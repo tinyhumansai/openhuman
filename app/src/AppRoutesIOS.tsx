@@ -66,7 +66,7 @@ const AppRoutesIOS: FC = () => {
         }
       />
       <Route
-        path="/chat"
+        path="/chat/:threadId?"
         element={
           <RequirePairing>
             <Accounts />

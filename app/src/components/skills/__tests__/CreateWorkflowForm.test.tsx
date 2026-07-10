@@ -6,7 +6,7 @@
  * and the /skills/new page can rely on it.
  *
  * Covers:
- *  - submit calls workflowsApi.createWorkflow with the trimmed/normalised
+ *  - submit calls skillsApi.createWorkflow with the trimmed/normalised
  *    payload (CSVs split, optional fields omitted when empty).
  *  - onStateChange is called with validity + submitting flags so
  *    wrappers can sync their submit button's disabled state.
@@ -15,6 +15,8 @@
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import CreateWorkflowForm, { previewSlug } from '../CreateWorkflowForm';
 
 const stableT = (key: string) => key;
 vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: stableT }) }));
@@ -25,15 +27,13 @@ const hoisted = vi.hoisted(() => ({
   describeWorkflow: vi.fn(),
 }));
 
-vi.mock('../../../services/api/workflowsApi', () => ({
-  workflowsApi: {
+vi.mock('../../../services/api/skillsApi', () => ({
+  skillsApi: {
     createWorkflow: hoisted.createWorkflow,
     updateWorkflow: hoisted.updateWorkflow,
     describeWorkflow: hoisted.describeWorkflow,
   },
 }));
-
-import CreateWorkflowForm, { previewSlug } from '../CreateWorkflowForm';
 
 const FORM_ID = 'create-skill-test-form';
 
@@ -61,9 +61,7 @@ describe('CreateWorkflowForm', () => {
   });
 
   it('renders required fields and the slug preview updates as the name changes', () => {
-    render(
-      <CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />
-    );
+    render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
 
     const nameInput = screen.getByLabelText(/skills.create.name/i) as HTMLInputElement;
     fireEvent.change(nameInput, { target: { value: 'My Cool Skill' } });
@@ -126,12 +124,15 @@ describe('CreateWorkflowForm', () => {
   });
 
   it('includes whenToUse in the payload when the trigger field is filled', async () => {
-    hoisted.createWorkflow.mockResolvedValue({ id: 'wf', name: 'wf', scope: 'user', legacy: false });
+    hoisted.createWorkflow.mockResolvedValue({
+      id: 'wf',
+      name: 'wf',
+      scope: 'user',
+      legacy: false,
+    });
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
 
-    fireEvent.change(screen.getByLabelText(/skills.create.name/i), {
-      target: { value: 'Triage' },
-    });
+    fireEvent.change(screen.getByLabelText(/skills.create.name/i), { target: { value: 'Triage' } });
     fireEvent.change(screen.getByLabelText(/skills.create.description/i), {
       target: { value: 'Summarise the inbox.' },
     });
@@ -154,9 +155,7 @@ describe('CreateWorkflowForm', () => {
     hoisted.createWorkflow.mockRejectedValue(new Error('slug already exists'));
     render(<CreateWorkflowForm formId={FORM_ID} onCreated={vi.fn()} />);
 
-    fireEvent.change(screen.getByLabelText(/skills.create.name/i), {
-      target: { value: 'Dupe' },
-    });
+    fireEvent.change(screen.getByLabelText(/skills.create.name/i), { target: { value: 'Dupe' } });
     fireEvent.change(screen.getByLabelText(/skills.create.description/i), {
       target: { value: 'whatever' },
     });
@@ -350,7 +349,12 @@ describe('CreateWorkflowForm', () => {
       expect(hoisted.createWorkflow).toHaveBeenCalledWith(
         expect.objectContaining({
           inputs: [
-            { name: 'issue', required: false, type: 'integer', description: 'Issue number to work on' },
+            {
+              name: 'issue',
+              required: false,
+              type: 'integer',
+              description: 'Issue number to work on',
+            },
           ],
         })
       );

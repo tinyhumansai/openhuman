@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { computeTimeline } from '../../lib/memory/memoryTimeline';
 import type { GraphRelation } from '../../utils/tauriCommands/memory';
-import { loadNamespaces, loadTimeline, memoryTimelineApi } from './memoryTimelineApi';
+import { loadNamespaces, loadTimeline } from './memoryTimelineApi';
 
 const mockGraphQuery = vi.fn();
 const mockListNamespaces = vi.fn();
@@ -63,12 +63,5 @@ describe('memoryTimelineApi.loadNamespaces', () => {
   it('returns the namespace list from the RPC', async () => {
     mockListNamespaces.mockResolvedValueOnce(['work', 'personal']);
     expect(await loadNamespaces()).toEqual(['work', 'personal']);
-  });
-});
-
-describe('memoryTimelineApi object', () => {
-  it('exposes the public surface', () => {
-    expect(typeof memoryTimelineApi.loadTimeline).toBe('function');
-    expect(typeof memoryTimelineApi.loadNamespaces).toBe('function');
   });
 });

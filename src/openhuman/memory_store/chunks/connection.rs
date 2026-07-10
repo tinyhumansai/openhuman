@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use chrono::Utc;
 use parking_lot::Mutex as PMutex;
 use rusqlite::Connection;
 use std::collections::HashMap;
@@ -116,6 +117,9 @@ struct CircuitBreaker {
     consecutive_failures: AtomicU32,
     tripped: AtomicBool,
     last_trip: PMutex<Option<Instant>>,
+    /// Set once a `SystemStartup` mark has been published for this path so a
+    /// fresh boot reports a real status without re-emitting on every open.
+    startup_emitted: AtomicBool,
 }
 
 impl CircuitBreaker {
@@ -124,13 +128,27 @@ impl CircuitBreaker {
             consecutive_failures: AtomicU32::new(0),
             tripped: AtomicBool::new(false),
             last_trip: PMutex::new(None),
+            startup_emitted: AtomicBool::new(false),
         }
     }
 
-    fn record_success(&self) {
+    /// Records a successful init. Returns `true` if this call cleared a
+    /// previously-tripped breaker (i.e. a transition back to healthy that the
+    /// caller should announce on the bus). Returns `false` for the steady-state
+    /// case where the breaker was already untripped, so we don't spam a
+    /// `HealthChanged{healthy:true}` event on every successful call.
+    fn record_success(&self) -> bool {
         self.consecutive_failures.store(0, Ordering::Relaxed);
-        self.tripped.store(false, Ordering::Relaxed);
         *self.last_trip.lock() = None;
+        // `swap` reports the prior value: `true` means we just transitioned
+        // from tripped → untripped, which is the recovery edge to announce.
+        self.tripped.swap(false, Ordering::Relaxed)
+    }
+
+    /// Returns `true` exactly once per breaker — on the first successful open —
+    /// so the caller emits a single `SystemStartup` mark for this path.
+    fn mark_startup_emitted(&self) -> bool {
+        !self.startup_emitted.swap(true, Ordering::Relaxed)
     }
 
     /// Records one more failure. Returns `true` if this call just tripped the
@@ -447,9 +465,42 @@ pub(crate) fn get_or_init_connection(config: &Config) -> Result<Arc<PMutex<Conne
                 .connections
                 .lock()
                 .insert(db_path.clone(), Arc::clone(&arc_conn));
-            // Reset any prior failure counter now that init succeeded.
-            if let Some(breaker) = conn_cache().breakers.lock().get(&db_path) {
-                breaker.record_success();
+            // Reset any prior failure counter now that init succeeded. Use (or
+            // lazily create) the persistent breaker so a clean first boot still
+            // has somewhere to record the one-shot startup mark.
+            let breaker = {
+                let mut guard = conn_cache().breakers.lock();
+                guard
+                    .entry(db_path.clone())
+                    .or_insert_with(|| Arc::new(CircuitBreaker::new()))
+                    .clone()
+            };
+            // Emit a one-time `SystemStartup` so a fresh boot reports a real
+            // status for `memory_tree_db` instead of "unknown" until the first
+            // failure. Fires once per path for the process lifetime.
+            if breaker.mark_startup_emitted() {
+                crate::core::event_bus::publish_global(
+                    crate::core::event_bus::DomainEvent::SystemStartup {
+                        component: "memory_tree_db".to_string(),
+                    },
+                );
+            }
+            // Only announce recovery on the transition back to healthy — i.e.
+            // when the breaker had previously tripped (driving `/health` to a
+            // permanent 503). Steady-state successes stay silent so we don't
+            // spam a `HealthChanged{healthy:true}` event on every call.
+            if breaker.record_success() {
+                log::info!(
+                    "[memory_tree] circuit breaker recovered for {}: DB init succeeded after a prior trip",
+                    db_path.display()
+                );
+                crate::core::event_bus::publish_global(
+                    crate::core::event_bus::DomainEvent::HealthChanged {
+                        component: "memory_tree_db".to_string(),
+                        healthy: true,
+                        message: None,
+                    },
+                );
             }
             log::debug!("[memory_tree] DB connection cached and ready");
             Ok(arc_conn)
@@ -471,7 +522,7 @@ pub(crate) fn get_or_init_connection(config: &Config) -> Result<Arc<PMutex<Conne
                     db_path.display(),
                     CB_THRESHOLD
                 );
-                let _ = crate::core::event_bus::publish_global(
+                crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::HealthChanged {
                         component: "memory_tree_db".to_string(),
                         healthy: false,
@@ -542,7 +593,255 @@ pub(crate) fn clear_connection_cache() {
 /// downstream crates should treat it as internal.
 #[doc(hidden)]
 pub fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-    let conn_arc = get_or_init_connection(config)?;
-    let guard = conn_arc.lock();
-    f(&guard)
+    // W3 connection foundation: route ALL production access to
+    // `<workspace_dir>/memory_tree/chunks.db` through the TinyCortex connection
+    // manager. The crate opens the SAME file (its `db_path_for` derives the
+    // identical `<workspace>/memory_tree/chunks.db`), applies the identical
+    // schema + version-gated migrations (`TREE_EMBEDDING`=1, `GLOBAL_TOPIC_PURGE`
+    // =2 — matched on both sides, so an already-migrated DB is a no-op), and
+    // migrates any pre-existing WAL database to the TRUNCATE rollback journal in
+    // place on first open. The former host connection cache below is retired in
+    // the deletion-ledger follow-up (it is now only referenced by cache-behaviour
+    // unit tests, which move upstream into the crate).
+    let mc = crate::openhuman::tinycortex::memory_config_from(config, config.workspace_dir.clone());
+    tinycortex::memory::chunks::with_connection(&mc, f)
+}
+
+/// Append `suffix` to the *file name* of `path` (so `chunks.db` + `-wal`
+/// = `chunks.db-wal`, and `chunks.db` + `.corrupt-…` = `chunks.db.corrupt-…`).
+/// SQLite names its side-files this way (not as a new extension), and the
+/// quarantine keeps the corrupt image alongside the original for inspection.
+fn with_name_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut p = path.to_path_buf();
+    let name = p
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    p.set_file_name(format!("{name}{suffix}"));
+    p
+}
+
+/// Run `PRAGMA quick_check(1)` against `db_path` on a fresh, short-lived
+/// connection. Returns `Ok(true)` when the structural scan reports `"ok"`,
+/// `Ok(false)` when it reports any corruption, and `Err` when the check itself
+/// can't run (file unopenable / header unreadable — itself a corruption signal
+/// the caller treats as malformed).
+fn quick_check_ok(db_path: &Path) -> Result<bool> {
+    let conn = Connection::open(db_path)
+        .with_context(|| format!("open for quick_check: {}", db_path.display()))?;
+    let _ = conn.busy_timeout(SQLITE_BUSY_TIMEOUT);
+    let result: String = conn
+        .query_row("PRAGMA quick_check(1)", [], |row| row.get(0))
+        .context("running PRAGMA quick_check")?;
+    Ok(result.eq_ignore_ascii_case("ok"))
+}
+
+/// Recover from a `SQLITE_CORRUPT` (malformed image) on the memory_tree DB.
+///
+/// Unlike the transient/contention/disk-full classes, a malformed on-disk
+/// image never heals on its own — every query fails forever and the worker
+/// re-pages Sentry on each poll (Sentry TAURI-RUST-E93: ~1.6k events in ~17 min
+/// from a single host). This is the recovery lever the sibling suppressors
+/// lack: it quarantines the damaged file (and its WAL/SHM side-files) to a
+/// timestamped `.corrupt-<ts>` copy — **preserved, not deleted**, so the bytes
+/// can still be inspected or salvaged — then rebuilds an empty schema so the
+/// memory-tree queue resumes instead of wedging indefinitely.
+///
+/// Returns `Ok(true)` when a quarantine + rebuild happened, `Ok(false)` when a
+/// fresh `PRAGMA quick_check` now passes (the earlier failure was transient and
+/// quarantining would have destroyed good data), and `Err` when the quarantine
+/// rename or the schema rebuild failed (caller backs off and retries).
+pub(crate) fn recover_corrupt_db(config: &Config) -> Result<bool> {
+    let db_path = db_path_for(config);
+
+    // 1. Drop any cached (corrupt) connection + breaker so the OS file handle
+    //    is closed before we rename, and the next open re-inits cleanly.
+    conn_cache().connections.lock().remove(&db_path);
+    conn_cache().breakers.lock().remove(&db_path);
+
+    // 2. Re-confirm corruption against the on-disk file. `quick_check` is the
+    //    cheap structural scan; if it now reports "ok" the image is actually
+    //    healthy (e.g. the original error was a transient mmap fault) and we
+    //    must NOT destroy good data — bail out without quarantining.
+    if db_path.exists() {
+        match quick_check_ok(&db_path) {
+            Ok(true) => {
+                log::info!(
+                    "[memory_tree] quick_check passed for {} — no quarantine needed",
+                    db_path.display()
+                );
+                return Ok(false);
+            }
+            Ok(false) => {
+                log::warn!(
+                    "[memory_tree] quick_check confirms corruption for {}, quarantining",
+                    db_path.display()
+                );
+            }
+            Err(e) => {
+                // The check couldn't even run (unopenable / unreadable header).
+                // That is itself a malformed-image signal — treat as corrupt.
+                log::warn!(
+                    "[memory_tree] quick_check could not run for {} ({e:#}); treating as corrupt",
+                    db_path.display()
+                );
+            }
+        }
+    } else {
+        log::warn!(
+            "[memory_tree] corrupt-recovery: {} is missing; rebuilding fresh schema",
+            db_path.display()
+        );
+    }
+
+    // 3. Quarantine the main DB + WAL/SHM side-files to `<name>.corrupt-<ts>`.
+    let ts = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let mut quarantined = 0usize;
+    for suffix in &["", "-wal", "-shm"] {
+        let src = with_name_suffix(&db_path, suffix);
+        if !src.exists() {
+            continue;
+        }
+        let dst = with_name_suffix(&src, &format!(".corrupt-{ts}"));
+        std::fs::rename(&src, &dst).with_context(|| {
+            format!(
+                "failed to quarantine corrupt memory_tree file {} -> {}",
+                src.display(),
+                dst.display()
+            )
+        })?;
+        log::warn!(
+            "[memory_tree] quarantined {} -> {}",
+            src.display(),
+            dst.display()
+        );
+        quarantined += 1;
+    }
+
+    // 4. Rebuild an empty schema by forcing a fresh open. The damaged rows are
+    //    not silently dropped — they live on in the `.corrupt-<ts>` copy.
+    get_or_init_connection(config)
+        .context("failed to rebuild memory_tree schema after quarantining corrupt DB")?;
+
+    log::warn!(
+        "[memory_tree] corruption recovery complete: quarantined {quarantined} file(s), \
+         rebuilt empty schema at {}",
+        db_path.display()
+    );
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `record_success` must only report a recovery transition (`true`) when
+    /// it actually clears a tripped breaker — the signal `get_or_init_connection`
+    /// uses to publish `HealthChanged{healthy:true}` exactly once instead of on
+    /// every successful call (C1).
+    #[test]
+    fn record_success_announces_only_on_trip_to_healthy_transition() {
+        let cb = CircuitBreaker::new();
+
+        // Untripped breaker: a success is steady-state, not a transition.
+        assert!(!cb.record_success());
+
+        // Trip the breaker by crossing the failure threshold.
+        let mut tripped = false;
+        for _ in 0..CB_THRESHOLD {
+            tripped = cb.record_failure();
+        }
+        assert!(tripped, "breaker should trip at CB_THRESHOLD failures");
+
+        // First success after a trip is the recovery edge → announce once.
+        assert!(cb.record_success());
+        // Subsequent successes are steady-state → stay silent.
+        assert!(!cb.record_success());
+    }
+
+    /// `mark_startup_emitted` must fire exactly once so a fresh boot emits a
+    /// single `SystemStartup` mark for `memory_tree_db` (C1).
+    #[test]
+    fn startup_mark_fires_exactly_once() {
+        let cb = CircuitBreaker::new();
+        assert!(cb.mark_startup_emitted());
+        assert!(!cb.mark_startup_emitted());
+        assert!(!cb.mark_startup_emitted());
+    }
+
+    // ── recover_corrupt_db tests (TAURI-RUST-E93 / #4048) ────────────────────
+
+    fn corrupt_test_config() -> (tempfile::TempDir, Config) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.workspace_dir = tmp.path().to_path_buf();
+        (tmp, cfg)
+    }
+
+    /// A malformed on-disk image must be quarantined (not deleted) and replaced
+    /// by a fresh, queryable schema so the memory-tree queue resumes.
+    #[test]
+    fn recover_corrupt_db_quarantines_and_rebuilds() {
+        clear_connection_cache();
+        let (_tmp, cfg) = corrupt_test_config();
+        let db_path = db_path_for(&cfg);
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        // Garbage bytes → not a valid SQLite header → corrupt image.
+        std::fs::write(&db_path, b"this is not a sqlite database, it is garbage").unwrap();
+
+        let recovered = recover_corrupt_db(&cfg).expect("recovery should succeed");
+        assert!(recovered, "garbage image must be quarantined + rebuilt");
+
+        // The corrupt bytes are preserved alongside, not silently dropped.
+        let quarantined: Vec<_> = std::fs::read_dir(db_path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains("chunks.db.corrupt-")
+            })
+            .collect();
+        assert_eq!(
+            quarantined.len(),
+            1,
+            "exactly one quarantined copy should exist"
+        );
+
+        // The rebuilt DB is healthy and the jobs table is queryable + empty.
+        clear_connection_cache();
+        let count: i64 = with_connection(&cfg, |conn| {
+            conn.query_row("SELECT COUNT(*) FROM mem_tree_jobs", [], |r| r.get(0))
+                .context("count jobs")
+        })
+        .expect("rebuilt DB must be queryable");
+        assert_eq!(count, 0, "rebuilt jobs table starts empty");
+    }
+
+    /// A healthy DB must NOT be quarantined — `quick_check` passes, so good data
+    /// is preserved and recovery is a no-op returning `Ok(false)`.
+    #[test]
+    fn recover_corrupt_db_is_noop_on_healthy_db() {
+        clear_connection_cache();
+        let (_tmp, cfg) = corrupt_test_config();
+        // Force a healthy DB into existence.
+        with_connection(&cfg, |conn| {
+            conn.query_row("SELECT COUNT(*) FROM mem_tree_jobs", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .context("seed healthy db")
+        })
+        .unwrap();
+
+        let recovered = recover_corrupt_db(&cfg).expect("recovery should succeed");
+        assert!(!recovered, "healthy DB must not be quarantined");
+
+        let db_path = db_path_for(&cfg);
+        let quarantined = std::fs::read_dir(db_path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().contains(".corrupt-"));
+        assert!(!quarantined, "no quarantine file should be created");
+    }
 }

@@ -24,9 +24,9 @@ mod identity_cost;
 mod learning;
 mod load;
 pub use load::{
-    action_dir_env_override, clear_active_user, default_action_dir, default_projects_dir,
-    default_root_openhuman_dir, pre_login_user_dir, read_active_user_id, resolve_action_dir,
-    user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
+    action_dir_env_override, active_user_marker_path, clear_active_user, default_action_dir,
+    default_projects_dir, default_root_openhuman_dir, pre_login_user_dir, read_active_user_id,
+    resolve_action_dir, user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
 };
 pub mod claude_agent_sdk;
 pub use claude_agent_sdk::ClaudeAgentSdkConfig;
@@ -34,6 +34,8 @@ mod local_ai;
 mod meet;
 mod node;
 mod observability;
+mod orchestration;
+mod privacy;
 mod proxy;
 mod routes;
 mod runtime;
@@ -41,6 +43,7 @@ mod runtime_python;
 mod scheduler_gate;
 mod storage_memory;
 mod task_sources;
+mod tokenjuice;
 mod tools;
 mod update;
 
@@ -53,10 +56,10 @@ pub use autocomplete::AutocompleteConfig;
 pub use autonomy::AutonomyConfig;
 pub use capability_providers::{CapabilityProviderConfig, CapabilityProviderTrustState};
 pub use channels::{
-    AuditConfig, ChannelsConfig, DingTalkConfig, DiscordConfig, IMessageConfig, IrcConfig,
-    LarkConfig, LarkReceiveMode, MatrixConfig, MattermostConfig, QQConfig, ResourceLimitsConfig,
-    SandboxBackend, SandboxConfig, SecurityConfig, SignalConfig, SlackConfig, StreamMode,
-    TelegramConfig, WebhookConfig, WhatsAppConfig,
+    AuditConfig, ChannelsConfig, DingTalkConfig, DiscordConfig, EmailConfig, IMessageConfig,
+    IrcConfig, LarkConfig, LarkReceiveMode, LinqConfig, MatrixConfig, MattermostConfig, QQConfig,
+    ResourceLimitsConfig, SandboxBackend, SandboxConfig, SecurityConfig, SignalConfig, SlackConfig,
+    StreamMode, TelegramConfig, WebhookConfig, WhatsAppConfig, YuanbaoConfig,
 };
 pub use context::ContextConfig;
 pub use dashboard::{DashboardConfig, DiagramViewerConfig, EventStreamConfig, ModelHealthConfig};
@@ -65,16 +68,20 @@ pub use heartbeat_cron::{CronConfig, HeartbeatConfig, SubconsciousMode};
 pub use identity_cost::{CostConfig, ModelPricing};
 pub use learning::{LearningConfig, ReflectionSource};
 pub use local_ai::{LocalAiConfig, LocalAiUsage};
-pub use meet::{AutoJoinPolicy, AutoSummarizePolicy, MeetConfig};
+pub use meet::{AutoJoinPolicy, AutoSummarizePolicy, CalendarProvider, MeetConfig};
 pub use node::NodeConfig;
-pub use observability::ObservabilityConfig;
+pub use observability::{AgentTracingBackend, AgentTracingConfig, ObservabilityConfig};
+pub use orchestration::OrchestrationConfig;
+pub use privacy::{PrivacyConfig, PrivacyMode};
 pub use proxy::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
     ProxyConfig, ProxyScope,
 };
 pub use routes::{EmbeddingRouteConfig, ModelRouteConfig};
-pub use runtime::{DockerRuntimeConfig, ReliabilityConfig, RuntimeConfig, SchedulerConfig};
+pub use runtime::{
+    DockerRuntimeConfig, ReliabilityConfig, RuntimeConfig, SchedulerConfig, ShellConfig,
+};
 pub use runtime_python::RuntimePythonConfig;
 pub use scheduler_gate::{SchedulerGateConfig, SchedulerGateMode};
 pub use storage_memory::{
@@ -82,10 +89,11 @@ pub use storage_memory::{
     StorageProviderSection, DEFAULT_CLOUD_LLM_MODEL,
 };
 pub use task_sources::TaskSourcesConfig;
+pub use tokenjuice::TokenjuiceConfig;
 pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,
-    GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, McpAuthConfig,
-    McpClientConfig, McpClientIdentityConfig, McpServerConfig, MultimodalConfig,
+    GitbooksConfig, HttpHeader, HttpRequestConfig, IntegrationToggle, IntegrationsConfig,
+    McpAuthConfig, McpClientConfig, McpClientIdentityConfig, McpServerConfig, MultimodalConfig,
     MultimodalFileConfig, PolymarketClobCredentials, PolymarketConfig, SearchConfig, SearchEngine,
     SearchEngineCredentials, SearxngConfig, SecretsConfig, SeltzConfig, WebSearchConfig,
     COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED,

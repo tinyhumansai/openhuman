@@ -9,7 +9,7 @@ const offlineStatusBase = {
   connectionStatus: 'offline' as const,
   statusDot: 'bg-stone-400',
   statusLabel: 'Offline',
-  statusColor: 'text-stone-500',
+  statusColor: 'text-content-muted',
   ctaLabel: 'Enable',
   ctaVariant: 'sage' as const,
 };

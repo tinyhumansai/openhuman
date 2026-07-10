@@ -42,10 +42,13 @@ pub fn write_if_new(abs_path: &Path, bytes: &[u8]) -> anyhow::Result<bool> {
     {
         let mut f = std::fs::File::create(&tmp_path)
             .map_err(|e| anyhow::anyhow!("create tempfile {:?}: {e}", tmp_path))?;
-        f.write_all(bytes)
-            .map_err(|e| anyhow::anyhow!("write tempfile {:?}: {e}", tmp_path))?;
-        f.sync_all()
-            .map_err(|e| anyhow::anyhow!("fsync tempfile {:?}: {e}", tmp_path))?;
+        // Remove the temp file on write/fsync failure so a leaked
+        // `.tmp_<uuid>.md` never accumulates in the user-facing vault.
+        if let Err(e) = f.write_all(bytes).and_then(|_| f.sync_all()) {
+            drop(f);
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(anyhow::anyhow!("write/fsync tempfile {:?}: {e}", tmp_path));
+        }
     }
 
     // Rename: if the target appeared concurrently (another thread/process beat
@@ -95,6 +98,100 @@ pub fn write_if_new(abs_path: &Path, bytes: &[u8]) -> anyhow::Result<bool> {
             }
         }
     }
+}
+
+/// Ensure the file at `abs_path` contains exactly `full_bytes`, whose body
+/// (front-matter excluded) hashes to `body_sha256`.
+///
+/// This is the write-side half of the content store's integrity contract
+/// (#4689): the recorded `content_sha256` must always match the bytes actually
+/// on disk. `write_if_new` alone cannot guarantee that — it skips an existing
+/// file unconditionally, so a stale/partial pre-existing file at the target
+/// path would be left in place while the caller records the *new* body's sha,
+/// permanently diverging the DB token from disk.
+///
+/// Behaviour when the file already exists:
+/// - on-disk body sha matches `body_sha256` → idempotent no-op.
+/// - mismatch → atomically replaced (temp file + rename over the destination)
+///   from `full_bytes`, so the file is never observed missing or partial. At
+///   ingest the freshly-composed input is authoritative, so overwriting a
+///   drifted on-disk file is the correct reconciliation.
+pub fn write_or_replace_body(
+    abs_path: &Path,
+    full_bytes: &[u8],
+    body_sha256: &str,
+) -> anyhow::Result<()> {
+    if abs_path.exists() {
+        let disk_sha = read_body_sha256(abs_path).unwrap_or_default();
+        if disk_sha == body_sha256 {
+            log::debug!(
+                "[content_store::atomic] file already on disk with matching body sha: {}",
+                abs_path.display()
+            );
+            return Ok(());
+        }
+        log::debug!(
+            "[content_store::atomic] on-disk body sha mismatch for {} (disk={disk_sha} new={body_sha256}) — re-staging",
+            abs_path.display()
+        );
+    }
+    // Write the replacement to a sibling temp file and atomically rename it over
+    // the destination. rename() replaces an existing file atomically on POSIX and
+    // NTFS, so — unlike unlink-then-write — the destination is never observed
+    // missing or partially written even if the process crashes or the write
+    // fails mid-way (a committed DB row can never end up pointing at an absent
+    // body file). Post-condition: on success `abs_path` holds exactly
+    // `full_bytes`, whose body hashes to `body_sha256`.
+    write_via_temp_rename(abs_path, full_bytes)
+}
+
+/// Write `bytes` to `abs_path` via a sibling tempfile + fsync + atomic rename,
+/// **replacing** any existing file. The rename is atomic on POSIX and NTFS, so
+/// the destination is never seen missing or half-written. Parent directories are
+/// created on demand and the parent dir entry is fsync'd on Unix for durability.
+fn write_via_temp_rename(abs_path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let parent = abs_path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|e| anyhow::anyhow!("create_dir_all {:?}: {e}", parent))?;
+
+    let tmp_path = parent.join(format!(".tmp_{}.md", uuid_v4_hex()));
+    {
+        let mut f = std::fs::File::create(&tmp_path)
+            .map_err(|e| anyhow::anyhow!("create tempfile {:?}: {e}", tmp_path))?;
+        // Clean up the temp file on a write/fsync failure too — not just on the
+        // rename failure below. content_root is the user-facing vault, so a
+        // leaked `.tmp_<uuid>.md` is visible in Obsidian and would accumulate.
+        if let Err(e) = f.write_all(bytes).and_then(|_| f.sync_all()) {
+            drop(f);
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(anyhow::anyhow!("write/fsync tempfile {:?}: {e}", tmp_path));
+        }
+    }
+
+    if let Err(e) = std::fs::rename(&tmp_path, abs_path) {
+        // Keep the old destination intact; only our temp is cleaned up.
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(anyhow::anyhow!(
+            "rename {:?} -> {:?}: {e}",
+            tmp_path,
+            abs_path
+        ));
+    }
+
+    #[cfg(unix)]
+    if let Ok(dir) = std::fs::File::open(parent) {
+        if let Err(e) = dir.sync_all() {
+            log::warn!(
+                "[content_store::atomic] parent dir fsync failed for {:?}: {e}",
+                parent
+            );
+        }
+    }
+    log::debug!(
+        "[content_store::atomic] wrote (replace) {}",
+        abs_path.display()
+    );
+    Ok(())
 }
 
 /// A summary that has been written to disk and is ready for SQLite upsert.
@@ -160,38 +257,11 @@ pub fn stage_summary_with_layout(
     let body_bytes = composed.body.as_bytes();
     let sha256 = sha256_hex(body_bytes);
 
-    // Idempotent re-stage: if the file already exists, read and hash its
-    // body bytes. If the on-disk hash matches the new body's hash, return
-    // the StagedSummary unchanged (true idempotency). If the hashes differ
-    // the on-disk file is stale/corrupted — re-write it atomically with the
-    // new content so the db row and disk file are always consistent.
-    //
-    // Not re-writing would leave SQLite storing a content_sha256 that
-    // doesn't match the actual on-disk bytes, breaking integrity checks.
-    if abs_path.exists() {
-        let disk_sha = read_body_sha256(&abs_path).unwrap_or_default();
-        if disk_sha == sha256 {
-            log::debug!(
-                "[content_store::atomic] summary already on disk with matching sha: {}",
-                input.summary_id
-            );
-            return Ok(StagedSummary {
-                summary_id: input.summary_id.to_string(),
-                content_path: rel_path,
-                content_sha256: sha256,
-            });
-        }
-        // Hash mismatch — overwrite atomically.
-        log::debug!(
-            "[content_store::atomic] summary on-disk sha mismatch for {} — re-staging",
-            input.summary_id
-        );
-        // Remove the stale file first; write_if_new's fast-path would skip it.
-        let _ = std::fs::remove_file(&abs_path);
-    }
-
-    let full_bytes = composed.full.as_bytes();
-    write_if_new(&abs_path, full_bytes)?;
+    // Idempotent re-stage that self-heals a stale/corrupt on-disk file: matching
+    // body sha is a no-op, a mismatch is atomically rewritten. Not re-writing
+    // would leave SQLite storing a content_sha256 that doesn't match the actual
+    // on-disk bytes, breaking integrity checks. See [`write_or_replace_body`].
+    write_or_replace_body(&abs_path, composed.full.as_bytes(), &sha256)?;
 
     log::debug!(
         "[content_store::atomic] staged summary {} → {}",
@@ -275,6 +345,47 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(sha256_hex(b"hello"), sha256_hex(b"world"));
         assert_eq!(a.len(), 64); // 32 bytes → 64 hex chars
+    }
+
+    #[test]
+    fn write_or_replace_body_writes_new_and_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("c.md");
+        let full = b"---\nk: v\n---\nBODY";
+        let body_sha = sha256_hex(b"BODY");
+        // Fresh write.
+        write_or_replace_body(&path, full, &body_sha).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), full);
+        // Idempotent: a matching on-disk body sha leaves the file untouched.
+        write_or_replace_body(&path, full, &body_sha).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), full);
+    }
+
+    #[test]
+    fn write_or_replace_body_overwrites_stale_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("c.md");
+        // A stale pre-existing file with a different body would be skipped by
+        // write_if_new; write_or_replace_body must reconcile it (#4689).
+        write_if_new(&path, b"---\nk: v\n---\nOLD").unwrap();
+        let new_full = b"---\nk: v\n---\nNEW";
+        write_or_replace_body(&path, new_full, &sha256_hex(b"NEW")).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), new_full);
+    }
+
+    #[test]
+    fn write_or_replace_body_errors_when_stale_target_cannot_be_replaced() {
+        // If the stale target can't be removed/overwritten (here: a directory
+        // sits at the path), the function must refuse rather than let the caller
+        // record a content_sha256 the on-disk bytes do not match (#4689).
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("c.md");
+        std::fs::create_dir_all(&path).unwrap();
+        let res = write_or_replace_body(&path, b"---\nk: v\n---\nNEW", &sha256_hex(b"NEW"));
+        assert!(
+            res.is_err(),
+            "must not record a sha the target does not hold"
+        );
     }
 
     fn mk_summary_input<'a>(

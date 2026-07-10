@@ -226,6 +226,15 @@ pub enum ExpectedErrorKind {
     /// `is_network_unreachable_message` anchors miss the inner OS message.
     ChannelSupervisorRestart,
     ConfigLoadTimedOut,
+    /// A config-file READ failed because the OS refused access to a file that
+    /// exists (ACL-denied, held open by another process, OneDrive placeholder).
+    /// Unpreventable user-environment state — zero local lever to make the file
+    /// readable. Demoted only for the access-denied / locked io kinds; a
+    /// `NotFound` after the `exists()` check stays a paging defect. See
+    /// [`is_config_read_io_failure_message`]. Drops TAURI-RUST-DME
+    /// (`inference_downloads_progress` re-reads config every poll → 36k events /
+    /// 1 Windows user).
+    ConfigReadIoFailure,
     /// The subconscious engine's SQLite schema init couldn't open its database
     /// file at all — a host-filesystem condition, not a code bug. Two canonical
     /// renderings, both bound to the user's local FS:
@@ -249,7 +258,7 @@ pub enum ExpectedErrorKind {
     /// contention (handled by the store's busy-retry loop) and unrelated DB
     /// failures in other domains still reach Sentry.
     SubconsciousSchemaUnavailable,
-    /// The user invoked "Import Codex CLI login" (Settings → AI → Codex auth)
+    /// The user invoked "Import Codex CLI login" (Connections → API keys → LLM → Codex auth)
     /// but the Codex CLI auth at `~/.codex/auth.json` is absent or unusable:
     /// the file doesn't exist (the user never ran `codex login`), can't be
     /// parsed, or carries no tokens / no access token. The import RPC already
@@ -285,6 +294,62 @@ pub enum ExpectedErrorKind {
     /// couldn't parse, and the FE *does* page for it, F8). See
     /// [`crate::openhuman::inference::provider::backend_error_code_skips_sentry`].
     BackendErrorCodeOwned,
+    /// A provider embedding call (Cohere `/v2/embed`, OpenAI/Voyage embed,
+    /// custom OpenAI-compatible embed) returned a **403/Forbidden gateway
+    /// HTML page** instead of the provider's JSON error envelope — the
+    /// signature of an edge/CDN/WAF or regional block sitting *in front of*
+    /// the provider API (the request never reached the provider app). The
+    /// endpoint is correct and a key was sent (the empty-key fast-fail guard
+    /// already passed), so there is no local lever: retry won't clear an edge
+    /// policy keyed on the user's network reputation / geo / IP. The
+    /// embedding caller already degrades gracefully and the UI surfaces the
+    /// failure; Sentry has no remediation path.
+    ///
+    /// Anchored on HTML gateway markers (`<!doctype html`, `<title>403`,
+    /// `403 forbidden`) **and the absence of a JSON envelope** so an
+    /// actionable JSON 4xx (Cohere's `{"message": …}`, a real request-shape
+    /// bug in our client) still classifies `None` and reaches Sentry. See
+    /// [`is_upstream_edge_block_message`].
+    ///
+    /// Drops Sentry TAURI-RUST-8S3 (~1.7 k events / 3 users on
+    /// openhuman@0.57.53, `Cohere embed API error (403 Forbidden):
+    /// <!doctype html>…<title>403</title>…`).
+    UpstreamEdgeBlock,
+    /// `approval_decide` (`src/openhuman/approval/rpc.rs`) resolved a request_id
+    /// whose pending row was **already decided, lazily expired, or superseded**
+    /// — `store::decide` updated 0 rows because `decided_at` was already set,
+    /// and `store::get_decision` confirms a persisted decision exists. The
+    /// inline-approvals design spec
+    /// (`docs/superpowers/specs/2026-05-23-telegram-inline-approvals-design.md`)
+    /// classifies "no pending approval found" as a **benign** outcome: the
+    /// frontend `ApprovalRequestCard.decide` and the Telegram callback both call
+    /// `approval_decide` without server-confirmed dedupe, so double-taps, two
+    /// operators racing, and expiry-while-live all land here harmlessly.
+    ///
+    /// Drops the benign half of Sentry TAURI-RUST-5EH (~1,995 events / 8 users
+    /// on `openhuman@0.57.53`). Anchored to the benign `"no pending approval
+    /// found"` wording emitted ONLY when `get_decision` confirms the row was
+    /// resolved; a genuine **never-registered** id raises the distinct
+    /// `"no pending approval ever registered"` string (no anchor) so a real
+    /// lost-registration defect still reaches Sentry.
+    ApprovalNoPendingRace,
+    /// A remote MCP server answered the connect handshake with HTTP 401 — it
+    /// needs OAuth sign-in, not a code fix. `McpHttpClient::read_response`
+    /// (`src/openhuman/mcp_client/client.rs`) raises the typed
+    /// [`crate::openhuman::mcp_client::McpUnauthorizedError`], and
+    /// `mcp_registry::connections::connect` already classifies it and stores a
+    /// `needs_auth` flag so the UI prompts the user to authenticate (the
+    /// `needs_auth` UX shipped in #3733 / #3719). But `mcp_clients_connect`
+    /// still returns `Err(e.to_string())`, which propagates to the RPC
+    /// dispatcher (`jsonrpc` → `report_error_or_expected`) where no arm matched
+    /// it — so the same user-state condition the UI already handles was being
+    /// captured as a full Sentry error (TAURI-RUST-CGP: ~1.2k events / 79 users
+    /// on `openhuman@0.57.53`). This arm closes that ship gap: the connect-time
+    /// 401 is preventable user-state with no Sentry-actionable signal, so demote
+    /// it to info. Anchored on the canonical `McpUnauthorizedError` Display body
+    /// (`"MCP unauthorized for "` + `"(HTTP 401"`) so an unrelated MCP transport
+    /// failure still reaches Sentry.
+    McpServerNeedsAuth,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -327,6 +392,27 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("codex cli auth") || lower.contains(".codex/auth.json") {
         return Some(ExpectedErrorKind::CodexCliAuthUnavailable);
     }
+    // TAURI-RUST-5EH — `approval_decide` resolved a request_id whose row was
+    // already decided / lazily expired / superseded (benign race per the
+    // inline-approvals design spec). `rpc::approval_decide` emits this exact
+    // `"no pending approval found"` wording ONLY after `store::get_decision`
+    // confirms a persisted decision exists; the genuine never-registered case
+    // raises `"no pending approval ever registered"` (matched by neither this
+    // arm nor any below), so a real lost-registration defect still reaches
+    // Sentry. See `ExpectedErrorKind::ApprovalNoPendingRace`.
+    if lower.contains("no pending approval found") {
+        return Some(ExpectedErrorKind::ApprovalNoPendingRace);
+    }
+    // TAURI-RUST-CGP — a remote MCP server answered the connect handshake with
+    // HTTP 401 (`McpUnauthorizedError`). `connections::connect` already stores a
+    // `needs_auth` flag so the UI prompts for OAuth sign-in (#3733 / #3719), but
+    // the `mcp_clients_connect` RPC still re-raises the stringified error here.
+    // It is preventable user-state (the server needs sign-in) with no
+    // Sentry-actionable signal — demote it. Highly specific anchor; no overlap
+    // with the generic matchers below. See `is_mcp_server_needs_auth_message`.
+    if is_mcp_server_needs_auth_message(&lower) {
+        return Some(ExpectedErrorKind::McpServerNeedsAuth);
+    }
     if lower.contains("local ai is disabled") {
         return Some(ExpectedErrorKind::LocalAiDisabled);
     }
@@ -344,11 +430,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // guard now fast-fails before issuing that request, but this arm demotes
     // any residual 401 of that shape — older clients, or a present-but-rejected
     // key — so the flood (TAURI-RUST-52S) stays out of Sentry either way.
-    if lower.contains("api key not set")
-        || lower.contains("missing api key")
-        || lower.contains("no api key is configured")
-        || lower.contains("no api key supplied")
-    {
+    if is_api_key_unset_message(&lower) {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
     // Check `ChannelSupervisorRestart` BEFORE `is_loopback_unavailable` and
@@ -385,6 +467,14 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_network_unreachable_message(&lower) {
         return Some(ExpectedErrorKind::NetworkUnreachable);
     }
+    // Check `is_upstream_edge_block_message` BEFORE the transient/backend
+    // matchers: an HTML 403 gateway page from a provider embed call carries a
+    // `403`/`forbidden` token that no other matcher claims, but routing it to
+    // its own bucket keeps "edge/CDN block" distinct from genuine transient
+    // 5xx and from the actionable JSON 4xx that must still page (TAURI-RUST-8S3).
+    if is_upstream_edge_block_message(&lower) {
+        return Some(ExpectedErrorKind::UpstreamEdgeBlock);
+    }
     if is_transient_upstream_http_message(&lower) {
         return Some(ExpectedErrorKind::TransientUpstreamHttp);
     }
@@ -397,6 +487,33 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // home — see the variant doc-comment for OPENHUMAN-TAURI-… coverage.
     if is_provider_user_state_message(&lower) {
         return Some(ExpectedErrorKind::ProviderUserState);
+    }
+    // TAURI-RUST-8FQ — the OpenAI ChatGPT/Codex OAuth access token expired with
+    // no usable refresh token. The provider HTTP layer
+    // (`provider::ops::api_error` / `chat_via_responses`) already demotes its
+    // own per-attempt event, but the same `anyhow::bail!` string re-raises here
+    // at the RPC boundary (`jsonrpc` → `report_error_or_expected`); route it to
+    // the shared `ProviderUserState` bucket so the re-report is demoted too
+    // instead of leaking the event the emit-site already suppressed. User-state
+    // — recovery is reconnecting OpenAI; Sentry has no remediation path. The
+    // markers are distinct from the backend "invalid token" session-expiry
+    // wording matched below, so this does not shadow that arm.
+    if crate::openhuman::inference::provider::is_openai_oauth_session_expired_message(message) {
+        return Some(ExpectedErrorKind::ProviderUserState);
+    }
+    // TAURI-RUST-5MV — ollama.com hosted-inference 500 (`Internal Server Error
+    // (ref: <uuid>)`) for `*:cloud` models. The provider HTTP layer
+    // (`native_chat` / `streaming_chat` / `api_error`) already demotes its own
+    // per-attempt event and re-raises the actionable
+    // "Ollama cloud is temporarily unavailable …" string; this catches the
+    // re-report at the agent / RPC boundary (`provider_chat` →
+    // `report_error_or_expected`, the `domain=agent` half of the flood). Routed
+    // to `TransientUpstreamHttp` — it is an external upstream 5xx the
+    // reliable-provider layer retries + falls back over, with no client lever.
+    // Delegates to the single-source provider matcher so the phrasing can't
+    // drift. Distinct anchor from the matchers above, so it shadows nothing.
+    if crate::openhuman::inference::provider::is_ollama_cloud_internal_500_message(message) {
+        return Some(ExpectedErrorKind::TransientUpstreamHttp);
     }
     if is_backend_user_error_message(&lower) {
         return Some(ExpectedErrorKind::BackendUserError);
@@ -416,6 +533,31 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     }
     if is_embedding_backend_auth_failure(&lower) {
         return Some(ExpectedErrorKind::SessionExpired);
+    }
+    // TAURI-RUST-5JR — a custom embeddings endpoint with no embeddings route
+    // (the user pointed the Custom (OpenAI-compatible) provider at a chat-only
+    // base URL, e.g. DeepSeek, which 404s every `/embeddings` POST).
+    // Deterministic user-config state, re-emitted on every memory re-embed;
+    // the embeddings settings UI surfaces an actionable "pick an
+    // embeddings-capable provider" message. Demote to info. Scoped to 404/405
+    // only so a real 500 from a valid embeddings endpoint stays in Sentry.
+    if is_embedding_endpoint_absent(&lower) {
+        return Some(ExpectedErrorKind::ProviderConfigRejection);
+    }
+    // TAURI-RUST-9SK — the user entered a non-embedding (chat) model id as the
+    // embeddings model (e.g. an OpenRouter `…:free` chat model), so the
+    // embeddings endpoint 400s `Model <id> does not exist` on every memory
+    // re-embed (2205 events / 1 user). OpenRouter's bare `"does not exist"` +
+    // integer `"code":400` body matches none of the chat-side phrases in
+    // `is_provider_config_rejection_message` (which key on the OpenAI-native
+    // `"does not exist or you do not have access"` / `model_not_found`), so
+    // without this it reaches Sentry. Deterministic user-config state; the
+    // settings UI surfaces an actionable "pick an embeddings-capable model"
+    // remediation. Scoped to the 400 model-rejection body so a real 400
+    // (oversized input, server fault) stays visible — same polarity contract as
+    // `is_embedding_endpoint_absent`.
+    if is_embedding_model_rejected(&lower) {
+        return Some(ExpectedErrorKind::ProviderConfigRejection);
     }
     // Provider config-rejection (unknown model / abstract tier leaked to a
     // custom provider / model-specific temperature). Body-shape based and
@@ -458,6 +600,13 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_config_load_timed_out_message(&lower) {
         return Some(ExpectedErrorKind::ConfigLoadTimedOut);
     }
+    // OS-level config-read denial on a file that exists (user-environment, zero
+    // local lever). Keyed on the config-read anchor + an access-denied/locked io
+    // signal; NotFound / unseen kinds fall through and keep paging. Requires the
+    // loader to surface the full io chain (#3962).
+    if is_config_read_io_failure_message(&lower) {
+        return Some(ExpectedErrorKind::ConfigReadIoFailure);
+    }
     // Empty-provider-response re-report from the web-channel layer. Runs
     // last so an earlier, more specific matcher always wins. See the
     // variant doc-comment and [`is_empty_provider_response_message`] for
@@ -496,14 +645,76 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 /// That string carries no "no space left on device" text, so anchor
 /// additionally on the cross-platform `StorageFull` ErrorKind token (std maps
 /// ENOSPC / `ERROR_DISK_FULL` / `ERROR_HANDLE_DISK_FULL` all to
-/// `ErrorKind::StorageFull`). This is defense-in-depth for the genuinely
+/// `ErrorKind::StorageFull`).
+///
+/// A fifth shape comes from SQLite itself. When the engine detects the
+/// disk-full condition during its own page bookkeeping (journal/WAL extension)
+/// before the next syscall surfaces an errno, rusqlite renders the `SQLITE_FULL`
+/// result code as `"database or disk is full"` (Sentry TAURI-RUST-B6N, hit at
+/// `memory_store::unified::documents::tx.commit()` during
+/// `openhuman.memory_doc_ingest`). `SQLITE_FULL` has only two causes:
+/// genuine ENOSPC/ERROR_DISK_FULL (always the case in practice — the same
+/// burst always produces an os-error-28/112 sibling event) or a
+/// `max_page_count` PRAGMA cap (we set none).
+///
+/// rusqlite renders `SQLITE_FULL` in one of two shapes. The **bare** shape is
+/// the five words `"database or disk is full"` — Our local memory-store write
+/// call-sites wrap it with `format!("<verb>: {e}")` (e.g. `"commit tx: ..."` /
+/// `"clear_namespace commit tx: ..."` in `memory_store::unified::documents`),
+/// so the phrase lands as the **suffix** of the local emit. The **extended**
+/// shape carries the full error-code envelope, `"database or disk is full:
+/// Error code 13: Insertion failed because database is full"` (Sentry
+/// TAURI-RUST-4R8, `memory_queue::store::claim_next` on `mem_tree_jobs`); here
+/// the canonical phrase sits mid-string, so the suffix anchor can't catch it.
+/// We detect this shape by requiring **both** local fragments together — the
+/// `"database or disk is full"` phrase AND the libsqlite3-sys `code_to_str`
+/// token `"insertion failed because database is full"` — which only rusqlite's
+/// own `SQLITE_FULL` Display emits as a pair. Requiring both (rather than the
+/// `code_to_str` token alone) keeps the silencer from matching a remote
+/// provider body that merely quotes the token half — e.g. an OpenAI-compatible
+/// `OpenAiEmbedding::embed` failure framed as `"Embedding API error (… Error
+/// code 13: Insertion failed because database is full)"` whose *server-side*
+/// SQLite is full is operator-actionable and must still surface to Sentry
+/// (codex CR on #3911). Both arms anchor on local-emit fragments rather than a
+/// bare `contains("database or disk is full")` so the silencer does not match a
+/// non-2xx backend response body whose payload happens to mention the phrase
+/// (e.g. an `api.tinyhumans.ai` 5xx whose server-side SQLite is full). Non-2xx
+/// backend bodies are framed by
+/// `integrations::client::post` / `composio::client` as `"Backend returned
+/// <status> <reason> for <METHOD> <url>: <detail>"` — an operator-actionable
+/// server/storage failure that must still surface to Sentry. As
+/// defense-in-depth for the edge case where the backend body itself ends with
+/// the phrase, reject any message that also carries the `"backend returned "`
+/// envelope prefix (codex CR on #3672, mirrors the precedent set by
+/// [`is_backend_user_error_message`]).
+///
+/// This is defense-in-depth for the genuinely
 /// unpreventable **write** paths (a write can't succeed on a full disk); the
 /// read path no longer emits this error at all (it degrades to a lock-free
 /// read — see `AuthProfilesStore::load`).
 fn is_disk_full_message(lower: &str) -> bool {
-    lower.contains("no space left on device")
+    if lower.contains("no space left on device")
         || lower.contains("not enough space on the disk")
         || lower.contains("storagefull")
+    {
+        return true;
+    }
+    // Two SQLITE_FULL renderings — see the fifth-shape section above. The
+    // **bare** shape lands the phrase as a suffix (after trimming trailing
+    // whitespace / punctuation that closures + JSON wrappers append). The
+    // **extended** shape (TAURI-RUST-4R8) puts the phrase mid-string followed
+    // by `: Error code 13: Insertion failed because database is full`; require
+    // BOTH local fragments so we match only rusqlite's own `SQLITE_FULL` Display
+    // and never a remote provider body that merely quotes the `code_to_str`
+    // half (codex CR on #3911). The negative `"backend returned "` guard
+    // rejects the remote 5xx envelope as a further line of defense.
+    let trimmed = lower.trim_end_matches(|c: char| {
+        c.is_ascii_whitespace() || matches!(c, '.' | ',' | ';' | ':' | '"' | '\'')
+    });
+    let bare_suffix = trimmed.ends_with("database or disk is full");
+    let extended_local = lower.contains("database or disk is full")
+        && lower.contains("insertion failed because database is full");
+    (bare_suffix || extended_local) && !lower.contains("backend returned ")
 }
 
 /// Detect the literal `"Config loading timed out"` string produced by
@@ -513,6 +724,55 @@ fn is_disk_full_message(lower: &str) -> bool {
 /// `Config::load_from_config_path`.
 fn is_config_load_timed_out_message(lower: &str) -> bool {
     lower.contains("config loading timed out")
+}
+
+/// Detect a config-file READ that failed because the operating system refused
+/// access to a file that **exists** — i.e. an unpreventable user-environment
+/// condition with zero local lever, not an OpenHuman defect.
+///
+/// `Config::load_or_init` (`impl_load.rs`) takes its read branch only after
+/// `config_path.exists()` returns true, then `read_to_string` is retried 5× and
+/// still fails. On a healthy install that never happens; in the wild a user's
+/// `config.toml` can be ACL-denied, held open by another process (antivirus /
+/// backup agent), or a OneDrive "files on demand" placeholder that won't
+/// hydrate. We cannot unlock or re-ACL a foreign-held file, so the per-poll
+/// re-report (TAURI-RUST-DME: `inference_downloads_progress` re-loads config on
+/// every poll → 36k events / 1 user) carries no Sentry-actionable signal.
+///
+/// Polarity contract — demote **only** when BOTH hold:
+///   1. an OpenHuman config-read context anchor is present — either
+///      `"failed to read config file"` (`load_or_init` retry path,
+///      `impl_load.rs`, the DME surface) or `"reading config.toml from"`
+///      (`load_from_config_path` snapshot-reload path) — AND
+///   2. an OS-level *access-denied / locked* signal is present.
+///
+/// `NotFound` (`os error 2` / "cannot find the file"), "is a directory", and any
+/// io kind not enumerated here are deliberately EXCLUDED: a file that vanished
+/// after the `exists()` check is a TOCTOU race / app defect and MUST keep
+/// paging. This matcher is only meaningful once the loader surfaces the full
+/// chain (`{:#}`, #3962) — the io fragment lives in the source, not the top
+/// `with_context` line.
+fn is_config_read_io_failure_message(lower: &str) -> bool {
+    let has_config_read_anchor =
+        lower.contains("failed to read config file") || lower.contains("reading config.toml from");
+    if !has_config_read_anchor {
+        return false;
+    }
+    // A directory (or otherwise non-regular file) at the config path is a
+    // bad-install / corruption signal that MUST keep paging. On Windows reading
+    // a directory surfaces the same `Access is denied. (os error 5)` shape as a
+    // genuine ACL denial, so the io-signal check below cannot tell them apart;
+    // the read site (`impl_load.rs`) now fails a directory fast with this
+    // distinct wording, and we belt-and-braces exclude it here too. (Codex P2.)
+    if lower.contains("is a directory") || lower.contains("not a file") {
+        return false;
+    }
+    lower.contains("access is denied")
+        || lower.contains("permission denied")
+        || lower.contains("being used by another process")
+        || lower.contains("cannot access the file")
+        || lower.contains("(os error 5)")
+        || lower.contains("(os error 32)")
 }
 
 /// Match whatsapp structured-ingest failures caused by transient SQLite lock
@@ -555,6 +815,73 @@ fn is_embedding_backend_auth_failure(lower: &str) -> bool {
     lower.contains("embedding api error")
         && lower.contains("401")
         && lower.contains("invalid token")
+}
+
+/// Detect a custom embeddings endpoint that exposes **no embeddings API** —
+/// the `OpenAiEmbedding` client POSTed `/embeddings` and the host answered
+/// `404 Not Found` (route absent) or `405 Method Not Allowed`. Canonical wire
+/// shape from `src/openhuman/embeddings/openai.rs`:
+///
+/// ```text
+/// Embedding API error (404 Not Found): <body>
+/// Embedding API error (405 Method Not Allowed): <body>
+/// ```
+///
+/// Deterministic user-config state: the user pointed the Custom
+/// (OpenAI-compatible) embeddings provider at a base URL whose host has no
+/// embeddings endpoint (e.g. a chat-only provider like DeepSeek). Every memory
+/// re-embed re-emits it (TAURI-RUST-5JR, ~2685 events / 9 users) and the
+/// settings UI surfaces an actionable remediation — Sentry has no fix to make.
+///
+/// Polarity (important): scoped to **404/405 only**. A `500` from a valid
+/// embeddings endpoint is a real server fault and must keep reaching Sentry; a
+/// `400` (e.g. oversized input) is prevented at source by the chunk cap
+/// (#3598) and likewise stays visible. Reused by
+/// `embeddings::rpc::update_settings` as the save-time hard-block signal so the
+/// two never drift.
+pub(crate) fn is_embedding_endpoint_absent(lower: &str) -> bool {
+    lower.contains("embedding api error") && (lower.contains("(404") || lower.contains("(405"))
+}
+
+/// Detect a custom/cloud embeddings endpoint that IS an embeddings API but
+/// **rejected the configured model id** — the user pasted a non-embedding
+/// (chat/reasoning) model into the embeddings model field. Canonical wire shape
+/// from `src/openhuman/embeddings/openai.rs` (TAURI-RUST-9SK, ~2205 events):
+///
+/// ```text
+/// Embedding API error (400 Bad Request): {"error":{"message":"Model nvidia/nemotron-3-super-120b-a12b does not exist","code":400}}
+/// ```
+///
+/// Deterministic user-config state, re-emitted on every memory re-embed; the
+/// embeddings settings UI surfaces an actionable "pick an embeddings-capable
+/// model" remediation (appended to the message at the emit site). The
+/// OpenRouter body — bare `"does not exist"` with an integer `"code":400` —
+/// matches none of the chat-side phrases in
+/// `inference::provider::is_provider_config_rejection_message` (those key on the
+/// OpenAI-native `"does not exist or you do not have access"` /
+/// `model_not_found`), so this dedicated matcher is what demotes it.
+///
+/// Polarity (important): scoped to **400** + a model-rejection body. A bare
+/// 400 (oversized input — prevented at source by the chunk cap #3598) or a 500
+/// from a valid embeddings endpoint is a real fault and must keep reaching
+/// Sentry, so this never fires on them.
+fn is_embedding_model_rejected(lower: &str) -> bool {
+    lower.contains("embedding api error")
+        && lower.contains("(400")
+        && (lower.contains("does not exist")
+            || lower.contains("does not support embeddings")
+            // Gemini's OpenAI-compat shim (generativelanguage.googleapis.com)
+            // maps `/v1/embeddings` → `BatchEmbedContents` and rejects a bare
+            // model id with `BatchEmbedContentsRequest.model: unexpected model
+            // name format` / `INVALID_ARGUMENT` on every re-embed (TAURI-RUST-4SA,
+            // 4,494 events / 1 user). The Custom-endpoint path now normalizes the
+            // id to `models/<name>` at the source; this demotes any that slip
+            // through (already-stored bad state, older releases, other compat
+            // hosts) so the per-embed flood stays out of Sentry. Distinct cause
+            // from the #4070/9SK `"does not exist"` family.
+            || lower.contains("unexpected model name format")
+            || (lower.contains("invalid_argument")
+                && lower.contains("batchembedcontentsrequest.model")))
 }
 
 /// Detect the memory-store chunk DB's circuit-breaker-open message that
@@ -672,6 +999,64 @@ pub fn is_session_expired_message(msg: &str) -> bool {
             && msg.contains("\"error\":\"Invalid token\""))
 }
 
+/// Detect a remote MCP server's connect-time 401 — the user must sign in to
+/// that server (OAuth), not a code defect. Anchored on the canonical
+/// [`crate::openhuman::mcp_client::McpUnauthorizedError`] `Display`
+/// body, which renders as `"MCP unauthorized for \`<endpoint>\` (HTTP 401…)"`.
+///
+/// Conjunctive match — both anchors must hit (input already lower-cased):
+///
+/// 1. `"mcp unauthorized for "` — the typed-error prefix. Scopes the match to
+///    the MCP transport's own 401 so an unrelated "unauthorized" / "401" from
+///    another domain cannot borrow this demotion.
+/// 2. `"(http 401"` — the parenthesised status the `Display` impl always emits
+///    (with or without the trailing `resource metadata:` discovery hint).
+///
+/// `connections::connect` already classifies this and stores a `needs_auth`
+/// flag so the UI prompts for sign-in; this predicate keeps the parallel
+/// `mcp_clients_connect` RPC re-report out of Sentry. See
+/// [`ExpectedErrorKind::McpServerNeedsAuth`].
+fn is_mcp_server_needs_auth_message(lower: &str) -> bool {
+    lower.contains("mcp unauthorized for ") && lower.contains("(http 401")
+}
+
+/// Detect the "a configured provider has no API key" user-config state.
+///
+/// Single source of truth for the `ApiKeyMissing` wording so the
+/// `expected_error_kind` demotion arm and the cron scheduler's halt-on-first
+/// classifier (`is_api_key_unset_failure`, TAURI-RUST-HCK) can never drift
+/// apart. The phrasing is emitted deterministically, before any HTTP, by the
+/// credential guards:
+///   - `inference/provider/compatible_request.rs::credential_for_request`
+///     ("<provider> API key not set. Configure via the web UI …")
+///   - the embeddings credential guards (cohere/openai) + the composio
+///     direct-mode factory bail ("no api key is configured" / "no api key
+///     supplied").
+///
+/// Distinct from a *rejected* key (a provider 401 "Invalid API key"): that is a
+/// present-but-wrong key and stays actionable in Sentry — this matcher is for
+/// the **absent** key only, which has no Sentry remediation path.
+pub fn is_api_key_unset_message(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("api key not set")
+        || lower.contains("missing api key")
+        || lower.contains("no api key is configured")
+        || lower.contains("no api key supplied")
+}
+
+/// Does this error text describe a **local** LLM provider (loopback host, e.g.
+/// LM Studio / Ollama / llama.cpp on `127.0.0.1:<port>` or `localhost:<port>`)
+/// refusing the connection because its server isn't running?
+///
+/// Single-source wrapper over [`is_loopback_unavailable`] so callers outside
+/// this module (the cron scheduler's retry-halt guard) key off the exact same
+/// matcher the [`expected_error_kind`] classifier uses — the phrasing cannot
+/// drift between the source demotion and the cron suppression. Lowercases the
+/// input to match the classifier's internal contract (TAURI-RUST-12K).
+pub fn is_local_provider_unreachable_message(text: &str) -> bool {
+    is_loopback_unavailable(&text.to_ascii_lowercase())
+}
+
 /// Detect the in-process-core boot-window shape: a sibling component
 /// (frontend RPC relay, agent-integrations / composio HTTP clients) tried to
 /// reach the embedded core's `127.0.0.1:<port>` listener before it finished
@@ -693,6 +1078,19 @@ pub fn is_session_expired_message(msg: &str) -> bool {
 ///    swallowing higher-level wrappers that merely mention "connection
 ///    refused" in prose.
 ///
+/// 3. **Locale-independent fallback**: on non-English OS locales the kernel
+///    renders the `ECONNREFUSED` / `WSAECONNREFUSED` text translated (e.g. a
+///    zh-CN Windows host emits `由于目标计算机积极拒绝，无法连接。 (os error
+///    10061)`), so the English `connection refused` prefix in (2) is absent
+///    and a genuine loopback-refused body would leak past this matcher into
+///    the broad [`is_network_unreachable_message`] bucket (TAURI-RUST-12K).
+///    Recover it by pairing the reqwest/hyper-stable `tcp connect error`
+///    marker with the connect-refused errno alone. Scoped to the three
+///    connect-refused errnos only — the distinct timeout errnos (`60` / `110`
+///    / `10060`, `WSAETIMEDOUT`) are NOT matched, so a loopback *timeout*
+///    still classifies as its own shape rather than being mislabelled
+///    "refused".
+///
 /// Drops OPENHUMAN-TAURI-R5 (~2.5k events, `integrations.get` emit site)
 /// and OPENHUMAN-TAURI-R6 (~2.5k events, the `rpc.invoke_method` re-wrap of
 /// the same trace). Both share `trace_id=6ebf5b62748d5144e541e2cddeabbbd0`
@@ -713,16 +1111,28 @@ fn is_loopback_unavailable(lower: &str) -> bool {
     if !has_loopback_host {
         return false;
     }
-    lower.contains("connection refused (os error 61)")
+    // (2) English errno-prefixed form.
+    if lower.contains("connection refused (os error 61)")
         || lower.contains("connection refused (os error 111)")
         || lower.contains("connection refused (os error 10061)")
+    {
+        return true;
+    }
+    // (3) Locale-independent fallback: the OS-refused text may be translated,
+    // leaving only the errno. Require the transport-layer `tcp connect error`
+    // marker so a non-connect loopback failure cannot match, and pin to the
+    // connect-refused errnos (not the timeout errnos 60 / 110 / 10060).
+    lower.contains("tcp connect error")
+        && (lower.contains("(os error 61)")
+            || lower.contains("(os error 111)")
+            || lower.contains("(os error 10061)"))
 }
 
 /// Detect Ollama embed call sites that surface a user-config rejection from
 /// the local Ollama daemon — pure user-state errors the UI already surfaces
 /// (toast / settings page warning) where Sentry has no remediation path.
 ///
-/// Three canonical wire shapes are covered, all emitted by
+/// Several canonical wire shapes are covered, all emitted by
 /// `openhuman::embeddings::ollama::OllamaEmbedding::embed` and the embed
 /// service fallback path:
 ///
@@ -737,21 +1147,31 @@ fn is_loopback_unavailable(lower: &str) -> bool {
 ///   `ollama embed failed with status 404 Not Found: {"error":"model \"<id>\" not found, try pulling it first"}`.
 ///   (Self-hosted Sentry events still flow from older client releases that
 ///   predate this matcher; they drop off naturally as users upgrade.)
+/// - **TAURI-RUST-3X / -8WA** (~982 events on 0.57.52): 501 "embeddings not
+///   supported". Two bodies — the model is chat/vision-only
+///   (`{"error":"this model does not support embeddings"}`) or the Ollama
+///   daemon was started without embed support
+///   (`{"error":"This server does not support embeddings. Start it with `--embeddings`"}`).
+/// - **TAURI-RUST-3E** (~249 events): 401 auth-required Ollama endpoint with
+///   no credentials configured. Wire shape:
+///   `ollama embed failed with status 401 Unauthorized: {"error": "unauthorized"}`.
 /// - **OPENHUMAN-TAURI-GX**: user opted into Ollama embeddings but the
 ///   daemon isn't running on `localhost:11434`, so the embed service falls
 ///   back to cloud embeddings for the session. Wire shape:
 ///   `ollama embeddings opted-in but daemon unreachable at http://localhost:11434; falling back to cloud embeddings for this session`.
 ///
-/// All three are user-config: the user picked the wrong model id, forgot to
-/// pull it, or forgot to start the daemon. The remediation is "fix the
-/// model id in Settings" / "run `ollama pull <id>`" / "start ollama" —
-/// none of which Sentry can do for them.
+/// All are user-config: the user picked the wrong model id, forgot to pull
+/// it, ran a daemon without embed support, omitted credentials, or forgot to
+/// start the daemon. The remediation is "fix the model id in Settings" /
+/// "run `ollama pull <id>`" / "start ollama with `--embeddings`" / "add a
+/// key" / "start ollama" — none of which Sentry can do for them.
 ///
-/// The classifier is anchored on the `"ollama embed"` prefix
-/// (`"ollama embed failed"` for the 400/404 shapes, `"ollama embeddings opted-in"`
-/// for the daemon-unreachable fallback) so unrelated 400/404 errors elsewhere
-/// in the codebase that happen to contain `"invalid model name"` or
-/// `"not found"` substrings are not silenced.
+/// Each arm is anchored on the `"ollama embed"` prefix
+/// (`"ollama embed failed"` for the failed-request shapes,
+/// `"ollama embeddings opted-in"` for the daemon-unreachable fallback) so
+/// unrelated errors elsewhere in the codebase that happen to contain
+/// `"invalid model name"`, `"not found"`, or `"does not support embeddings"`
+/// substrings are not silenced.
 ///
 /// Routes to [`ExpectedErrorKind::ProviderUserState`] — the same bucket that
 /// holds the composio / gmail / OAuth user-state errors. We deliberately do
@@ -779,9 +1199,17 @@ fn is_ollama_user_config_rejection(lower: &str) -> bool {
         return true;
     }
 
-    if lower.contains("ollama embed failed")
-        && lower.contains("this model does not support embeddings")
-    {
+    // 3X / 8WA — 501-status "embeddings not supported". Ollama emits two
+    // bodies for this: the model is chat/vision-only
+    // (`{"error":"this model does not support embeddings"}`) or the daemon
+    // itself was started without embedding support
+    // (`{"error":"This server does not support embeddings. Start it with `--embeddings`"}`,
+    // TAURI-RUST-8WA, ~982 events on 0.57.52). Both are user-side Ollama
+    // config the app can't fix — it can neither swap the user's model nor
+    // restart their daemon with `--embeddings`. Anchor on the shared
+    // `does not support embeddings` phrase (still gated by the
+    // `ollama embed failed` prefix) so a future qualifier wording still demotes.
+    if lower.contains("ollama embed failed") && lower.contains("does not support embeddings") {
         return true;
     }
 
@@ -970,6 +1398,57 @@ fn is_transient_upstream_http_message(lower: &str) -> bool {
     })
 }
 
+/// Detect a non-2xx **HTML 403/Forbidden gateway page** returned to a provider
+/// embedding call — the signature of an edge/CDN/WAF or regional block sitting
+/// in front of the provider API, where the request never reached the provider
+/// app and the body is a generic gateway error page rather than the provider's
+/// JSON error envelope.
+///
+/// Canonical wire shape (TAURI-RUST-8S3, `CohereEmbedding::embed` emit site):
+/// `"Cohere embed API error (403 Forbidden): <!doctype html>…<title>403</title>403 Forbidden"`.
+/// The same shape also covers the OpenAI/Voyage and custom OpenAI-compatible
+/// embed paths when their upstream is fronted by the same edge tier, so we do
+/// not pin to a single provider prefix.
+///
+/// Two conditions must BOTH hold:
+///
+/// 1. A **403 token** is present — either the `403` status inside the embed
+///    error prefix or a bare `403 forbidden` in the body.
+/// 2. An **HTML gateway marker** is present (`<!doctype html`, `<html`,
+///    `<title>403`) — proving the body is a gateway page, not the provider's
+///    structured error.
+///
+/// And the body must **not** look like a JSON envelope (no `{` … `"message"` /
+/// `"error"` JSON shape). This is the discrimination guard: Cohere's real JSON
+/// 403 (`{"message": "invalid api key"}`) and any genuine request-shape bug in
+/// our client that round-trips a JSON 4xx stay classified `None` and keep
+/// reaching Sentry. Only the bodiless edge HTML page is demoted.
+///
+/// `genuinely-unpreventable`: endpoint correct, key sent, retry can't clear an
+/// edge policy keyed on the user's network reputation / geo / IP — Sentry has
+/// no remediation path.
+fn is_upstream_edge_block_message(lower: &str) -> bool {
+    // Must originate from an embedding call so we don't silence an HTML 403
+    // surfaced by some unrelated path.
+    let is_embed = lower.contains("embed");
+    if !is_embed {
+        return false;
+    }
+    // A JSON envelope means the provider's app answered with a structured
+    // error — actionable, must page. Don't demote.
+    let looks_like_json = lower.contains('{')
+        && (lower.contains("\"message\"")
+            || lower.contains("\"error\"")
+            || lower.contains("\"detail\""));
+    if looks_like_json {
+        return false;
+    }
+    let has_403 = lower.contains("(403 ") || lower.contains("403 forbidden");
+    let has_html_marker =
+        lower.contains("<!doctype html") || lower.contains("<html") || lower.contains("<title>403");
+    has_403 && has_html_marker
+}
+
 /// Detect non-2xx HTTP failures returned from the backend integrations / composio
 /// clients that are by definition user-input or user-auth-state problems — not
 /// bugs Sentry can act on.
@@ -1035,6 +1514,21 @@ fn is_backend_user_error_message(lower: &str) -> bool {
 /// classifier survives caller wrapping (rpc.invoke_method, agent.run_single,
 /// `[composio:gmail]` prefixes, anyhow chains, …).
 fn is_provider_user_state_message(lower: &str) -> bool {
+    // TAURI-RUST-HXF: a direct BYO provider (groq `on_demand` free tier)
+    // rejected a *single* request whose token count exceeds the account's
+    // tokens-per-minute cap — `413 Payload Too Large … Request too large …
+    // tokens per minute (TPM): Limit 8000, Requested 42084`. It is permanently
+    // non-viable on the current tier (not a burst that retry/backoff clears)
+    // and OpenHuman cannot raise a third-party account's TPM tier, so it is
+    // user-config state, not a product bug. NOTE: a *managed-backend*
+    // `PAYLOAD_TOO_LARGE` guard-leak is force-captured (returns `None`) earlier
+    // in `expected_error_kind`, before this matcher runs, so this arm only ever
+    // sees direct-provider TPM rejections. Shared matcher (single source of
+    // truth with the subconscious circuit breaker) so the wording can't drift.
+    if crate::openhuman::inference::provider::is_provider_rate_cap_exceeded_message(lower) {
+        return true;
+    }
+
     // OPENHUMAN-TAURI-3R / -3S: composio enable_trigger when the slug isn't
     // in the trigger registry (e.g. user clicked a stale UI option).
     // Backend returns 500 with `"Trigger type GITHUB_PUSH_EVENT not found"`.
@@ -1188,7 +1682,28 @@ fn is_provider_user_state_message(lower: &str) -> bool {
     // No `inference/provider/ops.rs::list_models` other than this site emits
     // the `provider returned NNN` prefix (verified via grep), so the prefix
     // alone is a sufficient anchor.
-    if lower.starts_with("provider returned 404") {
+    //
+    // TAURI-RUST-8X3: anchor to the position where `provider returned 404` is
+    // the formatted *error prefix* — never to any occurrence in the response
+    // body. The primary fix classifies the *raw* error at the source
+    // (`inference/ops.rs::inference_list_models`) before any log prefix is
+    // applied, so the raw shape always starts with `provider returned 404:`.
+    // The one historically-observed prefixed re-report path is the
+    // `inference/ops.rs` `error!("[inference::ops] list_models:error: {err}")`
+    // log line — handled below as an explicit prefixed shape.
+    //
+    // A bare `contains` would mis-fire: a genuine 400/500 list-models failure
+    // formats as `provider returned 500: <body>`, and if `<body>` merely
+    // relays an upstream phrase like `upstream provider returned 404 ...`, the
+    // loose substring would demote that real 4xx/5xx defect out of Sentry —
+    // exactly the failures the discrimination guard
+    // (`does_not_classify_non_404_list_models_failures_as_user_state`) says
+    // must still escalate. So we require the anchor to be the prefix, not buried
+    // text. (Mirrors the parenthesised `(401` anchoring in
+    // `is_session_expired_message`.)
+    if lower.starts_with("provider returned 404")
+        || lower.contains("list_models:error: provider returned 404")
+    {
         return true;
     }
 
@@ -1419,6 +1934,23 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected provider-user-state error: {message}"
             );
         }
+        ExpectedErrorKind::McpServerNeedsAuth => {
+            // A remote MCP server rejected the connect handshake with HTTP 401:
+            // it needs OAuth sign-in. `mcp_registry::connections::connect`
+            // already stores a `needs_auth` flag and the UI prompts the user to
+            // authenticate (#3733 / #3719) — but `mcp_clients_connect` re-raises
+            // the stringified error to the RPC dispatcher, where it was being
+            // captured as a full Sentry error (TAURI-RUST-CGP: ~1.2k events / 79
+            // users). Preventable user-state with no Sentry-actionable signal;
+            // demote to info so the breadcrumb survives but no error event fires.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "mcp_server_needs_auth",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected MCP needs-auth (401) error: {message}"
+            );
+        }
         ExpectedErrorKind::ProviderConfigRejection => {
             // User-config state: a custom cloud provider rejected the
             // request because of the user's model / parameter setup — an
@@ -1645,6 +2177,23 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected config-load timeout: {message}"
             );
         }
+        ExpectedErrorKind::ConfigReadIoFailure => {
+            // OS refused to read an existing config.toml (ACL-denied, locked by
+            // another process, OneDrive placeholder). User-environment state —
+            // we cannot make the file readable, and the same poll re-reports it
+            // every cycle (TAURI-RUST-DME). Demote at `warn!` so it stays in the
+            // local log for support without paging on every poll.
+            // Metadata-only: the raw message embeds the absolute config path
+            // (username / home dir). Keep this arm PII-free like the other
+            // path-sensitive demotions — domain/operation/kind are enough to
+            // see the condition without leaking the path into local logs.
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "config_read_io_failure",
+                "[observability] {domain}.{operation} skipped expected config-read io failure (OS access denied/locked)"
+            );
+        }
         ExpectedErrorKind::SubconsciousSchemaUnavailable => {
             // Host-filesystem condition: SQLite couldn't open the subconscious
             // DB file (CANTOPEN / xShmMap). The WAL-fallback in
@@ -1695,6 +2244,37 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 kind = "backend_error_code",
                 error_code = %code,
                 "[observability] {domain}.{operation} skipped backend-owned errorCode={code} error: {message}"
+            );
+        }
+        ExpectedErrorKind::UpstreamEdgeBlock => {
+            // Provider embed call hit an edge/CDN/WAF or regional 403 block —
+            // the body is a generic HTML gateway page, not the provider's JSON
+            // error. Endpoint correct, key sent, retry can't clear an edge
+            // policy; the embedding caller degrades gracefully and the UI
+            // surfaces it. Demote at `warn!` so the breadcrumb retains the
+            // shape for triage without spawning an event (TAURI-RUST-8S3).
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "upstream_edge_block",
+                error = %message,
+                "[observability] {domain}.{operation} skipped upstream edge/CDN 403 block: {message}"
+            );
+        }
+        ExpectedErrorKind::ApprovalNoPendingRace => {
+            // Benign approval race (TAURI-RUST-5EH): the request_id was already
+            // decided / lazily expired / superseded — `store::get_decision`
+            // confirmed a persisted decision exists, so this is a double-tap,
+            // two-operator, or expiry-while-live race classified benign by the
+            // inline-approvals design spec, not a lost registration. Demote at
+            // `warn!` so a sustained spike still shows in operator dashboards
+            // without paging. The genuine never-registered case takes the
+            // capture path (distinct wording) and stays a Sentry signal.
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "approval_no_pending_race",
+                "[observability] {domain}.{operation} skipped benign already-decided/expired approval race: {message}"
             );
         }
     }
@@ -1749,6 +2329,48 @@ pub(crate) fn report_error_message(
                 operation = operation,
                 error = %message,
                 "[observability] {domain}.{operation} failed: {message}"
+            );
+        },
+    );
+}
+
+/// Capture a message to Sentry at **warning** severity with structured tags.
+///
+/// Mirror of [`report_error_message`] but at `sentry::Level::Warning`: the
+/// event is still recorded in Sentry (so it stays available for triage and
+/// dashboards) while warning-severity events do not trip the error-rate
+/// alert/paging rules that `Level::Error` events do (see the
+/// `sentry_tracing_layer` mapping in `core::logging`, where `ERROR` becomes a
+/// captured `Event` and `WARN`/`INFO` only a `Breadcrumb`). Use this for
+/// transport-boundary conditions worth seeing in aggregate that are never an
+/// actionable core defect — e.g. unrecognised RPC method names (#3567).
+///
+/// Like [`report_error_message`], capture is an explicit, synchronous
+/// `sentry::capture_message` rather than the `sentry-tracing` bridge; the
+/// accompanying diagnostic line is tagged with [`REPORT_ERROR_TRACING_TARGET`]
+/// so the production layer ignores it and we never double-report.
+pub(crate) fn report_warning_message(
+    message: &str,
+    domain: &str,
+    operation: &str,
+    extra: &[Tag<'_>],
+) {
+    sentry::with_scope(
+        |scope| {
+            scope.set_tag("domain", domain);
+            scope.set_tag("operation", operation);
+            for (k, v) in extra {
+                scope.set_tag(k, v);
+            }
+        },
+        || {
+            sentry::capture_message(message, sentry::Level::Warning);
+            tracing::warn!(
+                target: REPORT_ERROR_TRACING_TARGET,
+                domain = domain,
+                operation = operation,
+                message = %message,
+                "[observability] {domain}.{operation} warning: {message}"
             );
         },
     );
@@ -1842,6 +2464,46 @@ pub fn is_transient_provider_transport_failure(event: &sentry::protocol::Event<'
     event_has_transient_transport_phrase(event)
 }
 
+/// Defense-in-depth filter for aggregate provider exhaustion events where the
+/// aggregate only restates transient attempt failures.
+///
+/// Keep ordinary `failure=all_exhausted` events: they are the useful "every
+/// fallback failed" signal. Drop only the narrow shape observed in #3542,
+/// where the aggregate body starts with the reliable-provider exhaustion
+/// prefix and contains transient HTTP/transport wording already classified by
+/// [`is_transient_message_failure`].
+pub fn is_all_transient_provider_exhaustion_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("llm_provider") {
+        return false;
+    }
+    if tags.get("failure").map(String::as_str) != Some("all_exhausted") {
+        return false;
+    }
+
+    let direct = event.message.as_deref();
+    let from_logentry = event.logentry.as_ref().map(|log| log.message.as_str());
+    let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
+    [direct, from_logentry, from_exception]
+        .into_iter()
+        .flatten()
+        .any(all_provider_attempts_are_transient)
+}
+
+fn all_provider_attempts_are_transient(message: &str) -> bool {
+    let Some(attempts) = message.strip_prefix("All providers/models failed. Attempts:") else {
+        return false;
+    };
+    let mut saw_attempt = false;
+    for attempt in attempts.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        saw_attempt = true;
+        if !is_transient_message_failure(attempt) {
+            return false;
+        }
+    }
+    saw_attempt
+}
+
 /// Returns true when a Sentry event's message/exception text contains the
 /// canonical max-tool-iterations cap phrase (see
 /// `openhuman::agent::error::MAX_ITERATIONS_ERROR_PREFIX`).
@@ -1917,6 +2579,54 @@ pub fn is_session_expired_event(event: &sentry::protocol::Event<'_>) -> bool {
     }
 
     false
+}
+
+/// Defense-in-depth `before_send` filter for opaque `openhuman.auth_get_me`
+/// RPC failures whose message body has been collapsed to just the bare
+/// HTTP method + path (`"GET /auth/me"`) with no underlying transport error.
+///
+/// Pairs with the primary fix at `openhuman::credentials::ops::auth_get_me`,
+/// which replaced `e.to_string()` with `format!("{e:#}")` so the full
+/// `anyhow` context chain reaches the rpc dispatcher. Before that
+/// fix, every transient network failure under this RPC — reqwest timeout,
+/// connection reset, TLS handshake EOF, DNS hiccup — fingerprinted to one
+/// opaque "GET /auth/me" Sentry group (TAURI-RUST-10, ~409 events / 17
+/// users) because `is_transient_message_failure` could not see the
+/// stripped transport phrases.
+///
+/// This filter is the catch-all if anyone re-introduces the same anyhow
+/// `.to_string()` collapse at another call site that eventually reaches
+/// `report_error_or_expected` with the same shape, OR if the existing fix
+/// regresses. Genuine `auth_get_me` errors that carry the underlying
+/// context chain (`"GET /auth/me: error sending request for url (...): …"`)
+/// still page — only the bare path-only body is dropped.
+///
+/// Match criteria (all required):
+/// - tag `domain == "rpc"`
+/// - tag `operation == "invoke_method"`
+/// - tag `method == "openhuman.auth_get_me"`
+/// - `event.message` (or last exception `value`) trims to **exactly**
+///   `"GET /auth/me"` — strict equality, not `contains`, so a body with
+///   the chain appended still surfaces.
+pub fn is_auth_get_me_opaque_transport_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("rpc") {
+        return false;
+    }
+    if tags.get("operation").map(String::as_str) != Some("invoke_method") {
+        return false;
+    }
+    if tags.get("method").map(String::as_str) != Some("openhuman.auth_get_me") {
+        return false;
+    }
+
+    const OPAQUE_BODY: &str = "GET /auth/me";
+    let direct = event.message.as_deref();
+    let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
+    [direct, from_exception]
+        .into_iter()
+        .flatten()
+        .any(|body| body.trim() == OPAQUE_BODY)
 }
 
 pub fn is_transient_http_status(status: &str) -> bool {
@@ -2008,6 +2718,29 @@ pub fn is_transient_backend_api_failure(event: &sentry::protocol::Event<'_>) -> 
     is_transient_domain_failure(event, "backend_api")
 }
 
+/// Defense-in-depth `before_send` filter for skill-install fetch 4xx statuses.
+///
+/// A user/catalog-supplied `SKILL.md` URL returning 4xx means the remote skill
+/// path is missing, private, or otherwise unavailable to that user. The install
+/// RPC still returns the error so the UI can surface it, but Sentry should keep
+/// reporting server-side and transport failures only.
+pub fn is_skill_install_user_fetch_failure(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("skills") {
+        return false;
+    }
+    if tags.get("operation").map(String::as_str) != Some("install_fetch") {
+        return false;
+    }
+    if tags.get("failure").map(String::as_str) != Some("non_2xx") {
+        return false;
+    }
+
+    tags.get("status")
+        .and_then(|status| status.parse::<u16>().ok())
+        .is_some_and(|status| (400..500).contains(&status))
+}
+
 /// Transient integrations / Composio failures (timeout, connection reset,
 /// gateway hiccups).
 ///
@@ -2024,6 +2757,31 @@ pub fn is_transient_backend_api_failure(event: &sentry::protocol::Event<'_>) -> 
 pub fn is_transient_integrations_failure(event: &sentry::protocol::Event<'_>) -> bool {
     is_transient_domain_failure(event, "integrations")
         || is_transient_domain_failure(event, "composio")
+}
+
+/// Skill-install fetch **client errors** (4xx, esp. 404/410).
+///
+/// `install_workflow_from_url_with_home` fetches a user/catalog-supplied
+/// `SKILL.md`; a 4xx means the requested URL is gone or wrong — expected
+/// user-input state surfaced to the UI as "skill not found", not a
+/// Sentry-actionable defect. The primary suppression lives at that emit site
+/// (it no longer calls `report_error` for 4xx); this is the defense-in-depth
+/// net mirroring the `is_transient_*` filters, catching any future skills call
+/// site that reports a 4xx. Matched by the tags `report_error` writes:
+/// `domain=skills`, `failure=non_2xx`, and a 4xx `status`. A 5xx is a genuine
+/// remote failure and stays reportable. Drops TAURI-RUST-CGE (~1,446 events /
+/// 72 users on `openhuman@0.57.53`).
+pub fn is_skills_install_client_error_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("skills") {
+        return false;
+    }
+    if tags.get("failure").map(String::as_str) != Some("non_2xx") {
+        return false;
+    }
+    tags.get("status")
+        .and_then(|status| status.parse::<u16>().ok())
+        .is_some_and(|code| (400..500).contains(&code))
 }
 
 /// Transient updater failures from GitHub release probes/downloads.
@@ -2090,6 +2848,25 @@ pub fn is_transient_message_failure(msg: &str) -> bool {
         || contains_transient_transport_phrase(&lower)
 }
 
+/// Sentinel prefix stamped on a `/teams/me/usage` probe error that the
+/// failure-backoff in `crate::openhuman::team::ops` short-circuited — i.e. an
+/// already-reported repeat within the backoff window. The FIRST failure of a
+/// streak propagates its real error string and reports normally; only the
+/// suppressed repeats carry this prefix so the JSON-RPC boundary can demote
+/// them (no re-report) instead of re-flooding Sentry. See GH #4153.
+///
+/// Single source of truth: the producer (`team::ops::get_usage_with_cache`)
+/// builds its sentinel from this constant, and [`is_suppressed_usage_probe_backoff`]
+/// matches it — coupled by a unit test so the two cannot drift.
+pub const USAGE_PROBE_BACKOFF_PREFIX: &str = "USAGE_PROBE_BACKOFF:";
+
+/// Returns true when a message is the usage-probe failure-backoff sentinel
+/// (see [`USAGE_PROBE_BACKOFF_PREFIX`]). Anchored on the exact prefix so a real
+/// backend error string can never match.
+pub fn is_suppressed_usage_probe_backoff(msg: &str) -> bool {
+    msg.starts_with(USAGE_PROBE_BACKOFF_PREFIX)
+}
+
 /// Returns true when a Sentry event is a budget-exhausted 400 that should be
 /// dropped from `before_send`.
 ///
@@ -2112,6 +2889,161 @@ pub fn is_budget_event(event: &sentry::protocol::Event<'_>) -> bool {
         return false;
     }
     event_contains_budget_exhausted_message(event)
+}
+
+/// Whether a raw error / message string is a provider **insufficient-credits
+/// 402** — the BYO account (e.g. OpenRouter) genuinely lacks the balance to
+/// satisfy the request. Anchored on BOTH a 402-status shape AND a credit
+/// phrase, so a bare `402` (or a non-402 error whose body merely contains the
+/// digits `402`) is not swallowed and keeps reaching Sentry.
+///
+/// Single source of truth shared by the message-level cron halt
+/// (`openhuman::cron::scheduler`'s `is_insufficient_credits_failure`, which
+/// stops retrying a permanent 402 and skips its `report_error`) and the
+/// event-level `before_send` filter [`is_insufficient_credits_event`] — the
+/// same split as [`is_session_expired_message`] ↔ [`is_session_expired_event`].
+/// TAURI-RUST-514 / -C62.
+pub fn is_insufficient_credits_message(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    // Anchor the 402 to a status shape — the emit sites format the message
+    // as "<provider> API error (402 Payment Required): <body>". Matching a
+    // bare "402" would false-positive on body digits (e.g. a 400 error
+    // whose body says "can only afford 402 tokens"), which is NOT this
+    // user-state and must keep reaching Sentry.
+    let is_402_status = lower.contains("(402") || lower.contains("402 payment required");
+    if !is_402_status {
+        return false;
+    }
+    // Check the credit/balance signal against the BODY only. The status prefix
+    // "(402 Payment Required)" itself contains the phrase "payment required",
+    // which `body_indicates_insufficient_credits` matches — so feeding it the
+    // whole string would classify ANY 402 (even one whose body is an unrelated
+    // condition) as insufficient-credits and suppress it (codex P2 on #3913).
+    // Slice off everything up to and including the formatted "): " status
+    // separator first; fall back to the whole text when the separator is
+    // absent (non-standard shape) so a credit phrase there still matches.
+    let body = lower
+        .split_once("): ")
+        .map_or(lower.as_str(), |(_, body)| body);
+    crate::openhuman::inference::provider::body_indicates_insufficient_credits(body)
+}
+
+/// Defense-in-depth `before_send` filter for **insufficient-credits 402**
+/// provider events (TAURI-RUST-C62): the user's own BYO provider account
+/// (e.g. OpenRouter) is out of balance — a billing state OpenHuman has no
+/// lever over once the request already caps `max_tokens`.
+///
+/// The primary emit-site demotion lives in the `Provider::chat()` native_chat
+/// cascade (`is_provider_insufficient_credits_402`), but the compatible
+/// provider reports the same failure from several other paths
+/// (`chat_with_system`, `chat_with_history`, the streaming gates, and the
+/// shared `api_error` helper) that don't run that cascade. This filter is the
+/// single outermost net that catches all of them, keyed on the formatted
+/// message rather than tags so it matches regardless of which path emitted it.
+///
+/// Match criteria (all required):
+/// - the event message or any exception value names a 402 / payment-required
+///   failure (`"402"` or `"payment required"`), AND
+/// - that same text carries an insufficient-credits phrase
+///   (`provider::body_indicates_insufficient_credits`).
+pub fn is_insufficient_credits_event(event: &sentry::protocol::Event<'_>) -> bool {
+    if event
+        .message
+        .as_deref()
+        .is_some_and(is_insufficient_credits_message)
+    {
+        return true;
+    }
+    event.exception.values.iter().any(|exception| {
+        exception
+            .value
+            .as_deref()
+            .is_some_and(is_insufficient_credits_message)
+    })
+}
+
+/// Message-level matcher for a provider **monthly-quota / usage-limit
+/// exhausted** failure. Status-agnostic by design — unlike
+/// [`is_insufficient_credits_message`] it does NOT anchor on a 402 status,
+/// because the Kiro IDE proxy wraps its 402 inside a 500 envelope
+/// (TAURI-RUST-C9A). Delegates to the single-source quota-phrase set in
+/// [`crate::openhuman::inference::provider::body_indicates_quota_exhausted`], so
+/// the emit-site guard and this `before_send` net can't drift. Shared with the
+/// event-level filter [`is_quota_exhausted_event`].
+pub fn is_quota_exhausted_message(text: &str) -> bool {
+    crate::openhuman::inference::provider::body_indicates_quota_exhausted(text)
+}
+
+/// Defense-in-depth `before_send` filter for provider **monthly-quota
+/// exhausted** events (TAURI-RUST-C9A): the user's third-party plan has spent
+/// its allotment for the period — a billing/plan state OpenHuman has no lever
+/// over.
+///
+/// The primary emit-site demotion lives in the `Provider::chat()` native_chat
+/// cascade and the shared `api_error` helper (`is_provider_quota_exhausted`),
+/// but the compatible provider reports the same failure from several other
+/// paths that don't run those guards. This filter is the single outermost net
+/// that catches all of them, keyed on the formatted message rather than tags so
+/// it matches regardless of which path emitted it (and regardless of whether
+/// the upstream wrapped the 402 in a 500 envelope).
+pub fn is_quota_exhausted_event(event: &sentry::protocol::Event<'_>) -> bool {
+    if event
+        .message
+        .as_deref()
+        .is_some_and(is_quota_exhausted_message)
+    {
+        return true;
+    }
+    event.exception.values.iter().any(|exception| {
+        exception
+            .value
+            .as_deref()
+            .is_some_and(is_quota_exhausted_message)
+    })
+}
+
+/// Whether a raw error / message string is an Ollama **Cloud** hosted-inference
+/// `500` (`Internal Server Error (ref: <uuid>)`). Matches either the raw emit
+/// shape (`ollama API error (500 …): {"error":"Internal Server Error (ref: …)"}`)
+/// or the actionable re-raise the emit sites swap in
+/// (`is_ollama_cloud_internal_500_message`). The raw arm requires BOTH the
+/// `ollama` provider name and the `internal server error (ref:` envelope, so a
+/// generic 500 from another provider, or a local Ollama daemon crash (which
+/// carries no `ref:` UUID), still reaches Sentry.
+pub fn is_ollama_cloud_internal_500_message_any(text: &str) -> bool {
+    if crate::openhuman::inference::provider::is_ollama_cloud_internal_500_message(text) {
+        return true;
+    }
+    let lower = text.to_ascii_lowercase();
+    lower.contains("ollama") && lower.contains("internal server error (ref:")
+}
+
+/// Defense-in-depth `before_send` filter for **Ollama Cloud hosted-inference
+/// 500s** (TAURI-RUST-5MV): ollama.com's `*:cloud` models intermittently
+/// return an opaque `Internal Server Error (ref: <uuid>)` with no client lever
+/// (non-deterministic, byte-identical request succeeds when healthy), retried +
+/// fallen-back by the reliable-provider layer.
+///
+/// The primary demotion lives at the `native_chat` / `streaming_chat` /
+/// `api_error` emit sites, and the agent re-report is demoted via
+/// `expected_error_kind` → `TransientUpstreamHttp`. This is the single outermost
+/// net for any other compatible-provider path (`chat_with_system`,
+/// `chat_with_history`, the non-native cascades) that reports the same body,
+/// keyed on the message rather than tags so it matches regardless of emitter.
+pub fn is_ollama_cloud_internal_500_event(event: &sentry::protocol::Event<'_>) -> bool {
+    if event
+        .message
+        .as_deref()
+        .is_some_and(is_ollama_cloud_internal_500_message_any)
+    {
+        return true;
+    }
+    event.exception.values.iter().any(|exception| {
+        exception
+            .value
+            .as_deref()
+            .is_some_and(is_ollama_cloud_internal_500_message_any)
+    })
 }
 
 /// 404 on PATCH/DELETE to a channel-message path is an expected backend state
@@ -2177,6 +3109,22 @@ fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) 
 mod tests {
     use super::*;
 
+    #[test]
+    fn usage_probe_backoff_sentinel_classifies_only_its_own_prefix() {
+        // The producer in `team::ops` builds its sentinel from this prefix.
+        let sentinel = format!("{USAGE_PROBE_BACKOFF_PREFIX} recent /teams/me/usage failure");
+        assert!(is_suppressed_usage_probe_backoff(&sentinel));
+        // Real backend error strings must NEVER match — they keep reporting.
+        assert!(!is_suppressed_usage_probe_backoff(
+            "GET /teams/me/usage failed (500 Internal Server Error): "
+        ));
+        assert!(!is_suppressed_usage_probe_backoff(
+            "GET /teams/me/usage failed (404 Not Found); response_body_len=91"
+        ));
+        assert!(!is_suppressed_usage_probe_backoff("SESSION_EXPIRED: ..."));
+        assert!(!is_suppressed_usage_probe_backoff(""));
+    }
+
     /// Helper must accept `&anyhow::Error`, `&dyn std::error::Error`, and
     /// plain `&str` — the three shapes that show up at error sites today.
     #[test]
@@ -2198,6 +3146,43 @@ mod tests {
         let inner = std::io::Error::other("inner cause");
         let wrapped = anyhow::Error::from(inner).context("outer ctx");
         assert_eq!(format!("{wrapped:#}"), "outer ctx: inner cause");
+    }
+
+    /// Sentry TAURI-RUST-5EH: the benign already-decided/expired approval race
+    /// (`rpc::approval_decide` after `get_decision` confirms a persisted
+    /// decision) must classify as `ApprovalNoPendingRace` so the ~1,995-event
+    /// flood is demoted — while a genuine never-registered id (distinct
+    /// "ever registered" wording) must stay reportable (`None`).
+    #[test]
+    fn classifies_benign_approval_race_but_keeps_genuine_loss() {
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: no pending approval found for request_id \
+                 '4f1c…' (already decided or expired)"
+            ),
+            Some(ExpectedErrorKind::ApprovalNoPendingRace),
+            "benign already-decided/expired race must be demoted"
+        );
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: no pending approval ever registered \
+                 for request_id '4f1c…'"
+            ),
+            None,
+            "a genuine lost registration must remain a Sentry signal"
+        );
+    }
+
+    /// Exercise the full demotion path (classifier -> report arm) for a benign
+    /// approval race: it must take the expected branch and not panic.
+    #[test]
+    fn report_error_or_expected_demotes_benign_approval_race() {
+        report_error_or_expected(
+            "no pending approval found for request_id 'abc' (already decided or expired)",
+            "rpc",
+            "invoke_method",
+            &[],
+        );
     }
 
     #[test]
@@ -2255,6 +3240,68 @@ mod tests {
         );
     }
 
+    /// Sentry TAURI-RUST-CGP: a remote MCP server's connect-time 401 is
+    /// preventable user-state (the server needs OAuth sign-in), already handled
+    /// by the `needs_auth` UX (#3733 / #3719), so it must classify as
+    /// `McpServerNeedsAuth` and stay out of Sentry. The canonical body comes
+    /// straight from the typed `McpUnauthorizedError` `Display` impl (both the
+    /// bare and `resource metadata:` variants), plus the
+    /// `mcp_clients_connect`-prefixed RPC re-report shape that actually reaches
+    /// the dispatcher.
+    #[test]
+    fn classifies_mcp_connect_401_as_needs_auth() {
+        use crate::openhuman::mcp_client::McpUnauthorizedError;
+
+        let bare = McpUnauthorizedError {
+            endpoint: "https://youtube.run.tools".to_string(),
+            resource_metadata: None,
+        };
+        let with_meta = McpUnauthorizedError {
+            endpoint: "https://youtube.run.tools".to_string(),
+            resource_metadata: Some(
+                "https://youtube.run.tools/.well-known/oauth-protected-resource".to_string(),
+            ),
+        };
+        for msg in [
+            bare.to_string(),
+            with_meta.to_string(),
+            // The stringified RPC re-report shape that propagates from
+            // `mcp_clients_connect` to `report_error_or_expected`.
+            format!("openhuman.mcp_clients_connect failed: {with_meta}"),
+        ] {
+            assert_eq!(
+                expected_error_kind(&msg),
+                Some(ExpectedErrorKind::McpServerNeedsAuth),
+                "must classify MCP connect 401 as McpServerNeedsAuth: {msg}"
+            );
+        }
+        // Full demotion path (classifier -> report arm) must not panic.
+        report_error_or_expected(
+            &bare.to_string(),
+            "rpc",
+            "openhuman.mcp_clients_connect",
+            &[],
+        );
+    }
+
+    /// Guard against over-suppression: an MCP transport failure that is NOT the
+    /// typed 401 (a 500, or a generic "unauthorized" with no MCP anchor) MUST
+    /// still reach Sentry (stay `None`) so a real defect isn't blinded.
+    #[test]
+    fn does_not_classify_other_mcp_or_401_errors_as_needs_auth() {
+        for msg in [
+            "MCP server `https://youtube.run.tools` returned HTTP 500: internal error",
+            "openhuman.mcp_clients_connect failed: connection refused",
+            "Unauthorized (HTTP 401) from some unrelated provider",
+        ] {
+            assert_ne!(
+                expected_error_kind(msg),
+                Some(ExpectedErrorKind::McpServerNeedsAuth),
+                "must NOT classify as McpServerNeedsAuth: {msg}"
+            );
+        }
+    }
+
     /// Guard against over-suppression on the import path: a genuine
     /// keyring/persist failure (`upsert_profile`) or an unrelated error carries
     /// neither the `codex cli auth` nor the `.codex/auth.json` anchor and MUST
@@ -2272,6 +3319,30 @@ mod tests {
                 "real-defect/unrelated error must NOT be demoted as codex auth-unavailable: {msg}"
             );
         }
+    }
+
+    /// Sentry TAURI-RUST-8FQ: the OpenAI ChatGPT/Codex OAuth `token_expired`
+    /// 401 re-raised at the RPC boundary (`{provider} Responses API error: …`)
+    /// must classify as `ProviderUserState` so the re-report is demoted, not
+    /// just the emit-site event. A genuine bad-key 401 must stay reportable.
+    #[test]
+    fn classifies_openai_oauth_token_expired_as_provider_user_state() {
+        let bail = "openai Responses API error: {\"error\":{\"message\":\"Provided \
+            authentication token is expired. Please try signing in again.\",\
+            \"type\":null,\"code\":\"token_expired\"}}";
+        assert_eq!(
+            expected_error_kind(bail),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "OAuth token_expired re-report must be demoted at the RPC boundary"
+        );
+        // A real misconfigured key must NOT be swallowed by this arm.
+        let bad_key = "openai Responses API error: {\"error\":{\"code\":\"invalid_api_key\",\
+            \"message\":\"Incorrect API key provided.\"}}";
+        assert_ne!(
+            expected_error_kind(bad_key),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "a genuine bad-key 401 must remain reportable"
+        );
     }
 
     /// Sentry TAURI-RUST-R4: the composio direct-mode factory bail must
@@ -2304,6 +3375,28 @@ mod tests {
             ),
             Some(ExpectedErrorKind::ApiKeyMissing)
         );
+    }
+
+    /// TAURI-RUST-HCK — the single-source `is_api_key_unset_message` matcher
+    /// (consumed by the cron scheduler's halt-on-first classifier) must match
+    /// the VERBATIM wording emitted by the inference credential guard
+    /// (`credential_for_request`), so a wording drift fails CI instead of
+    /// silently re-opening the cron flood. It must NOT match a present-but-
+    /// rejected key (401 "Invalid API key") nor an ordinary provider error.
+    #[test]
+    fn is_api_key_unset_message_matches_verbatim_credential_guard_wording() {
+        assert!(is_api_key_unset_message(
+            "openrouter API key not set. Configure via the web UI or set the appropriate env var."
+        ));
+        assert!(is_api_key_unset_message(
+            "Cohere embed API error (401 Unauthorized): {\"message\":\"no api key supplied\"}"
+        ));
+        assert!(!is_api_key_unset_message(
+            "OpenAI API error (401 Unauthorized): invalid_api_key"
+        ));
+        assert!(!is_api_key_unset_message(
+            "OpenHuman API error (500 Internal Server Error): {\"error\":\"Internal server error\"}"
+        ));
     }
 
     /// Guard against over-suppression: a genuine BYO-key auth failure
@@ -2363,6 +3456,86 @@ mod tests {
     }
 
     #[test]
+    fn classifies_embedding_html_403_edge_block_as_upstream_edge_block() {
+        // TAURI-RUST-8S3: edge/CDN/WAF or regional 403 block in front of
+        // api.cohere.com — the body is a generic HTML gateway page, not
+        // Cohere's JSON error envelope. Endpoint correct, key sent, no local
+        // lever → demote.
+        let cohere_html_403 = "Cohere embed API error (403 Forbidden): <!doctype html>\
+            <html><head><title>403</title></head><body>403 Forbidden</body></html>";
+        assert_eq!(
+            expected_error_kind(cohere_html_403),
+            Some(ExpectedErrorKind::UpstreamEdgeBlock),
+            "HTML 403 gateway page from an embed call must classify as UpstreamEdgeBlock: {cohere_html_403}"
+        );
+
+        // Generic embed shape (openai/voyage/custom embed path) fronted by the
+        // same edge tier — also demoted (matcher is not pinned to one provider).
+        let openai_html_403 =
+            "Embedding API error (403 Forbidden): <!DOCTYPE html><title>403 Forbidden</title>";
+        assert_eq!(
+            expected_error_kind(openai_html_403),
+            Some(ExpectedErrorKind::UpstreamEdgeBlock),
+            "generic embed HTML 403 must classify as UpstreamEdgeBlock: {openai_html_403}"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_embedding_json_403_as_edge_block() {
+        // A JSON 403 envelope means the provider's app answered with a
+        // structured, actionable error (bad key, blocked org) — must stay in
+        // Sentry. The discrimination guard for TAURI-RUST-8S3.
+        let cohere_json_403 =
+            r#"Cohere embed API error (403 Forbidden): {"message": "invalid api token"}"#;
+        assert_eq!(
+            expected_error_kind(cohere_json_403),
+            None,
+            "JSON 403 envelope must NOT be demoted — stays actionable: {cohere_json_403}"
+        );
+
+        // A non-embed HTML 403 from some unrelated path must not be silenced by
+        // this embed-scoped matcher.
+        let non_embed_html_403 =
+            "page fetch failed (403 Forbidden): <!doctype html><title>403</title>";
+        assert_eq!(
+            expected_error_kind(non_embed_html_403),
+            None,
+            "non-embed HTML 403 must not match the embed edge-block matcher: {non_embed_html_403}"
+        );
+    }
+
+    #[test]
+    fn report_error_or_expected_demotes_embedding_html_403_edge_block() {
+        // Drive the full demote path (`report_error_or_expected` →
+        // `report_expected_message`'s `UpstreamEdgeBlock` arm) so the added
+        // logging branch is exercised, not just the classifier. The HTML 403
+        // edge-block body must take the demoted `warn!` arm and must NOT fall
+        // through to the hard `report_error_message` capture path.
+        let cohere_html_403 = anyhow::anyhow!(
+            "Cohere embed API error (403 Forbidden): <!doctype html>\
+             <html><head><title>403</title></head><body>403 Forbidden</body></html>"
+        );
+        // Confirm the classifier routes it to the demoted arm…
+        assert_eq!(
+            expected_error_kind(&format!("{cohere_html_403:#}")),
+            Some(ExpectedErrorKind::UpstreamEdgeBlock),
+            "edge-block 403 must classify so report_error_or_expected demotes it"
+        );
+        // …then actually invoke the report path to cover the logging arm.
+        report_error_or_expected(&cohere_html_403, "embeddings", "embed", &[]);
+
+        // Companion: a JSON 403 envelope is actionable — it must NOT be demoted
+        // (classifier returns None, so the hard report path is taken instead).
+        let cohere_json_403 =
+            r#"Cohere embed API error (403 Forbidden): {"message": "invalid api token"}"#;
+        assert_eq!(
+            expected_error_kind(cohere_json_403),
+            None,
+            "JSON 403 envelope must stay actionable — not routed to the demote arm"
+        );
+    }
+
+    #[test]
     fn does_not_classify_unrelated_is_not_configured_messages() {
         assert_eq!(
             expected_error_kind("workspace path is not configured for this user"),
@@ -2394,6 +3567,9 @@ mod tests {
             "ollama embeddings opted-in but daemon unreachable at http://localhost:11434; falling back to cloud embeddings for this session",
             // TAURI-RUST-3X — 501-status model-does-not-support-embeddings.
             r#"ollama embed failed with status 501 Not Implemented: {"error":"this model does not support embeddings"}"#,
+            // TAURI-RUST-8WA — 501-status daemon started without embed support.
+            // Exact wire body so a narrow-back to "this model …" fails CI.
+            r#"ollama embed failed with status 501 Not Implemented: {"error":"This server does not support embeddings. Start it with `--embeddings`"}"#,
             // TAURI-RUST-3E — 401 unauthorized embed (auth required at ollama endpoint).
             r#"ollama embed failed with status 401 Unauthorized: {"error": "unauthorized"}"#,
         ] {
@@ -2423,6 +3599,65 @@ mod tests {
                 "should classify embedding backend auth failure as SessionExpired: {raw}"
             );
         }
+    }
+
+    #[test]
+    fn classifies_embedding_model_does_not_exist_400_as_config_rejection() {
+        // TAURI-RUST-9SK (~2205 events / 1 user) — a chat model id pasted as the
+        // embeddings model. Verbatim OpenRouter wire body (bare "does not exist"
+        // + integer "code":400), plus the enriched form after the emit site
+        // appends the actionable remediation. Both must demote so the per-embed
+        // flood stays out of Sentry.
+        for raw in [
+            r#"Embedding API error (400 Bad Request): {"error":{"message":"Model nvidia/nemotron-3-super-120b-a12b does not exist","code":400}}"#,
+            "Embedding API error (400 Bad Request): {\"error\":{\"message\":\"Model nvidia/nemotron-3-super-120b-a12b does not exist\",\"code\":400}} — this model isn't an embeddings model; pick an embeddings-capable model in Settings → Memory",
+            r#"Embedding API error (400 Bad Request): {"error":{"message":"this model does not support embeddings"}}"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ProviderConfigRejection),
+                "should classify embedding model-rejection 400 as config rejection: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_gemini_model_format_400_as_config_rejection() {
+        // TAURI-RUST-4SA (~4,494 events / 1 user) — a bare model id sent to
+        // Gemini's OpenAI-compat shim, which maps `/v1/embeddings` →
+        // `BatchEmbedContents` and demands `models/<name>`. Verbatim Gemini wire
+        // body plus the enriched form after the emit site appends the Gemini
+        // remediation, and the alternate `INVALID_ARGUMENT` + field-path shape.
+        // All must demote so the per-embed flood stays out of Sentry.
+        for raw in [
+            r#"Embedding API error (400 Bad Request): {"error":{"code":400,"message":"BatchEmbedContentsRequest.model: unexpected model name format","status":"INVALID_ARGUMENT"}}"#,
+            "Embedding API error (400 Bad Request): {\"error\":{\"code\":400,\"message\":\"BatchEmbedContentsRequest.model: unexpected model name format\",\"status\":\"INVALID_ARGUMENT\"}} — Gemini needs the embeddings model id in `models/<name>` form (e.g. `models/text-embedding-004`); fix it in Settings → Memory",
+            r#"Embedding API error (400 Bad Request): {"error":{"code":400,"message":"Invalid value at 'model'","status":"INVALID_ARGUMENT","details":[{"field":"BatchEmbedContentsRequest.model"}]}}"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ProviderConfigRejection),
+                "should classify Gemini model-format 400 as config rejection: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_embedding_400s() {
+        // Polarity: a 400 that is NOT a model-rejection (e.g. oversized input)
+        // and any non-400 must keep reaching Sentry.
+        assert_eq!(
+            expected_error_kind(
+                r#"Embedding API error (400 Bad Request): {"error":{"message":"input exceeds the maximum number of tokens"}}"#
+            ),
+            None
+        );
+        assert_eq!(
+            expected_error_kind(
+                r#"Embedding API error (500 Internal Server Error): {"error":"model does not exist"}"#
+            ),
+            None
+        );
     }
 
     #[test]
@@ -2581,6 +3816,21 @@ mod tests {
     }
 
     #[test]
+    fn classifies_lmstudio_n_keep_exceeds_n_ctx_rereport() {
+        // TAURI-RUST-6V0: the verbatim LM Studio 400 body — the un-evictable
+        // prefix (`n_keep`) is larger than the model's loaded context
+        // (`n_ctx`). When this 400 slips past the pre-dispatch guard and is
+        // re-raised by the agent/web_channel, `report_error_or_expected` must
+        // classify it as expected user-state so it stays out of Sentry.
+        assert_eq!(
+            expected_error_kind(
+                "lmstudio API error (400 Bad Request): {\"error\":\"The number of tokens to keep from the initial prompt is greater than the context length (n_keep: 10978 >= n_ctx: 8192). Try to load the model with a larger context length, or provide a shorter input.\"}"
+            ),
+            Some(ExpectedErrorKind::ContextWindowExceeded)
+        );
+    }
+
+    #[test]
     fn does_not_classify_unrelated_messages_as_context_window_exceeded() {
         // Anchors are context-overflow specific. A generic "window" or
         // "context" mention, or an unrelated rate-limit "exceeded", must
@@ -2594,6 +3844,62 @@ mod tests {
                 expected_error_kind(raw),
                 None,
                 "must NOT classify as context-window-exceeded: {raw}"
+            );
+        }
+    }
+
+    // ── ProviderUserState: permanent TPM rate cap (TAURI-RUST-HXF) ─────────
+
+    #[test]
+    fn classifies_provider_rate_cap_413_tpm_rereport_as_provider_user_state() {
+        // TAURI-RUST-HXF: verbatim groq `on_demand` free-tier body — a single
+        // subconscious request (42084 tokens) exceeds the 8000 tokens-per-minute
+        // cap, so groq returns 413 and no retry can ever fit it. When re-raised
+        // by `agent.run_single` under `domain=agent`, `report_error_or_expected`
+        // must demote it to expected user-config state (the user's account tier
+        // is not a lever OpenHuman controls) instead of paging Sentry.
+        assert_eq!(
+            expected_error_kind(
+                "groq API error (413 Payload Too Large): {\"error\":{\"message\":\"Request too large \
+                 for model `openai/gpt-oss-120b` in organization `org_01k48ewn75ez7tsgw5hmd72px2` \
+                 service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 42084. \
+                 Please try again later.\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    #[test]
+    fn managed_backend_payload_too_large_still_pages_despite_rate_cap_arm() {
+        // Regression pin: a *managed-backend* `PAYLOAD_TOO_LARGE` is a
+        // client-guard leak (the client was supposed to bound the request) and
+        // MUST keep paging. The guard-leak arm returns `None` before the
+        // ProviderUserState matcher runs, so the new TPM arm cannot demote it.
+        assert_eq!(
+            expected_error_kind(
+                "OpenHuman API error (413 Payload Too Large): \
+                 {\"error\":{\"errorCode\":\"PAYLOAD_TOO_LARGE\",\"message\":\"request too big\"}}"
+            ),
+            None,
+            "managed PAYLOAD_TOO_LARGE guard-leak must still page"
+        );
+    }
+
+    #[test]
+    fn transient_tpm_burst_and_bare_413_do_not_demote_as_rate_cap() {
+        // The arm requires BOTH "request too large" (single-request permanence)
+        // AND a per-minute-tokens marker. A transient burst ("try again in Ns")
+        // and a bare 413 lacking those anchors must NOT be demoted to
+        // ProviderUserState — they stay retryable / Sentry-visible.
+        for raw in [
+            "groq API error (429 Too Many Requests): Rate limit reached for model \
+             `openai/gpt-oss-120b`. Please try again in 2.5s.",
+            "openai API error (413 Payload Too Large): request entity too large",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ProviderUserState),
+                "must NOT demote as permanent rate-cap: {raw}"
             );
         }
     }
@@ -2782,6 +4088,19 @@ mod tests {
             // only the `ErrorKind` debug + os_code survive — no "no space left
             // on device" text. Must still classify via the StorageFull anchor.
             "Failed to create auth profile lock (kind=Some(StorageFull), os_code=Some(28))",
+            // SQLITE_FULL rendering from rusqlite — engine-level disk-full
+            // detection during page-bookkeeping (journal/WAL extension) that
+            // beats the next syscall to the errno. Production hit at
+            // `memory_store::unified::documents::tx.commit()` during
+            // `openhuman.memory_doc_ingest`, in the same burst that emits
+            // os-error-112 siblings (Sentry TAURI-RUST-B6N).
+            "commit tx: database or disk is full",
+            // SQLITE_FULL **extended** rendering — the full error-code envelope
+            // where the canonical phrase is mid-string, not a suffix (Sentry
+            // TAURI-RUST-4R8, `memory_queue::store::claim_next` on
+            // `mem_tree_jobs`). Caught via the `code_to_str` token arm.
+            "Failed to claim next mem_tree_jobs row: database or disk is full: \
+             Error code 13: Insertion failed because database is full",
         ] {
             assert_eq!(
                 expected_error_kind(raw),
@@ -2803,6 +4122,82 @@ mod tests {
         assert_eq!(
             expected_error_kind("not enough memory to allocate buffer"),
             None
+        );
+        // The SQLite anchor pins to the exact `"database or disk is full"`
+        // phrase. Generic prose that mentions a full database for unrelated
+        // reasons (e.g. duplicate-row complaints, application-level capacity
+        // talk) must not be silenced.
+        assert_eq!(
+            expected_error_kind("upsert failed: database is full of duplicates"),
+            None
+        );
+        assert_eq!(
+            expected_error_kind("user quota: database is full for this tier"),
+            None
+        );
+        // A non-2xx backend body whose payload contains the SQLITE_FULL phrase
+        // (e.g. `api.tinyhumans.ai` server-side SQLite is full) is an
+        // operator-actionable storage failure, not the user's local disk —
+        // must still surface to Sentry. `integrations::client::post` frames
+        // these as `"Backend returned <status> <reason> for POST <url>:
+        // <detail>"` (codex CR on #3672). The suffix anchor excludes the
+        // embedded-in-JSON case; the negative `"backend returned "` guard
+        // covers the rare case where the body itself ends with the phrase.
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for POST \
+                 https://api.tinyhumans.ai/agent-integrations/composio/list: \
+                 {\"error\":\"database or disk is full\"}"
+            ),
+            None,
+            "remote-backend body must surface"
+        );
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 500 Internal Server Error for POST \
+                 https://api.tinyhumans.ai/agent-integrations/composio/list: \
+                 database or disk is full"
+            ),
+            None,
+            "remote-backend body must surface even when the body itself ends with the phrase"
+        );
+        // Same guard for the extended-code token: a backend body that quotes
+        // the SQLITE_FULL `code_to_str` string is still operator-actionable
+        // and must surface (TAURI-RUST-4R8 token arm + `"backend returned "`
+        // exclusion).
+        assert_eq!(
+            expected_error_kind(
+                "Backend returned 507 Insufficient Storage for POST \
+                 https://api.tinyhumans.ai/agent-integrations/composio/list: \
+                 Error code 13: Insertion failed because database is full"
+            ),
+            None,
+            "remote-backend body carrying the extended SQLITE_FULL token must surface"
+        );
+        // A remote OpenAI-compatible embeddings 500 whose server-side SQLite is
+        // full is wrapped by `OpenAiEmbedding::embed` as `"Embedding API error
+        // (…)"` — no `"backend returned "` prefix and no local `"database or
+        // disk is full"` phrase, just the `code_to_str` half. Requiring BOTH
+        // local fragments for the extended shape keeps this operator-actionable
+        // server fault reportable (codex CR on #3911).
+        assert_eq!(
+            expected_error_kind(
+                "Embedding API error (status 500): Error code 13: \
+                 Insertion failed because database is full"
+            ),
+            None,
+            "remote embedding-API body quoting only the code_to_str token must surface"
+        );
+        // Non-suffix occurrences in other body framings (no `"Backend
+        // returned"` prefix) are also excluded by the suffix anchor — locks
+        // in the primary defense layer.
+        assert_eq!(
+            expected_error_kind(
+                "Embedding API error (500 Internal Server Error): \
+                 {\"error\":\"database or disk is full\",\"retry\":true}"
+            ),
+            None,
+            "embedded-in-JSON body must surface"
         );
     }
 
@@ -2842,6 +4237,83 @@ mod tests {
         );
         // Bare "timed out" without the config-load phrase must not match.
         assert_eq!(expected_error_kind("cron job timed out after 30s"), None,);
+    }
+
+    #[test]
+    fn classifies_config_read_io_failure_for_os_denial_kinds() {
+        // TAURI-RUST-DME shape once the loader surfaces the full io chain
+        // (#3962): Windows access-denied on an existing config.toml.
+        assert_eq!(
+            expected_error_kind(
+                "Failed to read config file: C:\\Users\\u\\.openhuman\\users\\local-wb\\config.toml: Access is denied. (os error 5)"
+            ),
+            Some(ExpectedErrorKind::ConfigReadIoFailure),
+        );
+        // Sharing-violation: file held open by another process (antivirus /
+        // backup agent).
+        assert_eq!(
+            expected_error_kind(
+                "Failed to read config file: C:\\Users\\u\\.openhuman\\users\\local-wb\\config.toml: The process cannot access the file because it is being used by another process. (os error 32)"
+            ),
+            Some(ExpectedErrorKind::ConfigReadIoFailure),
+        );
+        // Unix permission-denied wording.
+        assert_eq!(
+            expected_error_kind(
+                "Failed to read config file: /home/u/.openhuman/users/local/config.toml: Permission denied (os error 13)"
+            ),
+            Some(ExpectedErrorKind::ConfigReadIoFailure),
+        );
+        // Snapshot-reload context anchor (`load_from_config_path`) must demote
+        // the same OS-denial family so a long-lived reloader can't leak either.
+        assert_eq!(
+            expected_error_kind(
+                "reading config.toml from C:\\Users\\u\\.openhuman\\users\\local-wb\\config.toml: Access is denied. (os error 5)"
+            ),
+            Some(ExpectedErrorKind::ConfigReadIoFailure),
+        );
+    }
+
+    #[test]
+    fn does_not_demote_config_read_notfound_or_unkeyed_failures() {
+        // NotFound AFTER the `exists()` gate is a TOCTOU race / app defect —
+        // it MUST keep paging, never demote.
+        assert_ne!(
+            expected_error_kind(
+                "Failed to read config file: C:\\Users\\u\\.openhuman\\users\\local-wb\\config.toml: The system cannot find the file specified. (os error 2)"
+            ),
+            Some(ExpectedErrorKind::ConfigReadIoFailure),
+        );
+        // Bare top-context line with no io signal (pre-#3962 shape, or an io
+        // kind we have not enumerated) must NOT demote — fail open to paging.
+        assert_ne!(
+            expected_error_kind(
+                "Failed to read config file: C:\\Users\\u\\.openhuman\\users\\local-wb\\config.toml"
+            ),
+            Some(ExpectedErrorKind::ConfigReadIoFailure),
+        );
+        // The access-denied signal alone, without the config-read anchor, must
+        // not be hijacked into the config bucket.
+        assert_ne!(
+            expected_error_kind("opening keychain failed: Access is denied. (os error 5)"),
+            Some(ExpectedErrorKind::ConfigReadIoFailure),
+        );
+        // A directory at the config path is corruption — keep paging even though
+        // it carries an access-denied / os-error-5 shape (Codex P2). Both the
+        // unix wording and the Windows os-error-5 + read-site wording are
+        // excluded by the `is a directory` / `not a file` guard.
+        assert_ne!(
+            expected_error_kind(
+                "Failed to read config file: /home/u/.openhuman/users/local/config.toml: Is a directory (os error 21)"
+            ),
+            Some(ExpectedErrorKind::ConfigReadIoFailure),
+        );
+        assert_ne!(
+            expected_error_kind(
+                "Config path is a directory, not a file: C:\\Users\\u\\.openhuman\\users\\local-wb\\config.toml: Access is denied. (os error 5)"
+            ),
+            Some(ExpectedErrorKind::ConfigReadIoFailure),
+        );
     }
 
     #[test]
@@ -2971,6 +4443,20 @@ mod tests {
                 "should classify as network-unreachable: {raw}"
             );
         }
+    }
+
+    #[test]
+    fn custom_openai_ollama_timeout_fallback_chain_is_network_unreachable() {
+        let chain =
+            "custom_openai chat completions transport error: error sending request for url \
+                     (http://localhost:11434/v1/chat/completions): operation timed out \
+                     (responses fallback failed: custom_openai API error (404 Not Found): \
+                     {\"error\":\"not found\"})";
+        assert_eq!(
+            expected_error_kind(chain),
+            Some(ExpectedErrorKind::NetworkUnreachable),
+            "local Ollama timeout plus responses fallback failure must not page Sentry"
+        );
     }
 
     #[test]
@@ -3164,6 +4650,7 @@ mod tests {
             "OpenHuman API error (408): request timeout",
             "OpenAI API error (429 Too Many Requests): rate limit",
             "Anthropic API error (502 Bad Gateway): upstream unhealthy",
+            "custom_openai API error (502 Bad Gateway): upstream gateway blip",
             "OpenHuman API error (503): service unavailable",
             "Provider API error (504): upstream timed out",
         ] {
@@ -3486,6 +4973,47 @@ mod tests {
     }
 
     #[test]
+    fn tool_execute_backend_401_invalid_token_does_not_hard_report() {
+        // TAURI-RUST-84E: the integrations client demotes its backend 401 via
+        // `report_error_or_expected`, but ALSO `anyhow::bail!`s it. The error
+        // bubbles to the agent tool-execute loop
+        // (`agent::harness::engine::tools::run_one_tool`'s `Ok(Err(e))` arm),
+        // which previously called the unconditional `report_error` — a second,
+        // hard Sentry event (domain=tool / operation=execute) for an
+        // already-classified user-end invalid-token condition. The arm now
+        // routes through `report_error_or_expected`; this test pins the exact
+        // wire shape so a classifier regression that lets the 401 escape (and
+        // resume double-reporting) fails CI.
+        //
+        // Mirror the tool-execute call path: the integrations client bails with
+        // `anyhow::anyhow!("Backend returned {status} for POST {url}: {detail}")`,
+        // the agent arm renders it with `{e:#}`, then `report_error_or_expected`
+        // consults `expected_error_kind`. Assert that classifier returns the
+        // expected user-state bucket (so the report is demoted, not hard).
+        let e = anyhow::anyhow!(
+            "Backend returned 401 Unauthorized for POST \
+             https://api.tinyhumans.ai/agent-integrations/parallel/search: Invalid token"
+        );
+        assert_eq!(
+            expected_error_kind(&format!("{e:#}")),
+            Some(ExpectedErrorKind::BackendUserError),
+            "the 84E tool-execute backend-401 wire shape must classify as expected \
+             user-state so report_error_or_expected demotes it instead of firing a \
+             hard tool/execute Sentry event"
+        );
+
+        // A genuine tool failure (no classifier arm) must keep surfacing as a
+        // hard error — confirm routing ALL tool errors through
+        // `report_error_or_expected` does not silently swallow real failures.
+        assert_eq!(
+            expected_error_kind("tool 'web_search' panicked: index out of bounds"),
+            None,
+            "a genuine tool failure must NOT be classified as expected — it still \
+             reaches Sentry as a hard error"
+        );
+    }
+
+    #[test]
     fn does_not_classify_transient_or_server_backend_errors_as_user_error() {
         // 408 / 429 are transient — they belong to the
         // upstream-transient bucket (or are retried at the caller), not
@@ -3772,6 +5300,49 @@ mod tests {
     }
 
     #[test]
+    fn classifies_embedding_endpoint_absent_as_config_rejection() {
+        // TAURI-RUST-5JR — custom embeddings provider pointed at a chat-only
+        // base URL (DeepSeek) that has no `/embeddings` route. Verbatim shape
+        // produced by `src/openhuman/embeddings/openai.rs` (prefix preserved
+        // even after the actionable-hint suffix is appended).
+        assert_eq!(
+            expected_error_kind(
+                "Embedding API error (404 Not Found): <html>not found</html> \
+                 — this endpoint has no embeddings API; pick an embeddings-capable \
+                 provider in Settings → Memory"
+            ),
+            Some(ExpectedErrorKind::ProviderConfigRejection)
+        );
+        // 405 Method Not Allowed — route exists for GET only / wrong verb.
+        assert_eq!(
+            expected_error_kind("Embedding API error (405 Method Not Allowed): {}"),
+            Some(ExpectedErrorKind::ProviderConfigRejection)
+        );
+    }
+
+    #[test]
+    fn does_not_demote_real_embedding_server_faults() {
+        // Polarity guard: a 500 from a VALID embeddings endpoint is a real
+        // server fault and must keep reaching Sentry — not demoted.
+        assert_eq!(
+            expected_error_kind("Embedding API error (500 Internal Server Error): upstream boom"),
+            None,
+            "embedding 500 is a real fault and must stay in Sentry"
+        );
+        // A 400 (e.g. oversized input — TAURI-RUST-4SA) is prevented at source
+        // by the chunk cap (#3598); a residual 400 must stay visible, NOT be
+        // swallowed by the 404/405-scoped endpoint-absent arm.
+        assert_eq!(
+            expected_error_kind(
+                "Embedding API error (400 Bad Request): {\"error\":{\"message\":\
+                 \"maximum input length is 8192 tokens.\"}}"
+            ),
+            None,
+            "embedding 400 must NOT be demoted by the endpoint-absent (404/405) arm"
+        );
+    }
+
+    #[test]
     fn does_not_classify_unrelated_provider_failures_as_config_rejection() {
         // Inverted polarity / scope guard: a 5xx or a generic 4xx with no
         // config-rejection body must still reach Sentry as actionable.
@@ -4046,6 +5617,55 @@ mod tests {
     }
 
     #[test]
+    fn couples_list_models_404_source_shape_to_classifier() {
+        // TAURI-RUST-8X3 coupling guard. Ties the TYPED SOURCE error shape
+        // emitted by `inference/provider/ops/models.rs` (the
+        // `provider returned 404: <body>` format) to the classifier, so a
+        // wording / prefix drift fails CI instead of silently leaking events.
+        //
+        // The wild Sentry message carried the `inference/ops.rs`
+        // `error!("[inference::ops] list_models:error: {err}")` PREFIX. The
+        // primary fix classifies the raw `err` at the source before that
+        // prefix is applied, but the `contains` widening above must ALSO
+        // catch the prefixed variant for any future prefixed re-report path.
+        // Assert BOTH the raw source shape and the prefixed log-line shape.
+
+        // (a) Raw source shape — exactly what `models.rs` returns for a Go
+        //     default-handler 404 (`404 page not found`).
+        let raw_source = "provider returned 404: 404 page not found";
+        assert_eq!(
+            expected_error_kind(raw_source),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "raw list_models 404 source shape must classify as ProviderUserState"
+        );
+
+        // (b) Raw source shape WITH the actionable hint appended by
+        //     `models.rs` for the 404 case — the prefix anchor must survive
+        //     the suffix.
+        let raw_with_hint = "provider returned 404: 404 page not found — the configured base URL does not expose a `/models` endpoint; check the provider's base URL (it usually ends in `/v1`)";
+        assert_eq!(
+            expected_error_kind(raw_with_hint),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "list_models 404 + actionable hint must still classify as ProviderUserState"
+        );
+
+        // (c) Prefixed log-line shape — the exact pattern from
+        //     `inference/ops.rs::inference_list_models` `error!`. The explicit
+        //     `list_models:error: provider returned 404` anchor must catch this
+        //     even though it does not start with `provider returned 404`. The
+        //     anchor is the formatted prefix, not a bare `404` substring, so it
+        //     does NOT mis-fire on a 500 whose body merely relays an upstream
+        //     404 (see `does_not_classify_non_404_list_models_failures_as_user_state`).
+        let prefixed =
+            "[inference::ops] list_models:error: provider returned 404: 404 page not found";
+        assert_eq!(
+            expected_error_kind(prefixed),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "prefixed list_models 404 log line must still classify as ProviderUserState (anchored prefix)"
+        );
+    }
+
+    #[test]
     fn does_not_classify_non_404_list_models_failures_as_user_state() {
         // Discrimination guard: only the 404 prefix demotes. Sibling 4xx /
         // 5xx codes from the same `provider returned NNN:` emit site must
@@ -4066,6 +5686,16 @@ mod tests {
             r#"provider returned 503: upstream temporarily unavailable"#,
             // 500 — a real upstream bug; must reach Sentry.
             r#"provider returned 500: {"error":"internal_server_error"}"#,
+            // TAURI-RUST-8X3 false-negative guard: a genuine 4xx/5xx whose
+            // *body* merely relays an upstream 404 phrase. The actual status
+            // is 500/400, so this is a real failure that MUST reach Sentry —
+            // the classifier anchors on the `provider returned 404:` prefix,
+            // not on any `404` occurrence in the body, so these must NOT demote.
+            r#"provider returned 500: {"error":"upstream provider returned 404 page not found"}"#,
+            r#"provider returned 400: gateway error — upstream provider returned 404"#,
+            // Prefixed log-line variant of the same trap: the genuine status is
+            // 500, the buried `... 404` is body text.
+            "[inference::ops] list_models:error: provider returned 500: upstream provider returned 404 not found",
         ] {
             assert_ne!(
                 expected_error_kind(raw),
@@ -4476,6 +6106,23 @@ mod tests {
     }
 
     #[test]
+    fn custom_openai_502_event_shape_is_transient_provider_http() {
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "llm_provider"),
+                ("provider", "custom_openai"),
+                ("failure", "non_2xx"),
+                ("status", "502"),
+            ],
+            "custom_openai API error (502 Bad Gateway): upstream gateway blip",
+        );
+        assert!(
+            is_transient_provider_http_failure(&event),
+            "custom_openai 502 attempts should be treated as transient provider HTTP noise"
+        );
+    }
+
+    #[test]
     fn transient_filter_keeps_permanent_failures() {
         for status in ["400", "401", "403", "404", "500"] {
             let event = event_with_tags(&[
@@ -4605,6 +6252,65 @@ mod tests {
     }
 
     #[test]
+    fn skills_install_fetch_filter_drops_client_error_statuses() {
+        for status in ["400", "401", "403", "404", "410", "499"] {
+            let event = event_with_tags(&[
+                ("domain", "skills"),
+                ("operation", "install_fetch"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                is_skill_install_user_fetch_failure(&event),
+                "skills install_fetch status {status} must be treated as user/catalog state"
+            );
+        }
+    }
+
+    #[test]
+    fn skills_install_fetch_filter_keeps_server_and_wrong_shape_failures() {
+        for status in ["500", "502", "503"] {
+            let event = event_with_tags(&[
+                ("domain", "skills"),
+                ("operation", "install_fetch"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                !is_skill_install_user_fetch_failure(&event),
+                "skills install_fetch status {status} must remain reportable"
+            );
+        }
+
+        for tags in [
+            [
+                ("domain", "skills"),
+                ("operation", "install_fetch"),
+                ("failure", "transport"),
+                ("status", "404"),
+            ],
+            [
+                ("domain", "skills"),
+                ("operation", "run"),
+                ("failure", "non_2xx"),
+                ("status", "404"),
+            ],
+            [
+                ("domain", "backend_api"),
+                ("operation", "install_fetch"),
+                ("failure", "non_2xx"),
+                ("status", "404"),
+            ],
+        ] {
+            let event = event_with_tags(&tags);
+            assert!(
+                !is_skill_install_user_fetch_failure(&event),
+                "only skills.install_fetch non_2xx 4xx events may be filtered: {tags:?}"
+            );
+        }
+    }
+
+    #[test]
     fn integrations_filter_drops_transient_statuses() {
         for status in TRANSIENT_HTTP_STATUSES {
             let event = event_with_tags(&[
@@ -4672,6 +6378,58 @@ mod tests {
         );
     }
 
+    /// TAURI-RUST-CGE: skill-install fetch 4xx (a missing/renamed catalog
+    /// `SKILL.md`) is expected user-input state — the before_send net must drop
+    /// it, while a genuine 5xx remote failure and unrelated domains stay
+    /// reportable.
+    #[test]
+    fn skills_install_client_error_filter_drops_4xx_keeps_5xx() {
+        // 4xx (esp. 404/410) = missing skill / wrong URL → dropped.
+        for status in ["400", "403", "404", "410", "429"] {
+            let event = event_with_tags(&[
+                ("domain", "skills"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                is_skills_install_client_error_event(&event),
+                "skills install 4xx {status} must be dropped"
+            );
+        }
+
+        // 5xx = genuine remote failure → stays a Sentry signal.
+        for status in ["500", "502", "503"] {
+            let event = event_with_tags(&[
+                ("domain", "skills"),
+                ("failure", "non_2xx"),
+                ("status", status),
+            ]);
+            assert!(
+                !is_skills_install_client_error_event(&event),
+                "skills install 5xx {status} must stay reportable"
+            );
+        }
+
+        // Domain scoping: a 4xx in another domain must not be touched here.
+        let other_domain = event_with_tags(&[
+            ("domain", "backend_api"),
+            ("failure", "non_2xx"),
+            ("status", "404"),
+        ]);
+        assert!(
+            !is_skills_install_client_error_event(&other_domain),
+            "non-skills 4xx must not be swallowed by the skills filter"
+        );
+
+        // A skills event without the non_2xx failure marker (e.g. a transport
+        // failure) must not be dropped by this status-scoped filter.
+        let skills_transport = event_with_tags(&[("domain", "skills"), ("failure", "transport")]);
+        assert!(
+            !is_skills_install_client_error_event(&skills_transport),
+            "skills transport failures are out of scope for the 4xx filter"
+        );
+    }
+
     #[test]
     fn composio_domain_routes_through_integrations_filter() {
         // OPENHUMAN-TAURI-35 (~139 events) / -2H (~26 events):
@@ -4724,6 +6482,47 @@ mod tests {
     }
 
     #[test]
+    fn composio_list_connections_503_504_wrappers_stay_filtered() {
+        for (status, reason) in [("503", "Service Unavailable"), ("504", "Gateway Timeout")] {
+            let message = format!(
+                "[composio] list_connections failed: Backend returned {status} {reason} \
+                 for GET /agent-integrations/composio/connections"
+            );
+            let event = event_with_tags_and_message(
+                &[
+                    ("domain", "composio"),
+                    ("failure", "non_2xx"),
+                    ("status", status),
+                ],
+                &message,
+            );
+            assert!(
+                is_transient_integrations_failure(&event),
+                "wrapped composio list_connections {status} failures must be filtered"
+            );
+        }
+
+        for (status, reason) in [("503", "Service Unavailable"), ("504", "Gateway Timeout")] {
+            let message = format!(
+                "Backend returned {status} {reason} \
+                 for GET /agent-integrations/composio/connections"
+            );
+            let event = event_with_tags_and_message(
+                &[
+                    ("domain", "integrations"),
+                    ("failure", "non_2xx"),
+                    ("status", status),
+                ],
+                &message,
+            );
+            assert!(
+                is_transient_integrations_failure(&event),
+                "raw integrations list_connections {status} failures must be filtered"
+            );
+        }
+    }
+
+    #[test]
     fn updater_transient_403_is_dropped() {
         let event = event_with_tags_and_message(
             &[
@@ -4738,6 +6537,19 @@ mod tests {
             is_updater_transient_event(&event),
             "GitHub 403 updater checks are unactionable transient/rate-limit noise"
         );
+    }
+
+    #[test]
+    fn updater_github_403_message_only_shapes_are_dropped() {
+        for event in [
+            event_with_message("GitHub API error: 403 Forbidden"),
+            event_with_exception_value("GitHub API error: 403 Forbidden"),
+        ] {
+            assert!(
+                is_updater_transient_event(&event),
+                "message-only GitHub 403 updater failures must be filtered"
+            );
+        }
     }
 
     #[test]
@@ -4953,6 +6765,227 @@ mod tests {
     }
 
     #[test]
+    fn quota_exhausted_filter_matches_500_wrapped_kiro_event() {
+        // TAURI-RUST-C9A: verbatim message as formatted by the provider emit
+        // site — a 500 envelope around an inner 402 / MONTHLY_REQUEST_COUNT.
+        // The status-agnostic quota filter must catch it on the message path
+        // and the exception path.
+        let body = "kiro API error (500 Internal Server Error): {\"error\":{\"message\":\
+            \"HTTP 402 from Kiro IDE: {\\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}\",\
+            \"type\":\"server_error\"}}";
+        assert!(is_quota_exhausted_event(&event_with_message(body)));
+        assert!(is_quota_exhausted_event(&event_with_exception_value(body)));
+        assert!(is_quota_exhausted_message(body));
+    }
+
+    #[test]
+    fn quota_exhausted_filter_matches_responses_usage_limit_reached_event() {
+        // TAURI-RUST-AFE: verbatim message as formatted by the `chat_via_responses`
+        // emit site — the Codex/ChatGPT OAuth `/responses` plan cap. Mirrors the
+        // real production shape `"<name> Responses API error (<status>): <body>"`
+        // (`compatible_helpers.rs:135`), including the `(429)` status segment and
+        // the full AFE payload (`plan_type` + `resets_at`) from `ops/http_error.rs`,
+        // so this stays coupled to the actual wire format rather than a loose
+        // substring. No "monthly"/"quota" co-marker, so it exercises the AFE
+        // phrase extension reaching the before_send net on both message and
+        // exception paths (the subconscious loop retries until `resets_at`).
+        let body = "openai Responses API error (429): {\"error\":{\"type\":\
+            \"usage_limit_reached\",\"message\":\"The usage limit has been reached\",\
+            \"plan_type\":\"plus\",\"resets_at\":1750000000}}";
+        assert!(is_quota_exhausted_event(&event_with_message(body)));
+        assert!(is_quota_exhausted_event(&event_with_exception_value(body)));
+        assert!(is_quota_exhausted_message(body));
+    }
+
+    #[test]
+    fn quota_exhausted_filter_ignores_generic_500_and_rate_limit() {
+        // A generic 500 outage and a 429 rate-limit are not plan-quota
+        // exhaustion — they must keep reaching Sentry / their own handling.
+        assert!(!is_quota_exhausted_event(&event_with_message(
+            "kiro API error (500 Internal Server Error): upstream connection reset"
+        )));
+        assert!(!is_quota_exhausted_event(&event_with_message(
+            "provider API error (429 Too Many Requests): rate_limit_exceeded"
+        )));
+    }
+
+    #[test]
+    fn insufficient_credits_filter_matches_message_path() {
+        // Verbatim TAURI-RUST-C62 message as formatted by the provider emit
+        // sites: "<provider> API error (402 Payment Required): <body>".
+        let event = event_with_message(
+            "myopenrouter API error (402 Payment Required): This request requires more credits, \
+             or fewer max_tokens. You requested up to 65536 tokens, but can only afford 49732.",
+        );
+        assert!(is_insufficient_credits_event(&event));
+    }
+
+    #[test]
+    fn insufficient_credits_filter_matches_exception_path() {
+        let event = event_with_exception_value(
+            "myopenrouter API error (402 Payment Required): insufficient balance",
+        );
+        assert!(is_insufficient_credits_event(&event));
+    }
+
+    #[test]
+    fn insufficient_credits_filter_requires_both_402_and_credit_phrase() {
+        // A 402 with no credit phrase must NOT be swallowed (could be another
+        // payment semantic) ...
+        assert!(!is_insufficient_credits_event(&event_with_message(
+            "provider API error (402): some unrelated condition"
+        )));
+        // ... and a credit phrase without a 402 must NOT be swallowed (e.g. a
+        // 400/500 that merely mentions balance) so a real defect still pages.
+        assert!(!is_insufficient_credits_event(&event_with_message(
+            "provider API error (500): internal error, insufficient memory"
+        )));
+    }
+
+    #[test]
+    fn insufficient_credits_filter_ignores_402_digits_in_a_non_402_body() {
+        // A non-402 error whose body merely contains the digits "402" and a
+        // credit phrase must NOT be suppressed — the 402 must be the status,
+        // not an arbitrary number in the body.
+        assert!(!is_insufficient_credits_event(&event_with_message(
+            "provider API error (400): can only afford 402 tokens"
+        )));
+    }
+
+    #[test]
+    fn is_insufficient_credits_message_matches_verbatim_cron_402() {
+        // Verbatim TAURI-RUST-514 body as it reaches the cron `report_error`
+        // call site (`domain=cron`, `operation=agent_job`): the message-level
+        // matcher must catch it so the cron halt skips the leaking report.
+        assert!(is_insufficient_credits_message(
+            "openrouter API error (402 Payment Required): {\"error\":{\"message\":\"This \
+             request requires more credits, or fewer max_tokens. You requested up to 65536 \
+             tokens, but can only afford 5081.\"}}",
+        ));
+        assert!(is_insufficient_credits_message(
+            "custom_openai API error (402 Payment Required): insufficient balance",
+        ));
+    }
+
+    #[test]
+    fn is_insufficient_credits_message_requires_402_and_credit_phrase() {
+        // A 402 without a credit phrase, and a credit phrase without a 402
+        // status, must both stay reportable (could be a real defect).
+        assert!(!is_insufficient_credits_message(
+            "provider API error (402): some unrelated condition"
+        ));
+        assert!(!is_insufficient_credits_message(
+            "provider API error (500): internal error, insufficient memory"
+        ));
+        // The status must be the 402, not a digit in the body.
+        assert!(!is_insufficient_credits_message(
+            "provider API error (400): can only afford 402 tokens"
+        ));
+        // codex P2: the status prefix "(402 Payment Required)" itself contains
+        // the phrase "payment required". An unrelated body behind a real 402
+        // must NOT be classified as insufficient-credits (else the cron halt
+        // would suppress a genuine 402 defect). The credit signal must live in
+        // the BODY, not the formatted status prefix.
+        assert!(!is_insufficient_credits_message(
+            "provider API error (402 Payment Required): some unrelated condition"
+        ));
+        // But a body that literally carries the credit signal still matches,
+        // even when the status prefix also says "Payment Required".
+        assert!(is_insufficient_credits_message(
+            "provider API error (402 Payment Required): your account has insufficient balance"
+        ));
+    }
+
+    #[test]
+    fn is_insufficient_credits_event_delegates_to_message_matcher() {
+        // Parity: the event-level filter is now a thin wrapper over the
+        // message-level matcher across both the message and exception paths.
+        let body = "myopenrouter API error (402 Payment Required): This request requires \
+                    more credits, or fewer max_tokens.";
+        assert!(is_insufficient_credits_message(body));
+        assert!(is_insufficient_credits_event(&event_with_message(body)));
+        assert!(is_insufficient_credits_event(&event_with_exception_value(
+            body
+        )));
+    }
+
+    #[test]
+    fn ollama_cloud_internal_500_reraise_routes_through_expected_path() {
+        // TAURI-RUST-5MV — the actionable message the emit sites raise must
+        // demote to `TransientUpstreamHttp` when re-reported at the agent / RPC
+        // boundary (`provider_chat` → `report_error_or_expected`), so the
+        // `domain=agent` half of the flood is suppressed too.
+        let reraise = crate::openhuman::inference::provider::ollama_cloud_internal_500_user_message(
+            Some("minimax-m3:cloud"),
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        );
+        assert_eq!(
+            expected_error_kind(&reraise),
+            Some(ExpectedErrorKind::TransientUpstreamHttp)
+        );
+    }
+
+    #[test]
+    fn ollama_cloud_internal_500_before_send_matches_raw_and_reraised_shapes() {
+        // The outermost net catches BOTH the raw emit body (any compatible
+        // path that bypassed the cascade) and the actionable re-raise.
+        let raw = "ollama API error (500 Internal Server Error): \
+            {\"error\":\"Internal Server Error (ref: df512dcb-d915-493b-8f2d-e8d3dfa640c1)\"}";
+        assert!(is_ollama_cloud_internal_500_event(&event_with_message(raw)));
+        assert!(is_ollama_cloud_internal_500_event(
+            &event_with_exception_value(raw)
+        ));
+
+        let reraise = crate::openhuman::inference::provider::ollama_cloud_internal_500_user_message(
+            None,
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        );
+        assert!(is_ollama_cloud_internal_500_event(&event_with_message(
+            &reraise
+        )));
+
+        // A local Ollama 500 without the `ref:` envelope, and a non-ollama 500,
+        // both stay reportable.
+        assert!(!is_ollama_cloud_internal_500_event(&event_with_message(
+            "ollama API error (500 Internal Server Error): {\"error\":\"out of memory\"}"
+        )));
+        assert!(!is_ollama_cloud_internal_500_event(&event_with_message(
+            "openai API error (500): Internal Server Error (ref: abc)"
+        )));
+    }
+
+    #[test]
+    fn session_expired_before_send_matches_core_401_events() {
+        let msg = "SESSION_EXPIRED: backend session not active — sign in to resume LLM work";
+        for event in [
+            event_with_tags_and_message(&[("domain", "llm_provider"), ("status", "401")], msg),
+            {
+                let mut event = event_with_exception_value(msg);
+                event.tags.insert("domain".into(), "backend_api".into());
+                event.tags.insert("status".into(), "401".into());
+                event
+            },
+        ] {
+            assert!(
+                is_session_expired_event(&event),
+                "core/backend session-expired 401 events should be filtered"
+            );
+        }
+    }
+
+    #[test]
+    fn session_expired_before_send_stays_domain_scoped() {
+        let event = event_with_tags_and_message(
+            &[("domain", "composio"), ("status", "401")],
+            "SESSION_EXPIRED: backend session not active — sign in to resume LLM work",
+        );
+        assert!(
+            !is_session_expired_event(&event),
+            "non-core domains must not be filtered as backend session expiry"
+        );
+    }
+
+    #[test]
     fn max_iterations_filter_matches_message_path() {
         // `report_error_message` calls `sentry::capture_message`, which
         // populates `event.message`. The filter must see the canonical
@@ -5158,6 +7191,56 @@ mod tests {
             expected_error_kind(raw),
             Some(ExpectedErrorKind::NetworkUnreachable)
         );
+    }
+
+    /// Verbatim body from TAURI-RUST-12K (2802 events / 29 users): a cron
+    /// agent job hits a local LM Studio server (`localhost:1234`) that isn't
+    /// running, on a zh-CN Windows host — so the `WSAECONNREFUSED` text is
+    /// localized and the English "connection refused" prefix is absent, leaving
+    /// only `(os error 10061)` behind the transport-stable `tcp connect error`
+    /// marker. The locale-independent arm must still route it to the loopback
+    /// bucket rather than leaking to the broad `NetworkUnreachable`.
+    #[test]
+    fn classifies_localized_loopback_connect_refused_as_loopback_unavailable() {
+        let raw = "error sending request for url \
+                   (http://localhost:1234/v1/chat/completions): client error (Connect): \
+                   tcp connect error: 由于目标计算机积极拒绝，无法连接。 (os error 10061)";
+        assert_eq!(
+            expected_error_kind(raw),
+            Some(ExpectedErrorKind::LoopbackUnavailable),
+            "localized WSAECONNREFUSED loopback body must classify as LoopbackUnavailable"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_loopback_timeout_as_loopback() {
+        // A loopback *timeout* (WSAETIMEDOUT os error 10060, not the
+        // connect-refused 10061) shares the `tcp connect error` marker but is
+        // a distinct failure class — it must NOT be swallowed by the
+        // connect-refused loopback arm.
+        let raw = "error sending request for url \
+                   (http://localhost:1234/v1/chat/completions): \
+                   tcp connect error: connection timed out (os error 10060)";
+        assert!(
+            !matches!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::LoopbackUnavailable)
+            ),
+            "loopback timeout must not classify as LoopbackUnavailable"
+        );
+    }
+
+    #[test]
+    fn is_local_provider_unreachable_message_wraps_loopback_matcher() {
+        let localized = "error sending request for url \
+                         (http://localhost:1234/v1/chat/completions): client error (Connect): \
+                         tcp connect error: 由于目标计算机积极拒绝，无法连接。 (os error 10061)";
+        assert!(is_local_provider_unreachable_message(localized));
+        // Remote refused must not match (loopback-only, keeps real outages visible).
+        assert!(!is_local_provider_unreachable_message(
+            "error sending request for url (https://api.tinyhumans.ai/x) \
+             → tcp connect error → Connection refused (os error 61)"
+        ));
     }
 
     #[test]
@@ -5561,5 +7644,131 @@ mod tests {
             "operation timed out",
         );
         assert!(!is_transient_provider_transport_failure(&event));
+    }
+
+    // ── is_auth_get_me_opaque_transport_event ────────────────────────────
+    // Covers the TAURI-RUST-10 fingerprint shape: `domain=rpc`,
+    // `operation=invoke_method`, `method=openhuman.auth_get_me`, message
+    // body = exactly "GET /auth/me" (no underlying chain). See the
+    // function docstring + the `auth_get_me` fix in
+    // `openhuman::credentials::ops::auth_get_me` for the broader
+    // context.
+
+    fn auth_get_me_tags() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("domain", "rpc"),
+            ("operation", "invoke_method"),
+            ("method", "openhuman.auth_get_me"),
+            ("elapsed_ms", "5003"),
+        ]
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_drops_bare_method_path_message() {
+        let event = event_with_tags_and_message(&auth_get_me_tags(), "GET /auth/me");
+        assert!(
+            is_auth_get_me_opaque_transport_event(&event),
+            "bare 'GET /auth/me' message must be dropped (TAURI-RUST-10 shape)"
+        );
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_tolerates_surrounding_whitespace() {
+        let event = event_with_tags_and_message(&auth_get_me_tags(), "  GET /auth/me  ");
+        assert!(
+            is_auth_get_me_opaque_transport_event(&event),
+            "trimmed equality must still match the opaque shape"
+        );
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_keeps_full_anyhow_chain_message() {
+        // Post-fix shape from `auth_get_me` now using `format!("{e:#}")`.
+        let event = event_with_tags_and_message(
+            &auth_get_me_tags(),
+            "GET /auth/me: error sending request for url \
+             (https://api.tinyhumans.ai/auth/me): operation timed out",
+        );
+        assert!(
+            !is_auth_get_me_opaque_transport_event(&event),
+            "messages carrying the underlying transport chain must surface — \
+             the transient classifier handles those at the rpc dispatcher"
+        );
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_keeps_other_rpc_methods() {
+        // Same opaque shape but for a different RPC must NOT be dropped —
+        // we don't have evidence the same anti-pattern exists elsewhere,
+        // and a path-only body might be a legitimate distinct error for a
+        // future endpoint.
+        for method in [
+            "openhuman.consume_login_token",
+            "openhuman.auth_create_channel_link_token",
+            "openhuman.thread_list",
+        ] {
+            let mut tags = auth_get_me_tags();
+            // Replace the method tag.
+            if let Some(slot) = tags.iter_mut().find(|(k, _)| *k == "method") {
+                slot.1 = method;
+            }
+            let event = event_with_tags_and_message(&tags, "GET /auth/me");
+            assert!(
+                !is_auth_get_me_opaque_transport_event(&event),
+                "filter must be scoped strictly to method=openhuman.auth_get_me \
+                 — saw method={method}"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_requires_rpc_invoke_method_domain() {
+        // Wrong domain → must surface.
+        let mut tags = auth_get_me_tags();
+        if let Some(slot) = tags.iter_mut().find(|(k, _)| *k == "domain") {
+            slot.1 = "backend_api";
+        }
+        let event = event_with_tags_and_message(&tags, "GET /auth/me");
+        assert!(!is_auth_get_me_opaque_transport_event(&event));
+
+        // Wrong operation → must surface.
+        let mut tags = auth_get_me_tags();
+        if let Some(slot) = tags.iter_mut().find(|(k, _)| *k == "operation") {
+            slot.1 = "post";
+        }
+        let event = event_with_tags_and_message(&tags, "GET /auth/me");
+        assert!(!is_auth_get_me_opaque_transport_event(&event));
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_matches_exception_value_path() {
+        // sentry-tracing path: message empty, exception last value carries
+        // the body. The filter must still match.
+        let mut event = event_with_tags(&auth_get_me_tags());
+        event.exception.values.push(sentry::protocol::Exception {
+            value: Some("GET /auth/me".to_string()),
+            ..Default::default()
+        });
+        assert!(
+            is_auth_get_me_opaque_transport_event(&event),
+            "must also catch the exception-value shape (sentry-tracing bridge)"
+        );
+    }
+
+    #[test]
+    fn auth_get_me_opaque_filter_ignores_empty_and_unrelated() {
+        // No message and no exception → false.
+        let event = event_with_tags(&auth_get_me_tags());
+        assert!(!is_auth_get_me_opaque_transport_event(&event));
+
+        // Unrelated message body with the right tags → false.
+        let event = event_with_tags_and_message(
+            &auth_get_me_tags(),
+            "session JWT verified via GET /auth/me on https://api.tinyhumans.ai",
+        );
+        assert!(
+            !is_auth_get_me_opaque_transport_event(&event),
+            "substring match must NOT trigger — strict equality only"
+        );
     }
 }

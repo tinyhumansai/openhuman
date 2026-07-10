@@ -1,8 +1,8 @@
 //! Discord HTTP + WebSocket MITM driven over the Chrome DevTools Protocol.
 //!
-//! Pairs with the embedded CEF webview's remote-debugging port (set in
-//! `lib.rs` via `--remote-debugging-port=9222`). One persistent task per
-//! tracked Discord account that:
+//! Attaches to the embedded CEF webview via the in-process CDP transport
+//! installed by `webview_accounts::open` (no TCP listener). One persistent
+//! task per tracked Discord account that:
 //!
 //!   1. Discovers the page target whose URL starts with `https://discord.com`
 //!   2. Attaches with `flatten: true`, enables `Network.*`
@@ -27,32 +27,25 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Runtime};
-use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
 use tokio::time::sleep;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 mod dom_snapshot;
-
-use crate::cdp::{CDP_HOST, CDP_PORT};
 
 /// How long to wait between reconnect attempts when the CDP WebSocket drops
 /// or the page target disappears (e.g. Discord refresh, navigation).
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(3);
 const MAX_CHANNEL_MESSAGES: usize = 400;
-
-/// CDP target descriptor (subset of `Target.TargetInfo`).
-#[derive(Debug, Clone)]
-struct CdpTarget {
-    id: String,
-    kind: String,
-    url: String,
-}
+/// Idle window after which the event pump assumes the attached page target is
+/// stale/destroyed (reload, renderer crash, hard navigation) and returns so
+/// the outer loop re-attaches. Chosen at >2x Discord's ~41s gateway heartbeat:
+/// a live session always emits gateway WS frames within this window, so a
+/// longer silence means the session is dead, not merely quiet.
+const PUMP_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DiscordPersistMessage {
@@ -294,20 +287,30 @@ pub fn spawn_scanner<R: Runtime>(
     let task = tokio::spawn(async move {
         let fragment = crate::cdp::target_url_fragment(&account_id);
         log::info!(
-            "[discord][{}] mitm up url_prefix={} fragment={} cdp={}:{}",
+            "[discord][{}] mitm up url_prefix={} fragment={} (in-process CDP)",
             account_id,
             url_prefix,
             fragment,
-            CDP_HOST,
-            CDP_PORT
         );
         // Let Discord's bootstrap (auth + gateway handshake) settle before
         // we attach — `Network.enable` issued during the cold-start burst
         // tends to race with the renderer's own initialization and we miss
         // the first few frames anyway.
         sleep(Duration::from_secs(4)).await;
+        // Lock onto the page target once a strict fragment match succeeds, so
+        // re-attaches after a reload survive Discord stripping the URL hash
+        // (see `attach_account_target`). Persists across reconnects.
+        let mut pinned_target_id: Option<String> = None;
         loop {
-            match run_mitm_session(&app, &account_id, &url_prefix, &fragment).await {
+            match run_mitm_session(
+                &app,
+                &account_id,
+                &url_prefix,
+                &fragment,
+                &mut pinned_target_id,
+            )
+            .await
+            {
                 Ok(()) => {
                     log::info!(
                         "[discord][{}] session ended cleanly, reconnecting",
@@ -331,48 +334,29 @@ pub fn spawn_scanner<R: Runtime>(
 }
 
 /// Run one CDP attach → enable → stream-events lifecycle. Returns when the
-/// underlying WebSocket closes, the page target disappears, or any
-/// dispatch hits an unrecoverable error. Caller loops.
+/// in-process transport closes (webview torn down) or when the pump's idle
+/// watchdog trips after `PUMP_IDLE_TIMEOUT` of no frames — i.e. the attached
+/// page target went stale (Discord reload, renderer crash, hard navigation).
+/// The caller's outer loop then re-attaches. `pinned_target_id` carries the
+/// pin/strict/relaxed resolution state across reconnects (see
+/// [`attach_account_target`]).
 async fn run_mitm_session<R: Runtime>(
     app: &AppHandle<R>,
     account_id: &str,
     url_prefix: &str,
     url_fragment: &str,
+    pinned_target_id: &mut Option<String>,
 ) -> Result<(), String> {
-    let browser_ws = browser_ws_url().await?;
-    let mut cdp = CdpConn::open(&browser_ws).await?;
-
-    // Find the discord page target. We don't subscribe to target lifecycle
-    // events for V1 — if the user reloads or navigates, the outer loop
-    // re-attaches on the next iteration. Cheap and predictable.
-    let targets_v = cdp.call("Target.getTargets", json!({}), None).await?;
-    let targets = parse_targets(&targets_v);
-    log::debug!("[discord][{}] {} targets total", account_id, targets.len());
-    let page = targets
-        .iter()
-        .find(|t| {
-            t.kind == "page" && t.url.starts_with(url_prefix) && t.url.ends_with(url_fragment)
-        })
-        .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
+    let (mut cdp, session_id) =
+        attach_account_target(app, account_id, url_prefix, url_fragment, pinned_target_id)
+            .await
+            .map_err(|e| format!("attach: {e}"))?;
     log::info!(
-        "[discord][{}] attaching to target {} url={}",
+        "[discord][{}] attached label={} session={}",
         account_id,
-        page.id,
-        page.url
+        cdp.label(),
+        session_id
     );
-
-    let attach = cdp
-        .call(
-            "Target.attachToTarget",
-            json!({ "targetId": page.id, "flatten": true }),
-            None,
-        )
-        .await?;
-    let session_id = attach
-        .get("sessionId")
-        .and_then(|x| x.as_str())
-        .ok_or_else(|| "page attach missing sessionId".to_string())?
-        .to_string();
 
     // Enable the Network domain on the page session — this is what unlocks
     // the `requestWillBeSent` / `webSocketFrame*` event stream we care about.
@@ -384,204 +368,127 @@ async fn run_mitm_session<R: Runtime>(
         session_id
     );
 
-    // Now drop into the pure event read loop until the WS closes. Any
-    // outstanding `cdp.call` requests will complete via the shared id-keyed
-    // dispatch in `pump_events`.
-    cdp.pump_events(app, account_id, &session_id).await
-}
-
-fn parse_targets(v: &Value) -> Vec<CdpTarget> {
-    v.get("targetInfos")
-        .and_then(|x| x.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|t| {
-                    Some(CdpTarget {
-                        id: t.get("targetId")?.as_str()?.to_string(),
-                        kind: t.get("type")?.as_str()?.to_string(),
-                        url: t
-                            .get("url")
-                            .and_then(|u| u.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    })
-                })
-                .collect()
+    // Drop into the event read loop. It returns when the in-process transport
+    // closes (webview gone) OR when the idle watchdog fires after
+    // `PUMP_IDLE_TIMEOUT` of no frames (stale/destroyed page target) — either
+    // way the outer loop re-attaches. The resilient pump also buffers bursts
+    // into an unbounded queue so a flood that overflows the broadcast ring
+    // isn't silently dropped. V1 doesn't issue any in-stream calls (responses
+    // table from the previous TCP impl is gone — re-introduce a
+    // request/response API here when V1.5 backfills `Network.getResponseBody`).
+    log::info!("[discord][{}] event pump started", account_id);
+    let mut ingest_state = DiscordIngestState::default();
+    let pump_result = cdp
+        .pump_events_resilient(&session_id, PUMP_IDLE_TIMEOUT, |method, params| {
+            dispatch_event(app, account_id, method, params, &mut ingest_state);
         })
-        .unwrap_or_default()
+        .await;
+    // Detach the now-stale session before the outer loop re-attaches, so idle /
+    // lag-forced reconnects don't accumulate orphaned CDP sessions on the
+    // transport (mirrors the DOM-scan cleanup).
+    crate::cdp::detach_session(&mut cdp, &session_id).await;
+    pump_result
 }
 
-/// Discover the browser-level WebSocket endpoint via `/json/version`.
-async fn browser_ws_url() -> Result<String, String> {
-    let url = format!("http://{CDP_HOST}:{CDP_PORT}/json/version");
-    let resp = reqwest::Client::builder()
-        .user_agent("openhuman-cdp/1.0")
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("reqwest build: {e}"))?
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("GET {url}: {e}"))?;
-    let v: Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
-    v.get("webSocketDebuggerUrl")
+/// Pure pin → strict → relaxed target-selection core of
+/// [`attach_account_target`]. Returns the chosen page target and whether it was
+/// a strict fragment match (the caller pins only on `true`). Split out so the
+/// resolution hierarchy is unit-testable without a live CDP transport.
+fn resolve_page_target<'a>(
+    targets: &'a [crate::cdp::target::CdpTarget],
+    url_prefix: &str,
+    url_fragment: &str,
+    pinned_target_id: Option<&str>,
+) -> Option<(&'a crate::cdp::target::CdpTarget, bool)> {
+    // 1. Pinned id (locked on a prior strict match) — survives the hash strip.
+    //    Still require the prefix: a pinned tab can navigate off Discord while
+    //    keeping its target id, and we must not keep scanning an off-prefix page.
+    if let Some(pid) = pinned_target_id {
+        if let Some(t) = targets
+            .iter()
+            .find(|t| t.id == pid && t.kind == "page" && t.url.starts_with(url_prefix))
+        {
+            return Some((t, false));
+        }
+    }
+    // 2. Strict fragment match — the only result that proves account ownership.
+    if let Some(t) = targets.iter().find(|t| {
+        t.kind == "page" && t.url.starts_with(url_prefix) && t.url.ends_with(url_fragment)
+    }) {
+        return Some((t, true));
+    }
+    // 3. Relaxed prefix-only — last resort; safe under per-account data-dir isolation.
+    targets
+        .iter()
+        .find(|t| t.kind == "page" && t.url.starts_with(url_prefix))
+        .map(|t| (t, false))
+}
+
+/// Resolve this account's page target, attach, and return the live
+/// [`CdpConn`](crate::cdp::CdpConn) plus session id.
+///
+/// Discord's web client `replaceState`s to its canonical `/channels/...` URL
+/// on boot, stripping the `#openhuman-account-<id>` fragment the webview was
+/// opened with — so a strict `ends_with(fragment)` match only holds for the
+/// first instant after navigation and fails forever after (the 4s settle delay
+/// alone guarantees we attach *after* the strip). Mirrors the Slack scanner's
+/// resolution hierarchy (`slack_scanner::scan_once`) via [`resolve_page_target`]:
+///
+///   1. **Pinned target id** — once a strict match locked the id, prefer it
+///      (still constrained to `url_prefix`). Survives the fragment strip and
+///      keeps multi-account sessions from cross-wiring scanner A onto B's tab.
+///   2. **Strict fragment match** (`url_prefix` + `#openhuman-account-<id>`).
+///      On hit, (re)pin the id into `pinned_target_id`.
+///   3. **Relaxed prefix-only match** — last resort. Per-account
+///      `data_directory` isolation makes this safe for single-account setups;
+///      never persisted into the pin (only a strict match proves ownership).
+async fn attach_account_target<R: Runtime>(
+    app: &AppHandle<R>,
+    account_id: &str,
+    url_prefix: &str,
+    url_fragment: &str,
+    pinned_target_id: &mut Option<String>,
+) -> Result<(crate::cdp::CdpConn, String), String> {
+    let mut cdp = crate::cdp::target::conn_for_account(app, account_id)?;
+    let targets_v = cdp.call("Target.getTargets", json!({}), None).await?;
+    let targets = crate::cdp::target::parse_targets(&targets_v);
+
+    let (page_target, is_strict) = resolve_page_target(
+        &targets,
+        url_prefix,
+        url_fragment,
+        pinned_target_id.as_deref(),
+    )
+    .ok_or_else(|| format!("no page target matching {url_prefix} fragment={url_fragment}"))?;
+
+    // (Re)pin on every live strict-fragment match — the one signal that proves
+    // this target is *this* account's. Refreshing (not just setting-once) lets a
+    // stale pin recover: after a renderer swap gives a new target id, the next
+    // strict match re-pins instead of being stuck on relaxed forever. Relaxed
+    // matches never feed the pin.
+    if is_strict && pinned_target_id.as_deref() != Some(page_target.id.as_str()) {
+        log::info!(
+            "[discord][{}] pinned to target_id={} (strict fragment match)",
+            account_id,
+            page_target.id
+        );
+        *pinned_target_id = Some(page_target.id.clone());
+    }
+
+    let target_id = page_target.id.clone();
+    let attach = cdp
+        .call(
+            "Target.attachToTarget",
+            json!({ "targetId": target_id, "flatten": true }),
+            None,
+        )
+        .await?;
+    let session = attach
+        .get("sessionId")
         .and_then(|x| x.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "no webSocketDebuggerUrl in /json/version".to_string())
-}
-
-// ---------- CDP connection ----------------------------------------------------
-
-/// CDP client tuned for **streaming** workloads — unlike the request/reply
-/// `CdpConn` used by `whatsapp_scanner` and `slack_scanner`, this one keeps
-/// a pending-id table so the read loop can deliver responses to the right
-/// caller AND surface inbound CDP events at the same time. Required for
-/// MITM because we need to listen continuously to `Network.*` events while
-/// occasionally issuing a `Network.getResponseBody` (V1.5).
-struct CdpConn {
-    sink: futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        Message,
-    >,
-    stream: futures_util::stream::SplitStream<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    >,
-    next_id: i64,
-    /// id → oneshot waiting for the matching response.
-    pending: HashMap<i64, oneshot::Sender<Result<Value, String>>>,
-}
-
-impl CdpConn {
-    async fn open(ws_url: &str) -> Result<Self, String> {
-        let (ws, _resp) = connect_async(ws_url)
-            .await
-            .map_err(|e| format!("ws connect: {e}"))?;
-        let (sink, stream) = ws.split();
-        Ok(Self {
-            sink,
-            stream,
-            next_id: 1,
-            pending: HashMap::new(),
-        })
-    }
-
-    /// One-shot CDP call — only safe to use **before** `pump_events` takes
-    /// ownership of the read stream. After that, callers must use the
-    /// pending-table machinery (not exposed yet — V1 needs no in-stream
-    /// calls). For the current setup phase (`Target.getTargets`,
-    /// `Target.attachToTarget`, `Network.enable`) we drain inline.
-    async fn call(
-        &mut self,
-        method: &str,
-        params: Value,
-        session_id: Option<&str>,
-    ) -> Result<Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
-        let mut req = json!({ "id": id, "method": method, "params": params });
-        if let Some(s) = session_id {
-            req["sessionId"] = json!(s);
-        }
-        let body = serde_json::to_string(&req).map_err(|e| format!("encode: {e}"))?;
-        self.sink
-            .send(Message::Text(body))
-            .await
-            .map_err(|e| format!("ws send: {e}"))?;
-        loop {
-            let msg = tokio::time::timeout(Duration::from_secs(15), self.stream.next())
-                .await
-                .map_err(|_| format!("ws read timeout (method={method})"))?
-                .ok_or_else(|| format!("ws closed (method={method})"))?
-                .map_err(|e| format!("ws recv: {e}"))?;
-            let text = match msg {
-                Message::Text(t) => t,
-                Message::Binary(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {
-                    continue
-                }
-                Message::Close(_) => return Err("ws closed".into()),
-            };
-            let v: Value = serde_json::from_str(&text).map_err(|e| format!("decode: {e}"))?;
-            // Inbound CDP events have `method` but no `id`. During setup we
-            // can safely drop them — `Network.enable` is the last setup
-            // call, so nothing we care about is in flight yet.
-            if v.get("id").and_then(|x| x.as_i64()) != Some(id) {
-                continue;
-            }
-            if let Some(err) = v.get("error") {
-                return Err(format!("cdp error: {err}"));
-            }
-            return Ok(v.get("result").cloned().unwrap_or(Value::Null));
-        }
-    }
-
-    /// Take over the read stream and dispatch every inbound message until
-    /// the WebSocket closes. Events route through `dispatch_event`;
-    /// responses route through `pending` (unused in V1 but plumbed so V1.5
-    /// can issue `Network.getResponseBody` without a redesign).
-    async fn pump_events<R: Runtime>(
-        &mut self,
-        app: &AppHandle<R>,
-        account_id: &str,
-        session_id: &str,
-    ) -> Result<(), String> {
-        log::info!("[discord][{}] event pump started", account_id);
-        let mut ingest_state = DiscordIngestState::default();
-        loop {
-            // No timeout here — Discord's gateway sends heartbeats every
-            // ~41s, but a fully idle channel can sit silent for minutes.
-            // We rely on the WS layer's own keepalive + the outer reconnect
-            // loop in `spawn_scanner` to recover from genuine drops.
-            let msg = self
-                .stream
-                .next()
-                .await
-                .ok_or_else(|| "ws closed".to_string())?
-                .map_err(|e| format!("ws recv: {e}"))?;
-            let text = match msg {
-                Message::Text(t) => t,
-                Message::Binary(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {
-                    continue
-                }
-                Message::Close(_) => {
-                    log::info!("[discord][{}] cdp ws closed", account_id);
-                    return Ok(());
-                }
-            };
-            let v: Value = match serde_json::from_str(&text) {
-                Ok(v) => v,
-                Err(e) => {
-                    log::warn!("[discord][{}] decode failed: {}", account_id, e);
-                    continue;
-                }
-            };
-            if let Some(id) = v.get("id").and_then(|x| x.as_i64()) {
-                // Response to one of our calls. Hand it off.
-                if let Some(tx) = self.pending.remove(&id) {
-                    let res = if let Some(err) = v.get("error") {
-                        Err(format!("cdp error: {err}"))
-                    } else {
-                        Ok(v.get("result").cloned().unwrap_or(Value::Null))
-                    };
-                    let _ = tx.send(res);
-                }
-                continue;
-            }
-            // Event: dispatch by method.
-            let method = v.get("method").and_then(|x| x.as_str()).unwrap_or("");
-            // Ignore events for sessions we didn't attach to (CDP
-            // multiplexes everything through one ws once flatten=true).
-            let evt_session = v.get("sessionId").and_then(|x| x.as_str()).unwrap_or("");
-            if !evt_session.is_empty() && evt_session != session_id {
-                continue;
-            }
-            let params = v.get("params").cloned().unwrap_or(Value::Null);
-            dispatch_event(app, account_id, method, &params, &mut ingest_state);
-        }
-    }
+        .ok_or_else(|| "page attach missing sessionId".to_string())?
+        .to_string();
+    Ok((cdp, session))
 }
 
 // ---------- Event filter & emit ----------------------------------------------
@@ -1212,8 +1119,17 @@ fn spawn_dom_poll<R: Runtime>(
         let fragment = crate::cdp::target_url_fragment(&account_id);
         sleep(Duration::from_secs(6)).await;
         let mut last_hash: Option<u64> = None;
+        let mut pinned_target_id: Option<String> = None;
         loop {
-            match dom_scan_once(&url_prefix, &fragment).await {
+            match dom_scan_once(
+                &app,
+                &account_id,
+                &url_prefix,
+                &fragment,
+                &mut pinned_target_id,
+            )
+            .await
+            {
                 Ok(scan) => {
                     if Some(scan.hash) != last_hash {
                         log::info!(
@@ -1244,16 +1160,15 @@ fn spawn_dom_poll<R: Runtime>(
     task.abort_handle()
 }
 
-async fn dom_scan_once(
+async fn dom_scan_once<R: Runtime>(
+    app: &AppHandle<R>,
+    account_id: &str,
     url_prefix: &str,
     url_fragment: &str,
+    pinned_target_id: &mut Option<String>,
 ) -> Result<dom_snapshot::DomScan, String> {
-    let prefix = url_prefix.to_string();
-    let fragment = url_fragment.to_string();
-    let (mut cdp, session) = crate::cdp::connect_and_attach_matching(move |t| {
-        t.url.starts_with(&prefix) && t.url.ends_with(&fragment)
-    })
-    .await?;
+    let (mut cdp, session) =
+        attach_account_target(app, account_id, url_prefix, url_fragment, pinned_target_id).await?;
     let scan = dom_snapshot::scan(&mut cdp, &session).await;
     crate::cdp::detach_session(&mut cdp, &session).await;
     scan

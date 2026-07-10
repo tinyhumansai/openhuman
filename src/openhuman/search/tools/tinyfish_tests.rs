@@ -178,3 +178,22 @@ fn agent_run_response_deserializes() {
     assert_eq!(resp.num_of_steps, Some(4));
     assert_eq!(resp.cost_usd, Some(0.12));
 }
+
+#[test]
+fn agent_run_output_hides_internal_run_id() {
+    let resp = TinyFishAgentRunResponse {
+        run_id: Some("run_123".to_string()),
+        status: "COMPLETED".to_string(),
+        result: Some(json!({"ok": true})),
+        error: None,
+        num_of_steps: Some(4),
+        cost_usd: Some(0.12),
+    };
+
+    let output = format_agent_run_response(resp);
+
+    assert!(output.contains("TinyFish automation finished."));
+    assert!(output.contains("Status: COMPLETED"));
+    assert!(!output.contains("Run ID:"));
+    assert!(!output.contains("run_123"));
+}

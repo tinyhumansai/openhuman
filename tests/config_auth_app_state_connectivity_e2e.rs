@@ -154,12 +154,9 @@ async fn serve_mock_backend() -> (
     let app = Router::new()
         .route("/auth/me", get(mock_auth_me))
         .route("/api/auth/me", get(mock_auth_me))
+        .route("/auth/login-token/consume", post(mock_consume_login_token))
         .route(
-            "/telegram/login-tokens/{token}/consume",
-            post(mock_consume_login_token),
-        )
-        .route(
-            "/api/telegram/login-tokens/{token}/consume",
+            "/api/auth/login-token/consume",
             post(mock_consume_login_token),
         )
         .route(
@@ -370,11 +367,17 @@ async fn static_auth_me(
     }))
 }
 
-async fn mock_consume_login_token(AxumPath(token): AxumPath<String>) -> Json<Value> {
+async fn mock_consume_login_token(Json(body): Json<Value>) -> Json<Value> {
+    // Token now arrives in the JSON body (`{ token }`), not the URL path, and the
+    // response field is `jwt` (matches backend `routes/auth.ts`).
+    let token = body
+        .get("token")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
     Json(json!({
         "success": true,
         "data": {
-            "jwtToken": format!("jwt-from-{token}")
+            "jwt": format!("jwt-from-{token}")
         }
     }))
 }
@@ -2106,6 +2109,7 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
     config.search.querit.api_key = Some("querit-secret".into());
     config.channels_config.telegram = Some(TelegramConfig {
         bot_token: "telegram-secret".into(),
+        chat_id: None,
         allowed_users: vec!["alice".into()],
         stream_mode: Default::default(),
         draft_update_interval_ms: 1000,
@@ -2798,14 +2802,18 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_get_meet_settings",
                 "openhuman.config_get_memory_sync_settings",
                 "openhuman.config_get_onboarding_completed",
+                "openhuman.config_get_privacy_mode",
                 "openhuman.config_get_runtime_flags",
                 "openhuman.config_get_sandbox_settings",
                 "openhuman.config_get_search_settings",
+                "openhuman.config_get_super_context_enabled",
                 "openhuman.config_get_voice_server_settings",
                 "openhuman.config_reset_local_data",
                 "openhuman.config_resolve_api_url",
                 "openhuman.config_set_browser_allow_all",
                 "openhuman.config_set_onboarding_completed",
+                "openhuman.config_set_privacy_mode",
+                "openhuman.config_set_super_context_enabled",
                 "openhuman.config_update_activity_level_settings",
                 "openhuman.config_update_agent_paths",
                 "openhuman.config_update_agent_settings",
@@ -2961,6 +2969,64 @@ async fn config_controller_mutations_round_trip_over_json_rpc() {
         !client_payload.to_string().contains("worker-a-secret"),
         "client config must not echo local API keys: {client_payload}"
     );
+
+    // The model registry is seeded + price/context-window-enriched from the
+    // static pricing catalog on load (in-memory), so a fresh workspace surfaces
+    // real numbers over RPC. Validates the full path: catalog → seed-on-load →
+    // client_config_json → JSON-RPC. (The earlier update_model_settings call did
+    // not include `model_registry`, so the seeded registry is left intact.)
+    let registry = client_payload
+        .get("model_registry")
+        .and_then(Value::as_array)
+        .expect("client config should expose model_registry");
+    assert!(
+        !registry.is_empty(),
+        "model_registry should be auto-seeded from the pricing catalog: {client_payload}"
+    );
+    let opus = registry
+        .iter()
+        .find(|m| m.get("id").and_then(Value::as_str) == Some("claude-opus-4-8"))
+        .unwrap_or_else(|| panic!("seeded registry should contain claude-opus-4-8: {registry:?}"));
+    assert_eq!(
+        opus.get("provider").and_then(Value::as_str),
+        Some("anthropic")
+    );
+    assert_eq!(
+        opus.get("cost_per_1m_input").and_then(Value::as_f64),
+        Some(5.0),
+        "input price should be pre-filled from the catalog: {opus:?}"
+    );
+    assert_eq!(
+        opus.get("cost_per_1m_output").and_then(Value::as_f64),
+        Some(25.0),
+        "output price should be pre-filled from the catalog: {opus:?}"
+    );
+    assert_eq!(
+        opus.get("context_window").and_then(Value::as_u64),
+        Some(1_000_000),
+        "context window should be pre-filled from the catalog: {opus:?}"
+    );
+    // Every seeded entry carries non-zero pricing + context window — the whole
+    // point of the catalog pre-fill.
+    for entry in registry {
+        let id = entry.get("id").and_then(Value::as_str).unwrap_or("<none>");
+        assert!(
+            entry
+                .get("cost_per_1m_output")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0)
+                > 0.0,
+            "{id} missing output price: {entry:?}"
+        );
+        assert!(
+            entry
+                .get("context_window")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0,
+            "{id} missing context window: {entry:?}"
+        );
+    }
 
     let memory = rpc(
         &harness.rpc_base,
@@ -4807,11 +4873,10 @@ async fn app_state_snapshot_degrades_runtime_service_status_failures() {
     let _service_state =
         EnvVarGuard::set_to_path("OPENHUMAN_SERVICE_MOCK_STATE_FILE", &service_state_path);
 
-    // The runtime snapshot cache is process-global and not keyed by config.
-    // Let prior app_state_snapshot tests age out so this call exercises the
-    // service-status fallback instead of returning a cached runtime.
-    tokio::time::sleep(Duration::from_millis(2_100)).await;
-
+    // The runtime snapshot cache is keyed by config identity (workspace_dir), so
+    // this harness's unique workspace guarantees a cache miss regardless of prior
+    // app_state_snapshot tests — the call exercises the service-status fallback
+    // against our injected mock rather than returning a foreign cached runtime.
     let snapshot = rpc(
         &harness.rpc_base,
         30_051,

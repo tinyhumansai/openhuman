@@ -22,8 +22,10 @@ impl Tool for MemoryDiffTool {
     }
 
     fn description(&self) -> &str {
-        "Check what changed in memory sources since the last sync or a named checkpoint. \
-         Returns a structured summary of added, removed, and modified items across one or all sources."
+        "Check what changed in memory sources since you last looked, the last sync, or a named \
+         checkpoint. Returns a structured summary of added, removed, and modified items. By \
+         default, reading a single source's diff commits a read marker so the next call only \
+         surfaces newer changes (set commit=false to preview without acknowledging)."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -44,6 +46,18 @@ impl Tool for MemoryDiffTool {
                     "type": "boolean",
                     "description": "If true, include line-level text diffs for modified items (truncated).",
                     "default": false
+                },
+                "since_read": {
+                    "type": "boolean",
+                    "description": "When diffing a single source, show changes since you last read \
+                                    this source's diff (vs. since the previous sync). Default true.",
+                    "default": true
+                },
+                "commit": {
+                    "type": "boolean",
+                    "description": "When using since_read, advance the read marker so the next call \
+                                    only surfaces newer changes. Default true; set false to preview.",
+                    "default": true
                 }
             },
             "additionalProperties": false
@@ -51,6 +65,9 @@ impl Tool for MemoryDiffTool {
     }
 
     fn permission_level(&self) -> PermissionLevel {
+        // Read-only with respect to the user's data: the only write this tool
+        // performs is advancing the read marker in the module's own diff.db
+        // (internal bookkeeping under workspace state, never `action_dir`).
         PermissionLevel::ReadOnly
     }
 
@@ -61,10 +78,16 @@ impl Tool for MemoryDiffTool {
             .get("include_text_diff")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let since_read = args
+            .get("since_read")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let commit = args.get("commit").and_then(|v| v.as_bool()).unwrap_or(true);
 
         debug!(
-            "[memory_diff][tool] execute source_id={:?} checkpoint_id={:?} include_text_diff={}",
-            source_id, checkpoint_id, include_text_diff
+            "[memory_diff][tool] execute source_id={:?} checkpoint_id={:?} include_text_diff={} \
+             since_read={} commit={}",
+            source_id, checkpoint_id, include_text_diff, since_read, commit
         );
 
         let config = config_rpc::load_config_with_timeout()
@@ -87,9 +110,15 @@ impl Tool for MemoryDiffTool {
                 .map_err(|e| anyhow::anyhow!(e))?
                 .ok_or_else(|| anyhow::anyhow!("source not found: {sid}"))?;
 
-            let diff = ops::diff_since_last(&source, &config, include_text_diff)
-                .await
-                .map_err(|e| anyhow::anyhow!(e))?;
+            let diff = if since_read {
+                ops::diff_since_read(&source, &config, include_text_diff, commit)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?
+            } else {
+                ops::diff_since_last(&source, &config, include_text_diff)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?
+            };
             let md = format_diff_result(&diff);
             return Ok(ToolResult::success(md));
         }
@@ -107,19 +136,19 @@ impl Tool for MemoryDiffTool {
             .map(|s| (s.id.clone(), s.label.clone(), s.kind.as_str().to_string()))
             .collect();
 
-        let counts: Vec<(String, String, String, usize)> = tokio::task::spawn_blocking(move || {
-            super::store::with_connection(&workspace_dir, |conn| {
+        let counts: Vec<(String, String, String, usize)> =
+            tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+                let ledger = super::git_store::Ledger::open(&workspace_dir)?;
                 let mut out = Vec::new();
                 for (sid, label, kind) in &source_ids {
-                    let snaps = super::store::list_snapshots(conn, Some(sid), 1000)?;
-                    out.push((sid.clone(), label.clone(), kind.clone(), snaps.len()));
+                    let count = ledger.snapshot_count_for_source(sid)?;
+                    out.push((sid.clone(), label.clone(), kind.clone(), count));
                 }
                 Ok(out)
             })
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("join: {e}"))?
-        .map_err(|e: anyhow::Error| anyhow::anyhow!("{e:#}"))?;
+            .await
+            .map_err(|e| anyhow::anyhow!("join: {e}"))?
+            .map_err(|e: anyhow::Error| anyhow::anyhow!("{e:#}"))?;
 
         let mut md = String::from("## Memory Sources (snapshot status)\n\n");
         if counts.is_empty() {
@@ -253,4 +282,114 @@ fn format_cross_source_diff(diff: &CrossSourceDiff) -> String {
     }
 
     md
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn change(item_id: &str, title: &str, kind: ChangeKind, text_diff: Option<&str>) -> ItemChange {
+        ItemChange {
+            item_id: item_id.to_string(),
+            title: title.to_string(),
+            kind,
+            old_content_hash: None,
+            new_content_hash: None,
+            text_diff: text_diff.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn format_diff_result_groups_changes_and_renders_text_diff() {
+        let diff = DiffResult {
+            source_id: "src_a".into(),
+            source_kind: "folder".into(),
+            source_label: "Docs".into(),
+            from_snapshot_id: Some("s1".into()),
+            to_snapshot_id: "s2".into(),
+            summary: DiffSummary {
+                added: 1,
+                removed: 1,
+                modified: 1,
+                unchanged: 2,
+            },
+            changes: vec![
+                change("new.md", "New Doc", ChangeKind::Added, None),
+                change(
+                    "edit.md",
+                    "Edited Doc",
+                    ChangeKind::Modified,
+                    Some("@@ -1 +1 @@\n-old\n+new"),
+                ),
+                // Empty title falls back to the item id.
+                change("gone.md", "", ChangeKind::Removed, None),
+            ],
+        };
+
+        let md = format_diff_result(&diff);
+        assert!(md.contains("1 added, 1 modified, 1 removed"));
+        assert!(md.contains("### Added\n- New Doc"));
+        assert!(md.contains("### Modified\n- Edited Doc"));
+        assert!(md.contains("```diff"), "text diff should be fenced: {md}");
+        assert!(md.contains("+new"));
+        assert!(
+            md.contains("### Removed\n- gone.md"),
+            "title falls back to id"
+        );
+    }
+
+    #[test]
+    fn format_diff_result_reports_no_changes() {
+        let diff = DiffResult {
+            source_id: "src_a".into(),
+            source_kind: "folder".into(),
+            source_label: "Docs".into(),
+            from_snapshot_id: Some("s1".into()),
+            to_snapshot_id: "s2".into(),
+            summary: DiffSummary::default(),
+            changes: vec![],
+        };
+        assert!(format_diff_result(&diff).contains("No changes detected."));
+    }
+
+    #[test]
+    fn format_cross_source_diff_breaks_down_per_source() {
+        let cross = CrossSourceDiff {
+            checkpoint_id: Some("ckpt_1".into()),
+            computed_at_ms: 0,
+            summary: DiffSummary {
+                added: 1,
+                modified: 0,
+                removed: 0,
+                unchanged: 0,
+            },
+            per_source: vec![DiffResult {
+                source_id: "src_a".into(),
+                source_kind: "folder".into(),
+                source_label: "Docs".into(),
+                from_snapshot_id: Some("s1".into()),
+                to_snapshot_id: "s2".into(),
+                summary: DiffSummary {
+                    added: 1,
+                    ..Default::default()
+                },
+                changes: vec![change("new.md", "New Doc", ChangeKind::Added, None)],
+            }],
+        };
+        let md = format_cross_source_diff(&cross);
+        assert!(md.contains("Total: 1 added"));
+        assert!(md.contains("### Docs (folder)"));
+        assert!(md.contains("+ New Doc"));
+    }
+
+    #[test]
+    fn format_cross_source_diff_empty_is_explicit() {
+        let cross = CrossSourceDiff {
+            checkpoint_id: Some("ckpt_1".into()),
+            computed_at_ms: 0,
+            summary: DiffSummary::default(),
+            per_source: vec![],
+        };
+        assert!(format_cross_source_diff(&cross).contains("No changes across any source"));
+    }
 }

@@ -7,7 +7,6 @@ import {
   openhumanUpdateSandboxSettings,
   type SandboxBackendId,
 } from '../../../utils/tauriCommands';
-import SettingsHeader from '../components/SettingsHeader';
 import {
   SettingsBadge,
   SettingsEmptyState,
@@ -18,7 +17,7 @@ import {
   SettingsSwitch,
   SettingsTextField,
 } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const BACKEND_OPTIONS: SandboxBackendId[] = [
   'auto',
@@ -31,7 +30,6 @@ const BACKEND_OPTIONS: SandboxBackendId[] = [
 
 const SandboxSettingsPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   const [isLoading, setIsLoading] = useState(isTauri());
   const [isSaving, setIsSaving] = useState(false);
@@ -136,48 +134,23 @@ const SandboxSettingsPanel = () => {
 
   if (!isTauri()) {
     return (
-      <div className="z-10 relative">
-        <SettingsHeader
-          title={t('settings.sandbox.title')}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-        <div className="p-4 pt-2">
-          <p className="text-sm text-neutral-500 dark:text-neutral-400">
-            {t('settings.sandbox.desktopOnly')}
-          </p>
-        </div>
-      </div>
+      <SettingsPanel description={t('settings.sandbox.menuDesc')}>
+        <p className="text-sm text-content-muted">{t('settings.sandbox.desktopOnly')}</p>
+      </SettingsPanel>
     );
   }
 
   if (isLoading) {
     return (
-      <div className="z-10 relative">
-        <SettingsHeader
-          title={t('settings.sandbox.title')}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-        <div className="p-4 pt-2">
-          <p className="text-sm text-neutral-500 dark:text-neutral-400">
-            {t('settings.sandbox.loading')}
-          </p>
-        </div>
-      </div>
+      <SettingsPanel description={t('settings.sandbox.menuDesc')}>
+        <p className="text-sm text-content-muted">{t('settings.sandbox.loading')}</p>
+      </SettingsPanel>
     );
   }
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.sandbox.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
-      <div className="p-4 pt-2 space-y-5">
+    <SettingsPanel description={t('settings.sandbox.menuDesc')}>
+      <>
         {/* Status section */}
         <SettingsSection title={t('settings.sandbox.status')}>
           <SettingsRow
@@ -193,11 +166,7 @@ const SandboxSettingsPanel = () => {
           {detectedBackend && (
             <SettingsRow
               label={t('settings.sandbox.detectedBackend')}
-              control={
-                <span className="text-sm font-mono text-neutral-800 dark:text-neutral-100">
-                  {detectedBackend}
-                </span>
-              }
+              control={<span className="text-sm font-mono text-content">{detectedBackend}</span>}
             />
           )}
         </SettingsSection>
@@ -280,7 +249,7 @@ const SandboxSettingsPanel = () => {
                   aria-label={t('settings.sandbox.memoryLimit')}
                   min={64}
                 />
-                <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                <span className="text-xs text-content-muted">
                   {t('settings.sandbox.memoryUnit')}
                 </span>
               </div>
@@ -307,9 +276,7 @@ const SandboxSettingsPanel = () => {
                   min={0.1}
                   step={0.1}
                 />
-                <span className="text-xs text-neutral-500 dark:text-neutral-400">
-                  {t('settings.sandbox.cpuUnit')}
-                </span>
+                <span className="text-xs text-content-muted">{t('settings.sandbox.cpuUnit')}</span>
               </div>
             }
           />
@@ -339,8 +306,8 @@ const SandboxSettingsPanel = () => {
           error={error}
           savingLabel={t('settings.sandbox.saving')}
         />
-      </div>
-    </div>
+      </>
+    </SettingsPanel>
   );
 };
 

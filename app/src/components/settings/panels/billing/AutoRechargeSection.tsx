@@ -74,14 +74,14 @@ const AutoRechargeSection = ({
 }: AutoRechargeSectionProps) => {
   const { t } = useT();
   return (
-    <div className="rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 overflow-hidden">
+    <div className="rounded-2xl border border-line bg-surface overflow-hidden">
       {/* Header row */}
       <div className="flex items-center justify-between p-3">
         <div>
-          <p className="text-md font-semibold text-neutral-800 dark:text-neutral-100">
+          <p className="text-md font-semibold text-content">
             {t('settings.billing.autoRecharge.title')}
           </p>
-          <p className="text-[11px] text-neutral-400 dark:text-neutral-500 mt-0.5">
+          <p className="text-[11px] text-content-faint mt-0.5">
             {t('settings.billing.autoRecharge.subtitle')}
           </p>
         </div>
@@ -119,7 +119,7 @@ const AutoRechargeSection = ({
 
       {/* Settings — only shown when enabled */}
       {!arLoading && arSettings?.enabled && (
-        <div className="border-t border-neutral-200 dark:border-neutral-800 px-3 pt-3 pb-2 space-y-3">
+        <div className="border-t border-line px-3 pt-3 pb-2 space-y-3">
           {/* Status row */}
           <div className="flex items-center gap-3 flex-wrap">
             {arSettings.inFlight && (
@@ -143,14 +143,14 @@ const AutoRechargeSection = ({
               </span>
             )}
             {arSettings.spentThisWeekUsd > 0 && (
-              <span className="text-[10px] text-neutral-400 dark:text-neutral-500">
+              <span className="text-[10px] text-content-faint">
                 {t('settings.billing.autoRecharge.spentThisWeek')
                   .replace('{spent}', arSettings.spentThisWeekUsd.toFixed(2))
                   .replace('{limit}', String(arSettings.weeklyLimitUsd))}
               </span>
             )}
             {arSettings.lastRechargeAt && (
-              <span className="text-[10px] text-neutral-500 dark:text-neutral-400">
+              <span className="text-[10px] text-content-muted">
                 {t('settings.billing.autoRecharge.expires').replace(
                   '{date}',
                   new Date(arSettings.lastRechargeAt).toLocaleDateString('en-US', {
@@ -185,7 +185,7 @@ const AutoRechargeSection = ({
 
           {/* Trigger threshold — bespoke pill-button selector, keep layout */}
           <div>
-            <p className="text-[11px] text-neutral-400 dark:text-neutral-500 mb-1.5">
+            <p className="text-[11px] text-content-faint mb-1.5">
               {t('settings.billing.autoRecharge.rechargeWhen')}
             </p>
             <div className="flex gap-1.5 flex-wrap">
@@ -197,7 +197,7 @@ const AutoRechargeSection = ({
                   className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                     arThreshold === v
                       ? 'bg-primary-500/20 text-primary-400 border-primary-500/40'
-                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 border-neutral-200 dark:border-neutral-800 hover:text-neutral-700 dark:hover:text-neutral-200'
+                      : 'bg-surface-subtle text-content-muted border-line hover:text-content-secondary dark:hover:text-neutral-200'
                   }`}>
                   ${v}
                 </button>
@@ -207,7 +207,7 @@ const AutoRechargeSection = ({
 
           {/* Recharge amount — bespoke pill-button selector, keep layout */}
           <div>
-            <p className="text-[11px] text-neutral-400 dark:text-neutral-500 mb-1.5">
+            <p className="text-[11px] text-content-faint mb-1.5">
               {t('settings.billing.autoRecharge.addAmount')}
             </p>
             <div className="flex gap-1.5 flex-wrap">
@@ -219,7 +219,7 @@ const AutoRechargeSection = ({
                   className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                     arAmount === v
                       ? 'bg-primary-500/20 text-primary-400 border-primary-500/40'
-                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 border-neutral-200 dark:border-neutral-800 hover:text-neutral-700 dark:hover:text-neutral-200'
+                      : 'bg-surface-subtle text-content-muted border-line hover:text-content-secondary dark:hover:text-neutral-200'
                   }`}>
                   ${v}
                 </button>
@@ -229,7 +229,7 @@ const AutoRechargeSection = ({
 
           {/* Weekly limit — bespoke pill-button selector, keep layout */}
           <div>
-            <p className="text-[11px] text-neutral-400 dark:text-neutral-500 mb-1.5">
+            <p className="text-[11px] text-content-faint mb-1.5">
               {t('settings.billing.autoRecharge.weeklyLimit')}
             </p>
             <div className="flex gap-1.5 flex-wrap">
@@ -241,7 +241,7 @@ const AutoRechargeSection = ({
                   className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                     arWeeklyLimit === v
                       ? 'bg-primary-500/20 text-primary-400 border-primary-500/40'
-                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 border-neutral-200 dark:border-neutral-800 hover:text-neutral-700 dark:hover:text-neutral-200'
+                      : 'bg-surface-subtle text-content-muted border-line hover:text-content-secondary dark:hover:text-neutral-200'
                   }`}>
                   ${v}
                 </button>
@@ -274,14 +274,14 @@ const AutoRechargeSection = ({
       )}
 
       {/* Payment methods */}
-      <div className="border-t border-neutral-200 dark:border-neutral-800 px-3 py-2.5">
+      <div className="border-t border-line px-3 py-2.5">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-[11px] font-medium text-neutral-600 dark:text-neutral-300">
+          <p className="text-[11px] font-medium text-content-secondary">
             {t('settings.billing.autoRecharge.paymentMethods')}
           </p>
           <Button
             type="button"
-            variant="ghost"
+            variant="tertiary"
             size="xs"
             onClick={onAddCard}
             className="text-primary-500 dark:text-primary-400 hover:text-primary-600 dark:hover:text-primary-300">
@@ -294,14 +294,14 @@ const AutoRechargeSection = ({
             {[0, 1].map(i => (
               <div
                 key={i}
-                className="h-9 rounded-lg bg-neutral-200/60 dark:bg-neutral-700/30 animate-pulse"
+                className="h-9 rounded-lg bg-surface-strong/60 dark:bg-neutral-700/30 animate-pulse"
               />
             ))}
           </div>
         ) : cards.length === 0 ? (
-          <div className="flex items-center gap-2 rounded-lg bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 p-2.5">
+          <div className="flex items-center gap-2 rounded-lg bg-surface-muted border border-line p-2.5">
             <svg
-              className="w-4 h-4 text-neutral-500 dark:text-neutral-400 flex-shrink-0"
+              className="w-4 h-4 text-content-muted flex-shrink-0"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24">
@@ -312,7 +312,7 @@ const AutoRechargeSection = ({
                 d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
               />
             </svg>
-            <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+            <p className="text-[11px] text-content-muted">
               {t('settings.billing.autoRecharge.noCards')}
             </p>
           </div>
@@ -326,10 +326,10 @@ const AutoRechargeSection = ({
               return (
                 <div
                   key={card.id}
-                  className="flex items-center gap-2 rounded-lg bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-800 px-2.5 py-2">
+                  className="flex items-center gap-2 rounded-lg bg-surface-muted border border-line px-2.5 py-2">
                   {/* Card icon */}
                   <svg
-                    className="w-4 h-4 text-neutral-400 dark:text-neutral-500 flex-shrink-0"
+                    className="w-4 h-4 text-content-faint flex-shrink-0"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24">
@@ -344,7 +344,7 @@ const AutoRechargeSection = ({
                   {/* Card info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-xs text-neutral-800 dark:text-neutral-100 font-medium">
+                      <span className="text-xs text-content font-medium">
                         {cardBrandLabel(card.brand)} ••••{card.last4}
                       </span>
                       {card.isDefault && (
@@ -353,7 +353,7 @@ const AutoRechargeSection = ({
                         </span>
                       )}
                     </div>
-                    <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    <p className="text-[10px] text-content-muted mt-0.5">
                       {t('settings.billing.autoRecharge.expires').replace(
                         '{date}',
                         `${String(card.expMonth).padStart(2, '0')}/${String(card.expYear).slice(-2)}`
@@ -366,7 +366,7 @@ const AutoRechargeSection = ({
                     {!card.isDefault && (
                       <Button
                         type="button"
-                        variant="ghost"
+                        variant="tertiary"
                         size="xs"
                         onClick={() => onSetDefault(card.id)}
                         disabled={!!settingDefaultId || !!deletingCardId}>
@@ -378,7 +378,8 @@ const AutoRechargeSection = ({
                       <div className="flex items-center gap-1">
                         <Button
                           type="button"
-                          variant="danger"
+                          variant="primary"
+                          tone="danger"
                           size="xs"
                           onClick={() => onDeleteCard(card.id)}
                           disabled={isDeleting}>
@@ -386,7 +387,7 @@ const AutoRechargeSection = ({
                         </Button>
                         <Button
                           type="button"
-                          variant="ghost"
+                          variant="tertiary"
                           size="xs"
                           onClick={() => setConfirmDeleteId(null)}>
                           {t('common.cancel')}
@@ -395,11 +396,11 @@ const AutoRechargeSection = ({
                     ) : (
                       <Button
                         type="button"
-                        variant="ghost"
+                        variant="tertiary"
                         size="xs"
                         onClick={() => setConfirmDeleteId(card.id)}
                         disabled={isDeleting || !!settingDefaultId}
-                        className="text-neutral-500 dark:text-neutral-400 hover:text-coral-600 dark:hover:text-coral-400">
+                        className="text-content-muted hover:text-coral-600 dark:hover:text-coral-400">
                         {t('common.remove')}
                       </Button>
                     )}

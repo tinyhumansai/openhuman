@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 
 import { injectViseme, tweenTransform } from './renderCore';
+import { sanitizeSvg } from './sanitizeSvg';
 import type { MascotDetail, MascotState } from './types';
 
 export interface BackendMascotProps {
@@ -56,7 +57,9 @@ export function BackendMascot({
   const initialMarkup = useMemo(() => {
     if (!state) return '';
     const active = viseme && viseme !== 'sil' ? viseme : null;
-    return injectViseme(state.svg, mascot, active);
+    // Sanitize before injection — backend-supplied SVG reaches a
+    // `dangerouslySetInnerHTML` sink in the privileged renderer.
+    return sanitizeSvg(injectViseme(state.svg, mascot, active));
     // We intentionally only re-inject on state change here; viseme effect
     // below handles in-place swaps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -82,7 +85,7 @@ export function BackendMascot({
     if (!slot) return;
     const active = viseme && viseme !== 'sil' ? viseme : null;
     const entry = active ? mascot.visemes.find(v => v.label === active) : null;
-    const inner = entry?.svg ?? '';
+    const inner = sanitizeSvg(entry?.svg ?? '');
     const visible = inner.length > 0;
     slot.innerHTML = inner;
     slot.setAttribute('opacity', visible ? '1' : '0');

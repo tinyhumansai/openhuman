@@ -17,12 +17,11 @@ const Input = forwardRef<HTMLInputElement, InputProps>((props, ref) => {
   const { inputSize = 'md', invalid, className, ...rest } = props;
   const ring = invalid
     ? 'border-coral-400 focus:border-coral-500 focus:ring-coral-500/20 dark:border-coral-500/60'
-    : 'border-neutral-300 focus:border-primary-500 focus:ring-primary-500/20 dark:border-neutral-700 dark:focus:border-primary-400';
+    : 'border-line-strong focus:border-primary-500 focus:ring-primary-500/20 dark:focus:border-primary-400';
   const classes = [
-    'w-full border bg-white text-neutral-900 placeholder-neutral-400',
+    'w-full border bg-surface text-content placeholder-content-faint',
     'transition-colors duration-150 focus:outline-none focus:ring-2',
-    'disabled:opacity-50 disabled:bg-neutral-50',
-    'dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder-neutral-500 dark:disabled:bg-neutral-800',
+    'disabled:opacity-50 disabled:bg-surface-muted',
     SIZES[inputSize],
     ring,
     className ?? '',

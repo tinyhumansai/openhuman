@@ -378,11 +378,18 @@ async fn on_turn_complete_dedupes_reflections_across_heuristic_and_llm_paths() {
 
     let memory_impl = Arc::new(MockMemory::default());
     let memory: Arc<dyn Memory> = memory_impl.clone();
+    // Wrap the stub provider as a `ChatModel` (the field's type after the Phase 1
+    // migration); the hint/temperature baked here are inert for the stub.
+    let stub_model = crate::openhuman::inference::provider::chat_model_from_provider(
+        Box::new(StubProvider),
+        "hint:reasoning".to_string(),
+        0.3,
+    );
     let hook = ReflectionHook::new(
         reflection_config(),
         Arc::new(Config::default()),
         memory,
-        Some(Arc::new(StubProvider)),
+        Some(stub_model),
     );
 
     let turn = TurnContext {
@@ -567,11 +574,16 @@ async fn on_turn_complete_emits_style_candidates_from_llm_preferences() {
     }
 
     let memory: Arc<dyn Memory> = Arc::new(MockMemory::default());
+    let stub_model = crate::openhuman::inference::provider::chat_model_from_provider(
+        Box::new(StubPrefProvider),
+        "hint:reasoning".to_string(),
+        0.3,
+    );
     let hook = ReflectionHook::new(
         reflection_config(),
         Arc::new(Config::default()),
         memory,
-        Some(Arc::new(StubPrefProvider)),
+        Some(stub_model),
     );
 
     let before = candidate::global().len();

@@ -5,16 +5,69 @@ import { useT } from '../../lib/i18n/I18nContext';
 import { type CatalogEntry, skillRegistryApi } from '../../services/api/skillRegistryApi';
 import {
   type InstallWorkflowFromUrlResult,
-  workflowsApi,
+  skillsApi,
   type WorkflowSummary,
-} from '../../services/api/workflowsApi';
+} from '../../services/api/skillsApi';
 import EmptyStateCard from '../EmptyStateCard';
+import ChipTabs from '../layout/ChipTabs';
+import Button from '../ui/Button';
 import InstallSkillDialog from './InstallSkillDialog';
 import UninstallSkillConfirmDialog from './UninstallSkillConfirmDialog';
 
 const log = debug('skills:explorer-tab');
 const CATALOG_PAGE_SIZE = 60;
 const SEARCH_DEBOUNCE_MS = 300;
+
+function slugifyInstallKey(value: string | null | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+
+  let out = '';
+  let lastDash = false;
+  for (const ch of raw) {
+    if (/[a-z0-9]/i.test(ch)) {
+      out += ch.toLowerCase();
+      lastDash = false;
+    } else if (!lastDash && out.length > 0) {
+      out += '-';
+      lastDash = true;
+    }
+  }
+  return out.replace(/-+$/, '') || null;
+}
+
+function lastPathSegment(value: string | null | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  const parts = raw.split(/[/:#?]+/).filter(Boolean);
+  return parts.at(-1) ?? null;
+}
+
+function parentPathSegment(value: string | null | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  const parts = raw.split(/[\\/]+/).filter(Boolean);
+  return parts.length >= 2 ? (parts.at(-2) ?? null) : null;
+}
+
+function catalogInstallKeys(entry: CatalogEntry): string[] {
+  return [
+    slugifyInstallKey(entry.id),
+    slugifyInstallKey(lastPathSegment(entry.id)),
+    slugifyInstallKey(parentPathSegment(entry.docs_path)),
+    slugifyInstallKey(parentPathSegment(entry.download_url)),
+  ].filter((key): key is string => Boolean(key));
+}
+
+function workflowInstallKeys(skill: WorkflowSummary): string[] {
+  return [slugifyInstallKey(skill.id), slugifyInstallKey(parentPathSegment(skill.location))].filter(
+    (key): key is string => Boolean(key)
+  );
+}
+
+function isCatalogEntryInstalled(entry: CatalogEntry, installedKeys: Set<string>): boolean {
+  return catalogInstallKeys(entry).some(key => installedKeys.has(key));
+}
 
 function SourceBadge({ source }: { source: string }) {
   const SOURCE_COLORS: Record<string, string> = {
@@ -33,7 +86,7 @@ function SourceBadge({ source }: { source: string }) {
   };
   const colors =
     SOURCE_COLORS[source] ??
-    'bg-stone-50 text-stone-600 border-stone-200 dark:bg-neutral-800 dark:text-neutral-300 dark:border-neutral-700';
+    'bg-surface-muted text-content-secondary border-line';
   return (
     <span
       className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider ${colors}`}>
@@ -74,7 +127,7 @@ function SkillFormatBadge({ format }: { format: string }) {
   const entry = FORMAT_MAP[lower] ?? {
     label: format || 'Skill',
     colors:
-      'bg-stone-50 text-stone-600 border-stone-200 dark:bg-neutral-800 dark:text-neutral-300 dark:border-neutral-700',
+      'bg-surface-muted text-content-secondary border-line',
   };
   return (
     <span
@@ -93,7 +146,7 @@ function SkillScopeBadge({ scope }: { scope: string }) {
         ? t('skills.explorer.scopeProject')
         : t('skills.explorer.scopeLegacy');
   return (
-    <span className="inline-flex items-center rounded-full border border-stone-200 dark:border-neutral-700 bg-stone-50 dark:bg-neutral-800 px-1.5 py-0.5 text-[9px] font-medium text-stone-500 dark:text-neutral-400">
+    <span className="inline-flex items-center rounded-full border border-line bg-surface-muted px-1.5 py-0.5 text-[9px] font-medium text-content-muted">
       {label}
     </span>
   );
@@ -122,12 +175,12 @@ function SkillTile({ skill, onUninstall, onClick }: SkillTileProps) {
           onClick();
         }
       }}
-      className="group flex flex-col justify-between rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 transition-colors cursor-pointer hover:bg-stone-50 dark:hover:bg-neutral-800/60">
+      className="group flex flex-col justify-between rounded-2xl border border-line bg-surface p-3 transition-colors cursor-pointer hover:bg-surface-hover">
       <div className="min-w-0">
         <div className="flex items-start justify-between gap-2">
-          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-stone-100 dark:bg-neutral-800">
+          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-surface-subtle">
             <svg
-              className="h-5 w-5 text-stone-500 dark:text-neutral-400"
+              className="h-5 w-5 text-content-muted"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -145,10 +198,10 @@ function SkillTile({ skill, onUninstall, onClick }: SkillTileProps) {
           </div>
         </div>
 
-        <h3 className="mt-2 line-clamp-1 text-sm font-semibold text-stone-900 dark:text-neutral-100">
+        <h3 className="mt-2 line-clamp-1 text-sm font-semibold text-content">
           {skill.name}
         </h3>
-        <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-stone-500 dark:text-neutral-400">
+        <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-content-muted">
           {skill.description || t('skills.explorer.noDescription')}
         </p>
 
@@ -157,12 +210,12 @@ function SkillTile({ skill, onUninstall, onClick }: SkillTileProps) {
             {skill.tags.slice(0, 3).map(tag => (
               <span
                 key={tag}
-                className="rounded-full bg-stone-100 dark:bg-neutral-800 px-1.5 py-0.5 text-[9px] font-medium text-stone-500 dark:text-neutral-400">
+                className="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[9px] font-medium text-content-muted">
                 {tag}
               </span>
             ))}
             {skill.tags.length > 3 && (
-              <span className="rounded-full bg-stone-100 dark:bg-neutral-800 px-1.5 py-0.5 text-[9px] font-medium text-stone-400 dark:text-neutral-500">
+              <span className="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[9px] font-medium text-content-faint">
                 +{skill.tags.length - 3}
               </span>
             )}
@@ -172,22 +225,24 @@ function SkillTile({ skill, onUninstall, onClick }: SkillTileProps) {
 
       <div className="mt-3 flex items-center justify-between gap-2">
         {skill.version && (
-          <span className="text-[10px] font-mono text-stone-400 dark:text-neutral-500">
+          <span className="text-[10px] font-mono text-content-faint">
             v{skill.version}
           </span>
         )}
         {!skill.version && <span />}
         {canUninstall && (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            tone="danger"
+            size="xs"
             data-testid={`skill-uninstall-${skill.id}`}
             onClick={e => {
               e.stopPropagation();
               onUninstall();
             }}
-            className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-2 py-1 text-[10px] font-medium text-coral-700 dark:text-coral-300 opacity-0 transition-all group-hover:opacity-100 hover:bg-coral-100 dark:hover:bg-coral-500/20">
+            className="opacity-0 group-hover:opacity-100">
             {t('skills.disconnect')}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -228,11 +283,11 @@ function CatalogTile({ entry, installed, installing, onInstall, onClick }: Catal
       className={`group flex flex-col justify-between rounded-2xl border p-3 transition-colors cursor-pointer ${
         installed
           ? 'border-sage-300 bg-sage-50/60 dark:border-sage-500/30 dark:bg-sage-500/10'
-          : 'border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:bg-stone-50 dark:hover:bg-neutral-800/60'
+          : 'border-line bg-surface hover:bg-surface-hover'
       }`}>
       <div className="min-w-0">
         <div className="flex items-start justify-between gap-2">
-          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-stone-100 dark:bg-neutral-800">
+          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-surface-subtle">
             <svg
               className="h-5 w-5 text-primary-500"
               fill="none"
@@ -251,10 +306,10 @@ function CatalogTile({ entry, installed, installing, onInstall, onClick }: Catal
           </div>
         </div>
 
-        <h3 className="mt-2 line-clamp-1 text-sm font-semibold text-stone-900 dark:text-neutral-100">
+        <h3 className="mt-2 line-clamp-1 text-sm font-semibold text-content">
           {entry.name}
         </h3>
-        <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-stone-500 dark:text-neutral-400">
+        <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-content-muted">
           {entry.description}
         </p>
 
@@ -263,7 +318,7 @@ function CatalogTile({ entry, installed, installing, onInstall, onClick }: Catal
             {entry.tags.slice(0, 3).map(tag => (
               <span
                 key={tag}
-                className="rounded-full bg-stone-100 dark:bg-neutral-800 px-1.5 py-0.5 text-[9px] font-medium text-stone-500 dark:text-neutral-400">
+                className="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[9px] font-medium text-content-muted">
                 {tag}
               </span>
             ))}
@@ -274,12 +329,12 @@ function CatalogTile({ entry, installed, installing, onInstall, onClick }: Catal
       <div className="mt-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           {entry.version && (
-            <span className="text-[10px] font-mono text-stone-400 dark:text-neutral-500">
+            <span className="text-[10px] font-mono text-content-faint">
               v{entry.version}
             </span>
           )}
           {entry.author && (
-            <span className="text-[10px] text-stone-400 dark:text-neutral-500">{entry.author}</span>
+            <span className="text-[10px] text-content-faint">{entry.author}</span>
           )}
         </div>
         {installed ? (
@@ -287,17 +342,17 @@ function CatalogTile({ entry, installed, installing, onInstall, onClick }: Catal
             {t('skills.explorer.installed')}
           </span>
         ) : (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="xs"
             data-testid={`registry-install-${entry.id}`}
             disabled={installing}
             onClick={e => {
               e.stopPropagation();
               onInstall();
-            }}
-            className="rounded-lg border border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10 px-2 py-1 text-[10px] font-medium text-primary-700 dark:text-primary-300 transition-colors hover:bg-primary-100 dark:hover:bg-primary-500/20 disabled:opacity-50">
+            }}>
             {installing ? t('skills.explorer.installing') : t('skills.explorer.install')}
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -337,12 +392,12 @@ function SkillDetailDialog({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
       onClick={onClose}>
       <div
-        className="mx-4 w-full max-w-lg rounded-2xl border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-xl"
+        className="mx-4 w-full max-w-lg rounded-2xl border border-line bg-surface shadow-xl"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3 border-b border-stone-100 dark:border-neutral-800 p-5">
+        <div className="flex items-start justify-between gap-3 border-b border-line-subtle p-5">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100 truncate">
+              <h2 className="text-base font-semibold text-content truncate">
                 {name}
               </h2>
               {installed && (
@@ -354,16 +409,19 @@ function SkillDetailDialog({
             <div className="mt-1.5 flex items-center gap-1.5">
               {source && <SourceBadge source={source} />}
               {category && (
-                <span className="inline-flex items-center rounded-full border border-stone-200 dark:border-neutral-700 bg-stone-50 dark:bg-neutral-800 px-1.5 py-0.5 text-[9px] font-medium text-stone-500 dark:text-neutral-400">
+                <span className="inline-flex items-center rounded-full border border-line bg-surface-muted px-1.5 py-0.5 text-[9px] font-medium text-content-muted">
                   {category}
                 </span>
               )}
             </div>
           </div>
-          <button
-            type="button"
+          <Button
+            iconOnly
+            variant="tertiary"
+            size="sm"
+            aria-label={t('common.close')}
             onClick={onClose}
-            className="flex-shrink-0 rounded-lg p-1 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 hover:bg-stone-100 dark:hover:bg-neutral-800 transition-colors">
+            className="flex-shrink-0 text-content-faint">
             <svg
               className="h-5 w-5"
               fill="none"
@@ -372,16 +430,16 @@ function SkillDetailDialog({
               strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
             </svg>
-          </button>
+          </Button>
         </div>
 
         <div className="p-5 space-y-4">
           {description && (
             <div>
-              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500 mb-1">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-content-faint mb-1">
                 {t('skills.detail.description')}
               </h3>
-              <p className="text-sm text-stone-700 dark:text-neutral-300 leading-relaxed whitespace-pre-wrap">
+              <p className="text-sm text-content-secondary leading-relaxed whitespace-pre-wrap">
                 {description}
               </p>
             </div>
@@ -390,40 +448,40 @@ function SkillDetailDialog({
           <div className="flex flex-wrap gap-x-6 gap-y-2">
             {version && (
               <div>
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-content-faint">
                   {t('skills.detail.version')}
                 </span>
-                <p className="text-xs font-mono text-stone-700 dark:text-neutral-300">{version}</p>
+                <p className="text-xs font-mono text-content-secondary">{version}</p>
               </div>
             )}
             {author && (
               <div>
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-content-faint">
                   {t('skills.detail.author')}
                 </span>
-                <p className="text-xs text-stone-700 dark:text-neutral-300">{author}</p>
+                <p className="text-xs text-content-secondary">{author}</p>
               </div>
             )}
             {license && (
               <div>
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-content-faint">
                   {t('skills.detail.license')}
                 </span>
-                <p className="text-xs text-stone-700 dark:text-neutral-300">{license}</p>
+                <p className="text-xs text-content-secondary">{license}</p>
               </div>
             )}
           </div>
 
           {tags.length > 0 && (
             <div>
-              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500 mb-1.5">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-content-faint mb-1.5">
                 {t('skills.detail.tags')}
               </h3>
               <div className="flex flex-wrap gap-1.5">
                 {tags.map(tag => (
                   <span
                     key={tag}
-                    className="rounded-full bg-stone-100 dark:bg-neutral-800 px-2 py-0.5 text-[10px] font-medium text-stone-600 dark:text-neutral-400">
+                    className="rounded-full bg-surface-subtle px-2 py-0.5 text-[10px] font-medium text-content-secondary">
                     {tag}
                   </span>
                 ))}
@@ -433,10 +491,10 @@ function SkillDetailDialog({
 
           {downloadUrl && (
             <div>
-              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500 mb-1">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-content-faint mb-1">
                 {t('skills.detail.source')}
               </h3>
-              <p className="text-[11px] font-mono text-stone-400 dark:text-neutral-500 break-all">
+              <p className="text-[11px] font-mono text-content-faint break-all">
                 {downloadUrl}
               </p>
             </div>
@@ -444,14 +502,10 @@ function SkillDetailDialog({
         </div>
 
         {!installed && onInstall && (
-          <div className="border-t border-stone-100 dark:border-neutral-800 p-4 flex justify-end">
-            <button
-              type="button"
-              disabled={installing}
-              onClick={onInstall}
-              className="rounded-lg border border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10 px-4 py-2 text-xs font-medium text-primary-700 dark:text-primary-300 transition-colors hover:bg-primary-100 dark:hover:bg-primary-500/20 disabled:opacity-50">
+          <div className="border-t border-line-subtle p-4 flex justify-end">
+            <Button variant="secondary" size="sm" disabled={installing} onClick={onInstall}>
               {installing ? t('skills.explorer.installing') : t('skills.explorer.install')}
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -475,10 +529,21 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
 
   const [catalogEntries, setCatalogEntries] = useState<CatalogEntry[]>([]);
   const [catalogTotal, setCatalogTotal] = useState(0);
+  // How many catalog entries are currently revealed. We fetch the whole list
+  // up front, then page through it client-side via the "Show more" control.
+  const [visibleCount, setVisibleCount] = useState(CATALOG_PAGE_SIZE);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogInitialized, setCatalogInitialized] = useState(false);
   const [installingId, setInstallingId] = useState<string | null>(null);
+  // Catalog entry ids we just installed this session. The "installed" badge is
+  // otherwise derived purely from `isCatalogEntryInstalled`, a heuristic that
+  // maps a refetched installed skill (whose post-install id/location can differ
+  // from the catalog entry) back to the catalog card. When that mapping misses,
+  // a successful install fell back to "Install" — the only signal was a fleeting
+  // toast, so the card looked unchanged (#4150). Recording the installed entry
+  // id here makes the card flip to "Installed" deterministically on success.
+  const [installedEntryIds, setInstalledEntryIds] = useState<Set<string>>(new Set());
 
   const [sources, setSources] = useState<string[]>([]);
   const [activeSources, setActiveSources] = useState<Set<string>>(new Set());
@@ -507,7 +572,9 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
     setSkillsLoading(true);
     setSkillsError(null);
     try {
-      const result = await workflowsApi.listWorkflows();
+      // Include `skills/`-root installs (registry installs land there) so they
+      // appear in the Installed tab and flip the catalog Install button.
+      const result = await skillsApi.listWorkflows({ includeSkills: true });
       log('fetchSkills: count=%d', result.length);
       setSkills(result);
     } catch (err) {
@@ -546,7 +613,10 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
         }
         log('fetchCatalog: total=%d', entries.length);
         setCatalogTotal(entries.length);
-        setCatalogEntries(entries.slice(0, CATALOG_PAGE_SIZE));
+        // Keep the full list so "Show more" can page through it without another
+        // RPC; only a window of it is rendered (see displayedCatalog).
+        setCatalogEntries(entries);
+        setVisibleCount(CATALOG_PAGE_SIZE);
         setCatalogInitialized(true);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -577,7 +647,20 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
     }
   }, [view, debouncedQuery, activeSourceFilter, fetchCatalog]);
 
-  const installedIds = useMemo(() => new Set(skills.map(s => s.id)), [skills]);
+  const installedKeys = useMemo(
+    () => new Set(skills.flatMap(skill => workflowInstallKeys(skill))),
+    [skills]
+  );
+
+  // A catalog entry counts as installed if the refetched installed list maps
+  // back to it (`isCatalogEntryInstalled`) OR we installed it this session. The
+  // latter guarantees the card reflects a successful install even when the
+  // heuristic key-match misses (#4150).
+  const entryInstalled = useCallback(
+    (entry: CatalogEntry): boolean =>
+      installedEntryIds.has(entry.id) || isCatalogEntryInstalled(entry, installedKeys),
+    [installedEntryIds, installedKeys]
+  );
 
   const filteredSkills = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
@@ -601,7 +684,7 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
 
   // When multiple sources are active (but not all), do client-side filtering
   // on the already-fetched results since the RPC only supports single source filter.
-  const displayedCatalog = useMemo(() => {
+  const filteredCatalog = useMemo(() => {
     if (
       activeSources.size === 0 ||
       activeSources.size >= sources.length ||
@@ -611,6 +694,13 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
     }
     return catalogEntries.filter(e => activeSources.has(e.source));
   }, [catalogEntries, activeSources, sources.length]);
+
+  // Client-side pagination window: we already hold the full fetched list, so
+  // "Show more" reveals the next page instantly with no extra RPC.
+  const displayedCatalog = useMemo(
+    () => filteredCatalog.slice(0, visibleCount),
+    [filteredCatalog, visibleCount]
+  );
 
   const handleInstalled = useCallback(
     (result: InstallWorkflowFromUrlResult) => {
@@ -642,7 +732,19 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
       setInstallingId(entry.id);
       try {
         const result = await skillRegistryApi.install(entry.id);
-        void fetchSkills();
+        // Authoritatively mark this entry installed so the card flips to
+        // "Installed" on success regardless of whether the refetched list maps
+        // back to it via the install-key heuristic (#4150).
+        setInstalledEntryIds(prev => {
+          const next = new Set(prev);
+          next.add(entry.id);
+          return next;
+        });
+        // Await the refetch so `installedKeys` is fresh before the button
+        // re-renders — otherwise it briefly flips back to "Install" between
+        // clearing the installing state and the list updating. `fetchSkills`
+        // swallows its own errors, so this never throws into the catch below.
+        await fetchSkills();
         onToast?.({
           type: 'success',
           title: t('skills.install.installComplete'),
@@ -663,56 +765,61 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
   const error = view === 'installed' ? skillsError : catalogError;
 
   return (
-    <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 shadow-soft animate-fade-up">
+    <div className="rounded-2xl border border-line bg-surface p-3 shadow-soft animate-fade-up">
       <div className="px-1 pb-3 pt-1">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            <h2 className="text-sm font-semibold text-content">
               {t('skills.explorer.title')}
             </h2>
-            <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500 dark:text-neutral-400">
+            <p className="mt-0.5 text-[11px] leading-relaxed text-content-muted">
               {t('skills.explorer.subtitle')}
             </p>
           </div>
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             data-testid="skill-install-from-url-btn"
             onClick={() => setInstallDialogOpen(true)}
-            className="flex-shrink-0 rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-neutral-200 shadow-sm transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1">
+            className="flex-shrink-0">
             {t('skills.explorer.installFromUrl')}
-          </button>
+          </Button>
         </div>
       </div>
 
       {/* View toggle */}
-      <div className="flex gap-2 px-1 pb-3">
-        <button
-          type="button"
-          onClick={() => setView('registry')}
-          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-            view === 'registry'
-              ? 'border-primary-200 dark:border-primary-500/40 bg-primary-50 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300'
-              : 'border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800/60'
-          }`}>
-          {t('skills.explorer.registryTab')}
-          {catalogTotal > 0 && (
-            <span className="ml-1.5 text-[10px] opacity-70">{catalogTotal.toLocaleString()}</span>
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={() => setView('installed')}
-          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-            view === 'installed'
-              ? 'border-primary-200 dark:border-primary-500/40 bg-primary-50 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300'
-              : 'border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800/60'
-          }`}>
-          {t('skills.explorer.installedTab')}
-          {skills.length > 0 && (
-            <span className="ml-1.5 text-[10px] opacity-70">{skills.length}</span>
-          )}
-        </button>
-      </div>
+      <ChipTabs<ExplorerView>
+        className="flex gap-2 px-1 pb-3"
+        ariaLabel={t('skills.explorer.title')}
+        value={view}
+        onChange={setView}
+        items={[
+          {
+            id: 'registry',
+            label: (
+              <>
+                {t('skills.explorer.registryTab')}
+                {catalogTotal > 0 && (
+                  <span className="ml-1.5 text-[10px] opacity-70">
+                    {catalogTotal.toLocaleString()}
+                  </span>
+                )}
+              </>
+            ),
+          },
+          {
+            id: 'installed',
+            label: (
+              <>
+                {t('skills.explorer.installedTab')}
+                {skills.length > 0 && (
+                  <span className="ml-1.5 text-[10px] opacity-70">{skills.length}</span>
+                )}
+              </>
+            ),
+          },
+        ]}
+      />
 
       {/* Source toggles */}
       {view === 'registry' && sources.length > 0 && (
@@ -734,7 +841,7 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
                 className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-colors ${
                   active
                     ? 'border-primary-300 dark:border-primary-500/50 bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300'
-                    : 'border-stone-200 dark:border-neutral-700 bg-stone-50 dark:bg-neutral-800 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300'
+                    : 'border-line bg-surface-muted text-content-faint hover:text-content-secondary'
                 }`}>
                 {src}
               </button>
@@ -747,7 +854,7 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
       <div className="flex gap-2 px-1 pb-3">
         <div className="relative flex-1">
           <svg
-            className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-stone-400 dark:text-neutral-500"
+            className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-content-faint"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -764,16 +871,19 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder={t('skills.explorer.searchPlaceholder')}
-            className="w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 py-2 pl-9 pr-3 text-xs text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+            className="w-full rounded-lg border border-line bg-surface py-2 pl-9 pr-3 text-xs text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
           />
         </div>
         {view === 'registry' && (
-          <button
-            type="button"
+          <Button
+            iconOnly
+            variant="secondary"
+            size="md"
             onClick={() => void fetchCatalog(debouncedQuery, activeSourceFilter, true)}
             disabled={catalogLoading}
             title={t('skills.explorer.refreshRegistry')}
-            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 shadow-sm transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800 disabled:opacity-50">
+            aria-label={t('skills.explorer.refreshRegistry')}
+            className="flex-shrink-0 text-content-muted shadow-sm">
             <svg
               className={`h-4 w-4 ${catalogLoading ? 'animate-spin' : ''}`}
               fill="none"
@@ -786,14 +896,14 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
                 d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182"
               />
             </svg>
-          </button>
+          </Button>
         )}
       </div>
 
       {/* Loading */}
       {loading && (
         <div className="flex items-center justify-center py-12">
-          <span className="h-5 w-5 animate-spin rounded-full border-2 border-stone-200 dark:border-neutral-700 border-t-primary-500" />
+          <span className="h-5 w-5 animate-spin rounded-full border-2 border-line border-t-primary-500" />
         </div>
       )}
 
@@ -801,16 +911,18 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
       {!loading && error && (
         <div className="mx-1 mb-3 rounded-xl border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 p-3">
           <p className="text-xs font-medium text-coral-700 dark:text-coral-300">{error}</p>
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            tone="danger"
+            size="xs"
             onClick={() =>
               void (view === 'installed'
                 ? fetchSkills()
                 : fetchCatalog(debouncedQuery, activeSourceFilter, true))
             }
-            className="mt-2 rounded-lg border border-coral-200 dark:border-coral-500/30 px-3 py-1 text-[11px] font-medium text-coral-700 dark:text-coral-300 hover:bg-coral-100 dark:hover:bg-coral-500/20">
+            className="mt-2">
             {t('common.retry')}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -842,7 +954,7 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
           )}
 
           {skills.length > 0 && sortedSkills.length === 0 && (
-            <p className="px-1 py-8 text-center text-xs text-stone-400 dark:text-neutral-500">
+            <p className="px-1 py-8 text-center text-xs text-content-faint">
               {t('skills.noResults')}
             </p>
           )}
@@ -867,7 +979,7 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
       {/* ── Registry view ── */}
       {view === 'registry' && !loading && !error && (
         <>
-          {catalogInitialized && catalogEntries.length === 0 && (
+          {catalogInitialized && filteredCatalog.length === 0 && (
             <EmptyStateCard
               className="mx-1 mb-3 py-10"
               icon={
@@ -902,20 +1014,27 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
                   <CatalogTile
                     key={`${entry.source}-${entry.id}`}
                     entry={entry}
-                    installed={installedIds.has(entry.id)}
+                    installed={entryInstalled(entry)}
                     installing={installingId === entry.id}
                     onClick={() => setDetailEntry(entry)}
                     onInstall={() => void handleRegistryInstall(entry)}
                   />
                 ))}
               </div>
-              {catalogTotal > displayedCatalog.length && (
-                <p className="mt-3 px-1 text-center text-[11px] text-stone-400 dark:text-neutral-500">
-                  {t('skills.explorer.showingOf')
-                    .replace('{shown}', String(displayedCatalog.length))
-                    .replace('{total}', catalogTotal.toLocaleString()) ||
-                    `Showing ${displayedCatalog.length} of ${catalogTotal.toLocaleString()} results. Refine your search to see more.`}
-                </p>
+              {filteredCatalog.length > displayedCatalog.length && (
+                <div className="mt-3 flex flex-col items-center gap-1">
+                  <button
+                    type="button"
+                    data-testid="registry-show-more"
+                    onClick={() => setVisibleCount(c => c + CATALOG_PAGE_SIZE)}
+                    className="rounded-lg border border-line bg-surface px-4 py-2 text-xs font-medium text-content-secondary shadow-soft transition-colors hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1">
+                    {t('common.showMore')}
+                  </button>
+                  <p className="text-[11px] text-content-faint">
+                    {displayedCatalog.length.toLocaleString()} /{' '}
+                    {filteredCatalog.length.toLocaleString()}
+                  </p>
+                </div>
               )}
             </>
           )}
@@ -941,13 +1060,13 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
         <SkillDetailDialog
           entry={detailEntry}
           skill={detailSkill}
-          installed={detailEntry ? installedIds.has(detailEntry.id) : true}
+          installed={detailEntry ? entryInstalled(detailEntry) : true}
           onClose={() => {
             setDetailEntry(null);
             setDetailSkill(null);
           }}
           onInstall={
-            detailEntry && !installedIds.has(detailEntry.id)
+            detailEntry && !entryInstalled(detailEntry)
               ? () => {
                   void handleRegistryInstall(detailEntry);
                   setDetailEntry(null);

@@ -15,10 +15,6 @@ use tempfile::TempDir;
 
 use openhuman_core::core::event_bus::{DomainEvent, EventHandler};
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::inference::provider::traits::{ChatMessage, Provider};
-use openhuman_core::openhuman::memory::query::{
-    run_walk, MemoryTreeWalkTool, WalkOptions, WalkStopReason,
-};
 use openhuman_core::openhuman::memory_store::chunks::store::upsert_chunks;
 use openhuman_core::openhuman::memory_store::chunks::types::{
     approx_token_count, chunk_id, Chunk, Metadata, SourceKind as ChunkSourceKind, SourceRef,
@@ -45,10 +41,9 @@ use openhuman_core::openhuman::memory_tree::tree::{
     append_leaf_deferred, get_or_create_tree, store as tree_store, LabelStrategy, LeafRef,
 };
 use openhuman_core::openhuman::memory_tree::tree_runtime::{
-    derive_parent_id, engine, estimate_tokens, level_from_node_id, rpc as tree_runtime_rpc,
-    store as runtime_store, TreeNode,
+    engine, rpc as tree_runtime_rpc, store as runtime_store,
 };
-use openhuman_core::openhuman::tools::traits::Tool;
+use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
 
 struct EnvVarGuard {
     key: &'static str,
@@ -100,22 +95,6 @@ fn config_in(tmp: &TempDir) -> Config {
     cfg.memory_tree.embedding_model = None;
     cfg.memory_tree.embedding_strict = false;
     cfg
-}
-
-fn runtime_node(namespace: &str, node_id: &str, summary: &str) -> TreeNode {
-    let ts = Utc.with_ymd_and_hms(2026, 5, 29, 13, 45, 0).unwrap();
-    TreeNode {
-        node_id: node_id.to_string(),
-        namespace: namespace.to_string(),
-        level: level_from_node_id(node_id),
-        parent_id: derive_parent_id(node_id),
-        summary: summary.to_string(),
-        token_count: estimate_tokens(summary),
-        child_count: 0,
-        created_at: ts,
-        updated_at: ts,
-        metadata: None,
-    }
 }
 
 fn staged_chunk(cfg: &Config, source_id: &str, seq: u32, tokens: u32) -> Chunk {
@@ -180,31 +159,19 @@ impl ScriptedProvider {
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    async fn chat_with_system(
+impl ChatModel<()> for ScriptedProvider {
+    async fn invoke(
         &self,
-        system_prompt: Option<&str>,
-        message: &str,
-        model: &str,
-        temperature: f64,
-    ) -> anyhow::Result<String> {
-        let _ = (system_prompt, message, model, temperature);
-        Ok(self
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
+        let response = self
             .responses
             .lock()
             .unwrap()
             .pop()
-            .unwrap_or_else(|| "fallback scripted summary".to_string()))
-    }
-
-    async fn chat_with_history(
-        &self,
-        messages: &[ChatMessage],
-        model: &str,
-        temperature: f64,
-    ) -> anyhow::Result<String> {
-        let _ = (messages, model, temperature);
-        self.chat_with_system(None, "", "", 0.0).await
+            .unwrap_or_else(|| "fallback scripted summary".to_string());
+        Ok(ModelResponse::assistant(response))
     }
 }
 
@@ -241,7 +208,7 @@ async fn tree_runtime_engine_rpc_and_walk_cover_success_and_edge_paths() {
         "rebuilt hour 10",
         "rebuilt hour 11",
     ]);
-    let last = engine::run_summarization(&cfg, &provider, "test-model", ns, Utc::now())
+    let last = engine::run_summarization(&cfg, &provider, ns, Utc::now())
         .await
         .expect("run summarization")
         .expect("last hour node");
@@ -275,39 +242,11 @@ async fn tree_runtime_engine_rpc_and_walk_cover_success_and_edge_paths() {
         "rebuilt year summary",
         "rebuilt root summary",
     ]);
-    let rebuilt = engine::rebuild_tree(&cfg, &rebuild_provider, "test-model", ns)
+    let rebuilt = engine::rebuild_tree(&cfg, &rebuild_provider, ns)
         .await
         .expect("rebuild tree");
     assert_eq!(rebuilt.total_nodes, 6);
     assert_eq!(runtime_store::buffer_read(&cfg, ns).unwrap().len(), 1);
-
-    let walk_provider = ScriptedProvider::new([
-        r#"Surveying children <tool_call>{"name":"peek","arguments":{"node_ids":["2026","missing"]}}</tool_call>"#,
-        r#"<tool_call>{"name":"descend","arguments":{"node_id":"2026/05/29"}}</tool_call>"#,
-        r#"<tool_call>{"name":"fetch_leaves","arguments":{"node_id":"2026/05/29"}}</tool_call>"#,
-        r#"<tool_call>{"name":"answer","arguments":{"text":"Alice and Bob discussed launch cleanup."}}</tool_call>"#,
-    ]);
-    let outcome = run_walk(
-        &cfg,
-        &walk_provider,
-        "Who discussed launch cleanup?",
-        WalkOptions {
-            max_turns: 8,
-            start_node_id: None,
-            namespace: ns.into(),
-            model: Some("scripted".into()),
-        },
-    )
-    .await
-    .expect("walk");
-    assert_eq!(outcome.stopped_reason, WalkStopReason::Answered);
-    assert_eq!(outcome.turns_used, 4);
-    assert!(outcome.answer.contains("Alice and Bob"));
-
-    let tool = MemoryTreeWalkTool;
-    assert_eq!(tool.name(), "memory_tree_walk");
-    let missing_query = tool.execute(json!({ "namespace": ns })).await.unwrap_err();
-    assert!(missing_query.to_string().contains("`query` is required"));
 }
 
 #[tokio::test]
@@ -375,72 +314,6 @@ async fn bucket_seal_deferred_and_fallback_paths_preserve_buffers_and_labels() {
     assert!(after_l0.is_empty());
     let parent = tree_store::get_buffer(&cfg, &tree.id, 1).expect("parent buffer");
     assert_eq!(parent.item_ids, sealed);
-}
-
-#[tokio::test]
-async fn memory_walk_provider_errors_and_unknown_actions_are_reported() {
-    let tmp = TempDir::new().expect("tempdir");
-    let cfg = config_in(&tmp);
-    let ns = "walk-round14";
-    for node in [
-        runtime_node(ns, "root", "root has one 2026 child"),
-        runtime_node(ns, "2026", "year node"),
-    ] {
-        runtime_store::write_node(&cfg, &node).expect("write node");
-    }
-
-    let provider = ScriptedProvider::new([
-        r#"<tool_call>{"name":"dance","arguments":{"node_id":"2026"}}</tool_call>"#,
-        "",
-    ]);
-    let outcome = run_walk(
-        &cfg,
-        &provider,
-        "exercise unknown action",
-        WalkOptions {
-            max_turns: 2,
-            start_node_id: Some("root".into()),
-            namespace: ns.into(),
-            model: Some("scripted".into()),
-        },
-    )
-    .await
-    .expect("unknown action walk");
-    assert_eq!(outcome.stopped_reason, WalkStopReason::LlmGaveUp);
-    assert!(outcome.trace[0]
-        .result_preview
-        .contains("unknown walk action"));
-
-    struct FailingProvider;
-    #[async_trait]
-    impl Provider for FailingProvider {
-        async fn chat_with_system(
-            &self,
-            system_prompt: Option<&str>,
-            message: &str,
-            model: &str,
-            temperature: f64,
-        ) -> anyhow::Result<String> {
-            let _ = (system_prompt, message, model, temperature);
-            anyhow::bail!("scripted provider failure")
-        }
-    }
-
-    let failed = run_walk(
-        &cfg,
-        &FailingProvider,
-        "force provider error",
-        WalkOptions {
-            max_turns: 1,
-            start_node_id: Some("missing".into()),
-            namespace: ns.into(),
-            model: None,
-        },
-    )
-    .await
-    .expect("provider errors become walk outcome");
-    assert!(matches!(failed.stopped_reason, WalkStopReason::Error(_)));
-    assert!(failed.answer.contains("Walk failed"));
 }
 
 #[tokio::test]

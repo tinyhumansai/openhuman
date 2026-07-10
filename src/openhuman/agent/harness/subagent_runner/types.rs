@@ -6,7 +6,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
+use tinyagents::harness::workspace::WorkspaceDescriptor;
 
+use crate::openhuman::agent::harness::definition::AgentTier;
 use crate::openhuman::inference::provider::ChatMessage;
 
 /// Per-spawn options that override or augment what the
@@ -57,21 +59,29 @@ pub struct SubagentRunOptions {
     /// `{workspace_dir}/.openhuman/subagent_checkpoints/`.
     pub checkpoint_dir: Option<PathBuf>,
 
-    /// Per-worker `action_dir` override for git-worktree isolation.
+    /// Per-worker isolated checkout for git-worktree isolation.
     ///
-    /// When `Some`, the runner installs this path as the
-    /// `current_action_dir_override` task-local around the inner tool-call
-    /// loop, so acting tools (shell, git) operate inside the worker's
-    /// isolated worktree checkout instead of the shared `Config.action_dir`.
-    /// When `None` (the default), behaviour is unchanged — tools fall through
-    /// to `security.action_dir`.
+    /// When `Some`, the runner derives a [`WorkspaceDescriptor`] rooted at this
+    /// path (see `workspace_descriptor_for_subagent`) and threads it onto the
+    /// tinyagents run context, so acting tools (shell, git) resolve their CWD to
+    /// the worker's isolated worktree checkout via
+    /// `ToolExecutionContext.workspace` instead of the shared `Config.action_dir`.
+    /// When `None` (the default), behaviour is unchanged — tools fall through to
+    /// `security.action_dir`.
     pub worktree_action_dir: Option<PathBuf>,
 
+    /// SDK workspace descriptor threaded into the TinyAgents tool-execution
+    /// context. When present it is attached to the run's `RunContext`
+    /// (`RunContext::with_workspace`) and surfaced per tool call via
+    /// `ToolExecutionContext::from_run_context`; acting tools read
+    /// `ToolExecutionContext.workspace` to route their CWD (issue #4249, 08.5).
+    pub workspace_descriptor: Option<WorkspaceDescriptor>,
+
     /// Steering channel for a running (typically async) sub-agent. When set,
-    /// the inner `run_turn_engine` drains steer/collect messages from this
-    /// queue at iteration boundaries — exactly like the main agent loop — so
-    /// the parent can `steer_subagent` mid-flight. `None` keeps today's
-    /// non-steerable behaviour.
+    /// the tinyagents harness drains steer/collect messages from this queue at
+    /// iteration boundaries — exactly like the main agent loop — so the parent
+    /// can `steer_subagent` mid-flight. `None` keeps today's non-steerable
+    /// behaviour.
     pub run_queue: Option<std::sync::Arc<crate::openhuman::agent::harness::run_queue::RunQueue>>,
 }
 
@@ -87,6 +97,17 @@ pub enum SubagentRunStatus {
     AwaitingUser {
         question: String,
         options: Option<Vec<String>>,
+    },
+    /// The sub-agent stopped WITHOUT reaching its goal — a circuit breaker
+    /// halted it (stuck: repeated identical call / repeated output / repeated
+    /// failure) or it hit the iteration cap. The run's `output` carries whatever
+    /// partial progress / checkpoint summary it produced; `reason` is a short,
+    /// machine-set explanation of why it stopped. The delegating agent must NOT
+    /// treat this as a completed result, and must not re-run the identical
+    /// delegation unchanged.
+    Incomplete {
+        /// Short, machine-set reason the run stopped short (stuck vs. cap).
+        reason: String,
     },
 }
 
@@ -107,6 +128,28 @@ pub struct SubagentRunOutcome {
     pub mode: SubagentMode,
     /// Whether the run completed or paused for user input.
     pub status: SubagentRunStatus,
+    /// Final in-memory history after the run loop exits. Durable sub-agent
+    /// sessions persist this so an idle worker can resume without rebuilding
+    /// its context from only the parent transcript.
+    pub final_history: Vec<ChatMessage>,
+    /// Token + cost accounting accumulated across every provider call this
+    /// sub-agent made. Surfaced so the parent turn can roll child spend into
+    /// the session totals (tokens + USD) and the global cost tracker. See
+    /// [`SubagentUsage`].
+    pub usage: SubagentUsage,
+}
+
+/// Token + cost totals for a single sub-agent run.
+///
+/// Mirrors the inner-loop `AggregatedUsage`, lifted into the public outcome so
+/// the parent turn can fold sub-agent spend into the session-level token/cost
+/// meters surfaced in the UI footer.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SubagentUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub charged_amount_usd: f64,
 }
 
 /// Which prompt-construction path the runner took for a sub-agent.
@@ -172,6 +215,16 @@ pub enum SubagentRunError {
     SpawnDepthExceeded {
         attempted_depth: usize,
         max_depth: usize,
+    },
+
+    #[error(
+        "delegation blocked by the spawn-hierarchy gate: a `{parent_tier}` agent may not \
+         delegate to a `{child_tier}` agent — {reason}"
+    )]
+    TierViolation {
+        parent_tier: AgentTier,
+        child_tier: AgentTier,
+        reason: String,
     },
 
     #[error("sub-agent exceeded maximum iterations ({0})")]

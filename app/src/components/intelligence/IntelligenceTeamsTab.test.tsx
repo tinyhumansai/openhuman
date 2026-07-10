@@ -5,13 +5,21 @@ import { type AgentTeam, agentTeamApi, type TeamView } from '../../services/api/
 import IntelligenceTeamsTab from './IntelligenceTeamsTab';
 
 vi.mock('../../services/api/agentTeamApi', () => ({
-  agentTeamApi: { list: vi.fn(), get: vi.fn(), listMessages: vi.fn() },
+  agentTeamApi: {
+    list: vi.fn(),
+    get: vi.fn(),
+    listMessages: vi.fn(),
+    messageMember: vi.fn(),
+    startMember: vi.fn(),
+  },
 }));
 vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
 
 const mockList = vi.mocked(agentTeamApi.list);
 const mockGet = vi.mocked(agentTeamApi.get);
 const mockMessages = vi.mocked(agentTeamApi.listMessages);
+const mockMessageMember = vi.mocked(agentTeamApi.messageMember);
+const mockStartMember = vi.mocked(agentTeamApi.startMember);
 
 function team(id: string, summary: string): AgentTeam {
   return {
@@ -47,6 +55,25 @@ function view(t: AgentTeam): TeamView {
         gateStatus: 'pending',
         evidence: [],
         orderIndex: 0,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ],
+  };
+}
+
+// A view whose member is idle, so TeamHeader renders the per-member start
+// control (hidden for `active` members).
+function viewWithIdleMember(t: AgentTeam): TeamView {
+  const v = view(t);
+  return {
+    ...v,
+    members: [
+      {
+        id: 'm2',
+        teamId: t.id,
+        name: 'scout',
+        memberStatus: 'idle',
         createdAt: '2026-01-01T00:00:00Z',
         updatedAt: '2026-01-01T00:00:00Z',
       },
@@ -187,5 +214,118 @@ describe('IntelligenceTeamsTab', () => {
 
     fireEvent.click(screen.getByText('intelligence.teams.refresh'));
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
+  });
+
+  // ── interactive surfaces (handleSend / handleStartMember) ──────────────────
+
+  it('sends a lead message to the whole team and refreshes the board', async () => {
+    const t = team('team-1', 'Ship onboarding');
+    mockList.mockResolvedValue([t]);
+    mockGet.mockResolvedValue(view(t));
+    mockMessageMember.mockResolvedValue({
+      runId: 'team-1',
+      sequence: 1,
+      eventType: 'team_message',
+      payload: { from: 'lead', to: null, content: 'kick it off', visibility: 'team' },
+      timestamp: '2026-01-01T00:00:00Z',
+    });
+    render(<IntelligenceTeamsTab />);
+    await screen.findByText('Audit flow');
+
+    fireEvent.change(screen.getByPlaceholderText('intelligence.teams.composer.placeholder'), {
+      target: { value: 'kick it off' },
+    });
+    fireEvent.click(screen.getByLabelText('intelligence.teams.composer.send'));
+
+    await waitFor(() =>
+      expect(mockMessageMember).toHaveBeenCalledWith({
+        teamId: 'team-1',
+        toMemberId: undefined,
+        content: 'kick it off',
+      })
+    );
+    // Refetched detail after the send (initial select + post-send).
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
+  });
+
+  it('surfaces a send failure as an action notice', async () => {
+    const t = team('team-1', 'Ship onboarding');
+    mockList.mockResolvedValue([t]);
+    mockGet.mockResolvedValue(view(t));
+    mockMessageMember.mockRejectedValue(new Error('send boom'));
+    render(<IntelligenceTeamsTab />);
+    await screen.findByText('Audit flow');
+
+    const input = screen.getByPlaceholderText(
+      'intelligence.teams.composer.placeholder'
+    ) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'hello' } });
+    fireEvent.click(screen.getByLabelText('intelligence.teams.composer.send'));
+
+    expect(await screen.findByText('send boom')).toBeInTheDocument();
+    // A failed send must reject so the composer keeps the unsent draft for retry.
+    expect(input.value).toBe('hello');
+  });
+
+  it('starts a member run and clears any prior notice on success', async () => {
+    const t = team('team-1', 'Ship onboarding');
+    mockList.mockResolvedValue([t]);
+    mockGet.mockResolvedValue(viewWithIdleMember(t));
+    mockStartMember.mockResolvedValue({
+      kind: 'started',
+      runId: 'run-1',
+      task: viewWithIdleMember(t).tasks[0],
+    });
+    render(<IntelligenceTeamsTab />);
+    await screen.findByText('Audit flow');
+
+    fireEvent.click(screen.getByLabelText('intelligence.teams.member.start scout'));
+
+    await waitFor(() =>
+      expect(mockStartMember).toHaveBeenCalledWith({ teamId: 'team-1', memberId: 'm2' })
+    );
+    // `started` shows no notice.
+    expect(screen.queryByText('intelligence.teams.action.alreadyActive')).not.toBeInTheDocument();
+  });
+
+  it('names the unmet dependencies when a start is blocked', async () => {
+    const t = team('team-1', 'Ship onboarding');
+    mockList.mockResolvedValue([t]);
+    mockGet.mockResolvedValue(viewWithIdleMember(t));
+    mockStartMember.mockResolvedValue({ kind: 'blocked', unmet: ['task-a', 'task-b'] });
+    render(<IntelligenceTeamsTab />);
+    await screen.findByText('Audit flow');
+
+    fireEvent.click(screen.getByLabelText('intelligence.teams.member.start scout'));
+
+    expect(
+      await screen.findByText('intelligence.teams.action.blocked: task-a, task-b')
+    ).toBeInTheDocument();
+  });
+
+  it('surfaces an already-active outcome as a notice', async () => {
+    const t = team('team-1', 'Ship onboarding');
+    mockList.mockResolvedValue([t]);
+    mockGet.mockResolvedValue(viewWithIdleMember(t));
+    mockStartMember.mockResolvedValue({ kind: 'alreadyActive' });
+    render(<IntelligenceTeamsTab />);
+    await screen.findByText('Audit flow');
+
+    fireEvent.click(screen.getByLabelText('intelligence.teams.member.start scout'));
+
+    expect(await screen.findByText('intelligence.teams.action.alreadyActive')).toBeInTheDocument();
+  });
+
+  it('surfaces a start failure as an action notice', async () => {
+    const t = team('team-1', 'Ship onboarding');
+    mockList.mockResolvedValue([t]);
+    mockGet.mockResolvedValue(viewWithIdleMember(t));
+    mockStartMember.mockRejectedValue(new Error('start boom'));
+    render(<IntelligenceTeamsTab />);
+    await screen.findByText('Audit flow');
+
+    fireEvent.click(screen.getByLabelText('intelligence.teams.member.start scout'));
+
+    expect(await screen.findByText('start boom')).toBeInTheDocument();
   });
 });

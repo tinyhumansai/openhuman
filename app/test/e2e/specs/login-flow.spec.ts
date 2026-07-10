@@ -5,7 +5,7 @@
  * Verifies the full auth + onboarding journey using mock data:
  *   Phase 1 — Deep link authentication:
  *     1. `openhuman://auth?token=...` deep link is triggered via __simulateDeepLink
- *     2. App calls POST /telegram/login-tokens/:token/consume  (mock server)
+ *     2. App calls POST /auth/login-token/consume            (mock server)
  *     3. App receives JWT, dispatches to Redux authSlice
  *     4. UserProvider calls GET /auth/me  (mock server)
  *
@@ -143,7 +143,7 @@ describe('Login flow — complete with mock data (Linux)', () => {
   });
 
   it('mock server received the token-consume call', async () => {
-    const call = await waitForRequest('POST', '/telegram/login-tokens/', 20_000);
+    const call = await waitForRequest('POST', '/auth/login-token/consume', 20_000);
     if (!call) {
       console.log(
         '[LoginFlow] Missing consume call. Request log:',
@@ -304,7 +304,7 @@ describe('Login flow — complete with mock data (Linux)', () => {
     await browser.pause(5_000);
 
     // Verify the consume call was made (mock returns 401 for expired tokens)
-    const call = await waitForRequest('POST', '/telegram/login-tokens/', 10_000);
+    const call = await waitForRequest('POST', '/auth/login-token/consume', 10_000);
     expect(call).toBeDefined();
     console.log('[LoginFlow] Expired token: consume call made (mock returns 401)');
 
@@ -321,7 +321,7 @@ describe('Login flow — complete with mock data (Linux)', () => {
     await browser.pause(5_000);
 
     // Verify the consume call was made (mock returns 401 for invalid tokens)
-    const call = await waitForRequest('POST', '/telegram/login-tokens/', 10_000);
+    const call = await waitForRequest('POST', '/auth/login-token/consume', 10_000);
     expect(call).toBeDefined();
     console.log('[LoginFlow] Invalid token: consume call made (mock returns 401)');
 
@@ -350,7 +350,7 @@ describe('Login flow — complete with mock data (Linux)', () => {
 
     // Assert NO consume call was made (bypass skips it)
     const consumeCall = getRequestLog().find(
-      r => r.method === 'POST' && r.url.includes('/telegram/login-tokens/')
+      r => r.method === 'POST' && r.url.includes('/auth/login-token/consume')
     );
     expect(consumeCall).toBeUndefined();
     console.log('[LoginFlow] Bypass auth: no consume call (correct — token set directly)');

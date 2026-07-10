@@ -25,6 +25,15 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 
+use crate::openhuman::tokenjuice::AgentTokenjuiceCompression;
+
+/// Iteration ceiling for an [`IterationPolicy::Extended`] agent — the higher
+/// bound a long-running agent (orchestrator, deep research) is allowed to reach
+/// before the harness stops it. Lives here, the sole consumer, since the legacy
+/// `tool_loop` that originally defined it was removed in the tinyagents
+/// migration (issue #4249).
+pub const EXTENDED_MAX_TOOL_ITERATIONS: usize = 50;
+
 /// Iteration-cap policy for a sub-agent.
 ///
 /// Controls how the harness enforces [`AgentDefinition::max_iterations`]:
@@ -34,7 +43,7 @@ use std::path::PathBuf;
 ///   the cap signals a likely loop.
 /// * **Extended** — the per-agent `max_iterations` is replaced at runtime
 ///   by a higher harness-wide constant
-///   ([`EXTENDED_MAX_TOOL_ITERATIONS`](super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS))
+///   ([`EXTENDED_MAX_TOOL_ITERATIONS`])
 ///   so the agent can complete realistic multi-tool workflows. The
 ///   repeated-failure circuit breaker and cost budget still apply. The
 ///   UI omits the denominator ("step N" instead of "turn N/M") to avoid
@@ -176,6 +185,13 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub max_result_chars: Option<usize>,
 
+    /// Optional per-LLM-call output token cap for this agent. When unset, the
+    /// shared agent-turn cap is used. Narrow agents can set a smaller cap so
+    /// a single verbose turn cannot flood the sub-agent loop before the final
+    /// result is truncated.
+    #[serde(default)]
+    pub max_turn_output_tokens: Option<u32>,
+
     /// Wall-clock timeout for the sub-agent's execution (seconds).
     #[serde(default)]
     pub timeout_secs: Option<u64>,
@@ -193,6 +209,14 @@ pub struct AgentDefinition {
     /// prompt and prepends its result to the prompt sent to this agent.
     #[serde(default)]
     pub trigger_memory_agent: TriggerMemoryAgent,
+
+    /// Per-agent TokenJuice tool-result compression profile.
+    ///
+    /// `auto` keeps compression on for normal agents, but resolves coding-model
+    /// agents to `light` so CCR-backed lossy compression does not replace raw
+    /// build/test/diff/search text that coding agents often need exactly.
+    #[serde(default)]
+    pub tokenjuice_compression: AgentTokenjuiceCompression,
 
     // ── delegation surface ─────────────────────────────────────────────
     /// Subagents this agent is allowed to spawn via synthesised
@@ -259,6 +283,15 @@ pub struct AgentDefinition {
     /// Tracks where the definition was loaded from (Builtin vs. File).
     #[serde(skip)]
     pub source: DefinitionSource,
+
+    // ── turn graph ──────────────────────────────────────────────────────
+    /// How this agent's turn is driven (issue #4249). Injected post-load from
+    /// the agent folder's `graph.rs::graph()` (mirrors how
+    /// [`PromptSource::Dynamic`] is injected from `prompt.rs::build`); TOML-
+    /// authored agents cannot set it, so it is `#[serde(skip)]` and defaults to
+    /// [`AgentGraph::Default`] (the shared default turn graph).
+    #[serde(skip, default)]
+    pub graph: super::agent_graph::AgentGraph,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -309,6 +342,57 @@ impl AgentTier {
             Self::Reasoning => "reasoning",
             Self::Worker => "worker",
         }
+    }
+}
+
+impl std::fmt::Display for AgentTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Single source of truth for the spawn-hierarchy rule: is a `parent`-tier
+/// agent allowed to delegate to a `child`-tier agent?
+///
+/// Returns `Ok(())` for the legal handoffs and `Err(reason)` for the three
+/// forbidden shapes, where `reason` is a tier-only human-readable explanation
+/// (no agent ids — callers prepend their own context):
+///
+/// - `Worker → *` — workers are leaf executors and must not spawn anything.
+/// - `Chat → Chat` — the chat tier is a leaf in its own dimension; cloning it
+///   defeats the fast-path and risks unbounded `chat → chat → …` chains.
+/// - `Reasoning → Reasoning` — reasoning agents compose downward into workers,
+///   not into each other (a depth-blowing recursion of slow models).
+///
+/// Note this forbids same-tier and worker-as-parent hops, **not** upward hops:
+/// `reasoning → chat` is a real, intentional builtin edge (the `subconscious`
+/// reasoner can hand a follow-up back to the `orchestrator` chat agent), so it
+/// must stay legal. The harness'es `MAX_SPAWN_DEPTH` cap bounds chain length
+/// independently of tier direction.
+///
+/// This is the static authoring rule the loader walks over declared `subagents`
+/// pairs at boot (see
+/// [`crate::openhuman::agent_registry::agents::validate_tier_hierarchy`]). The
+/// runtime spawn gate (`run_subagent`) reuses it as defense-in-depth, but
+/// deliberately exempts worker *parents* — at runtime a worker only reaches the
+/// spawn chokepoint via the documented collapsed `delegate_to_integrations_agent`
+/// path (→ `integrations_agent`, itself a worker), which the loader intentionally
+/// leaves untouched.
+pub fn validate_tier_transition(parent: AgentTier, child: AgentTier) -> Result<(), String> {
+    match (parent, child) {
+        (AgentTier::Worker, _) => Err(format!(
+            "a `worker` tier agent must not spawn `{}` — workers are leaf executors",
+            child.as_str()
+        )),
+        (AgentTier::Chat, AgentTier::Chat) => Err(
+            "the chat tier is a leaf in its own dimension — hand off to a `reasoning` or \
+             `worker` agent instead"
+                .to_string(),
+        ),
+        (AgentTier::Reasoning, AgentTier::Reasoning) => {
+            Err("reasoning agents compose downward into workers, not into each other".to_string())
+        }
+        _ => Ok(()),
     }
 }
 
@@ -389,13 +473,24 @@ impl AgentDefinition {
     ///
     /// * `Strict` → `self.max_iterations` unchanged.
     /// * `Extended` → the higher of `self.max_iterations` and the
-    ///   harness-wide [`EXTENDED_MAX_TOOL_ITERATIONS`](super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS).
+    ///   harness-wide [`EXTENDED_MAX_TOOL_ITERATIONS`].
     pub fn effective_max_iterations(&self) -> usize {
         match self.iteration_policy {
             IterationPolicy::Strict => self.max_iterations,
-            IterationPolicy::Extended => self
-                .max_iterations
-                .max(super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS),
+            IterationPolicy::Extended => self.max_iterations.max(EXTENDED_MAX_TOOL_ITERATIONS),
+        }
+    }
+
+    /// Resolve the authored TokenJuice profile to the concrete per-call policy.
+    pub fn effective_tokenjuice_compression(&self) -> AgentTokenjuiceCompression {
+        match self.tokenjuice_compression {
+            AgentTokenjuiceCompression::Auto => match &self.model {
+                ModelSpec::Hint(hint) if hint.trim().eq_ignore_ascii_case("coding") => {
+                    AgentTokenjuiceCompression::Light
+                }
+                _ => AgentTokenjuiceCompression::Full,
+            },
+            other => other,
         }
     }
 }

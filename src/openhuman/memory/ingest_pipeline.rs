@@ -279,7 +279,7 @@ async fn persist(
 
     let all_results: Vec<(ScoreResult, i64)> = chunks
         .iter()
-        .zip(scores.into_iter())
+        .zip(scores)
         .map(|(chunk, result)| (result, chunk.metadata.timestamp.timestamp_millis()))
         .collect();
     let dropped = all_results.iter().filter(|(r, _)| !r.kept).count();

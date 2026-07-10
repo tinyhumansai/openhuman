@@ -214,8 +214,8 @@ pub(crate) fn handle_voice_update_provider_settings(
                     "endpoint": p.endpoint,
                     "auth_style": p.auth_style.as_str(),
                     "capability": p.capability.as_str(),
-                    "stt_api_style": serde_json::to_value(&p.stt_api_style).unwrap_or_default(),
-                    "tts_api_style": serde_json::to_value(&p.tts_api_style).unwrap_or_default(),
+                    "stt_api_style": serde_json::to_value(p.stt_api_style).unwrap_or_default(),
+                    "tts_api_style": serde_json::to_value(p.tts_api_style).unwrap_or_default(),
                     "default_stt_model": p.default_stt_model,
                     "default_tts_voice": p.default_tts_voice,
                 })
@@ -313,7 +313,9 @@ pub(crate) fn handle_voice_test_provider(params: Map<String, Value>) -> Controll
                     crate::openhuman::voice::create_stt_provider(&p.provider, "", &config)
                         .map_err(|e| e.to_string())?;
 
-                // 0.1s of silence as WAV (8kHz mono 16-bit PCM).
+                // 0.1s of silence as WAV (16kHz mono 16-bit PCM) so the local
+                // Whisper provider can transcribe it in-process without an
+                // external binary (issue #3425).
                 let silent_wav = generate_silent_wav();
                 let audio_b64 = {
                     use base64::Engine;

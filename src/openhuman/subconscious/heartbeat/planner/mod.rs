@@ -44,7 +44,8 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
 
     if !(config.heartbeat.notify_meetings
         || config.heartbeat.notify_reminders
-        || config.heartbeat.notify_relevant_events)
+        || config.heartbeat.notify_relevant_events
+        || config.meet.watch_calendar)
     {
         tracing::debug!("[heartbeat:planner] all categories disabled; skipping tick");
         return summary;
@@ -56,7 +57,10 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
         events.extend(collect_cron_reminders(config, now));
     }
 
-    if config.heartbeat.notify_meetings {
+    // Calendar collection drives BOTH meeting reminder cards (notify_meetings)
+    // and calendar auto-join / ask prompts (meet.watch_calendar). Poll when
+    // either is on; the per-event handling below decides what to surface.
+    if config.heartbeat.notify_meetings || config.meet.watch_calendar {
         events.extend(collect_calendar_meetings(config, now).await);
     }
 
@@ -145,6 +149,63 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
             continue;
         }
 
+        if event.category == types::HeartbeatCategory::Meetings && plan.allow_external {
+            if let Some(meeting_url) = event.meeting_url.clone() {
+                tracing::info!(
+                    source = %event.source,
+                    source_event_id = %event.source_event_id,
+                    stage = plan.stage,
+                    "[heartbeat:planner] forwarding imminent meeting to auto-join policy"
+                );
+                let owns_notification =
+                    crate::openhuman::agent_meetings::calendar::handle_calendar_meeting_candidate(
+                        meeting_url,
+                        event.title.clone(),
+                        // Heartbeat-polled events carry only a title + URL; the
+                        // candidate handler resolves the reply anchor from the
+                        // signed-in account identity.
+                        None,
+                        // Pass the stable source event id so the per-event policy
+                        // tier can apply overrides set via meet_set_event_policy.
+                        Some(event.source_event_id.clone()),
+                    )
+                    .await;
+                if owns_notification {
+                    // The auto-join handler published its own actionable card
+                    // (AskEachTime prompt). Skip the generic plain card so the
+                    // user doesn't see two notifications for the same meeting.
+                    tracing::debug!(
+                        source = %event.source,
+                        source_event_id = %event.source_event_id,
+                        "[heartbeat:planner] auto-join handler owns notification; skipping plain card"
+                    );
+                    summary.deliveries_sent += 1;
+                    continue;
+                }
+            } else {
+                tracing::debug!(
+                    source = %event.source,
+                    source_event_id = %event.source_event_id,
+                    stage = plan.stage,
+                    "[heartbeat:planner] imminent meeting has no join URL; auto-join skipped"
+                );
+            }
+        }
+
+        // Watch-calendar-only mode: the calendar was polled solely to drive
+        // auto-join / ask (handled above). The user has NOT enabled meeting
+        // reminders, so don't emit the plain reminder card for meetings.
+        if event.category == types::HeartbeatCategory::Meetings && !config.heartbeat.notify_meetings
+        {
+            tracing::debug!(
+                source = %event.source,
+                source_event_id = %event.source_event_id,
+                "[heartbeat:planner] watch_calendar-only; suppressing plain meeting reminder card"
+            );
+            summary.deliveries_sent += 1;
+            continue;
+        }
+
         publish_core_notification(CoreNotificationEvent {
             id,
             category: event.category.notification_category(),
@@ -206,7 +267,8 @@ mod tests {
                     "id": "evt-1",
                     "summary": "Team sync",
                     "start": { "dateTime": "2026-05-08T10:20:00Z" },
-                    "htmlLink": "https://calendar.google.com/event?evt=1"
+                    "htmlLink": "https://calendar.google.com/event?evt=1",
+                    "hangoutLink": "https://meet.google.com/abc-defg-hij"
                 }
             ]
         });
@@ -226,6 +288,10 @@ mod tests {
         assert_eq!(
             events[0].deep_link.as_deref(),
             Some("https://calendar.google.com/event?evt=1")
+        );
+        assert_eq!(
+            events[0].meeting_url.as_deref(),
+            Some("https://meet.google.com/abc-defg-hij")
         );
     }
 
@@ -306,6 +372,7 @@ mod tests {
             title: "Pay rent".to_string(),
             body: String::new(),
             deep_link: None,
+            meeting_url: None,
             anchor_at: now,
         };
 
@@ -332,6 +399,7 @@ mod tests {
             title: "Planning".to_string(),
             body: String::new(),
             deep_link: None,
+            meeting_url: None,
             anchor_at: now + Duration::minutes(45),
         };
 
@@ -474,6 +542,71 @@ mod tests {
         assert_ne!(
             key_a, key_d,
             "different categories must produce different overlap keys"
+        );
+    }
+
+    /// An imminent calendar meeting with a join URL must be extracted with its
+    /// `meeting_url` populated and planned with `allow_external = true`, so the
+    /// planner forwards it to the auto-join policy (`handle_calendar_meeting_candidate`).
+    ///
+    /// Note: the end-to-end suppression path (handler "owns" the notification →
+    /// plain card skipped) is intentionally NOT asserted via `evaluate_and_dispatch`
+    /// here. That path depends on `collect_calendar_meetings` reaching a live
+    /// Composio connection and on `load_config_with_timeout` (which reads the
+    /// process-global `OPENHUMAN_WORKSPACE`, not this test's `TempDir`) — neither
+    /// is deterministic in a unit test. The policy-ownership decision itself is
+    /// covered by `auto_join_policy_owns_notification` tests in `agent_meetings::calendar`.
+    #[test]
+    fn imminent_meeting_with_url_is_extracted_and_marked_allow_external() {
+        let tmp = TempDir::new().unwrap();
+        let mut config = test_config(&tmp);
+        config.heartbeat.notify_meetings = true;
+        config.heartbeat.notify_reminders = false;
+        config.heartbeat.notify_relevant_events = false;
+        // meeting_lookahead_minutes=120 → allow_external=false for heads_up stage.
+        // We need allow_external=true (final_call / due window).
+        config.heartbeat.meeting_lookahead_minutes = 15;
+
+        let now = Utc::now();
+        // Anchor the meeting to start in ~5 min → within the 15-min lookahead
+        // AND within the 7-min final_call window → allow_external=true.
+        let anchor = now + Duration::minutes(5);
+
+        // Build a minimal Google Calendar payload that contains a hangoutLink so
+        // `meeting_url` is populated.
+        let payload = serde_json::json!({
+            "items": [{
+                "id": "suppress-test-evt",
+                "summary": "Suppression Test Meeting",
+                "start": { "dateTime": anchor.to_rfc3339() },
+                "end":   { "dateTime": (anchor + Duration::minutes(30)).to_rfc3339() },
+                "hangoutLink": "https://meet.google.com/sup-pres-sion"
+            }]
+        });
+
+        // The collector picks up the meeting and populates meeting_url.
+        let events = collectors::extract_calendar_events(
+            &payload,
+            "googlecalendar",
+            "conn-suppress",
+            now,
+            now + Duration::minutes(60),
+        );
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].meeting_url.as_deref(),
+            Some("https://meet.google.com/sup-pres-sion"),
+            "meeting_url must be populated from hangoutLink"
+        );
+        assert_eq!(events[0].category, types::HeartbeatCategory::Meetings);
+
+        // The plan marks it allow_external so the planner forwards it to the
+        // auto-join policy instead of only emitting a plain heads-up card.
+        let plan =
+            plan::plan_delivery_for_event(&events[0], &config, now).expect("must produce a plan");
+        assert!(
+            plan.allow_external,
+            "imminent meeting must be allow_external so the auto-join path fires"
         );
     }
 }

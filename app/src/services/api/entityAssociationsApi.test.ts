@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { computeEntityAssociations } from '../../lib/memory/entityAssociations';
 import type { GraphRelation } from '../../utils/tauriCommands/memory';
-import { entityAssociationsApi, loadAssociations, loadNamespaces } from './entityAssociationsApi';
+import { loadAssociations, loadNamespaces } from './entityAssociationsApi';
 
 const mockGraphQuery = vi.fn();
 const mockListNamespaces = vi.fn();
@@ -61,12 +61,5 @@ describe('entityAssociationsApi.loadNamespaces', () => {
   it('returns the namespace list from the RPC', async () => {
     mockListNamespaces.mockResolvedValueOnce(['work', 'personal']);
     expect(await loadNamespaces()).toEqual(['work', 'personal']);
-  });
-});
-
-describe('entityAssociationsApi object', () => {
-  it('exposes the public surface', () => {
-    expect(typeof entityAssociationsApi.loadAssociations).toBe('function');
-    expect(typeof entityAssociationsApi.loadNamespaces).toBe('function');
   });
 });

@@ -65,7 +65,7 @@ function WaveformBars() {
       {[0, 1, 2, 3, 4].map(i => (
         <span
           key={i}
-          className="w-[3px] rounded-full bg-white/90"
+          className="w-[3px] rounded-full bg-surface/90"
           style={{
             height: `${10 + (i % 3) * 4}px`,
             animation: `notch-bar 0.9s ease-in-out infinite`,
@@ -85,7 +85,7 @@ function SpinnerDots() {
       {[0, 1, 2].map(i => (
         <span
           key={i}
-          className="h-[5px] w-[5px] rounded-full bg-white/80"
+          className="h-[5px] w-[5px] rounded-full bg-surface/80"
           style={{
             animation: `notch-dot 1.2s ease-in-out infinite`,
             animationDelay: `${i * 0.2}s`,

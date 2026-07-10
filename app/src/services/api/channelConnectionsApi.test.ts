@@ -38,3 +38,33 @@ describe('channelConnectionsApi.disconnectChannel', () => {
     });
   });
 });
+
+describe('channelConnectionsApi default channel (issue #3712)', () => {
+  beforeEach(() => {
+    mockCallCoreRpc.mockReset();
+  });
+
+  it('updatePreferences persists the default via channels_set_default', async () => {
+    mockCallCoreRpc.mockResolvedValue({ active_channel: 'discord', restart_required: false });
+    await channelConnectionsApi.updatePreferences('discord');
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.channels_set_default',
+      params: { channel: 'discord' },
+    });
+  });
+
+  it('getDefaultChannel returns the core active_channel', async () => {
+    mockCallCoreRpc.mockResolvedValue({ active_channel: 'telegram' });
+    const result = await channelConnectionsApi.getDefaultChannel();
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.channels_get_default',
+      params: {},
+    });
+    expect(result).toBe('telegram');
+  });
+
+  it('getDefaultChannel returns null when active_channel is absent', async () => {
+    mockCallCoreRpc.mockResolvedValue({});
+    expect(await channelConnectionsApi.getDefaultChannel()).toBeNull();
+  });
+});

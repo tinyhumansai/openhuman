@@ -47,7 +47,7 @@ struct HandshakeAuth {
 /// A missing `Origin` header is treated as a native (non-browser) client
 /// and accepted — only the cross-origin browser-page case is the targeted
 /// bad actor here.
-fn origin_is_allowed(origin: Option<&str>) -> bool {
+pub(crate) fn origin_is_allowed(origin: Option<&str>) -> bool {
     let Some(origin) = origin else {
         return true; // native clients (CLI, Tauri shell) — no Origin header
     };
@@ -185,6 +185,12 @@ pub struct WebChannelEvent {
     /// `tool_result` events.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Structured, user-facing classification of a failed tool call (class,
+    /// category, plain-language cause + next action). Present on `tool_result`
+    /// events when the tool failed; the chat "View processing" timeline renders
+    /// the "why / what to do next" pair. `None` on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<serde_json::Value>,
     /// Optional citations attached to `chat_done` payloads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub citations: Option<serde_json::Value>,
@@ -199,6 +205,55 @@ pub struct WebChannelEvent {
     /// Per-thread task board snapshot carried by `task_board_updated`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_board: Option<serde_json::Value>,
+    /// Server-computed human label for a tool call (on `tool_call` /
+    /// `subagent_tool_call`), e.g. "Reading messages". The frontend renders
+    /// this verbatim for dynamic Composio/MCP/integration tools it can't
+    /// label itself, falling back to its own formatter when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_display_label: Option<String>,
+    /// Server-computed contextual detail for a tool call (on `tool_call` /
+    /// `subagent_tool_call`), e.g. "steven@gmail.com" — the bracketed target
+    /// shown after [`Self::tool_display_label`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_display_detail: Option<String>,
+    /// Holistic token/cost/context usage for a completed turn (parent +
+    /// sub-agents), carried on `chat_done`. Lets the UI footer show session
+    /// tokens, USD cost, and real context-window utilisation, with a
+    /// per-sub-agent hover breakdown. `None` for every non-`chat_done` event and
+    /// for synthetic done events that never ran a real turn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TurnUsagePayload>,
+}
+
+/// Token/cost/context totals for one completed turn, attached to `chat_done`.
+///
+/// Every numeric is a turn total (parent agent **plus** any sub-agents spawned
+/// during the turn); the `subagents` list breaks the same spend down per child
+/// for the UI hover. `context_window` is `0` when the core couldn't resolve the
+/// model's window (e.g. an unknown cloud model) — the UI falls back to a
+/// default in that case.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct TurnUsagePayload {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub cost_usd: f64,
+    pub context_window: u64,
+    /// Per-sub-agent spend, omitted from the wire when no sub-agents ran.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subagents: Vec<SubagentUsagePayload>,
+}
+
+/// One sub-agent's token/cost contribution within a turn (hover breakdown).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SubagentUsagePayload {
+    pub task_id: String,
+    pub agent_id: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_usd: f64,
 }
 
 /// Per-event subagent progress detail attached to `WebChannelEvent`.
@@ -261,6 +316,22 @@ pub struct SubagentProgressDetail {
     /// consistent agent labels across timeline, sub-mascots, and drawer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// Absolute path to the worker's isolated `git worktree` checkout
+    /// (on `subagent_completed`, when the worker ran with
+    /// `isolation = "worktree"`). Drives the inline worktree row's
+    /// open/diff/remove actions. `None` for non-isolated workers (#3376).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
+    /// Files (relative to the worktree root) the worker changed, snapshot
+    /// after the run (on `subagent_completed`). Absent for non-isolated
+    /// workers and clean worktrees.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changed_files: Option<Vec<String>>,
+    /// Whether the worker's worktree had uncommitted changes after the run
+    /// (on `subagent_completed`). A dirty worktree must not be auto-removed —
+    /// the UI requires an explicit user decision. `None` for non-isolated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dirty_status: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -557,6 +628,9 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_mcp_setup = io.clone();
     let io_memory_sync = io.clone();
     let io_agent_meetings = io.clone();
+    let io_tinyplace = io.clone();
+    let io_channel_status = io.clone();
+    let io_orchestration = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -642,6 +716,30 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             }
         }
         log::debug!("[socketio] core_notification bridge stopped");
+    });
+
+    // 5b. Orchestration chat activity → broadcast to all clients so the
+    //     TinyPlaceOrchestrationTab targeted-refetches the affected chat live
+    //     (stage 7). Mirrors the overlay/notification fire-and-forget pattern.
+    tokio::spawn(async move {
+        let mut rx = crate::openhuman::orchestration::subscribe_orchestration_socket();
+        loop {
+            let payload = match rx.recv().await {
+                Ok(payload) => payload,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} orchestration events due to lag",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            log::debug!("[socketio] broadcast orchestration:message");
+            let _ = io_orchestration.emit("orchestration:message", &payload);
+            let _ = io_orchestration.emit("orchestration_message", &payload);
+        }
+        log::debug!("[socketio] orchestration bridge stopped");
     });
 
     // 6. SessionExpired events → broadcast to all clients so the UI can
@@ -926,6 +1024,83 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     });
                     let _ = io_memory_sync.emit("memory:build_progress", &payload);
                 }
+                crate::core::event_bus::DomainEvent::HarnessInitProgress {
+                    step_id,
+                    state,
+                    message,
+                    percent,
+                } => {
+                    let payload = serde_json::json!({
+                        "step_id": step_id,
+                        "state": state,
+                        "message": message,
+                        "percent": percent,
+                    });
+                    let _ = io_memory_sync.emit("init:progress", &payload);
+                }
+                crate::core::event_bus::DomainEvent::HarnessInitCompleted {
+                    overall,
+                    failed_required,
+                } => {
+                    let payload = serde_json::json!({
+                        "overall": overall,
+                        "failed_required": failed_required,
+                    });
+                    let _ = io_memory_sync.emit("init:completed", &payload);
+                }
+                // Live per-step progress of an in-flight flow run (issue G2).
+                // Best-effort: the durable `flow_runs` row is the source of
+                // truth and the Workflows UI keeps a 2s poller as fallback, so
+                // a dropped event here (broadcast lag) only delays the live
+                // update, never corrupts run history.
+                crate::core::event_bus::DomainEvent::FlowRunProgress {
+                    run_id,
+                    node_id,
+                    status,
+                } => {
+                    let payload = serde_json::json!({
+                        "run_id": run_id,
+                        "node_id": node_id,
+                        "status": status,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast flow_run_progress run_id={} node_id={} status={}",
+                        run_id,
+                        node_id,
+                        status
+                    );
+                    let _ = io_memory_sync.emit("flow:run_progress", &payload);
+                    let _ = io_memory_sync.emit("flow_run_progress", &payload);
+                }
+                // A Workflow-origin tool call parked in the `ApprovalGate`
+                // (flow-approval-surface, PR2/PR3). Broadcast — not
+                // room-scoped like `ApprovalRequested`'s `approval_request`
+                // bridge — because a flow run has no chat thread/client to
+                // target; the Workflows UI listens process-wide and filters
+                // by `flow_id`/`run_id` client-side.
+                crate::core::event_bus::DomainEvent::FlowApprovalRequested {
+                    request_id,
+                    flow_id,
+                    run_id,
+                    tool_name,
+                    summary,
+                } => {
+                    let payload = serde_json::json!({
+                        "request_id": request_id,
+                        "flow_id": flow_id,
+                        "run_id": run_id,
+                        "tool_name": tool_name,
+                        "summary": summary,
+                    });
+                    log::info!(
+                        "[socketio] broadcast flow_approval_request request_id={} flow_id={} run_id={} tool={}",
+                        request_id,
+                        flow_id,
+                        run_id,
+                        tool_name
+                    );
+                    let _ = io_memory_sync.emit("flow_approval_request", &payload);
+                }
                 _ => {}
             }
         }
@@ -1038,6 +1213,25 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     );
                     let _ = io_agent_meetings.emit("agent_meetings:transcript", &payload);
                 }
+                crate::core::event_bus::DomainEvent::BackendMeetTranscriptDelta {
+                    turn,
+                    index,
+                    is_partial,
+                    correlation_id,
+                } => {
+                    let payload = serde_json::json!({
+                        "turn": turn,
+                        "index": index,
+                        "is_partial": is_partial,
+                        "correlation_id": correlation_id,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast agent_meetings:transcript_delta index={} is_partial={}",
+                        index,
+                        is_partial
+                    );
+                    let _ = io_agent_meetings.emit("agent_meetings:transcript_delta", &payload);
+                }
                 crate::core::event_bus::DomainEvent::BackendMeetError {
                     error,
                     correlation_id,
@@ -1052,6 +1246,178 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
         }
         log::debug!("[socketio] agent_meetings bridge stopped");
     });
+
+    // 10. Tinyplace stream events → broadcast to all connected frontend sockets.
+    tokio::spawn(async move {
+        let bus = {
+            const RETRY_INTERVAL_MS: u64 = 250;
+            const MAX_WAIT_SECS: u64 = 30;
+            let max_attempts = (MAX_WAIT_SECS * 1000) / RETRY_INTERVAL_MS;
+            let mut attempts: u64 = 0;
+            loop {
+                if let Some(bus) = crate::core::event_bus::global() {
+                    break bus;
+                }
+                attempts += 1;
+                if attempts > max_attempts {
+                    log::warn!(
+                        "[socketio] event_bus not initialised after {}s — tinyplace bridge giving up",
+                        MAX_WAIT_SECS
+                    );
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
+            }
+        };
+        let mut rx = bus.raw_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} event_bus events due to lag (tinyplace bridge)",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            match event {
+                crate::core::event_bus::DomainEvent::TinyPlaceStreamMessage {
+                    stream_id,
+                    kind,
+                    message,
+                } => {
+                    let payload = json!({
+                        "stream_id": stream_id,
+                        "kind": kind,
+                        "message": message,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast tinyplace:stream_message stream_id={} kind={}",
+                        stream_id,
+                        kind
+                    );
+                    let _ = io_tinyplace.emit("tinyplace:stream_message", &payload);
+                }
+                crate::core::event_bus::DomainEvent::TinyPlaceStreamStatusChanged {
+                    stream_id,
+                    status,
+                } => {
+                    let payload = json!({
+                        "stream_id": stream_id,
+                        "status": status,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast tinyplace:stream_status stream_id={} status={}",
+                        stream_id,
+                        status
+                    );
+                    let _ = io_tinyplace.emit("tinyplace:stream_status", &payload);
+                }
+                _ => {}
+            }
+        }
+        log::debug!("[socketio] tinyplace stream bridge stopped");
+    });
+
+    // 11. Channel listener health → broadcast `channel:connection-updated` to
+    //     all clients so the Messaging tab reflects the *live* connection state
+    //     instead of a stale, credential-presence-only "Connected" (issue
+    //     #3712). The supervised listener publishes `ChannelConnected` when it
+    //     (re)enters its recv loop and `ChannelDisconnected { reason }` when it
+    //     errors/exits. Only listener-backed channels (telegram/discord
+    //     `bot_token`) fire these, so we map them to the `bot_token` auth mode —
+    //     the frontend `normalizeChannelConnectionUpdatePayload` drops any
+    //     channel/mode it doesn't recognise.
+    tokio::spawn(async move {
+        let bus = {
+            const RETRY_INTERVAL_MS: u64 = 250;
+            const MAX_WAIT_SECS: u64 = 30;
+            let max_attempts = (MAX_WAIT_SECS * 1000) / RETRY_INTERVAL_MS;
+            let mut attempts: u64 = 0;
+            loop {
+                if let Some(bus) = crate::core::event_bus::global() {
+                    break bus;
+                }
+                attempts += 1;
+                if attempts > max_attempts {
+                    log::warn!(
+                        "[socketio] event_bus not initialised after {}s — channel_status bridge giving up",
+                        MAX_WAIT_SECS
+                    );
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
+            }
+        };
+        let mut rx = bus.raw_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} event_bus events due to lag (channel_status bridge)",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            let payload = match event {
+                crate::core::event_bus::DomainEvent::ChannelConnected { channel } => {
+                    log::debug!(
+                        "[socketio] broadcast channel:connection-updated {channel} -> connected"
+                    );
+                    Some(channel_connection_update_payload(
+                        &channel,
+                        "connected",
+                        None,
+                    ))
+                }
+                crate::core::event_bus::DomainEvent::ChannelDisconnected { channel, reason } => {
+                    log::debug!(
+                        "[socketio] broadcast channel:connection-updated {channel} -> error reason_len={}",
+                        reason.len()
+                    );
+                    Some(channel_connection_update_payload(
+                        &channel,
+                        "error",
+                        Some(&reason),
+                    ))
+                }
+                _ => None,
+            };
+            if let Some(payload) = payload {
+                // Emit both colon and underscore variants for FE compatibility.
+                let _ = io_channel_status.emit("channel:connection-updated", &payload);
+                let _ = io_channel_status.emit("channel_connection_updated", &payload);
+            }
+        }
+        log::debug!("[socketio] channel_status bridge stopped");
+    });
+}
+
+/// Build the `channel:connection-updated` payload broadcast when a supervised
+/// channel listener changes state (issue #3712). Listener-backed channels are
+/// always the `bot_token` auth mode (the only mode that materialises a runtime
+/// listener for telegram/discord); `last_error` carries the disconnect reason.
+/// Matches the shape consumed by the frontend
+/// `normalizeChannelConnectionUpdatePayload`.
+pub(crate) fn channel_connection_update_payload(
+    channel: &str,
+    status: &str,
+    last_error: Option<&str>,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "channel": channel,
+        "auth_mode": "bot_token",
+        "status": status,
+    });
+    if let Some(reason) = last_error {
+        payload["last_error"] = serde_json::Value::String(reason.to_string());
+    }
+    payload
 }
 
 /// Join `socket` to `room`, logging the result.
@@ -1161,7 +1527,30 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
 
 #[cfg(test)]
 mod tests {
-    use super::{event_alias, origin_is_allowed};
+    use super::{channel_connection_update_payload, event_alias, origin_is_allowed};
+
+    #[test]
+    fn channel_connection_update_payload_connected_omits_error() {
+        let payload = channel_connection_update_payload("discord", "connected", None);
+        assert_eq!(payload["channel"], "discord");
+        // Listener-backed channels always map to the bot_token auth mode.
+        assert_eq!(payload["auth_mode"], "bot_token");
+        assert_eq!(payload["status"], "connected");
+        assert!(
+            payload.get("last_error").is_none(),
+            "connected payload must not carry a last_error: {payload}"
+        );
+    }
+
+    #[test]
+    fn channel_connection_update_payload_error_carries_reason() {
+        let payload =
+            channel_connection_update_payload("discord", "error", Some("gateway closed (4004)"));
+        assert_eq!(payload["channel"], "discord");
+        assert_eq!(payload["auth_mode"], "bot_token");
+        assert_eq!(payload["status"], "error");
+        assert_eq!(payload["last_error"], "gateway closed (4004)");
+    }
 
     #[test]
     fn event_alias_translates_between_delimiters() {

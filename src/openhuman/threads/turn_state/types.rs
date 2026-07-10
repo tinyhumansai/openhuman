@@ -23,6 +23,11 @@ pub enum TurnLifecycle {
     Started,
     Streaming,
     Interrupted,
+    /// The turn finished normally. The snapshot is **kept** (not deleted) so
+    /// the chat "View processing" panel can replay the full transcript +
+    /// tool timeline after a reload / cold boot — startup interrupted-marking
+    /// skips this state, and the next turn on the thread overwrites it.
+    Completed,
 }
 
 /// High-level phase the agent is in within an iteration.
@@ -41,6 +46,50 @@ pub enum ToolTimelineStatus {
     Running,
     Success,
     Error,
+}
+
+/// Persisted, plain-language explanation of a FAILED tool row (#4459).
+///
+/// Mirrors the live socket `failure` object and the frontend
+/// `PersistedToolFailure` (`app/src/types/turnState.ts`) 1:1 — camelCase on the
+/// wire, `class`/`category` as the taxonomy's stable variant names — so a
+/// settled/reloaded turn keeps its "why + what to do next" copy across a thread
+/// switch or a cold boot. Absent on successful rows and on snapshots written
+/// before this field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedToolFailure {
+    /// Stable failure-class variant name, e.g. `"Timeout"`, `"Denied"`.
+    pub class: String,
+    /// Stable category variant name, e.g. `"Recoverable"`, `"UserDeclined"`.
+    pub category: String,
+    /// Whether the core considers the failure automatically recoverable.
+    pub recoverable: bool,
+    /// Plain-language cause (`causePlain` on the wire).
+    pub cause_plain: String,
+    /// Plain-language next action (`nextAction` on the wire).
+    pub next_action: String,
+}
+
+impl From<&crate::openhuman::tool_status::ClassifiedFailure> for PersistedToolFailure {
+    fn from(f: &crate::openhuman::tool_status::ClassifiedFailure) -> Self {
+        // Serialize the enums to their wire variant name so the persisted
+        // `class`/`category` strings match exactly what the live socket emits
+        // (`ClassifiedFailure` serializes each as its bare variant name).
+        fn variant_name<T: Serialize>(v: &T) -> String {
+            serde_json::to_value(v)
+                .ok()
+                .and_then(|j| j.as_str().map(str::to_string))
+                .unwrap_or_default()
+        }
+        Self {
+            class: variant_name(&f.class),
+            category: variant_name(&f.category),
+            recoverable: f.recoverable,
+            cause_plain: f.cause_plain.clone(),
+            next_action: f.next_action.clone(),
+        }
+    }
 }
 
 /// One row in the per-turn tool timeline.
@@ -65,6 +114,17 @@ pub struct ToolTimelineEntry {
     pub source_tool_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<SubagentActivity>,
+    /// Plain-language failure explanation for a FAILED row, carried in the
+    /// snapshot so it survives a thread switch / cold boot (#4459). `None` on
+    /// success and on legacy snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<PersistedToolFailure>,
+    /// Size-capped tool result text, persisted so the "View processing"
+    /// panel can show what a tool returned after a thread switch / cold
+    /// boot — the live socket forwards the same capped payload on
+    /// `tool_result`. `None` while running and on legacy snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
 }
 
 /// Live sub-agent activity nested under a `subagent:*` timeline row.
@@ -98,6 +158,12 @@ pub struct SubagentActivity {
     pub worker_thread_id: Option<String>,
     #[serde(default)]
     pub tool_calls: Vec<SubagentToolCall>,
+    /// Ordered reasoning/narration/tool transcript for this sub-agent — what
+    /// the inline "Agentic task insights" thoughts render from. Persisted (not
+    /// live-only) so the thoughts survive a settled turn / reload.
+    /// `#[serde(default)]` so snapshots written before this field load empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transcript: Vec<SubagentTranscriptItem>,
 }
 
 /// One child tool call performed by a running sub-agent.
@@ -113,14 +179,115 @@ pub struct SubagentToolCall {
     pub elapsed_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_chars: Option<usize>,
+    /// Server-computed human label for this child call (e.g. "Reading file"),
+    /// or `None` to defer to the client formatter. Mirrors the parent
+    /// [`ToolTimelineEntry::display_name`] so the same reusable row renderer
+    /// reads the same field for both main-agent and sub-agent calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Server-computed contextual detail (e.g. the path / recipient).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Plain-language failure explanation for a FAILED child call, so a
+    /// sub-agent's failed row carries the same "why + next" copy as a
+    /// main-agent row and it survives a snapshot round-trip (#4459). `None` on
+    /// success and on legacy snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<PersistedToolFailure>,
+    /// Size-capped child tool result text, persisted for the same reason as
+    /// [`ToolTimelineEntry::output`]. `None` while running and on legacy
+    /// snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
 }
 
-/// Persisted snapshot of an in-flight agent turn for one thread.
+/// One ordered item in a sub-agent's processing transcript — its streamed
+/// reasoning (`thinking`), visible narration (`text`), or a tool call, in the
+/// exact order they occurred. Mirrors the frontend `SubagentTranscriptItem`
+/// union 1:1 (order = push order; no `seq` is needed because each sub-agent's
+/// transcript is built as a single ordered list). Persisting these lets the
+/// inline "Agentic task insights" thoughts survive a settled turn / reload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+// `rename_all` renames the variant tags; `rename_all_fields` renames the
+// fields *inside* the struct variants (call_id → callId, …) — without the
+// latter the FE would read `undefined` for camelCase fields.
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
+pub enum SubagentTranscriptItem {
+    /// The sub-agent's hidden reasoning.
+    Thinking {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        iteration: Option<u32>,
+        text: String,
+    },
+    /// The sub-agent's visible narration.
+    Text {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        iteration: Option<u32>,
+        text: String,
+    },
+    /// A child tool call at the point it occurred (self-contained so a
+    /// rehydrated row renders without cross-referencing `tool_calls`).
+    Tool {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        iteration: Option<u32>,
+        call_id: String,
+        tool_name: String,
+        status: ToolTimelineStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        elapsed_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_chars: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+}
+
+/// One ordered item in the parent turn's processing transcript.
+///
+/// Unlike [`ToolTimelineEntry`] (a flat list of tool rows), the transcript
+/// preserves the **interleaving** of the agent's visible narration, its
+/// hidden reasoning, and its tool calls in the exact order they streamed —
+/// so the chat "View processing" panel can render prose between tool groups
+/// the way Claude / Hermes does. `seq` is a monotonic per-turn ordering key
+/// (round alone can't order narration vs thinking within one round). Tool
+/// items hold only a `call_id` pointer into [`TurnState::tool_timeline`] so
+/// the row's status/label live in exactly one place.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+// `rename_all_fields` is required so the `ToolCall.call_id` field serializes as
+// `callId` (the FE reads camelCase) — `rename_all` alone only renames variants.
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
+pub enum TranscriptItem {
+    /// The agent's visible assistant text between tool calls.
+    Narration { round: u32, seq: u32, text: String },
+    /// The agent's hidden reasoning (when the model emits it).
+    Thinking { round: u32, seq: u32, text: String },
+    /// A pointer to a tool row in [`TurnState::tool_timeline`].
+    ToolCall {
+        round: u32,
+        seq: u32,
+        call_id: String,
+    },
+}
+
+/// Persisted snapshot of an in-flight (or just-finished) agent turn for one
+/// thread.
 ///
 /// Written to disk by the web-channel progress consumer at iteration
-/// boundaries, tool start/complete, and on terminal events. Deleted
-/// on successful turn completion. A surviving snapshot at startup
-/// indicates an interrupted turn.
+/// boundaries, tool start/complete, and on terminal events. On normal
+/// completion it is marked [`TurnLifecycle::Completed`] and **kept** (so the
+/// "View processing" panel can replay the finished turn's transcript); a
+/// non-terminal snapshot surviving startup is marked
+/// [`TurnLifecycle::Interrupted`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnState {
@@ -141,6 +308,11 @@ pub struct TurnState {
     pub thinking: String,
     #[serde(default)]
     pub tool_timeline: Vec<ToolTimelineEntry>,
+    /// Ordered, interleaved record of the agent's narration, reasoning, and
+    /// tool calls for the "View processing" panel. `#[serde(default)]` so
+    /// snapshots written before this field still load (as empty).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transcript: Vec<TranscriptItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_board: Option<TaskBoard>,
     pub started_at: String,
@@ -163,12 +335,22 @@ pub struct GetTurnStateResponse {
     pub turn_state: Option<TurnState>,
 }
 
-/// Response payload for `openhuman.threads_turn_state_list`.
+/// Response payload for `openhuman.threads_turn_state_list` and
+/// `openhuman.threads_turn_state_history`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTurnStatesResponse {
     pub turn_states: Vec<TurnState>,
     pub count: usize,
+}
+
+/// Request payload for `openhuman.threads_turn_state_get_turn` — a specific
+/// turn of a thread, identified by its producing request id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GetTurnStateForRequestRequest {
+    pub thread_id: String,
+    pub request_id: String,
 }
 
 /// Request payload for `openhuman.threads_turn_state_clear`.
@@ -206,6 +388,7 @@ impl TurnState {
             streaming_text: String::new(),
             thinking: String::new(),
             tool_timeline: Vec::new(),
+            transcript: Vec::new(),
             task_board: None,
             started_at: now.clone(),
             updated_at: now,

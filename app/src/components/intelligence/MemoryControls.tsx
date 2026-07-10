@@ -25,6 +25,7 @@ import {
   memoryTreeResetTree,
   memoryTreeWipeAll,
 } from '../../utils/tauriCommands';
+import ChipTabs from '../layout/ChipTabs';
 import { ObsidianVaultSection } from './ObsidianVaultSection';
 
 interface MemoryControlsProps {
@@ -41,11 +42,11 @@ interface MemoryControlsProps {
 
 const BTN_BASE =
   'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2';
-const BTN_PRIMARY = `${BTN_BASE} bg-primary-500 text-white shadow-sm hover:bg-primary-600 focus:ring-primary-200`;
-const BTN_GHOST = `${BTN_BASE} border border-stone-200 bg-white text-stone-700 shadow-sm hover:bg-stone-50 focus:ring-stone-200 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800 dark:focus:ring-neutral-700`;
+const BTN_PRIMARY = `${BTN_BASE} bg-primary-500 text-content-inverted shadow-sm hover:bg-primary-600 focus:ring-primary-200`;
+const BTN_GHOST = `${BTN_BASE} border border-line bg-surface text-content-secondary shadow-sm hover:bg-surface-hover focus:ring-stone-200 dark:focus:ring-neutral-700`;
 // Destructive actions read as proper (bordered) buttons but stay muted until
 // hover, when they reveal their warning tint.
-const BTN_MUTED = `${BTN_BASE} border border-stone-200 bg-white text-stone-500 shadow-sm focus:ring-stone-200 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:focus:ring-neutral-700`;
+const BTN_MUTED = `${BTN_BASE} border border-line bg-surface text-content-muted shadow-sm focus:ring-stone-200 dark:focus:ring-neutral-700`;
 
 export function MemoryControls({
   mode,
@@ -58,6 +59,7 @@ export function MemoryControls({
   const [building, setBuilding] = useState(false);
   const [wiping, setWiping] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const busy = building || wiping || resetting;
 
   const handleWipe = useCallback(async () => {
@@ -146,6 +148,27 @@ export function MemoryControls({
     }
   }, [onToast, onRefresh]);
 
+  const handleRefresh = useCallback(async () => {
+    if (refreshing) return;
+    console.debug('[ui-flow][memory-controls] manual refresh: entry');
+    setRefreshing(true);
+    try {
+      // `onRefresh` re-pulls the graph; the parent owns the fetch and may
+      // resolve synchronously (it just bumps a version key today). Run it
+      // alongside a short minimum spin window so the click always produces
+      // perceptible feedback instead of an instant, invisible no-op.
+      await Promise.all([
+        Promise.resolve(onRefresh()),
+        new Promise(resolve => setTimeout(resolve, 600)),
+      ]);
+    } catch (err) {
+      console.error('[ui-flow][memory-controls] manual refresh failed', err);
+    } finally {
+      setRefreshing(false);
+      console.debug('[ui-flow][memory-controls] manual refresh: exit');
+    }
+  }, [onRefresh, refreshing]);
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-3" data-testid="memory-actions">
       <ModeToggle mode={mode} onChange={onModeChange} />
@@ -173,16 +196,18 @@ export function MemoryControls({
           {resetting ? t('workspace.rebuilding') : t('workspace.resetMemoryTree')}
         </button>
 
-        <span aria-hidden className="mx-1 h-5 w-px self-center bg-stone-200 dark:bg-neutral-700" />
+        <span aria-hidden className="mx-1 h-5 w-px self-center bg-surface-strong" />
 
         {/* Secondary actions — quiet ghost buttons. */}
         <button
           type="button"
-          onClick={onRefresh}
+          onClick={handleRefresh}
+          disabled={refreshing}
+          aria-busy={refreshing}
           data-testid="memory-graph-refresh"
           className={BTN_GHOST}
           title={t('common.refresh')}>
-          <RefreshIcon /> {t('common.refresh')}
+          {refreshing ? <Spinner /> : <RefreshIcon />} {t('common.refresh')}
         </button>
         {contentRootAbs ? (
           <ObsidianVaultSection contentRootAbs={contentRootAbs} onToast={onToast} />
@@ -212,36 +237,19 @@ interface ModeToggleProps {
 
 function ModeToggle({ mode, onChange }: ModeToggleProps) {
   const { t } = useT();
-  const baseBtn =
-    'px-3.5 py-1.5 text-xs font-semibold rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary-200';
-  const active = 'bg-primary-500 text-white shadow-sm';
-  const idle =
-    'text-stone-600 hover:text-stone-900 dark:text-neutral-300 dark:hover:text-neutral-100';
   return (
-    <div
-      className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-stone-50 p-1 dark:border-neutral-800 dark:bg-neutral-800/60"
-      role="tablist"
-      aria-label={t('workspace.graphViewMode')}
-      data-testid="memory-graph-mode-toggle">
-      <button
-        type="button"
-        onClick={() => onChange('tree')}
-        className={`${baseBtn} ${mode === 'tree' ? active : idle}`}
-        role="tab"
-        aria-selected={mode === 'tree'}
-        data-testid="memory-graph-mode-tree">
-        {t('workspace.trees')}
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange('contacts')}
-        className={`${baseBtn} ${mode === 'contacts' ? active : idle}`}
-        role="tab"
-        aria-selected={mode === 'contacts'}
-        data-testid="memory-graph-mode-contacts">
-        {t('workspace.contacts')}
-      </button>
-    </div>
+    <ChipTabs<GraphMode>
+      items={[
+        { id: 'tree', label: t('workspace.trees'), testId: 'memory-graph-mode-tree' },
+        { id: 'contacts', label: t('workspace.contacts'), testId: 'memory-graph-mode-contacts' },
+      ]}
+      value={mode}
+      onChange={onChange}
+      as="tab"
+      ariaLabel={t('workspace.graphViewMode')}
+      testId="memory-graph-mode-toggle"
+      className="inline-flex items-center gap-1.5"
+    />
   );
 }
 

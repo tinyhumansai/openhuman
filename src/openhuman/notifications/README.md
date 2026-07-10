@@ -21,7 +21,7 @@ The notifications domain owns two complementary sub-systems. The **core-bridge**
 | `src/openhuman/notifications/bus.rs` | `NotificationBridgeSubscriber` (`EventHandler`), the `NOTIFICATION_BUS` broadcast static, `publish_core_notification`/`subscribe_core_notifications`, the pure `event_to_notification` translator, and `register_notification_bridge_subscriber`. |
 | `src/openhuman/notifications/rpc.rs` | Async RPC handler fns (`handle_ingest`, `handle_list`, `handle_mark_read`, `handle_dismiss`, `handle_mark_acted`, `handle_settings_get`/`_set`, `handle_stats`) + `triage_action_to_score` heuristic. |
 | `src/openhuman/notifications/schemas.rs` | Controller schema defs, the `NOTIFICATION_CONTROLLER_DEFS` table, `all_controller_schemas`/`all_registered_controllers`, and handler wrappers delegating to `rpc.rs`. |
-| `src/openhuman/notifications/store.rs` | SQLite persistence (`integration_notifications` + `notification_settings` tables) via a per-call `with_connection` helper; insert/list/dedup/triage-update/status/settings/stats queries. |
+| `src/openhuman/notifications/store.rs` | SQLite persistence (`integration_notifications` + `notification_settings` + `core_notifications` tables) via a per-call `with_connection` helper; insert/list/dedup/triage-update/status/settings/stats queries plus core-notification persistence (#3805). |
 | `src/openhuman/notifications/bus_tests.rs` | Sibling test suite for the bridge. |
 | `src/openhuman/notifications/store_tests.rs` | Sibling test suite for the store. |
 
@@ -35,7 +35,7 @@ Re-exported from `mod.rs`:
 
 ## RPC / controllers
 
-Namespace `notification` (8 controllers, registered via `all_notifications_registered_controllers`):
+Namespace `notification` (10 controllers, registered via `all_notifications_registered_controllers`):
 
 | Function | Inputs | Output |
 | --- | --- | --- |
@@ -47,8 +47,20 @@ Namespace `notification` (8 controllers, registered via `all_notifications_regis
 | `settings_get` | `provider` | `{ settings }` (defaulted if absent) |
 | `settings_set` | `provider`, `enabled`, `importance_threshold`, `route_to_orchestrator` | `{ ok, settings }` — threshold clamped to 0.0–1.0. |
 | `stats` | — | `{ total, unread, unscored, by_provider, by_action }` |
+| `core_list` | `only_unread?` (true), `limit?` (100) | `{ items, unread_count }` — persisted core notifications (#3805), newest first; sync-down for events fired while the app was closed. |
+| `core_mark_read` | `id` | `{ ok }` (true when a row matched) |
 
 Schemas + handlers are wired into the controller registry in `src/core/all.rs`.
+
+### Core-notification persistence (#3805)
+
+Core notifications are broadcast-only; if no client is connected when the
+event fires (app closed / minimised / disconnected) the broadcast reaches zero
+receivers and the notification is lost. `NotificationBridgeSubscriber` therefore
+**persists** each translated `CoreNotificationEvent` to a `core_notifications`
+table (keyed by event id, so re-publishes dedupe) *before* broadcasting, and the
+`core_list` / `core_mark_read` controllers let the frontend sync down and
+acknowledge anything missed on the next app open.
 
 ## Agent tools
 

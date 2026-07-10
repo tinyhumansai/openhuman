@@ -366,6 +366,42 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "delete_source" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "delete_source",
+            description: "Fully delete one document source by its EXACT source_id: every chunk \
+                 plus its score / entity-index / embedding / reembed-skip side rows and chunk \
+                 content files, the ingest dedup gates (bare source_id AND versioned \
+                 source_id@version), and (when the source becomes fully orphaned) its \
+                 source-scoped summary tree — summaries, summary embeddings + reembed-skip, \
+                 tree entity-index, buffers, the tree row, and summary content files. Unlike \
+                 delete_chunk this cascades, so stale summaries of the deleted source cannot \
+                 resurface in recall, and it also finishes legacy partial deletes (chunks already \
+                 gone, tree/gate left behind). Exact match only (never a prefix); shared \
+                 collection/path_scope trees that summarise multiple documents are left intact. \
+                 Idempotent — an unknown source_id returns deleted=false.",
+            inputs: vec![FieldSchema {
+                name: "source_id",
+                ty: TypeSchema::String,
+                comment: "Exact source id to remove (e.g. a Telegram note/event/meeting id).",
+                required: true,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "deleted",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the call did real work: chunks were removed OR a stale \
+                              orphaned source tree was cleaned (legacy case, chunks_removed=0).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "chunks_removed",
+                    ty: TypeSchema::U64,
+                    comment: "Number of chunk rows removed for the source.",
+                    required: true,
+                },
+            ],
+        },
         "wipe_all" => ControllerSchema {
             namespace: NAMESPACE,
             function: "wipe_all",
@@ -860,10 +896,11 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "smart_walk" => ControllerSchema {
             namespace: NAMESPACE,
             function: "smart_walk",
-            description: "Multi-strategy memory retrieval — combines vector \
-                search, keyword search, entity lookup, and tree browsing to \
-                answer natural-language queries across raw files, wiki \
-                summaries, documents, and episodic memories.",
+            description: "Deterministic E2GraphRAG memory retrieval — extracts \
+                query entities (spaCy, with regex fallback), routes between \
+                entity-graph (local) and dense-summary (global) search with no \
+                LLM, and returns ranked evidence hits for a natural-language \
+                query.",
             inputs: vec![
                 FieldSchema {
                     name: "query",
@@ -872,59 +909,42 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: true,
                 },
                 FieldSchema {
-                    name: "namespace",
-                    ty: TypeSchema::String,
-                    comment: "Memory namespace. Default: \"default\".",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "max_turns",
+                    name: "limit",
                     ty: TypeSchema::U64,
-                    comment: "Max LLM turns. Default 12, hard cap 25.",
+                    comment: "Max evidence hits to return. Default 10.",
                     required: false,
                 },
                 FieldSchema {
-                    name: "model",
-                    ty: TypeSchema::String,
-                    comment: "Provider:model override (e.g. 'deepseek:deepseek-chat').",
+                    name: "time_window_days",
+                    ty: TypeSchema::U64,
+                    comment: "Restrict the global/dense branch to the last N days.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "max_hops",
+                    ty: TypeSchema::U64,
+                    comment: "Entity-graph relatedness hop threshold. Default 2.",
                     required: false,
                 },
             ],
             outputs: vec![
                 FieldSchema {
-                    name: "answer",
-                    ty: TypeSchema::String,
-                    comment: "Synthesized answer with evidence citations.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "turns_used",
-                    ty: TypeSchema::U64,
-                    comment: "Number of LLM turns consumed.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "evidence_count",
-                    ty: TypeSchema::U64,
-                    comment: "Number of evidence items collected.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "stopped_reason",
-                    ty: TypeSchema::String,
-                    comment: "Why the walk stopped (answered/max_turns/llm_gave_up/error).",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "evidence",
+                    name: "hits",
                     ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
-                    comment: "Array of {source_path, snippet, relevance} evidence items.",
+                    comment: "Ranked RetrievalHit evidence (node_id, content, \
+                        entities, score, time range, ...).",
                     required: true,
                 },
                 FieldSchema {
-                    name: "trace",
-                    ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
-                    comment: "Array of {turn, action, args_summary, result_preview} trace steps.",
+                    name: "total",
+                    ty: TypeSchema::U64,
+                    comment: "Pre-truncation match count.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "truncated",
+                    ty: TypeSchema::Bool,
+                    comment: "True when total exceeds the returned hit count.",
                     required: true,
                 },
             ],

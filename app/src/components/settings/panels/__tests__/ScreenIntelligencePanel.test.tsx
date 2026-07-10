@@ -128,13 +128,10 @@ describe('ScreenIntelligencePanel', () => {
       expect(screen.getAllByText('Screen Awareness').length).toBeGreaterThan(0);
     });
 
-    const enabledLabel = screen.getByText('Enabled').closest('label');
-    const enabledCheckbox = enabledLabel?.querySelector(
-      'input[type="checkbox"]'
-    ) as HTMLInputElement;
-    expect(enabledCheckbox.checked).toBe(false);
+    const enabledSwitch = screen.getByRole('switch', { name: 'Enabled' });
+    expect(enabledSwitch).toHaveAttribute('aria-checked', 'false');
 
-    fireEvent.click(enabledCheckbox);
+    fireEvent.click(enabledSwitch);
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
     expect(await screen.findByRole('button', { name: 'Saving…' })).toBeInTheDocument();
@@ -311,14 +308,13 @@ describe('ScreenIntelligencePanel', () => {
 
     await waitFor(() => expect(screen.getAllByText(/screen awareness/i).length).toBeGreaterThan(0));
 
-    const monitoringLabel = screen.getByText('Screen Monitoring').closest('label');
-    const checkbox = monitoringLabel?.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const monitoringSwitch = screen.getByRole('switch', { name: 'Screen Monitoring' });
 
     // Initially reflects status value (true in baseState.features)
-    expect(checkbox.checked).toBe(true);
+    expect(monitoringSwitch).toHaveAttribute('aria-checked', 'true');
 
-    fireEvent.click(checkbox);
-    expect(checkbox.checked).toBe(false);
+    fireEvent.click(monitoringSwitch);
+    expect(monitoringSwitch).toHaveAttribute('aria-checked', 'false');
   });
 
   // ─── Session status display ───────────────────────────────────────────────

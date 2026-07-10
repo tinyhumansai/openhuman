@@ -87,7 +87,7 @@ pub(super) fn migrate_legacy_embeddings_to_sidecar(
     // no-op job on every DB open — which would otherwise pollute the jobs
     // table for unrelated callers/tests. Enqueued atomically with the
     // migration; dedupe key = signature, so exactly one chain per space.
-    let has_uncovered = has_uncovered_reembed_work(&*tx, &sig)?;
+    let has_uncovered = has_uncovered_reembed_work(&tx, &sig)?;
     if has_uncovered {
         let backfill_job = crate::openhuman::memory_queue::types::NewJob::reembed_backfill(
             &crate::openhuman::memory_queue::types::ReembedBackfillPayload {

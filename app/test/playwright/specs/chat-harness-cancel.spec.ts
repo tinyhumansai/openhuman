@@ -125,11 +125,13 @@ test.describe('Chat Harness - Cancel', () => {
     await createNewThread(page);
     await sendMessage(page, PROMPT);
 
-    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible({ timeout: 10_000 });
+    // Mid-stream, the composer's Send button morphs into a Stop button (the
+    // cancel control now lives in the composer for the text composer).
+    await expect(page.getByTestId('stop-generation-button')).toBeVisible({ timeout: 10_000 });
 
-    await page.getByRole('button', { name: 'Cancel' }).click();
+    await page.getByTestId('stop-generation-button').click();
 
-    await expect(page.getByRole('button', { name: 'Cancel' })).toHaveCount(0, { timeout: 10_000 });
+    await expect(page.getByTestId('stop-generation-button')).toHaveCount(0, { timeout: 10_000 });
     for (const piece of LATE_PIECES) {
       await expect(page.getByText(piece, { exact: false })).toHaveCount(0, { timeout: 5_000 });
     }

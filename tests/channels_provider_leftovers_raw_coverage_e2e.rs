@@ -328,10 +328,12 @@ async fn web_round19_covers_classifier_variants_and_cancel_cleanup() {
     assert_eq!(budget.error_type, "budget_exhausted");
     assert_eq!(budget.source, "openhuman_billing");
 
+    // #3714: a DNS / transport drop now classifies as the dedicated `network`
+    // arm (was the generic `inference` catch-all), still retryable.
     let network = web_test_support::classify_error_for_test(
         "request error: dns error while trying to connect",
     );
-    assert_eq!(network.error_type, "inference");
+    assert_eq!(network.error_type, "network");
     assert!(network.retryable);
 
     web_test_support::set_forced_run_chat_task_error_for_test(Some(

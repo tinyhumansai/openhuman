@@ -37,7 +37,7 @@ const SettingsSearchBar = ({ value, onValueChange }: SettingsSearchBarProps) => 
 
   return (
     <div data-testid="settings-search" className="relative shrink-0">
-      <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-stone-400 dark:text-neutral-500">
+      <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-content-faint">
         <SearchIcon />
       </span>
       <input
@@ -56,7 +56,7 @@ const SettingsSearchBar = ({ value, onValueChange }: SettingsSearchBarProps) => 
         }}
         placeholder={t('settings.settingsSearch.placeholder')}
         data-testid="settings-search-input"
-        className="w-full border-0 border-b border-stone-200 bg-transparent py-2.5 pl-10 pr-10 text-sm text-stone-900 placeholder:text-stone-400 focus:border-primary-400 focus:outline-none focus:ring-0 dark:border-neutral-800 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+        className="w-full border-0 border-b border-line bg-transparent py-2.5 pl-10 pr-10 text-sm text-content placeholder:text-stone-400 focus:border-primary-400 focus:outline-none focus:ring-0 dark:placeholder:text-neutral-500"
       />
       {value && (
         <button
@@ -67,7 +67,7 @@ const SettingsSearchBar = ({ value, onValueChange }: SettingsSearchBarProps) => 
           }}
           aria-label={t('settings.settingsSearch.clear')}
           data-testid="settings-search-clear"
-          className="absolute inset-y-0 right-2 flex items-center px-1.5 text-stone-400 hover:text-stone-600 dark:text-neutral-500 dark:hover:text-neutral-300">
+          className="absolute inset-y-0 right-2 flex items-center px-1.5 text-content-faint hover:text-content-secondary">
           <ClearIcon />
         </button>
       )}

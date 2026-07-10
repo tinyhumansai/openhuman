@@ -1,15 +1,15 @@
 /**
  * WorkflowRunnerBody — vitest coverage for the saved-schedules block.
  *
- * Phase 2 of the WorkflowRunnerBody / DevWorkflowPanel unification (see
- * docs/skills-runner-unification.md): this file is seeded with the
+ * Phase 2 of the WorkflowRunnerBody / DevWorkflowPanel unification:
+ * this file is seeded with the
  * smoke-test for the enable/disable toggle so future Phase 3 chunks
  * (run-history, active-config card, smart-issue picker gating) drop
  * additional cases alongside.
  *
  * Covered here:
  *  - Mount with one saved schedule for the picked skill (mocking
- *    workflows_list, workflows_describe, cron_list, recent_runs).
+ *    skills_list, skills_describe, cron_list, recent_runs).
  *  - Toggle flips enabled → false via openhumanCronUpdate(id, { enabled }).
  *  - The list re-loads after toggle (openhumanCronList called again).
  *  - aria-checked reflects the new state once the list refreshes.
@@ -51,8 +51,8 @@ vi.mock('../../../utils/tauriCommands/cron', () => ({
   openhumanCronRuns: hoisted.cronRuns,
 }));
 
-vi.mock('../../../services/api/workflowsApi', () => ({
-  workflowsApi: {
+vi.mock('../../../services/api/skillsApi', () => ({
+  skillsApi: {
     listWorkflows: hoisted.listWorkflows,
     describeWorkflow: hoisted.describeWorkflow,
     runWorkflow: hoisted.runWorkflow,
@@ -173,7 +173,7 @@ describe('WorkflowRunnerBody — saved-schedule toggle', () => {
     const Body = await importBody();
     renderBody(Body);
 
-    // Wait for workflows_list to resolve and populate the dropdown.
+    // Wait for skills_list to resolve and populate the dropdown.
     await waitFor(() => expect(hoisted.listWorkflows).toHaveBeenCalled());
 
     // Pick the skill so the schedule list mounts.
@@ -546,7 +546,7 @@ describe('WorkflowRunnerBody — URL ?workflow= preselect', () => {
     expect(hoisted.describeWorkflow).not.toHaveBeenCalled();
   });
 
-  it('ignores ?workflow= when the value is not in the workflows_list (picker stays empty, describeWorkflow called once with empty=never)', async () => {
+  it('ignores ?workflow= when the value is not in the skills_list (picker stays empty, describeWorkflow called once with empty=never)', async () => {
     // ?workflow=unknown-skill is treated as best-effort: we set the state
     // but the picker shows "Select a skill" since the option isn't in
     // the list. The describe call IS attempted (we don't pre-filter
@@ -971,9 +971,7 @@ describe('WorkflowRunnerBody — recent runs status badges', () => {
     renderBody(Body);
 
     await waitFor(() => {
-      expect(
-        screen.getByText('settings.skillsRunner.recentRuns.headingAll')
-      ).toBeInTheDocument();
+      expect(screen.getByText('settings.skillsRunner.recentRuns.headingAll')).toBeInTheDocument();
     });
   });
 
@@ -1124,7 +1122,19 @@ describe('WorkflowRunnerBody — history run with no output', () => {
 
   it('shows historyNoOutput placeholder when a run row has null output', async () => {
     hoisted.cronRuns.mockResolvedValue({
-      result: { runs: [{ id: 1, job_id: 'job-1', started_at: '2026-05-30T09:00:00Z', finished_at: '2026-05-30T09:00:05Z', status: 'ok', output: null, duration_ms: 5000 }] },
+      result: {
+        runs: [
+          {
+            id: 1,
+            job_id: 'job-1',
+            started_at: '2026-05-30T09:00:00Z',
+            finished_at: '2026-05-30T09:00:05Z',
+            status: 'ok',
+            output: null,
+            duration_ms: 5000,
+          },
+        ],
+      },
     });
 
     const Body = await importBody();
@@ -1210,9 +1220,7 @@ describe('WorkflowRunnerBody — buildCronJobName with non-empty inputs', () => 
       id: 'name-skill',
       name: 'Name Skill',
       when_to_use: 'test.',
-      inputs: [
-        { name: 'owner', type: 'string', required: true, description: 'Owner' },
-      ],
+      inputs: [{ name: 'owner', type: 'string', required: true, description: 'Owner' }],
     });
   });
 
@@ -1248,11 +1256,9 @@ describe('WorkflowRunnerBody — ensureRuntimeAvailability failure', () => {
     hoisted.cronList.mockResolvedValue({ result: [] });
     hoisted.cronRuns.mockResolvedValue({ result: { runs: [] } });
     hoisted.runWorkflow.mockResolvedValue({ run_id: 'r', skill_id: 'x', log: '/tmp/l' });
-    hoisted.listWorkflows.mockResolvedValue([{
-      id: 'py-skill',
-      name: 'Python Skill',
-      resources: ['scripts/run.py'],
-    }]);
+    hoisted.listWorkflows.mockResolvedValue([
+      { id: 'py-skill', name: 'Python Skill', resources: ['scripts/run.py'] },
+    ]);
     hoisted.describeWorkflow.mockResolvedValue({
       id: 'py-skill',
       name: 'Python Skill',
@@ -1264,7 +1270,16 @@ describe('WorkflowRunnerBody — ensureRuntimeAvailability failure', () => {
   it('surfaces runtime unavailable error on run when python runtime is missing', async () => {
     hoisted.resolveRuntimes.mockResolvedValue({
       runtimes: [
-        { runtime: 'python', enabled: true, available: false, source: 'managed', version: null, binary: null, binDir: null, error: 'not installed' },
+        {
+          runtime: 'python',
+          enabled: true,
+          available: false,
+          source: 'managed',
+          version: null,
+          binary: null,
+          binDir: null,
+          error: 'not installed',
+        },
       ],
     });
 

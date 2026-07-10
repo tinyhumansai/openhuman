@@ -17,6 +17,7 @@ describe('builtinCloudProviders', () => {
     ['deepseek', 'https://api.deepseek.com/v1', 'bearer'],
     ['minimax', 'https://api.minimax.io/v1', 'bearer'],
     ['sumopod', 'https://ai.sumopod.com/v1', 'bearer'],
+    ['modelscope', 'https://api-inference.modelscope.cn/v1', 'bearer'],
   ] as const)('maps %s to its endpoint and auth style', (slug, endpoint, authStyle) => {
     expect(defaultEndpointForBuiltinCloudProvider(slug)).toBe(endpoint);
     expect(authStyleForBuiltinCloudProvider(slug)).toBe(authStyle);
@@ -43,6 +44,7 @@ describe('builtinCloudProviders', () => {
         'venice',
         'vercel-ai-gateway',
         'sumopod',
+        'modelscope',
       ])
     );
   });

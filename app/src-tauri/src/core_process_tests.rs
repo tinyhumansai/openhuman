@@ -1,6 +1,7 @@
 use super::{
     current_rpc_token, default_core_port, generate_rpc_token, is_expected_port_clash,
-    is_openhuman_root_body, parse_lsof_pid, parse_netstat_pid, CoreProcessHandle, RecoveryOutcome,
+    is_openhuman_root_body, parse_lsof_pid, parse_netstat_pid, parse_ps_comm, parse_tasklist_name,
+    validate_kill_target, CoreProcessHandle, PortOwner, RecoveryOutcome,
 };
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -599,30 +600,16 @@ fn startup_timeout_cleanup_aborts_task_and_clears_slot() {
 
         let message = handle.cleanup_startup_timeout(false, false, 2).await;
 
+        // One loose check that the human-readable diagnostic names the failure,
+        // instead of pinning six exact substrings of its formatting (plan.md
+        // §3) — the wording of the diagnostic is not a contract.
         assert!(
             message.contains("core process did not become ready within"),
-            "timeout message should include the readiness budget: {message}"
+            "timeout message should name the readiness failure: {message}"
         );
-        assert!(
-            message.contains("ready_signal=false"),
-            "timeout message should include ready signal state: {message}"
-        );
-        assert!(
-            message.contains("port=19006"),
-            "timeout message should include RPC port: {message}"
-        );
-        assert!(
-            message.contains("port_open=false"),
-            "timeout message should include final port state: {message}"
-        );
-        assert!(
-            message.contains("task_state=running"),
-            "timeout message should include task state: {message}"
-        );
-        assert!(
-            message.contains("attempt=2"),
-            "timeout message should include startup attempt: {message}"
-        );
+        // Load-bearing behaviour (skeptic-flagged, must stay): cleanup clears
+        // the managed task slot so a retry can spawn fresh, and cancels the
+        // startup shutdown token before aborting.
         assert!(
             handle.task.lock().await.is_none(),
             "cleanup must clear the managed task slot so retry can spawn fresh"
@@ -644,6 +631,7 @@ fn recovery_outcome_serializes_correctly() {
         success: true,
         message: "Core recovered on port 7789".to_string(),
         new_port: Some(7789),
+        foreign_owner: None,
     };
     let json = serde_json::to_value(&outcome).expect("serialize");
     assert_eq!(json["success"], serde_json::json!(true));
@@ -660,6 +648,7 @@ fn recovery_outcome_failure_serializes_with_null_port() {
         success: false,
         message: "Recovery failed: port still busy".to_string(),
         new_port: None,
+        foreign_owner: None,
     };
     let json = serde_json::to_value(&outcome).expect("serialize");
     assert_eq!(json["success"], serde_json::json!(false));
@@ -667,6 +656,92 @@ fn recovery_outcome_failure_serializes_with_null_port() {
         json["new_port"].is_null(),
         "new_port should be null when None"
     );
+    assert!(
+        json["foreign_owner"].is_null(),
+        "foreign_owner should be null when None"
+    );
+}
+
+#[test]
+fn recovery_outcome_serializes_foreign_owner() {
+    let outcome = RecoveryOutcome {
+        success: false,
+        message: "Recovery failed: port still busy".to_string(),
+        new_port: None,
+        foreign_owner: Some(PortOwner {
+            pid: 4242,
+            name: "Skype.exe".to_string(),
+        }),
+    };
+    let json = serde_json::to_value(&outcome).expect("serialize");
+    assert_eq!(json["foreign_owner"]["pid"], serde_json::json!(4242));
+    assert_eq!(
+        json["foreign_owner"]["name"],
+        serde_json::json!("Skype.exe")
+    );
+}
+
+#[test]
+fn parse_tasklist_name_extracts_image_name() {
+    assert_eq!(
+        parse_tasklist_name("\"chrome.exe\",\"1234\",\"Console\",\"1\",\"123,456 K\"\r\n"),
+        Some("chrome.exe".to_string())
+    );
+    // Leading blank lines are skipped.
+    assert_eq!(
+        parse_tasklist_name("\n\"node.exe\",\"42\",\"Console\",\"1\",\"9,000 K\""),
+        Some("node.exe".to_string())
+    );
+}
+
+#[test]
+fn parse_tasklist_name_rejects_no_tasks_sentinel_and_blanks() {
+    assert_eq!(
+        parse_tasklist_name("INFO: No tasks are running which match the specified criteria.\r\n"),
+        None
+    );
+    assert_eq!(parse_tasklist_name(""), None);
+    assert_eq!(parse_tasklist_name("\"\",\"1\""), None);
+}
+
+#[test]
+fn parse_ps_comm_takes_basename() {
+    assert_eq!(parse_ps_comm("nginx\n"), Some("nginx".to_string()));
+    assert_eq!(
+        parse_ps_comm("/usr/lib/postgresql/16/bin/postgres\n"),
+        Some("postgres".to_string())
+    );
+    assert_eq!(parse_ps_comm("   \n"), None);
+    assert_eq!(parse_ps_comm(""), None);
+}
+
+#[test]
+fn validate_kill_target_accepts_unchanged_owner() {
+    assert_eq!(validate_kill_target(Some(1234), 1234, 999), Ok(1234));
+}
+
+#[test]
+fn validate_kill_target_refuses_when_owner_gone_or_changed() {
+    // Port freed between surfacing the owner and confirming.
+    assert!(validate_kill_target(None, 1234, 999).is_err());
+    // A different process now holds the port — never kill what the user did
+    // not consent to (PID-reuse / race guard).
+    assert!(validate_kill_target(Some(5678), 1234, 999).is_err());
+}
+
+#[test]
+fn validate_kill_target_refuses_self_pid() {
+    let err = validate_kill_target(Some(999), 999, 999).unwrap_err();
+    assert!(err.contains("own process"), "got: {err}");
+}
+
+#[test]
+fn validate_kill_target_refuses_protected_pids() {
+    // Low/kernel pids must never be signalled even if the user "consented":
+    // 0 (kill(0) hits the process group on Unix), 1 (init/launchd), 4 (NT kernel).
+    assert!(validate_kill_target(Some(0), 0, 999).is_err());
+    assert!(validate_kill_target(Some(1), 1, 999).is_err());
+    assert!(validate_kill_target(Some(4), 4, 999).is_err());
 }
 
 #[test]

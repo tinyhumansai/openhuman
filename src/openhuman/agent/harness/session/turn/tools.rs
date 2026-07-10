@@ -1,97 +1,29 @@
 //! Tool execution and Composio delegation refresh.
 
-use super::super::agent_tool_exec;
 use super::super::types::Agent;
 use super::newly_connected_slugs;
-use crate::openhuman::agent::dispatcher::ParsedToolCall;
 use crate::openhuman::agent::harness;
-use crate::openhuman::agent::hooks::ToolCallRecord;
 use crate::openhuman::agent::progress::AgentProgress;
 
 use std::sync::Arc;
 
 impl Agent {
     // ─────────────────────────────────────────────────────────────────
-    // Per-call tool execution
-    // ─────────────────────────────────────────────────────────────────
-
-    /// Executes a single tool call and returns the result and execution record.
-    ///
-    /// This method:
-    /// 1. Emits telemetry events for the start of execution.
-    /// 2. Handles the special `spawn_subagent` tool with `fork` context.
-    /// 3. Validates tool visibility and availability.
-    /// 4. Dispatches to the underlying tool implementation.
-    /// 5. Applies per-result byte budgets to prevent context window bloat.
-    /// 6. Sanitizes and records the outcome for post-turn hooks.
-    pub(in super::super) async fn execute_tool_call(
-        &self,
-        call: &ParsedToolCall,
-        iteration: usize,
-    ) -> (
-        crate::openhuman::agent::dispatcher::ToolExecutionResult,
-        ToolCallRecord,
-    ) {
-        let normalized_call = super::normalize_tool_call(call);
-        let call: &ParsedToolCall = &normalized_call;
-        // The per-call execution path lives in the shared
-        // [`super::agent_tool_exec::run_agent_tool_call`] so `Agent::turn`
-        // (when migrated to the turn engine, via `AgentToolSource`) and any
-        // direct caller run the identical logic. Progress is emitted through a
-        // `TurnProgress` over this agent's sink. Legacy `run_skill`-wrapped
-        // built-in cron tool calls are normalized to direct calls first.
-        let progress = super::super::super::engine::TurnProgress::new(self.on_progress.clone());
-        let artifact_store =
-            crate::openhuman::agent::harness::tool_result_artifacts::ToolResultArtifactStore::new(
-                self.action_dir.clone(),
-                self.session_key.clone(),
-            );
-        let ctx = agent_tool_exec::AgentToolExecCtx {
-            tools: &self.tools,
-            visible_tool_names: &self.visible_tool_names,
-            tool_policy_session: &self.tool_policy_session,
-            tool_policy: self.tool_policy.as_ref(),
-            payload_summarizer: self.payload_summarizer.as_deref(),
-            event_session_id: self.event_session_id(),
-            event_channel: self.event_channel(),
-            agent_definition_id: &self.agent_definition_id,
-            prefer_markdown: self.context.prefer_markdown_tool_output(),
-            budget_bytes: self.context.tool_result_budget_bytes(),
-            artifact_store: Some(&artifact_store),
-        };
-        agent_tool_exec::run_agent_tool_call(&ctx, &progress, call, iteration).await
-    }
-
-    /// Executes multiple tool calls in sequence.
-    ///
-    /// Collects results and execution records for all requested tools in a single batch.
-    pub(in super::super) async fn execute_tools(
-        &self,
-        calls: &[ParsedToolCall],
-        iteration: usize,
-    ) -> (
-        Vec<crate::openhuman::agent::dispatcher::ToolExecutionResult>,
-        Vec<ToolCallRecord>,
-    ) {
-        let mut results = Vec::with_capacity(calls.len());
-        let mut records = Vec::with_capacity(calls.len());
-        for call in calls {
-            let (exec_result, record) = self.execute_tool_call(call, iteration).await;
-            results.push(exec_result);
-            records.push(record);
-        }
-        (results, records)
-    }
-
-    // ─────────────────────────────────────────────────────────────────
     // Sub-agent context snapshots
     // ─────────────────────────────────────────────────────────────────
 
     /// Snapshot the parent's runtime so spawned sub-agents can read
     /// it via the [`harness::PARENT_CONTEXT`] task-local.
-    pub(in super::super) fn build_parent_execution_context(
-        &self,
-    ) -> harness::ParentExecutionContext {
+    pub(super) fn build_parent_execution_context(&self) -> harness::ParentExecutionContext {
+        let workspace_descriptor =
+            harness::current_parent().and_then(|parent| parent.workspace_descriptor);
+        if let Some(descriptor) = workspace_descriptor.as_ref() {
+            tracing::debug!(
+                root = %descriptor.root.display(),
+                policy_id = %descriptor.policy_id,
+                "[agent_loop] inheriting ambient workspace descriptor for parent context snapshot"
+            );
+        }
         let allowed_subagent_ids = crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global()
             .and_then(|registry| registry.get(&self.agent_definition_id))
             .map(|definition| {
@@ -119,9 +51,21 @@ impl Agent {
             provider: Arc::clone(&self.provider),
             all_tools: Arc::clone(&self.tools),
             all_tool_specs: Arc::clone(&self.tool_specs),
+            // Names of the tools the parent actually advertises this turn —
+            // taken from the *policy-filtered* `visible_tool_specs` (after
+            // ToolPolicySession drops tools above the channel's permission),
+            // not the raw `visible_tool_names` (pre-policy). This is the exact
+            // set the parent provider receives, so consumers like
+            // `agent_prepare_context` never surface a tool the parent can't call.
+            visible_tool_names: self
+                .visible_tool_specs
+                .iter()
+                .map(|spec| spec.name.clone())
+                .collect(),
             model_name: self.model_name.clone(),
             temperature: self.temperature,
             workspace_dir: self.workspace_dir.clone(),
+            workspace_descriptor,
             memory: Arc::clone(&self.memory),
             agent_config: self.config.clone(),
             workflows: Arc::new(self.workflows.clone()),
@@ -145,7 +89,7 @@ impl Agent {
     /// progress bridge (e.g. a tool row stuck in `running` forever).
     /// A closed sink is logged and ignored; no progress subscriber is
     /// equivalent to success.
-    pub(in super::super) async fn emit_progress(&self, event: AgentProgress) {
+    pub(super) async fn emit_progress(&self, event: AgentProgress) {
         if let Some(ref tx) = self.on_progress {
             if let Err(e) = tx.send(event).await {
                 log::warn!("[agent] progress sink closed while emitting lifecycle event: {e}");
@@ -188,7 +132,7 @@ impl Agent {
 
     /// Lazily attach this session to the global event bus so it can
     /// observe `ComposioIntegrationsChanged` notifications.
-    pub(in super::super) fn ensure_composio_integrations_listener(&mut self) {
+    pub(super) fn ensure_composio_integrations_listener(&mut self) {
         if self.composio_integrations_rx.is_some() {
             return;
         }
@@ -246,9 +190,67 @@ impl Agent {
         saw_signal
     }
 
+    /// Lazily attach this session to the global event bus so it can observe
+    /// [`crate::core::event_bus::DomainEvent::WorkflowsChanged`] (skill
+    /// install / uninstall / create). Mirror of
+    /// [`Self::ensure_composio_integrations_listener`].
+    pub(super) fn ensure_skill_events_listener(&mut self) {
+        if self.skill_events_rx.is_some() {
+            return;
+        }
+        if let Some(bus) = crate::core::event_bus::global() {
+            self.skill_events_rx = Some(bus.raw_receiver());
+            log::debug!(
+                "[agent_loop] armed installed-skills listener for session='{}'",
+                self.event_session_id
+            );
+        }
+    }
+
+    /// Drain pending [`crate::core::event_bus::DomainEvent::WorkflowsChanged`]
+    /// events. Returns `true` when at least one was observed (or the listener
+    /// lagged) and the caller should re-scan the installed skill set via
+    /// [`Self::refresh_workflows`]. Mirror of
+    /// [`Self::drain_composio_integrations_changed_events`].
+    pub(in super::super) fn drain_skill_events(&mut self) -> bool {
+        self.ensure_skill_events_listener();
+        let Some(rx) = self.skill_events_rx.as_mut() else {
+            return false;
+        };
+        use tokio::sync::broadcast::error::TryRecvError;
+
+        let mut saw_signal = false;
+        let mut closed = false;
+        loop {
+            match rx.try_recv() {
+                Ok(crate::core::event_bus::DomainEvent::WorkflowsChanged { reason }) => {
+                    saw_signal = true;
+                    log::info!("[agent_loop] received installed-skills changed event ({reason})");
+                }
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Lagged(skipped)) => {
+                    saw_signal = true;
+                    log::warn!(
+                        "[agent_loop] installed-skills listener lagged by {} event(s); forcing catalogue re-check",
+                        skipped
+                    );
+                }
+                Err(TryRecvError::Closed) => {
+                    closed = true;
+                    break;
+                }
+            }
+        }
+        if closed {
+            self.skill_events_rx = None;
+        }
+        saw_signal
+    }
+
     /// Reconcile the session's delegation schema against the latest cached
     /// integrations snapshot. Returns `true` only when a refresh applied.
-    pub(in super::super) fn refresh_delegation_tools_from_cached_integrations(
+    pub(super) fn refresh_delegation_tools_from_cached_integrations(
         &mut self,
         trigger: &str,
     ) -> bool {
@@ -297,6 +299,146 @@ impl Agent {
             self.connected_integrations = prev_integrations;
             false
         }
+    }
+
+    /// Reconcile the tracked installed-skill set ([`Self::workflows`]) against
+    /// what is on disk, so a skill installed/uninstalled mid-session can be
+    /// surfaced to the model without a session restart.
+    ///
+    /// Note the system-prompt `## Installed Skills` block is frozen at turn 1
+    /// (KV-cache stability — it is only built when history is empty), so this
+    /// does NOT rebuild that block for the live session. Instead — exactly like
+    /// [`Self::refresh_delegation_tools_from_cached_integrations`] / the MCP
+    /// mid-session mechanism — genuinely-new skill ids (present on disk but not
+    /// in the prior snapshot) are parked in [`Self::pending_skill_announcement`]
+    /// (announced once via [`Self::announced_skills`]) and surfaced on the next
+    /// user turn; `run_skill` then loads/runs them fresh from disk. Updating the
+    /// tracked slice keeps the next diff correct and feeds a *fresh* session's
+    /// rendered catalogue.
+    ///
+    /// Returns `true` when the installed set changed. Cheap no-op when it
+    /// hasn't: a directory scan plus an id-set comparison, no prompt rebuild.
+    pub(in super::super) fn refresh_workflows(&mut self, trigger: &str) -> bool {
+        let id_of = |w: &crate::openhuman::skills::Workflow| -> String {
+            if w.dir_name.is_empty() {
+                w.name.clone()
+            } else {
+                w.dir_name.clone()
+            }
+        };
+        let latest = crate::openhuman::skills::load_workflow_metadata(&self.workspace_dir);
+        let current_ids: std::collections::HashSet<String> =
+            self.workflows.iter().map(&id_of).collect();
+        let latest_ids: std::collections::HashSet<String> = latest.iter().map(&id_of).collect();
+        if current_ids == latest_ids {
+            return false;
+        }
+        // Newly-present skills (on disk now, absent from the prior snapshot),
+        // announced at most once this session.
+        let newly: Vec<String> = latest_ids
+            .difference(&current_ids)
+            .filter(|id| self.announced_skills.insert((*id).clone()))
+            .cloned()
+            .collect();
+        // Skills removed from disk since the last snapshot: retract them so the
+        // model stops routing `run_skill` calls to skills that no longer exist.
+        // The frozen `## Installed Skills` system-prompt block cannot be updated
+        // mid-session (KV-cache stability), so the retraction note on the user
+        // turn is the only signal the model gets — mirrors the install path.
+        // Clear from `announced_skills` so a re-install later is announced fresh.
+        let removed: Vec<String> = current_ids.difference(&latest_ids).cloned().collect();
+        for id in &removed {
+            self.announced_skills.remove(id);
+        }
+        log::info!(
+            "[agent_loop] installed-skills set changed ({trigger}): {} -> {} skills (new={} removed={}); updating tracked set + parking notes (system-prompt catalogue frozen for KV cache)",
+            self.workflows.len(),
+            latest.len(),
+            newly.len(),
+            removed.len(),
+        );
+        self.workflows = latest;
+        for id in newly {
+            // A re-install after a still-pending retraction cancels the
+            // retraction: the skill is present again, so drop the stale "gone"
+            // note and announce it instead.
+            self.pending_skill_retraction.retain(|p| p != &id);
+            if !self.pending_skill_announcement.contains(&id) {
+                self.pending_skill_announcement.push(id);
+            }
+        }
+        for id in removed {
+            // If the skill was installed and uninstalled before its
+            // announcement ever surfaced, the model never saw it as available —
+            // drop the pending announcement so we don't emit a contradictory
+            // "installed" + "retracted" pair on the same user turn.
+            self.pending_skill_announcement.retain(|p| p != &id);
+            if !self.pending_skill_retraction.contains(&id) {
+                self.pending_skill_retraction.push(id);
+            }
+        }
+        true
+    }
+
+    /// Test-only: installed-skill ids currently in the catalogue snapshot
+    /// (`dir_name`, falling back to `name`). Lets `refresh_workflows` tests
+    /// assert through a method instead of touching private fields.
+    #[cfg(test)]
+    pub(in super::super) fn test_workflow_ids(&self) -> Vec<String> {
+        self.workflows
+            .iter()
+            .map(|w| {
+                if w.dir_name.is_empty() {
+                    w.name.clone()
+                } else {
+                    w.dir_name.clone()
+                }
+            })
+            .collect()
+    }
+
+    /// Test-only: skill ids parked for the next-turn `[skills update]`
+    /// announcement by `refresh_workflows`.
+    #[cfg(test)]
+    pub(in super::super) fn test_pending_skill_announcement(&self) -> &[String] {
+        &self.pending_skill_announcement
+    }
+
+    /// Test-only: skill ids parked for the next-turn `[skills retracted]`
+    /// retraction note by `refresh_workflows`.
+    #[cfg(test)]
+    pub(in super::super) fn test_pending_skill_retraction(&self) -> &[String] {
+        &self.pending_skill_retraction
+    }
+
+    /// Test-only: inject a specific skill-events receiver (e.g. one whose
+    /// sender has been dropped) so `drain_skill_events`' `Closed` arm is
+    /// reachable without the global bus singleton.
+    #[cfg(test)]
+    pub(in super::super) fn set_skill_events_rx_for_test(
+        &mut self,
+        rx: tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>,
+    ) {
+        self.skill_events_rx = Some(rx);
+    }
+
+    /// Test-only: whether the skill-events listener is currently armed.
+    #[cfg(test)]
+    pub(in super::super) fn has_skill_events_rx(&self) -> bool {
+        self.skill_events_rx.is_some()
+    }
+
+    /// Test-only: inject a specific composio-integrations receiver so the
+    /// drain path can be exercised against an isolated bus instead of the
+    /// global singleton (which other parallel tests publish into, racing the
+    /// "drained after one pass" assertion). Mirror of
+    /// [`Self::set_skill_events_rx_for_test`].
+    #[cfg(test)]
+    pub(in super::super) fn set_composio_integrations_rx_for_test(
+        &mut self,
+        rx: tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>,
+    ) {
+        self.composio_integrations_rx = Some(rx);
     }
 
     /// Re-synthesise `delegate_*` tools for the orchestrator's `subagents`

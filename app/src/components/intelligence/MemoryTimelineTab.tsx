@@ -53,12 +53,12 @@ const MemoryTimelineTab = () => {
   return (
     <div className="space-y-4">
       {namespaces.length > 0 && (
-        <label className="flex items-center gap-2 text-xs text-stone-600 dark:text-neutral-300">
+        <label className="flex items-center gap-2 text-xs text-content-secondary">
           {t('memoryTimeline.namespaceLabel')}
           <select
             value={namespace}
             onChange={e => handleNamespace(e.target.value)}
-            className="rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm text-stone-800 dark:text-neutral-100">
+            className="rounded-lg border border-line bg-surface px-2 py-1 text-sm text-content">
             <option value="">{t('memoryTimeline.namespaceAll')}</option>
             {namespaces.map(ns => (
               <option key={ns} value={ns}>

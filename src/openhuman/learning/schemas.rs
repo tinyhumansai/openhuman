@@ -1021,10 +1021,8 @@ fn handle_reset_cache(_params: Map<String, Value>) -> ControllerFuture {
         // Delete all non-Pinned rows.
         let mut deleted = 0usize;
         for f in &all {
-            if f.user_state != UserState::Pinned {
-                if cache.delete(&f.key).unwrap_or(false) {
-                    deleted += 1;
-                }
+            if f.user_state != UserState::Pinned && cache.delete(&f.key).unwrap_or(false) {
+                deleted += 1;
             }
         }
 

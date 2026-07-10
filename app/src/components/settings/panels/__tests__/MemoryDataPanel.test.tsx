@@ -92,6 +92,17 @@ describe('MemoryDataPanel', () => {
     });
   });
 
+  it('renders in embedded mode (embedded padding branch)', async () => {
+    resolveConfigWith('balanced');
+    renderWithProviders(<MemoryDataPanel embedded />);
+
+    // Body sections still render when embedded (exercises the embedded layout
+    // branch of the root container).
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-sources')).toBeInTheDocument();
+    });
+  });
+
   it.skip('keeps all preset buttons accessible when sync connections returns an error', async () => {
     resolveConfigWith('balanced');
 

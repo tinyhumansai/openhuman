@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::rpc::RpcOutcome;
 
+use super::git_store::Ledger;
 use super::ops;
-use super::store;
 use super::types::*;
 
 // ── Request / Response types ──────────────────────────────────────────
@@ -59,6 +59,34 @@ pub struct DiffSinceLastRequest {
 #[derive(Debug, Serialize)]
 pub struct DiffSinceLastResponse {
     pub diff: DiffResult,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiffSinceReadRequest {
+    pub source_id: String,
+    #[serde(default)]
+    pub include_text_diff: Option<bool>,
+    /// Advance the read marker to the head snapshot after computing the diff.
+    /// Defaults to true so reading acknowledges the changes as consumed.
+    #[serde(default)]
+    pub commit: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DiffSinceReadResponse {
+    pub diff: DiffResult,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MarkReadRequest {
+    /// Sources to mark read. Omit to mark all enabled sources with a snapshot.
+    #[serde(default)]
+    pub source_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MarkReadResponse {
+    pub marked: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,10 +166,9 @@ pub async fn list_snapshots_rpc(
     let limit = req.limit.unwrap_or(50) as u32;
     let source_id = req.source_id;
 
-    let snapshots = tokio::task::spawn_blocking(move || {
-        store::with_connection(&workspace_dir, |conn| {
-            store::list_snapshots(conn, source_id.as_deref(), limit)
-        })
+    let snapshots = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<Snapshot>> {
+        let ledger = Ledger::open(&workspace_dir)?;
+        ledger.list_snapshots(source_id.as_deref(), limit)
     })
     .await
     .map_err(|e| format!("list_snapshots join: {e}"))?
@@ -195,6 +222,44 @@ pub async fn diff_since_last_rpc(
     Ok(RpcOutcome::new(DiffSinceLastResponse { diff }, vec![]))
 }
 
+pub async fn diff_since_read_rpc(
+    req: DiffSinceReadRequest,
+) -> Result<RpcOutcome<DiffSinceReadResponse>, String> {
+    let commit = req.commit.unwrap_or(true);
+    debug!(
+        "[memory_diff][rpc] diff_since_read source_id={} commit={}",
+        req.source_id, commit
+    );
+    let config = config_rpc::load_config_with_timeout().await?;
+    let source = crate::openhuman::memory_sources::get_source(&req.source_id)
+        .await?
+        .ok_or_else(|| format!("source not found: {}", req.source_id))?;
+
+    let diff = ops::diff_since_read(
+        &source,
+        &config,
+        req.include_text_diff.unwrap_or(false),
+        commit,
+    )
+    .await?;
+    debug!(
+        "[memory_diff][rpc] diff_since_read done added={} removed={} modified={}",
+        diff.summary.added, diff.summary.removed, diff.summary.modified
+    );
+    Ok(RpcOutcome::new(DiffSinceReadResponse { diff }, vec![]))
+}
+
+pub async fn mark_read_rpc(req: MarkReadRequest) -> Result<RpcOutcome<MarkReadResponse>, String> {
+    debug!(
+        "[memory_diff][rpc] mark_read source_ids={:?}",
+        req.source_ids
+    );
+    let config = config_rpc::load_config_with_timeout().await?;
+    let marked = ops::mark_read(&config, req.source_ids).await?;
+    debug!("[memory_diff][rpc] mark_read done marked={}", marked);
+    Ok(RpcOutcome::new(MarkReadResponse { marked }, vec![]))
+}
+
 pub async fn create_checkpoint_rpc(
     req: CreateCheckpointRequest,
 ) -> Result<RpcOutcome<CreateCheckpointResponse>, String> {
@@ -220,8 +285,9 @@ pub async fn list_checkpoints_rpc(
     let workspace_dir = config.workspace_dir.clone();
     let limit = req.limit.unwrap_or(20) as u32;
 
-    let checkpoints = tokio::task::spawn_blocking(move || {
-        store::with_connection(&workspace_dir, |conn| store::list_checkpoints(conn, limit))
+    let checkpoints = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<Checkpoint>> {
+        let ledger = Ledger::open(&workspace_dir)?;
+        ledger.list_checkpoints(limit)
     })
     .await
     .map_err(|e| format!("list_checkpoints join: {e}"))?

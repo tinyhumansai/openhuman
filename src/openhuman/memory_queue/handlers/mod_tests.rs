@@ -594,3 +594,151 @@ fn cap_embed_text_bounds_oversized_input() {
     let small = "hello world";
     assert_eq!(cap_embed_text(small), small);
 }
+
+/// C9: `prepare_extract` must score over the **full** on-disk body but leave
+/// the returned `PreparedExtract.chunk` holding only the ≤500-char preview —
+/// never the full body. This is the swap-then-restore guarantee that keeps a
+/// batch of N prepared items from retaining N full bodies in memory before
+/// finalize. We assert the body is read from disk (a body longer than the
+/// preview) yet the returned chunk content equals the preview again.
+#[tokio::test]
+async fn prepare_extract_scores_full_body_but_returns_preview() {
+    use crate::openhuman::memory::chat::{test_override, StaticChatProvider};
+    use crate::openhuman::memory_queue::types::ExtractChunkPayload;
+    use crate::openhuman::memory_store::chunks::store::upsert_chunks;
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+    };
+    use std::sync::Arc;
+
+    let (_tmp, cfg) = test_config();
+    let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+
+    // Full body is > 500 chars so the stored preview is a strict prefix and
+    // is observably different from the body the scorer reads off disk.
+    let body: String = "the quarterly planning notes from the engineering sync covering rollout sequencing and staffing. "
+        .repeat(12);
+    assert!(body.len() > 500, "test body must exceed the preview cap");
+    let expected_preview: String = body.chars().take(500).collect();
+
+    let chunk = Chunk {
+        id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "c9-extract-seed"),
+        content: body.clone(),
+        metadata: Metadata {
+            source_kind: SourceKind::Chat,
+            source_id: "slack:#eng".into(),
+            owner: "alice".into(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: vec![],
+            source_ref: Some(SourceRef::new("slack://x")),
+            path_scope: None,
+        },
+        token_count: 64,
+        seq_in_source: 0,
+        created_at: ts,
+        partial_message: false,
+    };
+    // upsert_chunks stores only the ≤500-char preview in the `content` column.
+    upsert_chunks(&cfg, &[chunk.clone()]).unwrap();
+    // Stage the full body to disk so `read_chunk_body` returns it.
+    let content_root = cfg.memory_tree_content_root();
+    std::fs::create_dir_all(&content_root).unwrap();
+    let staged = content_store::stage_chunks(&content_root, &[chunk.clone()]).unwrap();
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        crate::openhuman::memory_store::chunks::store::upsert_staged_chunks_tx(&tx, &staged)?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    let payload = ExtractChunkPayload {
+        chunk_id: chunk.id.clone(),
+    };
+    let job = mk_running_job(
+        JobKind::ExtractChunk,
+        serde_json::to_string(&payload).unwrap(),
+    );
+
+    // Pin a static (offline) chat provider so any borderline LLM consult is
+    // deterministic and never touches the network.
+    let prepared = test_override::with_provider(
+        Arc::new(StaticChatProvider::new("[]")),
+        prepare_extract(&cfg, &job),
+    )
+    .await
+    .unwrap()
+    .expect("seeded chunk must produce a PreparedExtract");
+
+    assert_eq!(
+        prepared.chunk.content, expected_preview,
+        "returned chunk must hold the restored preview, not the full body"
+    );
+    assert_ne!(
+        prepared.chunk.content, body,
+        "returned chunk must NOT retain the full on-disk body"
+    );
+}
+
+/// #4359: a cloud-embedding "No backend session" bail is a global, login-
+/// recoverable condition — `reembed_collect` must fail the backfill fast with a
+/// typed `AuthMissing` failure and must **not** tombstone any row, so the same
+/// rows re-embed once the user signs in. (A per-row tombstone here would
+/// exclude the rows from the worklist forever — the regression this guards.)
+struct MissingSessionEmbedder;
+
+#[async_trait::async_trait]
+impl crate::openhuman::memory_tree::score::embed::Embedder for MissingSessionEmbedder {
+    fn name(&self) -> &'static str {
+        "missing-session"
+    }
+
+    async fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
+        anyhow::bail!(
+            "No backend session for cloud embeddings: log in to OpenHuman, or set \
+             memory.embedding_provider to \"ollama\" / \"none\" in config.toml"
+        )
+    }
+}
+
+#[tokio::test]
+async fn reembed_backfill_auth_missing_fails_fast_without_tombstone() {
+    use crate::openhuman::memory_tree::health::{FailureCode, PipelineFailure};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let (_tmp, cfg) = test_config();
+    let ids = vec![
+        "chunk-a".to_string(),
+        "chunk-b".to_string(),
+        "chunk-c".to_string(),
+    ];
+    let tombstoned = Arc::new(AtomicUsize::new(0));
+    let tombstoned_for_mark = Arc::clone(&tombstoned);
+
+    let err = reembed_collect(
+        &cfg,
+        &MissingSessionEmbedder,
+        "provider=cloud;model=embedding-v1;dims=1024",
+        &ids,
+        "chunk",
+        |_cfg, id| Ok(format!("body for {id}")),
+        move |_cfg, _id, _sig, _reason| {
+            tombstoned_for_mark.fetch_add(1, Ordering::SeqCst);
+        },
+    )
+    .await
+    .expect_err("missing cloud session must fail the backfill, not return Ok");
+
+    let failure = err
+        .downcast_ref::<PipelineFailure>()
+        .expect("auth-missing backfill error must carry a typed PipelineFailure");
+    assert_eq!(failure.code, FailureCode::AuthMissing);
+    assert!(failure.is_unrecoverable());
+    assert_eq!(
+        tombstoned.load(Ordering::SeqCst),
+        0,
+        "auth-missing must NOT tombstone any row — they must stay re-embeddable after login"
+    );
+}

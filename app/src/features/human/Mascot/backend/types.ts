@@ -61,14 +61,20 @@ export interface MascotViseme {
   svg: string;
 }
 
+export type MascotFormat = 'svg' | 'rive';
+
 export interface MascotSummary {
   id: string;
   name: string;
   version: string;
   description: string;
-  /** State metadata only — no SVG bytes or tween, to keep list payload light. */
-  states: Pick<MascotState, 'id' | 'label' | 'description'>[];
-  hasVisemes: boolean;
+  /** 'svg' (legacy) or 'rive' (current). Absent on old backends => treat as svg. */
+  format?: MascotFormat;
+  /** SVG-only: state metadata (no SVG bytes or tween) to keep list payload light. */
+  states?: Pick<MascotState, 'id' | 'label' | 'description'>[];
+  hasVisemes?: boolean;
+  /** Rive-only: maps logical state ids to Rive pose enum values. */
+  stateToPose?: Record<string, string>;
 }
 
 export interface MascotDetail {
@@ -76,6 +82,7 @@ export interface MascotDetail {
   name: string;
   version: string;
   description: string;
+  format?: 'svg';
   viewBox: string;
   defaultState: string;
   variables: MascotVariable[];
@@ -83,6 +90,35 @@ export interface MascotDetail {
   visemes: MascotViseme[];
   visemeSlot?: string;
   hidesOnViseme?: string[];
+}
+
+export type ViewModelInputType = 'number' | 'boolean' | 'color' | 'string' | 'enum';
+
+export interface ViewModelInput {
+  name: string;
+  type: ViewModelInputType;
+  description?: string;
+}
+
+/** Rive mascot manifest — the binary lives at `rivFileUrl` (version-stamped). */
+export interface RiveMascotDetail {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  format: 'rive';
+  /** Backend-relative URL of the .riv binary, e.g. `/mascots/toshi/riv?v=1.0.0`. */
+  rivFileUrl: string;
+  source?: 'builtin' | 'custom';
+  defaultState: string;
+  stateToPose: Record<string, string>;
+  viewModelInputs: ViewModelInput[];
+}
+
+export type MascotDetailUnion = MascotDetail | RiveMascotDetail;
+
+export function isRiveMascotDetail(d: MascotDetailUnion): d is RiveMascotDetail {
+  return d.format === 'rive';
 }
 
 /** Wire shapes for /mascots and /mascots/:id. */
@@ -93,5 +129,5 @@ export interface ListMascotsResponse {
 
 export interface GetMascotResponse {
   success: true;
-  data: { mascot: MascotDetail };
+  data: { mascot: MascotDetailUnion };
 }

@@ -183,6 +183,23 @@ fn autonomy_settings_rpc_is_registered() {
 }
 
 #[test]
+fn super_context_rpc_is_registered() {
+    let funcs: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.function)
+        .collect();
+    assert!(funcs.contains(&"get_super_context_enabled"));
+    assert!(funcs.contains(&"set_super_context_enabled"));
+    // Handler registry must stay in lockstep with the schema list.
+    let handlers: Vec<&str> = all_registered_controllers()
+        .iter()
+        .map(|h| h.schema.function)
+        .collect();
+    assert!(handlers.contains(&"get_super_context_enabled"));
+    assert!(handlers.contains(&"set_super_context_enabled"));
+}
+
+#[test]
 fn memory_sync_settings_rpc_is_registered() {
     let funcs: Vec<&str> = all_controller_schemas()
         .iter()
@@ -263,6 +280,20 @@ fn update_local_ai_settings_schema_allows_json_base_url() {
     match &field.ty {
         TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Json)),
         other => panic!("expected Option<Json>, got {other:?}"),
+    }
+}
+
+#[test]
+fn update_local_ai_settings_schema_accepts_api_key() {
+    let schema = schemas("update_local_ai_settings");
+    let field = schema
+        .inputs
+        .iter()
+        .find(|field| field.name == "api_key")
+        .expect("api_key field must be declared so validate_params accepts it");
+    match &field.ty {
+        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::String)),
+        other => panic!("expected Option<String>, got {other:?}"),
     }
 }
 

@@ -13,10 +13,7 @@ mod types;
 
 // Public API consumed by the rest of `mcp_server`
 pub use dispatch::{call_tool, list_tools_result, tool_error, tool_success};
-pub use specs::{
-    base_tool_specs, list_tools_result_for_config, list_tools_result_from_specs, searxng_tool_spec,
-    tool_specs,
-};
+pub use specs::tool_specs;
 pub use types::{McpToolSpec, ToolCallError};
 
 // Re-exports needed by the companion test module via `use super::*`.

@@ -5,3 +5,21 @@
 [submodule "app/src-tauri/vendor/tauri-plugin-notification"]
 	path = app/src-tauri/vendor/tauri-plugin-notification
 	url = https://github.com/tinyhumansai/tauri-plugin-notification.git
+[submodule "vendor/tinyagents"]
+	path = vendor/tinyagents
+	url = https://github.com/tinyhumansai/tinyagents
+[submodule "vendor/tinyflows"]
+	path = vendor/tinyflows
+	url = https://github.com/tinyhumansai/tinyflows
+[submodule "vendor/tinycortex"]
+	path = vendor/tinycortex
+	url = https://github.com/tinyhumansai/tinycortex
+[submodule "vendor/tinyjuice"]
+	path = vendor/tinyjuice
+	url = https://github.com/tinyhumansai/tinyjuice
+[submodule "vendor/tinychannels"]
+	path = vendor/tinychannels
+	url = https://github.com/tinyhumansai/tinychannels
+[submodule "vendor/tinyplace"]
+	path = vendor/tinyplace
+	url = https://github.com/tinyhumansai/tiny.place.git

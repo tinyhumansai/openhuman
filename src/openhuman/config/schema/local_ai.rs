@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// method below returns `false` regardless of these values.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
+#[derive(Default)]
 pub struct LocalAiUsage {
     /// When true (and `runtime_enabled`), use the local model for embedding
     /// generation instead of the cloud backend.
@@ -28,17 +29,6 @@ pub struct LocalAiUsage {
     pub subconscious: bool,
 }
 
-impl Default for LocalAiUsage {
-    fn default() -> Self {
-        Self {
-            embeddings: false,
-            heartbeat: false,
-            learning_reflection: false,
-            subconscious: false,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct LocalAiConfig {
@@ -47,8 +37,8 @@ pub struct LocalAiConfig {
     /// serde and will be silently ignored on load (intentional forced reset).
     #[serde(default = "default_runtime_enabled")]
     pub runtime_enabled: bool,
-    /// Local provider identifier. Supported values are `ollama` and
-    /// `lm_studio`; unknown values normalize to `ollama` at runtime.
+    /// Local provider identifier. Supported values are `ollama`, `lm_studio`,
+    /// and `omlx`; unknown values normalize to `ollama` at runtime.
     #[serde(default = "default_provider")]
     pub provider: String,
     /// Optional provider base URL. For LM Studio this defaults to

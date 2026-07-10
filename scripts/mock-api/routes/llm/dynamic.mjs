@@ -137,9 +137,26 @@ function buildReasoningSummary(prompt, toolText, thread) {
   ].join(" ");
 }
 
+// Orchestration/delegate tools (analyze_image, delegate_*) require a `prompt`
+// argument (and carry `citation_requirement`). The dynamic fallback can only
+// synthesize simple worker-tool args (q/path/cmd/url), so a fabricated call to a
+// delegate tool fails schema validation with a confusing "arguments.prompt is
+// required" bubble (tinyhumansai/openhuman#4517). Treat only tools that do NOT
+// require `prompt` as fabricatable; otherwise fall through to benign text.
+function isSimpleWorkerTool(toolDef) {
+  const params = toolDef?.function?.parameters || toolDef?.parameters || {};
+  const required = Array.isArray(params.required) ? params.required : [];
+  return !required.includes("prompt");
+}
+
 function inferToolCalls(prompt, toolDefs = []) {
   const lower = String(prompt || "").toLowerCase();
-  const declared = Array.isArray(toolDefs) ? toolDefs : [];
+  const declared = (Array.isArray(toolDefs) ? toolDefs : []).filter(
+    isSimpleWorkerTool,
+  );
+  // Only delegate/orchestration tools are available — the fallback can't build a
+  // valid call, so return benign text rather than a schema-error tool call.
+  if (declared.length === 0) return [];
   const picked = (name, args) => ({
     id: createMockId("tool"),
     name,

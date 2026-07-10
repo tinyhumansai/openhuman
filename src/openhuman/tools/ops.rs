@@ -167,22 +167,47 @@ pub fn all_tools_with_runtime(
         // `agent::harness::subagent_runner` for the dispatch path.
         Box::new(SpawnSubagentTool::new()),
         Box::new(SpawnAsyncSubagentTool::new()),
-        // Steer a running async sub-agent mid-flight and collect its result:
-        // `steer_subagent { task_id, message }` injects into the child's
-        // run-queue (drained at its next iteration boundary), `wait_subagent
-        // { task_id }` blocks for the final output. See
-        // `agent_orchestration::running_subagents`.
+        // Interactive clarification early-exit. Sub-agents pause on this tool
+        // (checkpoint → `AwaitingUser`, see `subagent_runner::ops::graph`) and
+        // the orchestrator resumes them via `continue_subagent` (#4291).
+        // Several agent scopes (orchestrator, crypto, markets, scheduler,
+        // mcp_setup, desktop control) name it, so it must exist in the base
+        // registry or none of them can actually ask the user anything.
+        Box::new(AskClarificationTool::new()),
+        // Read-only project overview (git status, recent commits, top-level
+        // tree) rooted at the agent action dir. Named by the orchestrator and
+        // planner scopes.
+        Box::new(WorkspaceStateTool::new(action_dir.to_path_buf())),
+        // "Plan mode as a subagent": runs the read-only `context_scout`
+        // inline and returns a bounded context bundle + recommended next
+        // tool calls. Visible only to agents that allowlist it
+        // (orchestrator / planner).
+        Box::new(AgentPrepareContextTool::new()),
+        // Steer/list/close reusable async sub-agents and collect results by
+        // durable `subagent_session_id` (preferred) or transient `task_id`.
+        Box::new(ListSubagentsTool::new()),
         Box::new(SteerSubagentTool::new()),
+        Box::new(WaitTool::new()),
+        Box::new(WaitLoopTool::new()),
         Box::new(WaitSubagentTool::new()),
+        Box::new(CloseSubagentTool::new()),
         Box::new(ContinueSubagentTool::new()),
         Box::new(SpawnParallelAgentsTool::new()),
         Box::new(DelegateToPersonalityTool::new()),
+        // Multi-stage durable delegation (issue #4249, Phase 3): runs the chosen
+        // sub-agent through the tinyagents plan→execute→review→finalize graph,
+        // checkpointed to the session DB. Heavier than spawn_subagent; for
+        // sub-tasks that benefit from a self-review/revision loop.
+        Box::new(DelegateGraphTool::new()),
         // Coding-harness control flow (issue #1205): a process-global
         // todo registry the agent can rewrite end-to-end, plus the
         // `plan_exit` marker that hands a plan-mode pass off to a
         // build-mode pass. The plan→build mode switch itself is a
         // follow-up; the tool emits a stable marker today.
         Box::new(TodoTool::new()),
+        // Interactive plan-review gate: parks the live turn on a thread-scoped
+        // plan the user must approve before execution (Codex/Claude plan mode).
+        Box::new(crate::openhuman::plan_review::RequestPlanReviewTool::new()),
         // Move/update a specific task card by id on a target board (defaults to
         // the proactive `task-sources` board) — lets the agent advance the task
         // it's working (in_progress / done+evidence / blocked+reason) from any
@@ -193,11 +218,19 @@ pub fn all_tools_with_runtime(
         // subagent and (by default) waits on its result like a function call;
         // `await_workflow` re-attaches to a run that outlived its inline wait.
         // Both wrap `skill_runtime::spawn_workflow_run_background` +
-        // `await_run_outcome` — the same spawn path `openhuman.workflows_run`
+        // `await_run_outcome` — the same spawn path `openhuman.skills_run`
         // JSON-RPC uses, so RPC and tool callers stay in sync.
         Box::new(RunWorkflowTool::new().with_skill_allowlist(skill_allowlist.cloned())),
         Box::new(AwaitWorkflowTool::new()),
         Box::new(CurrentTimeTool::new()),
+        // Reversibility for native tool-output compaction (Stage 1a): when a
+        // large result is compacted with a `retrieve_tool_output("<hash>")`
+        // marker, this hands the original back from the CCR store on demand.
+        Box::new(RetrieveToolOutputTool::new()),
+        // TokenJuice 2.0 content-router retrieval: fetches the original (full or
+        // by byte/line range) for a `⟦tj:<hash>⟧` marker from the CCR cache.
+        // Supersedes `retrieve_tool_output`; both are kept live during migration.
+        Box::new(crate::openhuman::tokenjuice::TokenjuiceRetrieveTool::new()),
         // Deterministic time-expression → timestamp resolver. `current_time`
         // only returns *now*, leaving the model to do epoch arithmetic by hand
         // (a real incident had an agent compute "24h ago" ~10 months off, then
@@ -225,12 +258,74 @@ pub fn all_tools_with_runtime(
         )),
         Box::new(DetectToolsTool::new()),
         Box::new(InstallToolTool::new(security.clone())),
+        // Orchestration session-history read tools — browse persisted
+        // OpenHuman↔agent transcripts. Read-only; workspace-internal store access.
+        Box::new(crate::openhuman::orchestration::tools::ListSessionsTool::new(config.clone())),
+        Box::new(crate::openhuman::orchestration::tools::ReadSessionTool::new(config.clone())),
+        // List the agent's tiny.place contacts (browse-loop entry point).
+        Box::new(crate::openhuman::orchestration::tools::ListContactsTool),
+        // Send-on-behalf: DM another agent for the user. Linked-peers-only,
+        // reuse-or-mint per-peer session id; Write-class external effect.
+        Box::new(crate::openhuman::orchestration::tools::SendToAgentTool::new(config.clone())),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
         Box::new(CronListTool::new(config.clone())),
         Box::new(CronRemoveTool::new(config.clone())),
         Box::new(CronUpdateTool::new(config.clone(), security.clone())),
         Box::new(CronRunTool::new(config.clone())),
         Box::new(CronRunsTool::new(config.clone())),
+        // Agent-first Workflow authoring (issue B4): validates a candidate
+        // graph and returns a proposal summary — never creates/enables a
+        // flow itself. Only the chat UI's WorkflowProposalCard "Save &
+        // enable" action calls `flows_create`.
+        Box::new(ProposeWorkflowTool::new(config.clone())),
+        // workflow-builder agent tool belt (Phase 5b). A deliberately narrow,
+        // propose-or-read surface: revise a draft (validate-only), read saved
+        // flows/runs/connections, ground tool_call slugs in the real catalog,
+        // and dry-run a draft against MOCK capabilities. None of these persist
+        // or enable a flow (only the user's own `flows_create` click does); the
+        // read tools are `PermissionLevel::None`, and `dry_run_workflow` is
+        // autonomy-tier gated + wired to deterministic mock capabilities.
+        Box::new(ReviseWorkflowTool::new(config.clone())),
+        Box::new(ListFlowsTool::new(config.clone())),
+        Box::new(GetFlowTool::new(config.clone())),
+        Box::new(GetFlowRunTool::new(config.clone())),
+        Box::new(ListFlowConnectionsTool::new(config.clone())),
+        Box::new(SearchToolCatalogTool::new(config.clone())),
+        // Full live contract (schemas, real required_args/output_fields,
+        // primary_array_path) for one action slug found via
+        // search_tool_catalog — the grounding step before WIRING a node's
+        // args/downstream bindings (systemic tool-contract fix, Part 1).
+        Box::new(GetToolContractTool::new(config.clone())),
+        // B12: ONE bounded, READ-ONLY, REAL Composio call to derive the real
+        // primary_array_path/output_fields when the live listing publishes no
+        // output schema at all (verified for every GitHub action) — overrides
+        // get_tool_contract's schema-derived hint for that slug from then on.
+        // Read-scope actions only (hard-refused otherwise), connected
+        // toolkits only — see builder_tools.rs's module doc for the carve-out
+        // this makes in the workflow-builder agent's "no composio_execute"
+        // invariant.
+        Box::new(GetToolOutputSampleTool::new(config.clone())),
+        // Ground an `agent` node's `agent_ref` in real registered agent-kind ids
+        // (researcher / code_executor / …) — the agent analogue of
+        // search_tool_catalog. Read-only.
+        Box::new(ListAgentProfilesTool::new()),
+        Box::new(DryRunWorkflowTool::new(security.clone(), config.clone())),
+        // Real end-to-end test run of a SAVED flow (Write / external-effect). The
+        // workflow-builder prompt requires it to ask the user for confirmation
+        // first, and the flow's own approval gate still pauses outbound nodes.
+        Box::new(RunFlowTool::new(config.clone())),
+        // Persist a built graph onto an EXISTING saved flow (Write). Used only
+        // when the USER explicitly asks the agent to save; the seeded build
+        // turn from the Flows prompt bar is propose-only (see #4596) — Accept
+        // + the canvas's own Save persist the graph. The tool itself can
+        // never create a flow or change enabled/require_approval.
+        Box::new(SaveWorkflowTool::new(config.clone())),
+        // Flow Scout discovery: the `flow_discovery` agent's terminal emit
+        // sink. Read-only reasoning over the user's data ends by calling
+        // `suggest_workflows`, which persists workflow ideas for the Flows page
+        // "Suggested for you" section. `PermissionLevel::None`, no external
+        // effect — writes only to the agent's own suggestions store.
+        Box::new(SuggestWorkflowsTool::new(config.clone())),
         // Wallet tools — expose wallet operations to the agent tool-call pipeline
         // so the crypto sub-agent can prepare transfers, check status, etc.
         Box::new(WalletStatusTool::new()),
@@ -242,12 +337,23 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
+        // #4458: the memory read→dedupe→write→update-index protocol
+        // (`agent::harness::memory_protocol`) can only close its write cycle via a
+        // successful `update_memory_md` call, and the archivist's `[tools] named`
+        // allowlist selects it — but subagents only filter the *parent* tool set,
+        // so if this tool is absent from the registry the archivist silently loses
+        // it and the model hits a permanent unsatisfiable "call update_memory_md"
+        // nag loop (unknown-tool error → the tracker never sees IndexUpdate). It is
+        // always registered here (same as the other memory tools); per-agent
+        // visibility is governed by each agent's `named` allowlist. Targets the
+        // workspace `MEMORY.md`/`SKILL.md` (where `channels_prompt`/`session_memory`
+        // read them from), and prefers the live TinyAgents workspace descriptor at
+        // execution time when one is present.
+        Box::new(UpdateMemoryMdTool::new(root_config.workspace_dir.clone())),
         // #002: read-only self-diagnosis of the memory pipeline so the agent
         // can explain an empty/stalled wiki + the fix.
         Box::new(MemoryDoctorTool::new(config.clone())),
         Box::new(MemoryQueryTool),
-        Box::new(MemoryQueryWalkTool),
-        Box::new(SmartMemoryWalkTool),
         // memory_search tools — vector search, chunk context, hybrid search,
         // and previously unregistered raw store tools.
         Box::new(MemoryVectorSearchTool),
@@ -357,6 +463,9 @@ pub fn all_tools_with_runtime(
         Box::new(ThreadUpdateTitleTool),
         Box::new(ThreadUpdateLabelsTool),
         Box::new(ThreadMessageListTool),
+        // Read-only cross-thread transcript search (trigram index). Lets the
+        // context scout and other agents recall what was said in earlier chats.
+        Box::new(ThreadTranscriptSearchTool),
         Box::new(ThreadMessageAppendTool),
         Box::new(ThreadMessageUpdateTool),
         Box::new(ThreadTitleGenerateTool),
@@ -504,6 +613,7 @@ pub fn all_tools_with_runtime(
         Box::new(McpRegistryGetTool::new(config.clone())),
         Box::new(McpRegistryInstalledListTool::new(config.clone())),
         Box::new(McpRegistryStatusTool::new(config.clone())),
+        Box::new(McpRegistryListToolsTool),
         Box::new(McpRegistryConnectTool::new(config.clone())),
         Box::new(McpRegistryDisconnectTool),
         Box::new(McpRegistryToolCallTool),
@@ -521,8 +631,24 @@ pub fn all_tools_with_runtime(
          memory_hybrid_search, memory_store_raw_search, memory_store_raw_chunks, memory_store_kinds"
     );
 
-    // Subconscious scratchpad tools — persistent working memory across ticks.
-    tools.extend(crate::openhuman::subconscious::scratchpad::tools::all_scratchpad_tools());
+    // Memory diff — structured "what changed in the agent's world since a
+    // checkpoint/last sync". Drives the subconscious tick's first stage and is
+    // available to any agent that lists it. Unit struct, no runtime deps.
+    tools.push(Box::new(crate::openhuman::memory_diff::MemoryDiffTool));
+
+    // Subconscious user-facing handoff — notify_user proactive delivery.
+    tools.extend(crate::openhuman::subconscious::user_thread::all_user_thread_tools());
+
+    // tiny.place agent surface. These wrap the internal tiny.place controllers
+    // so the dedicated tinyplace subagent can register identities, inspect
+    // inbox/DM state, trade marketplace assets, manage groups, and work jobs
+    // through the same validation/client paths as JSON-RPC.
+    let tinyplace_tools = crate::openhuman::tinyplace::tools::all_tinyplace_agent_tools();
+    log::debug!(
+        "[tools::ops][tinyplace] registering tinyplace agent tools count={}",
+        tinyplace_tools.len()
+    );
+    tools.extend(tinyplace_tools);
 
     // Presentation generation (#2778). Native-Rust engine (ppt-rs
     // backed) as of the #2780-follow-up rust-engine refactor — no
@@ -532,6 +658,43 @@ pub fn all_tools_with_runtime(
         root_config.workspace_dir.clone(),
         security.clone(),
     )));
+
+    // Long-term goals list tools. Used primarily by the background
+    // `goals_agent` (which filters to these via its `[tools] named`
+    // allowlist); also available to the main agent for explicit edits.
+    {
+        let goals_dir = root_config.workspace_dir.clone();
+        tools.push(Box::new(
+            crate::openhuman::memory_goals::GoalsListTool::new(goals_dir.clone()),
+        ));
+        tools.push(Box::new(crate::openhuman::memory_goals::GoalsAddTool::new(
+            goals_dir.clone(),
+        )));
+        tools.push(Box::new(
+            crate::openhuman::memory_goals::GoalsEditTool::new(goals_dir.clone()),
+        ));
+        tools.push(Box::new(
+            crate::openhuman::memory_goals::GoalsDeleteTool::new(goals_dir),
+        ));
+    }
+
+    // Thread-level goal tools (Codex-style per-thread completion contract).
+    // Visible only to agents that allowlist them (orchestrator). The target
+    // thread is resolved from the ambient `thread_id`, so no thread arg is
+    // taken. `goal_get`/`goal_set`/`goal_complete` — pause/resume/budget are
+    // system-driven and have no model tool.
+    {
+        let goal_dir = root_config.workspace_dir.clone();
+        tools.push(Box::new(crate::openhuman::thread_goals::GoalGetTool::new(
+            goal_dir.clone(),
+        )));
+        tools.push(Box::new(crate::openhuman::thread_goals::GoalSetTool::new(
+            goal_dir.clone(),
+        )));
+        tools.push(Box::new(
+            crate::openhuman::thread_goals::GoalCompleteTool::new(goal_dir),
+        ));
+    }
 
     if browser_config.enabled {
         // Unified web-access allowlist (merge fetch + browser firewalls): the
@@ -672,6 +835,20 @@ pub fn all_tools_with_runtime(
     }
 
     tools.extend(crate::openhuman::search::build_search_tools(root_config));
+
+    // Media generation (image/video via GMI through the backend). Skipped when
+    // no integration client is configured; artifacts land under `action_dir`.
+    tools.extend(crate::openhuman::media_generation::build_media_tools(
+        root_config,
+        action_dir,
+    ));
+
+    // Managed cloud file storage (S3 via the backend). Skipped when no
+    // integration client is configured; downloads land under `action_dir`.
+    tools.extend(crate::openhuman::file_storage::build_file_storage_tools(
+        root_config,
+        action_dir,
+    ));
 
     // High-level web3 tools (swaps / bridges / dapp calls) built on the wallet.
     // They call the backend deBridge proxy per-invocation and error gracefully
@@ -847,6 +1024,31 @@ pub fn all_tools_with_runtime(
         tracing::debug!("[lsp] capability gate on — LspTool registered");
     } else {
         tracing::debug!("[lsp] capability gate off (set OPENHUMAN_LSP_ENABLED=1 to register)");
+    }
+
+    // Language-workflow `rhai_workflows` tool (`.ragsh` REPL, `openhuman::rhai_workflows`): lets
+    // the orchestrator author and run its own Rhai workflow cells (fan-out,
+    // loops, dedup/verify pipelines). Registered on the `supervised`/`full`
+    // tiers only — dark on `readonly` (it can drive effectful tools/sub-agents)
+    // and behind the `OPENHUMAN_RHAI_WORKFLOWS=0` kill switch. Every effectful inner call
+    // still re-gates itself in the Rhai bridge, so this surface adds no new
+    // ungated capability.
+    let rhai_workflows_enabled = std::env::var("OPENHUMAN_RHAI_WORKFLOWS")
+        .or_else(|_| std::env::var("OPENHUMAN_RHAI"))
+        .or_else(|_| std::env::var("OPENHUMAN_RLM"))
+        .map(|v| v != "0")
+        .unwrap_or(true);
+    if rhai_workflows_enabled
+        && security.autonomy != crate::openhuman::security::policy::AutonomyLevel::ReadOnly
+    {
+        tools.push(Box::new(crate::openhuman::rhai_workflows::RhaiTool::new()));
+        tracing::debug!("[rhai_workflows] registered rhai_workflows language-workflow tool");
+    } else {
+        tracing::debug!(
+            rhai_workflows_enabled,
+            tier = ?security.autonomy,
+            "[rhai_workflows] rhai_workflows tool not registered (readonly tier or OPENHUMAN_RHAI_WORKFLOWS=0)"
+        );
     }
 
     tools

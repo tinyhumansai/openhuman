@@ -24,11 +24,11 @@ import {
   LuSparkles,
   LuX,
 } from 'react-icons/lu';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
+import { TaskKanbanBoard } from '../../features/conversations/components/TaskKanbanBoard';
+import { isTaskThread } from '../../features/conversations/utils/threadFilter';
 import { useT } from '../../lib/i18n/I18nContext';
-import { TaskKanbanBoard } from '../../pages/conversations/components/TaskKanbanBoard';
-import { isTaskThread } from '../../pages/conversations/utils/threadFilter';
 import { threadApi } from '../../services/api/threadApi';
 import {
   TASK_SOURCES_THREAD_ID,
@@ -47,6 +47,9 @@ import {
 } from '../../store/threadSlice';
 import type { ThreadMessage } from '../../types/thread';
 import type { TaskBoard, TaskBoardCard, TaskBoardCardStatus } from '../../types/turnState';
+import { chatThreadPath } from '../../utils/chatRoutes';
+import { settingsNavState } from '../settings/modal/settingsOverlay';
+import Button from '../ui/Button';
 import { UserTaskComposer } from './UserTaskComposer';
 
 const log = debug('intelligence:tasks');
@@ -391,7 +394,7 @@ export default function IntelligenceTasksTab() {
         dispatch(setActiveThread(thread.id));
         void dispatch(loadThreads());
         void dispatch(loadThreadMessages(thread.id));
-        navigate('/chat');
+        navigate(chatThreadPath(thread.id));
 
         await chatSend({
           threadId: thread.id,
@@ -527,7 +530,7 @@ export default function IntelligenceTasksTab() {
     const title =
       thread?.title && thread.title.trim().length > 0
         ? thread.title
-        : `${t('intelligence.tasks.threadPrefix')} ${shortId(threadId)}`;
+        : t('intelligence.tasks.threadPrefix').replace('{thread}', shortId(threadId));
 
     boardEntries.push({ threadId, title, board, live: Boolean(liveBoard) });
   }
@@ -543,9 +546,7 @@ export default function IntelligenceTasksTab() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs text-stone-400 dark:text-neutral-500">
-          {t('intelligence.tasks.subtitle')}
-        </p>
+        <p className="text-xs text-content-faint">{t('intelligence.tasks.subtitle')}</p>
         <button
           type="button"
           onClick={() => setComposerOpen(true)}
@@ -564,7 +565,7 @@ export default function IntelligenceTasksTab() {
       {/* Personal board — always present so users can manage their own tasks. */}
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <h3 className="truncate text-sm font-semibold text-stone-700 dark:text-neutral-200">
+          <h3 className="truncate text-sm font-semibold text-content-secondary">
             {t('intelligence.tasks.personalBoardTitle')}
           </h3>
         </div>
@@ -588,10 +589,7 @@ export default function IntelligenceTasksTab() {
             dispatch(setSelectedThread(tid));
             void dispatch(loadThreads());
             void dispatch(loadThreadMessages(tid));
-            // Pass the thread as an explicit open-intent so Conversations'
-            // mount-resume honors it (its default resume only considers
-            // General-tab threads and would otherwise drop this task session).
-            navigate('/chat', { state: { openThreadId: tid } });
+            navigate(chatThreadPath(tid));
           }}
           workingCardId={workingCardId}
           mutatingCardId={mutatingCardId}
@@ -609,7 +607,7 @@ export default function IntelligenceTasksTab() {
       )}
 
       {loading && (
-        <div className="flex items-center justify-center py-6 text-stone-400 dark:text-neutral-500">
+        <div className="flex items-center justify-center py-6 text-content-faint">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-ocean-500 border-t-transparent mr-2" />
           <span className="text-sm">{t('intelligence.tasks.loadingBoards')}</span>
         </div>
@@ -626,7 +624,7 @@ export default function IntelligenceTasksTab() {
         <section key={entry.threadId} className="space-y-2">
           <div className="flex items-center gap-2">
             <h3
-              className="truncate text-sm font-semibold text-stone-700 dark:text-neutral-200"
+              className="truncate text-sm font-semibold text-content-secondary"
               title={entry.title}>
               {entry.title}
             </h3>
@@ -781,6 +779,7 @@ function TaskSourceTaskList({
 }) {
   const { t } = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const sortedCards = useMemo(
     () => [...board.cards].sort((a, b) => a.order - b.order),
     [board.cards]
@@ -790,27 +789,27 @@ function TaskSourceTaskList({
     <section className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="truncate text-sm font-semibold text-stone-700 dark:text-neutral-200">
+          <h3 className="truncate text-sm font-semibold text-content-secondary">
             {t('settings.taskSources.title')}
           </h3>
-          <p className="text-xs text-stone-400 dark:text-neutral-500">
+          <p className="text-xs text-content-faint">
             {t('intelligence.tasks.sourceList.subtitle')}
           </p>
         </div>
         <button
           type="button"
-          onClick={() => navigate('/settings/integrations')}
+          onClick={() => navigate('/settings/integrations', settingsNavState(location))}
           className="text-xs font-medium text-ocean-600 hover:text-ocean-700 dark:text-ocean-300 dark:hover:text-ocean-200">
           {t('conversations.taskKanban.sources.manage')}
         </button>
       </div>
 
       {sortedCards.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-stone-200 py-7 text-center text-sm text-stone-400 dark:border-neutral-800 dark:text-neutral-500">
+        <div className="rounded-xl border border-dashed border-line py-7 text-center text-sm text-content-faint">
           {t('intelligence.tasks.sourceList.empty')}
         </div>
       ) : (
-        <ul className="divide-y divide-stone-100 rounded-xl border border-stone-200 bg-white dark:divide-neutral-800 dark:border-neutral-800 dark:bg-neutral-900">
+        <ul className="divide-y divide-line-subtle rounded-xl border border-line bg-surface dark:divide-neutral-800">
           {sortedCards.map(card => {
             const source = readSourceMetadata(card.sourceMetadata);
             const done = card.status === 'done';
@@ -829,11 +828,11 @@ function TaskSourceTaskList({
                         </span>
                       )}
                     </div>
-                    <p className="break-words text-sm font-medium leading-snug text-stone-800 dark:text-neutral-100">
+                    <p className="break-words text-sm font-medium leading-snug text-content">
                       {card.title}
                     </p>
                     {(card.objective || card.notes) && (
-                      <p className="line-clamp-2 break-words text-xs leading-snug text-stone-500 dark:text-neutral-400">
+                      <p className="line-clamp-2 break-words text-xs leading-snug text-content-muted">
                         {card.objective || card.notes}
                       </p>
                     )}
@@ -845,7 +844,7 @@ function TaskSourceTaskList({
                         target="_blank"
                         rel="noreferrer"
                         title={t('conversations.taskKanban.source.openExternal')}
-                        className="flex h-8 w-8 items-center justify-center rounded-md border border-stone-200 text-stone-500 hover:bg-stone-50 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800">
+                        className="flex h-8 w-8 items-center justify-center rounded-md border border-line text-content-muted hover:bg-surface-hover dark:text-content-secondary">
                         <LuExternalLink className="h-4 w-4" />
                       </a>
                     )}
@@ -907,23 +906,25 @@ function TaskSourceRefinementDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="max-h-[90vh] w-full max-w-2xl overflow-hidden rounded-xl border border-stone-200 bg-white shadow-xl dark:border-neutral-800 dark:bg-neutral-950">
-        <div className="flex items-start justify-between gap-3 border-b border-stone-100 px-4 py-3 dark:border-neutral-800">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-hidden rounded-xl border border-line bg-surface shadow-xl dark:bg-surface-canvas">
+        <div className="flex items-start justify-between gap-3 border-b border-line-subtle px-4 py-3">
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-stone-800 dark:text-neutral-100">
+            <h3 className="text-sm font-semibold text-content">
               {t('intelligence.tasks.sourcePlan.title')}
             </h3>
-            <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
+            <p className="mt-0.5 text-xs text-content-muted">
               {t('intelligence.tasks.sourcePlan.subtitle')}
             </p>
           </div>
-          <button
-            type="button"
+          <Button
+            iconOnly
+            variant="tertiary"
+            size="sm"
             aria-label={t('common.close')}
             onClick={onClose}
-            className="flex h-8 w-8 flex-none items-center justify-center rounded-md text-stone-500 hover:bg-stone-100 dark:text-neutral-300 dark:hover:bg-neutral-800">
+            className="flex-none">
             <LuX className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
 
         <div className="max-h-[calc(90vh-8rem)] space-y-4 overflow-y-auto px-4 py-4">
@@ -935,73 +936,69 @@ function TaskSourceRefinementDialog({
           </div>
 
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+            <span className="text-xs font-medium text-content-secondary">
               {t('conversations.taskKanban.field.title')}
             </span>
             <input
               value={title}
               onChange={event => setTitle(event.target.value)}
-              className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none focus:border-ocean-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+              className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content outline-none focus:border-ocean-400"
             />
           </label>
 
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+            <span className="text-xs font-medium text-content-secondary">
               {t('conversations.taskKanban.field.objective')}
             </span>
             <textarea
               value={objective}
               onChange={event => setObjective(event.target.value)}
               rows={3}
-              className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none focus:border-ocean-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+              className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content outline-none focus:border-ocean-400"
             />
           </label>
 
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+            <span className="text-xs font-medium text-content-secondary">
               {t('conversations.taskKanban.field.plan')}
             </span>
             <textarea
               value={planText}
               onChange={event => setPlanText(event.target.value)}
               rows={5}
-              className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none focus:border-ocean-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+              className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content outline-none focus:border-ocean-400"
             />
           </label>
 
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+            <span className="text-xs font-medium text-content-secondary">
               {t('conversations.taskKanban.field.acceptanceCriteria')}
             </span>
             <textarea
               value={criteriaText}
               onChange={event => setCriteriaText(event.target.value)}
               rows={4}
-              className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none focus:border-ocean-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+              className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content outline-none focus:border-ocean-400"
             />
           </label>
 
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+            <span className="text-xs font-medium text-content-secondary">
               {t('conversations.taskKanban.field.notes')}
             </span>
             <textarea
               value={notes}
               onChange={event => setNotes(event.target.value)}
               rows={3}
-              className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none focus:border-ocean-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+              className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content outline-none focus:border-ocean-400"
             />
           </label>
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-stone-100 px-4 py-3 dark:border-neutral-800">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            className="rounded-md border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-50 disabled:opacity-40 dark:border-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-800">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line-subtle px-4 py-3">
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={saving}>
             {t('common.cancel')}
-          </button>
+          </Button>
           <button
             type="button"
             onClick={() => void approve()}

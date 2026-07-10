@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentTeamMember, TeamMessage } from '../../services/api/agentTeamApi';
@@ -49,5 +49,46 @@ describe('TeamActivityRail', () => {
     expect(
       screen.getByText('intelligence.teams.activity.toTeam', { exact: false })
     ).toBeInTheDocument();
+  });
+
+  it('renders no composer without onSend', () => {
+    render(<TeamActivityRail messages={[]} members={members} />);
+    expect(
+      screen.queryByPlaceholderText('intelligence.teams.composer.placeholder')
+    ).not.toBeInTheDocument();
+  });
+
+  it('sends a broadcast (null recipient) with the typed content and clears the draft', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    render(<TeamActivityRail messages={[]} members={members} onSend={onSend} />);
+    const input = screen.getByPlaceholderText(
+      'intelligence.teams.composer.placeholder'
+    ) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'ship it' } });
+    fireEvent.click(screen.getByLabelText('intelligence.teams.composer.send'));
+    expect(onSend).toHaveBeenCalledWith(null, 'ship it');
+    await waitFor(() => expect(input.value).toBe(''));
+  });
+
+  it('sends to the selected teammate and submits on Enter', () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    render(<TeamActivityRail messages={[]} members={members} onSend={onSend} />);
+    fireEvent.change(screen.getByLabelText('intelligence.teams.composer.recipient'), {
+      target: { value: 'm2' },
+    });
+    const input = screen.getByPlaceholderText('intelligence.teams.composer.placeholder');
+    fireEvent.change(input, { target: { value: 'your turn' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onSend).toHaveBeenCalledWith('m2', 'your turn');
+  });
+
+  it('does not send blank content', () => {
+    const onSend = vi.fn();
+    render(<TeamActivityRail messages={[]} members={members} onSend={onSend} />);
+    fireEvent.change(screen.getByPlaceholderText('intelligence.teams.composer.placeholder'), {
+      target: { value: '   ' },
+    });
+    fireEvent.click(screen.getByLabelText('intelligence.teams.composer.send'));
+    expect(onSend).not.toHaveBeenCalled();
   });
 });

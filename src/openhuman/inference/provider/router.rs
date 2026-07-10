@@ -1,11 +1,12 @@
 use super::traits::{ChatMessage, ChatRequest, ChatResponse};
 use super::Provider;
+use crate::openhuman::inference::provider::record_resolved_provider_route;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
 /// Maps OpenHuman's abstract tier model names (`reasoning-v1`, `chat-v1`,
-/// `reasoning-quick-v1`, `agentic-v1`, `coding-v1`, `summarization-v1`)
-/// to the hint slot in `model_routes`. Returns `None` for any model the
+/// `reasoning-quick-v1`, `agentic-v1`, `burst-v1`, `coding-v1`, `summarization-v1`,
+/// `vision-v1`) to the hint slot in `model_routes`. Returns `None` for any model the
 /// router shouldn't rewrite.
 fn openhuman_tier_to_hint(model: &str) -> Option<&'static str> {
     match model {
@@ -13,8 +14,10 @@ fn openhuman_tier_to_hint(model: &str) -> Option<&'static str> {
         "chat-v1" => Some("chat"),
         "reasoning-quick-v1" => Some("chat"),
         "agentic-v1" => Some("agentic"),
+        "burst-v1" => Some("burst"),
         "coding-v1" => Some("coding"),
         "summarization-v1" => Some("summarization"),
+        "vision-v1" => Some("vision"),
         _ => None,
     }
 }
@@ -92,7 +95,7 @@ impl RouterProvider {
     /// Resolution order:
     /// 1. `hint:<name>` — direct hint lookup (e.g. `hint:reasoning`).
     /// 2. OpenHuman abstract tier names — `reasoning-v1`, `chat-v1`,
-    ///    `agentic-v1`, `coding-v1`, `summarization-v1` map onto the corresponding hints
+    ///    `agentic-v1`, `burst-v1`, `coding-v1`, `summarization-v1` map onto the corresponding hints
     ///    so a custom provider gets the user-configured model id instead of
     ///    the literal tier name (which is only meaningful to the OpenHuman
     ///    backend and would 404 on OpenAI/Anthropic/etc.).
@@ -161,6 +164,13 @@ impl RouterProvider {
 
 #[async_trait]
 impl Provider for RouterProvider {
+    fn telemetry_provider_id(&self) -> String {
+        self.providers
+            .get(self.default_index)
+            .map(|(_, p)| p.telemetry_provider_id())
+            .unwrap_or_else(|| "custom".to_string())
+    }
+
     async fn chat_with_system(
         &self,
         system_prompt: Option<&str>,
@@ -177,6 +187,7 @@ impl Provider for RouterProvider {
             "Router dispatching request"
         );
 
+        record_resolved_provider_route(provider_name, &resolved_model);
         provider
             .chat_with_system(system_prompt, message, &resolved_model, temperature)
             .await
@@ -189,7 +200,8 @@ impl Provider for RouterProvider {
         temperature: f64,
     ) -> anyhow::Result<String> {
         let (provider_idx, resolved_model) = self.resolve(model);
-        let (_, provider) = &self.providers[provider_idx];
+        let (provider_name, provider) = &self.providers[provider_idx];
+        record_resolved_provider_route(provider_name, &resolved_model);
         provider
             .chat_with_history(messages, &resolved_model, temperature)
             .await
@@ -202,7 +214,8 @@ impl Provider for RouterProvider {
         temperature: f64,
     ) -> anyhow::Result<ChatResponse> {
         let (provider_idx, resolved_model) = self.resolve(model);
-        let (_, provider) = &self.providers[provider_idx];
+        let (provider_name, provider) = &self.providers[provider_idx];
+        record_resolved_provider_route(provider_name, &resolved_model);
         provider.chat(request, &resolved_model, temperature).await
     }
 
@@ -214,7 +227,8 @@ impl Provider for RouterProvider {
         temperature: f64,
     ) -> anyhow::Result<ChatResponse> {
         let (provider_idx, resolved_model) = self.resolve(model);
-        let (_, provider) = &self.providers[provider_idx];
+        let (provider_name, provider) = &self.providers[provider_idx];
+        record_resolved_provider_route(provider_name, &resolved_model);
         provider
             .chat_with_tools(messages, tools, &resolved_model, temperature)
             .await
@@ -231,6 +245,53 @@ impl Provider for RouterProvider {
         self.providers
             .iter()
             .any(|(_, provider)| provider.supports_vision())
+    }
+
+    /// Delegate to the provider that actually handles `model` so local
+    /// runtimes report their runtime-loaded window (LM Studio `n_ctx`) instead
+    /// of the static-table default the trait would otherwise return (#3550 /
+    /// TAURI-RUST-6V0).
+    async fn effective_context_window(&self, model: &str) -> Option<u64> {
+        let (provider_idx, resolved_model) = self.resolve(model);
+        let (_, provider) = &self.providers[provider_idx];
+        provider.effective_context_window(&resolved_model).await
+    }
+
+    /// Whether the *default* provider is local. Model-blind — kept for callers
+    /// that have no model in hand. The engine's pre-dispatch guard uses the
+    /// model-aware [`Provider::is_local_provider_for_model`] below instead, so a
+    /// cloud-default router still gates correctly when it routes a model to a
+    /// local provider (#3550 / TAURI-RUST-6V0).
+    fn is_local_provider(&self) -> bool {
+        self.providers
+            .get(self.default_index)
+            .map(|(_, p)| p.is_local_provider())
+            .unwrap_or(false)
+    }
+
+    /// Resolve `model` to the provider that actually handles it and report
+    /// *that* provider's locality. Without this, a router whose default is
+    /// cloud reports `is_local_provider() == false` even when `model` routes to
+    /// a local provider, so the engine's pre-dispatch un-evictable-prefix guard
+    /// is skipped and the opaque local `400 (n_keep >= n_ctx)` reaches the user
+    /// (Codex P2 + CodeRabbit review on PR #3771). `effective_context_window`
+    /// already resolves the routed provider, so this keeps the two in step.
+    fn is_local_provider_for_model(&self, model: &str) -> bool {
+        let (provider_idx, _) = self.resolve(model);
+        self.providers
+            .get(provider_idx)
+            .map(|(_, p)| p.is_local_provider())
+            .unwrap_or(false)
+    }
+
+    /// Delegate the authoritative runtime-loaded window to the routed provider,
+    /// mirroring [`RouterProvider::effective_context_window`] so the engine's
+    /// hard pre-dispatch abort sees the same routed provider's loaded `n_ctx`
+    /// (#3550 / TAURI-RUST-6V0).
+    async fn loaded_context_window(&self, model: &str) -> Option<u64> {
+        let (provider_idx, resolved_model) = self.resolve(model);
+        let (_, provider) = &self.providers[provider_idx];
+        provider.loaded_context_window(&resolved_model).await
     }
 
     async fn warmup(&self) -> anyhow::Result<()> {

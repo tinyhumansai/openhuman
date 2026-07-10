@@ -119,6 +119,6 @@ describe('ChannelSelector', () => {
     );
     const mcpBtn = screen.getByRole('button', { name: /mcp servers/i });
     expect(mcpBtn.className).not.toContain('bg-primary-50');
-    expect(mcpBtn.className).toContain('bg-stone-50');
+    expect(mcpBtn.className).toContain('bg-surface-muted');
   });
 });

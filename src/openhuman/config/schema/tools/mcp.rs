@@ -111,20 +111,41 @@ impl Default for McpServerConfig {
     }
 }
 
+/// One HTTP header (name + value) for the multi-header [`McpAuthConfig::Headers`]
+/// variant — e.g. a remote that requires both `X-Client-Key` and
+/// `X-Client-Secret`, or an API key plus an org id.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum McpAuthConfig {
-    None,
-    BearerToken { token: String },
-    Basic { username: String, password: String },
-    Header { name: String, value: String },
-    QueryParam { name: String, value: String },
+pub struct HttpHeader {
+    pub name: String,
+    pub value: String,
 }
 
-impl Default for McpAuthConfig {
-    fn default() -> Self {
-        Self::None
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Default)]
+pub enum McpAuthConfig {
+    #[default]
+    None,
+    BearerToken {
+        token: String,
+    },
+    Basic {
+        username: String,
+        password: String,
+    },
+    Header {
+        name: String,
+        value: String,
+    },
+    /// Multiple request headers, all applied — for remotes that authenticate
+    /// with more than one header (single-header servers use [`Self::Header`]).
+    Headers {
+        headers: Vec<HttpHeader>,
+    },
+    QueryParam {
+        name: String,
+        value: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

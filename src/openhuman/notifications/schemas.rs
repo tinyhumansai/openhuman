@@ -62,6 +62,16 @@ const NOTIFICATION_CONTROLLER_DEFS: &[NotificationControllerDef] = &[
         schema: schema_stats,
         handler: handle_stats_wrap,
     },
+    NotificationControllerDef {
+        function: "core_list",
+        schema: schema_core_list,
+        handler: handle_core_list_wrap,
+    },
+    NotificationControllerDef {
+        function: "core_mark_read",
+        schema: schema_core_mark_read,
+        handler: handle_core_mark_read_wrap,
+    },
 ];
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -372,6 +382,63 @@ fn schema_stats() -> ControllerSchema {
     }
 }
 
+fn schema_core_list() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "notification",
+        function: "core_list",
+        description: "List persisted core notifications (cron, webhook, sub-agent, triage) so \
+                      the frontend can sync down events fired while the app was closed (#3805).",
+        inputs: vec![
+            FieldSchema {
+                name: "only_unread",
+                ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                comment: "Return only unread notifications. Defaults to true.",
+                required: false,
+            },
+            FieldSchema {
+                name: "limit",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Maximum number of records to return; defaults to 100.",
+                required: false,
+            },
+        ],
+        outputs: vec![
+            FieldSchema {
+                name: "items",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("CoreNotificationEvent"))),
+                comment: "Persisted core notifications, newest first.",
+                required: true,
+            },
+            FieldSchema {
+                name: "unread_count",
+                ty: TypeSchema::I64,
+                comment: "Total count of unread core notifications.",
+                required: true,
+            },
+        ],
+    }
+}
+
+fn schema_core_mark_read() -> ControllerSchema {
+    ControllerSchema {
+        namespace: "notification",
+        function: "core_mark_read",
+        description: "Mark a persisted core notification as read by its id (#3805).",
+        inputs: vec![FieldSchema {
+            name: "id",
+            ty: TypeSchema::String,
+            comment: "Id of the core notification to mark as read.",
+            required: true,
+        }],
+        outputs: vec![FieldSchema {
+            name: "ok",
+            ty: TypeSchema::Bool,
+            comment: "True when a matching notification was updated.",
+            required: true,
+        }],
+    }
+}
+
 fn schema_unknown() -> ControllerSchema {
     ControllerSchema {
         namespace: "notification",
@@ -428,6 +495,14 @@ fn handle_stats_wrap(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { super::rpc::handle_stats(params).await })
 }
 
+fn handle_core_list_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::rpc::handle_core_list(params).await })
+}
+
+fn handle_core_mark_read_wrap(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { super::rpc::handle_core_mark_read(params).await })
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -453,6 +528,8 @@ mod tests {
                 "dismiss",
                 "mark_acted",
                 "stats",
+                "core_list",
+                "core_mark_read",
             ]
         );
     }
@@ -460,7 +537,7 @@ mod tests {
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 8);
+        assert_eq!(controllers.len(), 10);
         let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
         assert_eq!(
             names,
@@ -473,6 +550,8 @@ mod tests {
                 "dismiss",
                 "mark_acted",
                 "stats",
+                "core_list",
+                "core_mark_read",
             ]
         );
     }

@@ -66,6 +66,7 @@ pub(super) struct ModelSettingsUpdate {
     pub(super) reasoning_provider: Option<String>,
     pub(super) agentic_provider: Option<String>,
     pub(super) coding_provider: Option<String>,
+    pub(super) vision_provider: Option<String>,
     pub(super) memory_provider: Option<String>,
     pub(super) embeddings_provider: Option<String>,
     pub(super) heartbeat_provider: Option<String>,
@@ -93,6 +94,7 @@ pub(super) struct RuntimeSettingsUpdate {
 #[derive(Debug, Deserialize)]
 pub(super) struct BrowserSettingsUpdate {
     pub(super) enabled: Option<bool>,
+    pub(super) backend: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,6 +119,21 @@ pub(super) struct AnalyticsSettingsUpdate {
 #[derive(Debug, Deserialize)]
 pub(super) struct MeetSettingsUpdate {
     pub(super) auto_orchestrator_handoff: Option<bool>,
+    /// Calendar auto-join policy as a string: `ask_each_time` | `always` | `never`.
+    pub(super) auto_join_policy: Option<String>,
+    /// Post-call summary policy as a string: `ask` | `always` | `never`.
+    pub(super) auto_summarize_policy: Option<String>,
+    pub(super) listen_only_default: Option<bool>,
+    pub(super) ingest_backend_transcripts: Option<bool>,
+    /// Per-platform policy overrides. Keys: "gmeet", "zoom", "teams", "webex".
+    /// Values: `ask_each_time` | `always` | `never`.
+    pub(super) platform_auto_join_policies: Option<std::collections::HashMap<String, String>>,
+    /// Master switch for calendar-driven auto-join / ask-to-join.
+    pub(super) watch_calendar: Option<bool>,
+    /// Calendar detection source as a string: `composio` | `recall`.
+    pub(super) calendar_provider: Option<String>,
+    /// User's meeting display name, reused as the bot's reply anchor.
+    pub(super) reply_display_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +165,7 @@ pub(super) struct LocalAiSettingsUpdate {
     pub(super) usage_heartbeat: Option<bool>,
     pub(super) usage_learning_reflection: Option<bool>,
     pub(super) usage_subconscious: Option<bool>,
+    pub(super) api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,6 +186,11 @@ pub(super) struct WorkspaceOnboardingFlagSetParams {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct OnboardingCompletedSetParams {
+    pub(super) value: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SuperContextSetParams {
     pub(super) value: bool,
 }
 
@@ -220,6 +243,12 @@ pub(super) struct AutonomySettingsUpdate {
     /// may run without an approval prompt. Empty list clears it.
     pub(super) auto_approve: Option<Vec<String>>,
     pub(super) require_task_plan_approval: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct PrivacyModeUpdate {
+    /// `"local_only" | "standard" | "sensitive"` (case-insensitive).
+    pub(super) mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

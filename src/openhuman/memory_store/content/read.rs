@@ -1,10 +1,73 @@
 //! Read and verify chunk and summary `.md` files from the content store.
 
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use super::atomic::sha256_hex;
 use super::compose::split_front_matter;
 use crate::openhuman::memory::util::redact::redact;
+
+/// Resolve a DB-stored relative forward-slash path against `content_root`,
+/// rejecting any traversal (`..`), absolute, or non-normal component.
+///
+/// The `raw_refs` / `content_path` values are treated as **untrusted** at the
+/// read boundary: although the write path slugifies/sanitizes them, a future
+/// ingest source or DB tamper could store `../../etc/passwd` and turn this
+/// reader into an arbitrary file-disclosure primitive that feeds the LLM
+/// context. We therefore (1) reject any `..`/absolute/prefix component before
+/// touching disk and (2) — when the target exists — canonicalize the resolved
+/// path and assert it stays under the canonicalized `content_root`.
+fn resolve_within_content_root(content_root: &Path, rel_path: &str) -> anyhow::Result<PathBuf> {
+    // Reject absolute inputs outright. A leading `/` (or a Windows drive/UNC
+    // prefix) would otherwise split into an empty leading component that gets
+    // silently skipped, treating `/etc/passwd` as a relative path under the
+    // content root rather than flagging the obvious traversal attempt.
+    if Path::new(rel_path).is_absolute() {
+        return Err(anyhow::anyhow!(
+            "[content_store::read] rejected absolute path in path_hash={}",
+            redact(rel_path),
+        ));
+    }
+
+    let mut abs = content_root.to_path_buf();
+    for component in rel_path.split('/') {
+        // Skip empty components from leading/double/trailing slashes.
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        // Reject anything that is not a plain file/dir name: `..`, absolute
+        // roots, Windows prefixes, etc.
+        match Path::new(component).components().next() {
+            Some(Component::Normal(_)) => abs.push(component),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "[content_store::read] rejected unsafe path component in path_hash={}",
+                    redact(rel_path),
+                ));
+            }
+        }
+    }
+
+    // Defense in depth: if the file exists, canonicalize and confirm
+    // containment. (canonicalize requires the path to exist, so this is a
+    // no-op for not-yet-created files — the component check above already
+    // blocks traversal in that case.)
+    if abs.exists() {
+        let canon_root = content_root
+            .canonicalize()
+            .unwrap_or_else(|_| content_root.to_path_buf());
+        let canon_abs = abs
+            .canonicalize()
+            .map_err(|e| anyhow::anyhow!("[content_store::read] canonicalize failed: {e}"))?;
+        if !canon_abs.starts_with(&canon_root) {
+            return Err(anyhow::anyhow!(
+                "[content_store::read] resolved path escapes content_root for path_hash={}",
+                redact(rel_path),
+            ));
+        }
+    }
+
+    Ok(abs)
+}
 
 /// The result of reading a chunk file from disk.
 pub struct ChunkFileContents {
@@ -175,14 +238,9 @@ pub fn read_chunk_body(
     }
 
     let content_root = config.memory_tree_content_root();
-    // Reconstruct the absolute path from the stored relative forward-slash path.
-    let abs_path = {
-        let mut p = content_root.clone();
-        for component in rel_path.split('/') {
-            p.push(component);
-        }
-        p
-    };
+    // Reconstruct the absolute path from the stored relative forward-slash
+    // path, rejecting any traversal and confirming containment.
+    let abs_path = resolve_within_content_root(&content_root, &rel_path)?;
 
     log::debug!(
         "[content_store::read] read_chunk_body chunk_id={} path_hash={}",
@@ -198,20 +256,33 @@ pub fn read_chunk_body(
         )
     })?;
 
-    // Verify the on-disk body matches the SHA stored at write time. A mismatch
-    // means the file was tampered with, the tx that committed the pointer
-    // raced with a separate writer, or the disk corrupted — all unsafe to
-    // hand back to a consumer. Fail loudly rather than serve stale/corrupt
-    // bytes into the LLM extractor / summariser pipeline.
+    // The content file is content-addressed and atomically written, so the file
+    // on disk is authoritative for this chunk's body. A sha mismatch means the
+    // stored token drifted from disk — e.g. an external editor rewrote a synced
+    // file after ingest (#4689). Serve the full on-disk body and repair the
+    // stale token so the next read verifies cleanly, instead of returning an Err
+    // that every caller converts into the ≤500-char preview (silent truncation).
     if result.sha256 != expected_sha256 {
-        return Err(anyhow::anyhow!(
-            "[content_store::read] sha256 mismatch for chunk_id={} \
-             expected={} actual={} path_hash={}",
+        log::warn!(
+            "[content_store::read] stale sha token for chunk_id={} disk={} db={} path_hash={} \
+             — serving on-disk body and repairing token",
             chunk_id,
-            expected_sha256,
             result.sha256,
+            expected_sha256,
             redact(&rel_path),
-        ));
+        );
+        if let Err(e) = crate::openhuman::memory_store::chunks::store::update_chunk_content_sha256(
+            config,
+            chunk_id,
+            &result.sha256,
+        ) {
+            // Best-effort: the correct body is already in hand; a failed repair
+            // just means the next read re-heals. Never fail the read on this.
+            log::warn!(
+                "[content_store::read] failed to repair sha token for chunk_id={}: {e:#}",
+                chunk_id,
+            );
+        }
     }
 
     Ok(result.body)
@@ -237,10 +308,20 @@ fn read_chunk_body_from_raw(
     let content_root = config.memory_tree_content_root();
     let mut parts: Vec<String> = Vec::with_capacity(refs.len());
     for r in refs {
-        let mut abs = content_root.clone();
-        for component in r.path.split('/') {
-            abs.push(component);
-        }
+        // Treat the DB-stored ref path as untrusted: reject traversal /
+        // absolute paths and confirm the resolved path stays under
+        // content_root before reading. Skip (don't fail the whole chunk) on a
+        // rejected ref, matching the best-effort policy for per-file errors.
+        let abs = match resolve_within_content_root(&content_root, &r.path) {
+            Ok(p) => p,
+            Err(e) => {
+                log::warn!(
+                    "[content_store::read] raw_ref rejected path_hash={} err={e}",
+                    redact(&r.path)
+                );
+                continue;
+            }
+        };
         let bytes = match std::fs::read(&abs) {
             Ok(b) => b,
             Err(e) => {
@@ -300,13 +381,7 @@ pub fn read_summary_body(
     let (rel_path, expected_sha256) = pointers;
 
     let content_root = config.memory_tree_content_root();
-    let abs_path = {
-        let mut p = content_root.clone();
-        for component in rel_path.split('/') {
-            p.push(component);
-        }
-        p
-    };
+    let abs_path = resolve_within_content_root(&content_root, &rel_path)?;
 
     log::debug!(
         "[content_store::read] read_summary_body summary_id={} path_hash={}",
@@ -322,17 +397,28 @@ pub fn read_summary_body(
         )
     })?;
 
-    // Verify the on-disk body matches the SHA stored at seal time. See the
-    // matching guard in `read_chunk_body` for rationale.
+    // Self-heal a drifted sha token by trusting the on-disk file and repairing
+    // the stored token, rather than returning an Err that callers convert into
+    // the ≤500-char preview. See the matching guard in `read_chunk_body` (#4689).
     if result.sha256 != expected_sha256 {
-        return Err(anyhow::anyhow!(
-            "[content_store::read] sha256 mismatch for summary_id={} \
-             expected={} actual={} path_hash={}",
+        log::warn!(
+            "[content_store::read] stale sha token for summary_id={} disk={} db={} path_hash={} \
+             — serving on-disk body and repairing token",
             summary_id,
-            expected_sha256,
             result.sha256,
+            expected_sha256,
             redact(&rel_path),
-        ));
+        );
+        if let Err(e) = crate::openhuman::memory_store::chunks::store::update_summary_content_sha256(
+            config,
+            summary_id,
+            &result.sha256,
+        ) {
+            log::warn!(
+                "[content_store::read] failed to repair sha token for summary_id={}: {e:#}",
+                summary_id,
+            );
+        }
     }
 
     Ok(result.body)
@@ -606,6 +692,55 @@ mod tests {
     }
 
     #[test]
+    fn read_chunk_body_from_raw_rejects_path_traversal() {
+        use crate::openhuman::memory_store::chunks::store::RawRef;
+
+        let dir = TempDir::new().unwrap();
+        let mut cfg = crate::openhuman::config::Config::default();
+        cfg.workspace_dir = dir.path().to_path_buf();
+
+        let content_root = cfg.memory_tree_content_root();
+        std::fs::create_dir_all(&content_root).unwrap();
+        std::fs::write(content_root.join("safe.txt"), "safe").unwrap();
+
+        // A secret sitting next to content_root that a traversal ref tries to
+        // reach. The traversal ref must be skipped, leaving only the safe body.
+        let outside = content_root.parent().unwrap().join("secret.txt");
+        std::fs::write(&outside, "TOP SECRET").unwrap();
+
+        let refs = vec![
+            RawRef {
+                path: "../secret.txt".into(),
+                start: 0,
+                end: None,
+            },
+            RawRef {
+                path: "safe.txt".into(),
+                start: 0,
+                end: None,
+            },
+        ];
+
+        let body = read_chunk_body_from_raw(&cfg, &refs).unwrap();
+        assert_eq!(body, "safe");
+        assert!(!body.contains("SECRET"));
+    }
+
+    #[test]
+    fn resolve_within_content_root_rejects_traversal_and_absolute() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+
+        assert!(resolve_within_content_root(root, "../escape.md").is_err());
+        assert!(resolve_within_content_root(root, "a/../../escape.md").is_err());
+        assert!(resolve_within_content_root(root, "/etc/passwd").is_err());
+
+        // Safe relative paths resolve correctly.
+        let ok = resolve_within_content_root(root, "sub/dir/file.md").unwrap();
+        assert_eq!(ok, root.join("sub").join("dir").join("file.md"));
+    }
+
+    #[test]
     fn read_chunk_body_roundtrips_from_staged_content_pointer() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp);
@@ -637,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn read_chunk_body_errors_on_sha_mismatch() {
+    fn read_chunk_body_self_heals_on_sha_mismatch() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(&tmp);
         let chunk = sample_chunk();
@@ -655,6 +790,8 @@ mod tests {
         })
         .unwrap();
 
+        // Simulate an external editor rewriting the synced file after ingest:
+        // the on-disk body drifts from the recorded content_sha256 (#4689).
         let rel =
             crate::openhuman::memory_store::chunks::store::get_chunk_content_path(&cfg, &chunk.id)
                 .unwrap()
@@ -665,8 +802,74 @@ mod tests {
         }
         std::fs::write(&abs, b"---\nsource_kind: chat\n---\nmutated body").unwrap();
 
-        let err = read_chunk_body(&cfg, &chunk.id).unwrap_err();
-        assert!(err.to_string().contains("sha256 mismatch"));
+        // Self-heal: serve the full on-disk body instead of erroring into the
+        // ≤500-char preview, and repair the stale token.
+        let body = read_chunk_body(&cfg, &chunk.id).unwrap();
+        assert_eq!(body, "mutated body");
+
+        let (_, sha) = crate::openhuman::memory_store::chunks::store::get_chunk_content_pointers(
+            &cfg, &chunk.id,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(sha, sha256_hex(b"mutated body"));
+        // A second read now verifies cleanly against the repaired token.
+        assert_eq!(read_chunk_body(&cfg, &chunk.id).unwrap(), "mutated body");
+    }
+
+    #[test]
+    fn read_summary_body_self_heals_on_sha_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = test_config(&tmp);
+        let tree = sample_tree();
+        let node = sample_summary_node();
+        insert_tree(&cfg, &tree).unwrap();
+        let staged = stage_summary(
+            &cfg.memory_tree_content_root(),
+            &SummaryComposeInput {
+                summary_id: &node.id,
+                tree_kind: SummaryTreeKind::Source,
+                tree_id: &tree.id,
+                tree_scope: &tree.scope,
+                level: node.level,
+                child_ids: &node.child_ids,
+                child_basenames: None,
+                child_count: node.child_ids.len(),
+                time_range_start: node.time_range_start,
+                time_range_end: node.time_range_end,
+                sealed_at: node.sealed_at,
+                body: &node.content,
+            },
+            "slack-eng",
+        )
+        .unwrap();
+        with_connection(&cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            insert_summary_tx(&tx, &node, Some(&staged), "test")?;
+            tx.commit()?;
+            Ok(())
+        })
+        .unwrap();
+
+        let (rel, _) = crate::openhuman::memory_store::chunks::store::get_summary_content_pointers(
+            &cfg, &node.id,
+        )
+        .unwrap()
+        .unwrap();
+        let mut abs = cfg.memory_tree_content_root();
+        for part in rel.split('/') {
+            abs.push(part);
+        }
+        std::fs::write(&abs, b"---\ntree_kind: source\n---\nmutated summary").unwrap();
+
+        let body = read_summary_body(&cfg, &node.id).unwrap();
+        assert_eq!(body, "mutated summary");
+        let (_, sha) = crate::openhuman::memory_store::chunks::store::get_summary_content_pointers(
+            &cfg, &node.id,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(sha, sha256_hex(b"mutated summary"));
     }
 
     #[test]

@@ -40,6 +40,13 @@ const soulFile = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** Wait for the SOUL section to finish loading (the mode toggle is always shown). */
+const awaitLoaded = () =>
+  waitFor(() => expect(screen.getByTestId('persona-soul-mode-guided')).toBeInTheDocument());
+
+/** Switch to the Advanced (raw markdown) editor. */
+const openAdvanced = () => fireEvent.click(screen.getByTestId('persona-soul-mode-advanced'));
+
 describe('PersonaPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -52,17 +59,65 @@ describe('PersonaPanel', () => {
     );
   });
 
-  it('loads SOUL.md contents into the editor on mount', async () => {
+  it('defaults to the guided builder and hides raw markdown', async () => {
     renderWithProviders(<PersonaPanel />);
-    await waitFor(() => {
-      expect(screen.getByTestId('persona-soul-editor')).toHaveValue('You are helpful.');
-    });
+    await awaitLoaded();
+    expect(screen.getByTestId('persona-guided-personality')).toBeInTheDocument();
+    expect(screen.queryByTestId('persona-soul-editor')).not.toBeInTheDocument();
     expect(readPersonaFileMock).toHaveBeenCalledWith('SOUL.md');
+  });
+
+  it('reveals the raw SOUL.md editor in Advanced mode', async () => {
+    renderWithProviders(<PersonaPanel />);
+    await awaitLoaded();
+    openAdvanced();
+    expect(screen.getByTestId('persona-soul-editor')).toHaveValue('You are helpful.');
+  });
+
+  it('splices a guided field edit into SOUL.md and saves it over RPC', async () => {
+    readPersonaFileMock.mockResolvedValue(
+      soulFile({ contents: '## Personality\n\nOld.\n', is_default: false })
+    );
+    renderWithProviders(<PersonaPanel />);
+    await awaitLoaded();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('persona-guided-personality')).toHaveValue('Old.')
+    );
+    fireEvent.change(screen.getByTestId('persona-guided-personality'), {
+      target: { value: 'Warm and direct.' },
+    });
+    fireEvent.click(screen.getByTestId('persona-soul-save'));
+
+    await waitFor(() => {
+      expect(writePersonaFileMock).toHaveBeenCalledWith(
+        'SOUL.md',
+        '## Personality\n\nWarm and direct.\n'
+      );
+    });
+  });
+
+  it('applies a role template and saves the seeded persona over RPC', async () => {
+    readPersonaFileMock.mockResolvedValue(
+      soulFile({ contents: '## Personality\n\nOld.\n', is_default: false })
+    );
+    renderWithProviders(<PersonaPanel />);
+    await awaitLoaded();
+
+    fireEvent.click(screen.getByTestId('persona-template-doctor'));
+    fireEvent.click(screen.getByTestId('persona-soul-save'));
+
+    await waitFor(() => {
+      const lastCall = writePersonaFileMock.mock.calls.at(-1);
+      expect(lastCall?.[0]).toBe('SOUL.md');
+      expect(lastCall?.[1]).toContain('Careful and precise');
+      expect(lastCall?.[1]).toContain('## Voice');
+    });
   });
 
   it('persists the display name to the store on save', async () => {
     const { store } = renderWithProviders(<PersonaPanel />);
-    await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
+    await awaitLoaded();
 
     fireEvent.change(screen.getByTestId('persona-display-name-input'), {
       target: { value: 'Nova' },
@@ -78,13 +133,14 @@ describe('PersonaPanel', () => {
 
   it('keeps the identity save button disabled until a field changes', async () => {
     renderWithProviders(<PersonaPanel />);
-    await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
+    await awaitLoaded();
     expect(screen.getByTestId('persona-identity-save')).toBeDisabled();
   });
 
-  it('writes edited SOUL.md contents over RPC', async () => {
+  it('writes edited SOUL.md contents over RPC from the raw editor', async () => {
     renderWithProviders(<PersonaPanel />);
-    await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
+    await awaitLoaded();
+    openAdvanced();
 
     fireEvent.change(screen.getByTestId('persona-soul-editor'), {
       target: { value: 'You are calm and concise.' },
@@ -99,7 +155,8 @@ describe('PersonaPanel', () => {
   it('surfaces a save error when the write RPC fails', async () => {
     writePersonaFileMock.mockRejectedValue(new Error('disk full'));
     renderWithProviders(<PersonaPanel />);
-    await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
+    await awaitLoaded();
+    openAdvanced();
 
     fireEvent.change(screen.getByTestId('persona-soul-editor'), { target: { value: 'edited' } });
     fireEvent.click(screen.getByTestId('persona-soul-save'));
@@ -113,7 +170,7 @@ describe('PersonaPanel', () => {
     readPersonaFileMock.mockResolvedValue(soulFile({ contents: 'custom', is_default: false }));
     resetPersonaFileMock.mockRejectedValue(new Error('reset boom'));
     renderWithProviders(<PersonaPanel />);
-    await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toHaveValue('custom'));
+    await awaitLoaded();
 
     fireEvent.click(screen.getByTestId('persona-soul-reset'));
 
@@ -126,9 +183,9 @@ describe('PersonaPanel', () => {
     // Start from a non-default file so the Reset button is enabled.
     readPersonaFileMock.mockResolvedValue(soulFile({ contents: 'custom', is_default: false }));
     renderWithProviders(<PersonaPanel />);
-    await waitFor(() => {
-      expect(screen.getByTestId('persona-soul-editor')).toHaveValue('custom');
-    });
+    await awaitLoaded();
+    openAdvanced();
+    await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toHaveValue('custom'));
 
     fireEvent.click(screen.getByTestId('persona-soul-reset'));
 
@@ -140,7 +197,7 @@ describe('PersonaPanel', () => {
 
   it('disables Reset while the file is already the bundled default', async () => {
     renderWithProviders(<PersonaPanel />);
-    await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
+    await awaitLoaded();
     expect(screen.getByTestId('persona-soul-reset')).toBeDisabled();
     expect(screen.getByTestId('persona-soul-default-badge')).toBeInTheDocument();
   });
@@ -155,8 +212,15 @@ describe('PersonaPanel', () => {
 
   it('navigates to the Face tab for avatar & voice', async () => {
     renderWithProviders(<PersonaPanel />);
-    await waitFor(() => expect(screen.getByTestId('persona-soul-editor')).toBeInTheDocument());
+    await awaitLoaded();
     fireEvent.click(screen.getByTestId('persona-open-mascot'));
     expect(mockNavigateToSettings).toHaveBeenCalledWith('personality#face');
+  });
+
+  it('links guided users to Agent access for permissions', async () => {
+    renderWithProviders(<PersonaPanel />);
+    await awaitLoaded();
+    fireEvent.click(screen.getByTestId('persona-guided-agent-access'));
+    expect(mockNavigateToSettings).toHaveBeenCalledWith('agent-access');
   });
 });

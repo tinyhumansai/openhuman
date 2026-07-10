@@ -1,0 +1,30 @@
+{
+  "tag_name": "v0.0.0-test",
+  "assets": [
+    {
+      "name": "OpenHuman_0.0.0-test_amd64.AppImage",
+      "browser_download_url": "https://example.invalid/OpenHuman_0.0.0-test_amd64.AppImage",
+      "digest": "sha256:appimage-amd64"
+    },
+    {
+      "name": "OpenHuman_0.0.0-test_aarch64.AppImage",
+      "browser_download_url": "https://example.invalid/OpenHuman_0.0.0-test_aarch64.AppImage",
+      "digest": "sha256:appimage-aarch64"
+    },
+    {
+      "name": "OpenHuman_0.0.0-test_amd64.deb",
+      "browser_download_url": "https://example.invalid/OpenHuman_0.0.0-test_amd64.deb",
+      "digest": "sha256:deb-amd64"
+    },
+    {
+      "name": "OpenHuman_0.0.0-test_arm64.deb",
+      "browser_download_url": "https://example.invalid/OpenHuman_0.0.0-test_arm64.deb",
+      "digest": "sha256:deb-arm64"
+    },
+    {
+      "name": "OpenHuman_0.0.0-test_aarch64-apple-darwin.app.tar.gz",
+      "browser_download_url": "https://example.invalid/OpenHuman_0.0.0-test_aarch64-apple-darwin.app.tar.gz",
+      "digest": "sha256:darwin-aarch64"
+    }
+  ]
+}

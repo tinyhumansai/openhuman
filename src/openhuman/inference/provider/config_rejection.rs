@@ -166,6 +166,21 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // `{"error":{"message":"model field is required","code":"missing_required_field"}}`
         // when the request body contains an empty `"model":""` field.
         "model field is required",
+        // TAURI-RUST-GKV (~2.3k events / 1 user) — the LOCAL form of the
+        // 4NM empty-model state, caught one layer earlier. The #2784 guard
+        // in `factory::make_cloud_provider_by_slug` bails BEFORE any
+        // provider HTTP call when a `<slug>` provider string carries no
+        // model and the `cloud_providers` entry has no `default_model`:
+        //   "[chat-factory] no model configured: role '<r>' resolved to an
+        //    empty model id for slug '<s>'. Include a model in the provider
+        //    string (e.g. '<s>:<model-id>') or set default_model …".
+        // User-state — the remediation is "add/pick a model in Settings →
+        // LLM", which the user-facing copy surfaces; Sentry has no
+        // remediation. Anchored on the role/slug-interpolation-free
+        // substring, which IS `factory::NO_MODEL_CONFIGURED_ANCHOR` —
+        // referenced directly so the two can never drift (the round-trip
+        // test in `factory_tests.rs` remains as a belt-and-braces guard).
+        super::factory::NO_MODEL_CONFIGURED_ANCHOR,
         // TAURI-RUST-2G (~2684 events) / TAURI-RUST-2F (~950 events) —
         // thinking-mode model (DeepSeek-R1 / Moonshot K2-thinking on
         // `provider=cloud` custom_openai) rejects a follow-up turn that
@@ -198,7 +213,7 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         //   "The model `<name>` may not be available on your provider.
         //    Configure a fallback chain via `reliability.model_fallbacks`
         //    in your OpenHuman config, or change your default model in
-        //    Settings → AI.\n\nAll providers/models failed. Attempts:\n…"
+        //    Connections → API keys → LLM.\n\nAll providers/models failed. Attempts:\n…"
         //
         // The aggregate fires once per turn regardless of the underlying
         // per-attempt cause (auth wall, unknown model, region block,
@@ -236,6 +251,18 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // harmless (`.any()` short-circuits) and kept so each Sentry
         // family stays self-documenting.
         "does not support tools",
+        // TAURI-RUST-ADC (~5.9k events / 10 users) — OpenRouter's
+        // *router-level* phrasing of the same tool-capability user-state.
+        // When the picked model has no provider endpoint that supports tool
+        // calling, OpenRouter returns a 404 with `{"error":{"message":"No
+        // endpoints found that support tool use. Try disabling \"<tool>\".
+        // ..."}}`. The wording differs from the direct-provider `does not
+        // support tools` body above ("tool use" vs "tools", prefixed with
+        // "No endpoints found"), so it needs its own anchor. Same user-state
+        // class: pick a tool-capable model. Surfaced most often by the
+        // autonomous Subconscious loop, which additionally halts on this via
+        // its own capability breaker (`subconscious/engine.rs`).
+        "no endpoints found that support tool use",
         // TAURI-RUST-4P6 (~36.6k events / 2 users) — user picked an
         // *embedding* model (Ollama `bge-m3:latest`, OpenHuman's default
         // memory-tree embed model) as their chat model. Ollama rejects every
@@ -352,6 +379,13 @@ mod tests {
                 "J4",
                 r#"custom_openai streaming API error (404 Not Found): {"error":{"message":"model 'llama3.3' not found","type":"not_found_error","param":null,"code":null}}"#,
             ),
+            // TAURI-RUST-ADC — OpenRouter router-level "no tool-use endpoint"
+            // 404, surfaced by the autonomous Subconscious loop on a
+            // content-safety model that supports no tools.
+            (
+                "ADC",
+                r#"openrouter API error (404 Not Found): {"error":{"message":"No endpoints found that support tool use. Try disabling \"spawn_async_subagent\". To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-selection"}}"#,
+            ),
             // TAURI-RUST-4NM — nvidia-nim (and compatible providers) return
             // this body when the request body has an empty `"model":""`.
             // This is user-configuration state: the provider string had no
@@ -384,7 +418,7 @@ mod tests {
             // the re-reported error stays demoted.
             (
                 "TAURI-RUST-4P6-enriched",
-                "ollama API error: model 'bge-m3:latest' does not support chat — it appears to be an embedding or non-chat model. Assign a chat-capable model to this provider (e.g. in Settings → AI), or pick a different model.",
+                "ollama API error: model 'bge-m3:latest' does not support chat — it appears to be an embedding or non-chat model. Assign a chat-capable model to this provider (e.g. in Connections → API keys → LLM), or pick a different model.",
             ),
         ] {
             assert!(
@@ -444,28 +478,28 @@ mod tests {
             // 1) Verbatim 4JS payload.
             "The model `reasoning-quick-v1` may not be available on your provider. \
              Configure a fallback chain via `reliability.model_fallbacks` in your \
-             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             OpenHuman config, or change your default model in Connections → API keys → LLM.\n\n\
              All providers/models failed. Attempts:\n\
              provider=openhuman model=reasoning-quick-v1 attempt 1/3: non_retryable; \
              error=OpenHuman API error (401 Unauthorized): {\"success\":false,\"error\":\"Invalid token\"}",
             // 2) Unknown-model upstream cause.
             "The model `gpt-5.5` may not be available on your provider. \
              Configure a fallback chain via `reliability.model_fallbacks` in your \
-             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             OpenHuman config, or change your default model in Connections → API keys → LLM.\n\n\
              All providers/models failed. Attempts:\n\
              provider=custom_openai model=gpt-5.5 attempt 1/3: non_retryable; \
              error=custom_openai API error (404 Not Found): {\"error\":\"model not found\"}",
             // 3) Region-block (R1-sibling) per-attempt cause.
             "The model `gpt-4o` may not be available on your provider. \
              Configure a fallback chain via `reliability.model_fallbacks` in your \
-             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             OpenHuman config, or change your default model in Connections → API keys → LLM.\n\n\
              All providers/models failed. Attempts:\n\
              provider=custom_openai model=gpt-4o attempt 1/3: non_retryable; \
              error=custom_openai API error (403 Forbidden): {\"error\":{\"message\":\"This model is not available in your region.\"}}",
             // 4) Bare aggregate — minimal anchor surface.
             "The model `x` may not be available on your provider. \
              Configure a fallback chain via `reliability.model_fallbacks` in your \
-             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             OpenHuman config, or change your default model in Connections → API keys → LLM.\n\n\
              All providers/models failed. Attempts:\n",
         ] {
             assert!(
@@ -602,6 +636,36 @@ mod tests {
         assert!(is_provider_config_rejection_message(
             "model field is required"
         ));
+    }
+
+    #[test]
+    fn detects_chat_factory_empty_model_local_bail() {
+        // TAURI-RUST-GKV — the #2784 factory guard
+        // (`make_cloud_provider_by_slug`) catches the empty-model state
+        // BEFORE the provider HTTP call (the local form of 4NM) and bails
+        // with this body (role/slug interpolated). Verbatim from Sentry
+        // issue 18482 (role='chat', slug='nvidia').
+        let body = "[chat-factory] no model configured: role 'chat' resolved to an empty model id \
+                    for slug 'nvidia'. Include a model in the provider string (e.g. \
+                    'nvidia:<model-id>') or set default_model on the cloud_providers entry for \
+                    slug 'nvidia'.";
+        assert!(
+            is_provider_config_rejection_message(body),
+            "TAURI-RUST-GKV empty-model bail must classify as provider config-rejection: {body:?}"
+        );
+        // Bare anchor on its own (the literal shared with
+        // `factory::NO_MODEL_CONFIGURED_ANCHOR`).
+        assert!(is_provider_config_rejection_message(
+            "resolved to an empty model id"
+        ));
+        // Negative: a near-miss model-resolution error that does NOT carry
+        // the anchor (or any other phrase) must stay Sentry-actionable.
+        assert!(
+            !is_provider_config_rejection_message(
+                "could not resolve the model registry for slug 'nvidia'"
+            ),
+            "unrelated model-resolution error must not classify on the GKV anchor"
+        );
     }
 
     #[test]

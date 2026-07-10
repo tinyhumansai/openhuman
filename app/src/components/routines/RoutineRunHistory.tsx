@@ -28,7 +28,7 @@ const RoutineRunHistory = ({ runs, loading, onLoadRuns }: RoutineRunHistoryProps
         type="button"
         onClick={handleToggle}
         disabled={loading}
-        className="flex items-center gap-1.5 text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 transition-colors">
+        className="flex items-center gap-1.5 text-xs text-content-muted hover:text-content-secondary transition-colors">
         <svg
           className={`w-3 h-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
           fill="none"
@@ -42,9 +42,7 @@ const RoutineRunHistory = ({ runs, loading, onLoadRuns }: RoutineRunHistoryProps
       {expanded && (
         <div className="mt-2 space-y-1.5">
           {runs.length === 0 && !loading && (
-            <div className="text-xs text-stone-400 dark:text-neutral-500 pl-4">
-              {t('routines.noHistory')}
-            </div>
+            <div className="text-xs text-content-faint pl-4">{t('routines.noHistory')}</div>
           )}
           {runs.map(run => {
             const isSuccess = run.status === 'ok' || run.status === 'success';
@@ -59,16 +57,12 @@ const RoutineRunHistory = ({ runs, loading, onLoadRuns }: RoutineRunHistoryProps
                       isSuccess ? 'bg-sage-500' : 'bg-coral-500'
                     }`}
                   />
-                  <span className="text-stone-600 dark:text-neutral-300">
+                  <span className="text-content-secondary">
                     {isSuccess ? t('routines.statusSuccess') : t('routines.statusError')}
                   </span>
-                  <span className="text-stone-400 dark:text-neutral-500">
-                    {formatTimeAgo(run.finished_at)}
-                  </span>
+                  <span className="text-content-faint">{formatTimeAgo(run.finished_at)}</span>
                   {run.duration_ms != null && (
-                    <span className="text-stone-400 dark:text-neutral-500">
-                      ({formatDuration(run.duration_ms)})
-                    </span>
+                    <span className="text-content-faint">({formatDuration(run.duration_ms)})</span>
                   )}
                   {hasOutput && (
                     <button
@@ -80,7 +74,7 @@ const RoutineRunHistory = ({ runs, loading, onLoadRuns }: RoutineRunHistoryProps
                   )}
                 </div>
                 {isOutputExpanded && hasOutput && (
-                  <pre className="mt-1 ml-3.5 p-2 text-[11px] bg-stone-100 dark:bg-neutral-800 rounded-lg text-stone-600 dark:text-neutral-300 overflow-x-auto max-h-40 whitespace-pre-wrap break-words">
+                  <pre className="mt-1 ml-3.5 p-2 text-[11px] bg-surface-subtle rounded-lg text-content-secondary overflow-x-auto max-h-40 whitespace-pre-wrap break-words">
                     {run.output}
                   </pre>
                 )}

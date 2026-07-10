@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
-use tokio::fs::{self, File, OpenOptions};
+use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
 static WARNED_WORLD_READABLE_CONFIGS: OnceLock<Mutex<HashSet<std::path::PathBuf>>> =
@@ -179,6 +179,20 @@ impl Config {
                 }
             }
 
+            // A directory (or other non-regular file) at the config path is a
+            // bad-install / corruption signal, not a transient read failure. On
+            // Windows `read_to_string` of a directory returns the same
+            // `Access is denied. (os error 5)` shape as a real ACL denial, which
+            // the observability classifier would otherwise demote. Fail fast with
+            // distinct wording so it keeps paging instead of being suppressed as
+            // an expected user-state config-read failure (#3962, Codex P2).
+            if config_path.is_dir() {
+                anyhow::bail!(
+                    "Config path is a directory, not a file: {}",
+                    config_path.display()
+                );
+            }
+
             let contents = crate::openhuman::util::retry_with_backoff_async(
                 "read config file",
                 5,
@@ -238,7 +252,20 @@ impl Config {
                 "Config loaded"
             );
             crate::openhuman::migrations::run_pending(&mut config).await;
-            decrypt_config_secrets(&mut config, &openhuman_dir)?;
+            let migrated_legacy_secrets = decrypt_config_secrets(&mut config, &openhuman_dir)?;
+            if migrated_legacy_secrets {
+                // One-time forced migration: a legacy `enc:` (XOR) secret was
+                // upgraded to `enc2:` on read. Persist immediately so the
+                // insecure ciphertext stops living on disk (audit C8). A save
+                // failure is non-fatal — the config is still usable in memory
+                // and migration will be retried on the next startup.
+                if let Err(e) = config.save().await {
+                    log::warn!(
+                        "[security][config] failed to persist enc: -> enc2: secret migration; \
+                         will retry on next startup: {e}"
+                    );
+                }
+            }
             Ok(config)
         } else {
             let mut config = Config {
@@ -304,7 +331,9 @@ impl Config {
         config.workspace_dir = workspace_dir;
         config.action_dir = resolve_action_dir(&config.action_dir_override);
         config.apply_env_overrides();
-        decrypt_config_secrets(&mut config, &openhuman_dir)?;
+        // Debug-dump path is read-only; ignore the migration signal (the
+        // authoritative `load_or_init` path persists upgraded secrets).
+        let _ = decrypt_config_secrets(&mut config, &openhuman_dir)?;
         Ok(config)
     }
 
@@ -330,6 +359,16 @@ impl Config {
             };
             config.apply_env_overrides_from(&ProcessEnvWithoutWorkspace);
             return Ok(config);
+        }
+
+        // See the `load_or_init` read branch: a directory at the config path is
+        // corruption, not a transient read failure — fail fast with distinct
+        // wording so it pages instead of being demoted (#3962, Codex P2).
+        if config_path.is_dir() {
+            anyhow::bail!(
+                "Config path is a directory, not a file: {}",
+                config_path.display()
+            );
         }
 
         let raw = fs::read_to_string(&config_path)

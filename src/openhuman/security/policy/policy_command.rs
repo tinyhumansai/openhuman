@@ -91,7 +91,7 @@ pub(super) fn has_dangerous_env_prefix(s: &str) -> bool {
         }
         let (name, _) = word.split_once('=').unwrap_or((word, ""));
         let upper = name.to_ascii_uppercase();
-        if DANGEROUS_ENV_PREFIXES.iter().any(|d| *d == upper.as_str()) {
+        if DANGEROUS_ENV_PREFIXES.contains(&upper.as_str()) {
             return true;
         }
         rest = rest[word.len()..].trim_start();
@@ -160,10 +160,7 @@ pub(super) fn skip_env_assignments(s: &str) -> &str {
 }
 
 pub(super) fn command_basename(command: &str) -> &str {
-    command
-        .split(|ch| ch == '/' || ch == '\\')
-        .next_back()
-        .unwrap_or(command)
+    command.split(['/', '\\']).next_back().unwrap_or(command)
 }
 
 pub(super) fn normalized_command_name(command: &str) -> String {
@@ -372,10 +369,8 @@ pub(super) fn contains_unquoted_single_ampersand(command: &str) -> bool {
                 match ch {
                     '\'' => quote = QuoteState::Single,
                     '"' => quote = QuoteState::Double,
-                    '&' => {
-                        if chars.next_if_eq(&'&').is_none() {
-                            return true;
-                        }
+                    '&' if chars.next_if_eq(&'&').is_none() => {
+                        return true;
                     }
                     _ => {}
                 }
@@ -779,12 +774,29 @@ pub(super) fn classify_segment(base: &str, args: &[String], joined: &str) -> Com
     if is_command_executor(base) {
         return CommandClass::Write;
     }
-    // `find` is read-only unless it executes commands or deletes files.
+    // `find` is read-only unless it executes commands, deletes, or writes
+    // files. -fprintf / -fprint / -fprint0 / -fls write their output to a
+    // named file rather than stdout — an arbitrary-path write that side-steps
+    // the gated file-write tools (and their workspace confinement), so they
+    // must be classified Write (approval-gated) alongside -delete.
+    //
+    // `args` is built with `split_whitespace()`, which keeps shell quotes that
+    // the shell itself strips before `find` runs — `find . '-fprint' out`
+    // arrives as the literal `'-fprint'`. Trim surrounding single/double quotes
+    // before matching so a quoted predicate cannot slip the write past the gate.
     if base == "find" {
         if args.iter().any(|a| {
             matches!(
-                a.as_str(),
-                "-exec" | "-execdir" | "-ok" | "-okdir" | "-delete"
+                a.trim_matches(|c| c == '\'' || c == '"'),
+                "-exec"
+                    | "-execdir"
+                    | "-ok"
+                    | "-okdir"
+                    | "-delete"
+                    | "-fprintf"
+                    | "-fprint"
+                    | "-fprint0"
+                    | "-fls"
             )
         }) {
             return CommandClass::Write;

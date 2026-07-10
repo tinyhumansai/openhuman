@@ -24,13 +24,9 @@ const SettingsMenuItem = ({
   rightElement,
 }: SettingsMenuItemProps) => {
   // Color variations for dangerous items (like logout/delete)
-  const titleColor = dangerous
-    ? 'text-amber-600 dark:text-amber-300'
-    : 'text-stone-900 dark:text-neutral-100';
-  const iconColor = dangerous
-    ? 'text-amber-600 dark:text-amber-300'
-    : 'text-stone-900 dark:text-neutral-100';
-  const borderColor = 'border-stone-200 dark:border-neutral-800';
+  const titleColor = dangerous ? 'text-amber-600 dark:text-amber-300' : 'text-content';
+  const iconColor = dangerous ? 'text-amber-600 dark:text-amber-300' : 'text-content';
+  const borderColor = 'border-line';
 
   // Border classes for first/last items
   const borderClasses = isLast ? '' : `border-b ${borderColor}`;
@@ -53,7 +49,7 @@ const SettingsMenuItem = ({
         type="button"
         data-testid={testId}
         onClick={onClick}
-        className={`w-full flex items-center justify-between py-3 px-4 bg-stone-50 dark:bg-neutral-900/40 text-stone-900 dark:text-neutral-100 ${borderClasses} hover:bg-stone-100 dark:hover:bg-neutral-800/60 transition-all duration-200 text-left ${roundedClasses} focus:outline-none focus:ring-0 focus:border-inherit`}>
+        className={`w-full flex items-center justify-between py-3 px-4 bg-surface-muted text-content ${borderClasses} hover:bg-surface-hover transition-all duration-200 text-left ${roundedClasses} focus:outline-none focus:ring-0 focus:border-inherit`}>
         {content}
       </button>
     );
@@ -62,7 +58,7 @@ const SettingsMenuItem = ({
   return (
     <div
       data-testid={testId}
-      className={`w-full flex items-center justify-between py-3 px-4 bg-stone-50 dark:bg-neutral-900/40 text-stone-900 dark:text-neutral-100 ${borderClasses} ${roundedClasses}`}>
+      className={`w-full flex items-center justify-between py-3 px-4 bg-surface-muted text-content ${borderClasses} ${roundedClasses}`}>
       {content}
     </div>
   );

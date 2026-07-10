@@ -103,6 +103,26 @@ fn local_only_capability_marks_no_destinations() {
 }
 
 #[test]
+fn persona_pack_reports_github_mascot_manifest_destination() {
+    let cap = lookup("settings.persona_pack").expect("persona pack capability exists");
+    let privacy = cap.privacy.expect("persona pack is privacy-annotated");
+
+    assert!(
+        privacy.leaves_device,
+        "loading the mascot library fetches a GitHub-hosted manifest"
+    );
+    assert_eq!(privacy.data_kind, PrivacyDataKind::Metadata);
+    let haystack = privacy.destinations.join(" | ").to_lowercase();
+    assert!(
+        haystack.contains("github")
+            && haystack.contains("raw.githubusercontent.com")
+            && haystack.contains("asset"),
+        "destinations must disclose the GitHub raw manifest host and manifest asset hosts, got: {:?}",
+        privacy.destinations
+    );
+}
+
+#[test]
 fn unannotated_capability_serializes_without_privacy_field() {
     let cap = lookup("conversation.create").expect("capability exists");
     assert!(cap.privacy.is_none());
@@ -167,16 +187,16 @@ fn embedding_provider_capabilities_share_domain_and_category() {
         "both embedding capabilities must land in the same UI category"
     );
 
-    // The Settings panel they describe is the same one — make sure the
+    // The settings surface they describe is the same one — make sure the
     // `how_to` strings point at it, not at an out-of-date breadcrumb.
     assert!(
-        config.how_to.contains("Settings") && config.how_to.contains("Embeddings"),
-        "config how_to must mention Settings > … > Embeddings, got: {}",
+        config.how_to.contains("Connections") && config.how_to.contains("Embeddings"),
+        "config how_to must mention Connections → … → Embeddings, got: {}",
         config.how_to
     );
     assert!(
-        test.how_to.contains("Settings") && test.how_to.contains("Embeddings"),
-        "test how_to must mention Settings > … > Embeddings, got: {}",
+        test.how_to.contains("Connections") && test.how_to.contains("Embeddings"),
+        "test how_to must mention Connections → … → Embeddings, got: {}",
         test.how_to
     );
 }

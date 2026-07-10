@@ -98,6 +98,30 @@ describe('ChatRuntimeProvider — artifact event dispatch (#2779)', () => {
     });
   });
 
+  it('onArtifactPending upserts an in_progress snapshot keyed on the artifact id (#3162)', () => {
+    const listeners = renderProvider();
+
+    act(() => {
+      listeners.onArtifactPending?.({
+        thread_id: 'thread-1',
+        artifact_id: 'a-1',
+        kind: 'presentation',
+        title: 'Deck',
+        workspace_dir: '/workspace',
+        path: 'a-1/deck.pptx',
+      });
+    });
+
+    const bucket = store.getState().chatRuntime.artifactsByThread['thread-1'];
+    expect(bucket).toHaveLength(1);
+    expect(bucket?.[0]).toMatchObject({
+      artifactId: 'a-1',
+      kind: 'presentation',
+      title: 'Deck',
+      status: 'in_progress',
+    });
+  });
+
   it('onArtifactFailed records the producer-supplied error', () => {
     const listeners = renderProvider();
 

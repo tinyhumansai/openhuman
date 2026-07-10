@@ -98,6 +98,7 @@ impl EventHandler for ConversationPersistenceSubscriber {
                 reply_target,
                 content,
                 thread_ts,
+                inbound_envelope,
                 workspace_dir,
             } => {
                 let my_workspace = match self.workspace_dir_snapshot() {
@@ -124,10 +125,15 @@ impl EventHandler for ConversationPersistenceSubscriber {
                         sender,
                         reply_target,
                         thread_ts: thread_ts.as_deref(),
+                        tinychannels_session_key: inbound_envelope
+                            .as_ref()
+                            .map(tinychannels_session_key),
                         content,
                         role: "user",
                         success: None,
                         elapsed_ms: None,
+                        model_provider: None,
+                        model: None,
                         source: "channel_received",
                     },
                 ) {
@@ -146,6 +152,8 @@ impl EventHandler for ConversationPersistenceSubscriber {
                 reply_target,
                 thread_ts,
                 response,
+                provider,
+                model,
                 elapsed_ms,
                 success,
                 workspace_dir,
@@ -175,10 +183,13 @@ impl EventHandler for ConversationPersistenceSubscriber {
                         sender,
                         reply_target,
                         thread_ts: thread_ts.as_deref(),
+                        tinychannels_session_key: None,
                         content: response,
                         role: "assistant",
                         success: Some(*success),
                         elapsed_ms: Some(*elapsed_ms),
+                        model_provider: Some(provider),
+                        model: Some(model),
                         source: "channel_processed",
                     },
                 ) {
@@ -201,10 +212,13 @@ struct ChannelTurnDescriptor<'a> {
     sender: &'a str,
     reply_target: &'a str,
     thread_ts: Option<&'a str>,
+    tinychannels_session_key: Option<String>,
     content: &'a str,
     role: &'a str,
     success: Option<bool>,
     elapsed_ms: Option<u64>,
+    model_provider: Option<&'a str>,
+    model: Option<&'a str>,
     source: &'a str,
 }
 
@@ -264,9 +278,12 @@ fn persist_channel_turn(
                 "channelSender": descriptor.sender,
                 "replyTarget": descriptor.reply_target,
                 "threadTs": descriptor.thread_ts,
+                "tinychannelsSessionKey": descriptor.tinychannels_session_key,
                 "sourceEvent": descriptor.source,
                 "success": descriptor.success,
                 "elapsedMs": descriptor.elapsed_ms,
+                "modelProvider": descriptor.model_provider,
+                "model": descriptor.model,
                 "sourceMessageId": descriptor.message_id,
             }),
             sender: descriptor.role.to_string(),
@@ -281,6 +298,14 @@ fn persist_channel_turn(
         descriptor.role
     );
     Ok(())
+}
+
+fn tinychannels_session_key(envelope: &tinychannels::ChannelInboundEnvelope) -> String {
+    tinychannels::build_session_key_for_inbound_envelope(
+        "main",
+        envelope,
+        tinychannels::channel::SessionKeyPolicy::default(),
+    )
 }
 
 fn persisted_channel_thread_id(
@@ -347,6 +372,18 @@ mod tests {
     async fn persists_inbound_and_processed_turns_into_workspace_thread() {
         let temp = TempDir::new().expect("tempdir");
         let subscriber = ConversationPersistenceSubscriber::new(temp.path().to_path_buf());
+        let mut inbound_envelope =
+            tinychannels::inbound_envelope_from_legacy_message(&ChannelMessage {
+                channel: "slack".into(),
+                id: "m1".into(),
+                sender: "alice".into(),
+                reply_target: "general".into(),
+                content: "hello".into(),
+                thread_ts: Some("thread-1".into()),
+                timestamp: 0,
+            });
+        inbound_envelope.conversation.kind = tinychannels::channel::ConversationKind::Channel;
+        inbound_envelope.conversation.scope_id = Some("T123".into());
 
         subscriber
             .handle(&DomainEvent::ChannelMessageReceived {
@@ -356,6 +393,7 @@ mod tests {
                 reply_target: "general".into(),
                 content: "hello".into(),
                 thread_ts: Some("thread-1".into()),
+                inbound_envelope: Some(inbound_envelope),
                 workspace_dir: temp.path().to_path_buf(),
             })
             .await;
@@ -368,6 +406,8 @@ mod tests {
                 content: "hello".into(),
                 thread_ts: Some("thread-1".into()),
                 response: "hi there".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
                 elapsed_ms: 42,
                 success: true,
                 workspace_dir: temp.path().to_path_buf(),
@@ -383,10 +423,16 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].id, "user:m1");
         assert_eq!(messages[0].sender, "user");
+        assert_eq!(
+            messages[0].extra_metadata["tinychannelsSessionKey"],
+            "main:slack:default:channel:T123:general:thread-1"
+        );
         assert_eq!(messages[1].id, "assistant:m1");
         assert_eq!(messages[1].sender, "assistant");
         assert_eq!(messages[1].extra_metadata["elapsedMs"], 42);
         assert_eq!(messages[1].extra_metadata["success"], true);
+        assert_eq!(messages[1].extra_metadata["modelProvider"], "test-provider");
+        assert_eq!(messages[1].extra_metadata["model"], "test-model");
     }
 
     #[tokio::test]
@@ -402,6 +448,7 @@ mod tests {
                 reply_target: "chat-1".into(),
                 content: "hello".into(),
                 thread_ts: Some("100".into()),
+                inbound_envelope: None,
                 workspace_dir: temp.path().to_path_buf(),
             })
             .await;
@@ -413,6 +460,7 @@ mod tests {
                 reply_target: "chat-1".into(),
                 content: "follow-up".into(),
                 thread_ts: Some("200".into()),
+                inbound_envelope: None,
                 workspace_dir: temp.path().to_path_buf(),
             })
             .await;
@@ -434,6 +482,7 @@ mod tests {
             reply_target: "room-1".into(),
             content: "hello".into(),
             thread_ts: None,
+            inbound_envelope: None,
             workspace_dir: temp.path().to_path_buf(),
         };
 
@@ -490,6 +539,7 @@ mod tests {
                 reply_target: "dev".into(),
                 content: "hello".into(),
                 thread_ts: None,
+                inbound_envelope: None,
                 workspace_dir: temp.path().to_path_buf(),
             })
             .await;
@@ -517,6 +567,7 @@ mod tests {
                 reply_target: "general".into(),
                 content: "should not persist".into(),
                 thread_ts: None,
+                inbound_envelope: None,
                 workspace_dir: stale.path().to_path_buf(),
             })
             .await;
@@ -545,6 +596,7 @@ mod tests {
                 reply_target: "general".into(),
                 content: "hello".into(),
                 thread_ts: None,
+                inbound_envelope: None,
                 workspace_dir: temp.path().to_path_buf(),
             })
             .await;
@@ -558,6 +610,8 @@ mod tests {
                 content: "hello".into(),
                 thread_ts: None,
                 response: "hi there".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
                 elapsed_ms: 10,
                 success: true,
                 workspace_dir: temp.path().to_path_buf(),
@@ -589,6 +643,7 @@ mod tests {
                 reply_target: "general".into(),
                 content: "hello".into(),
                 thread_ts: None,
+                inbound_envelope: None,
                 workspace_dir: temp.path().to_path_buf(),
             })
             .await;
@@ -603,6 +658,8 @@ mod tests {
                 content: "hello".into(),
                 thread_ts: None,
                 response: "should not persist".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
                 elapsed_ms: 10,
                 success: true,
                 workspace_dir: stale.path().to_path_buf(),
@@ -638,6 +695,7 @@ mod tests {
                 reply_target: "chat-1".into(),
                 content: "hello".into(),
                 thread_ts: None,
+                inbound_envelope: None,
                 workspace_dir: workspace_a.path().to_path_buf(),
             })
             .await;
@@ -652,6 +710,8 @@ mod tests {
                 content: "hello".into(),
                 thread_ts: None,
                 response: "from workspace B — must be dropped".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
                 elapsed_ms: 5,
                 success: true,
                 workspace_dir: workspace_b.path().to_path_buf(),
@@ -668,6 +728,8 @@ mod tests {
                 content: "hello".into(),
                 thread_ts: None,
                 response: "from workspace A — should persist".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
                 elapsed_ms: 10,
                 success: true,
                 workspace_dir: workspace_a.path().to_path_buf(),
@@ -708,6 +770,7 @@ mod tests {
                     reply_target: "room-1".into(),
                     content: format!("msg {i}"),
                     thread_ts: None,
+                    inbound_envelope: None,
                     workspace_dir: stale.path().to_path_buf(),
                 })
                 .await;
@@ -737,6 +800,7 @@ mod tests {
                 reply_target: "general".into(),
                 content: "stale".into(),
                 thread_ts: None,
+                inbound_envelope: None,
                 workspace_dir: stale.path().to_path_buf(),
             })
             .await;
@@ -750,6 +814,7 @@ mod tests {
                 reply_target: "general".into(),
                 content: "valid".into(),
                 thread_ts: None,
+                inbound_envelope: None,
                 workspace_dir: temp.path().to_path_buf(),
             })
             .await;

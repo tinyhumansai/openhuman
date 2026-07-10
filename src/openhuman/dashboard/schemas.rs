@@ -81,9 +81,29 @@ fn model_health_entry_fields() -> Vec<FieldSchema> {
             required: true,
         },
         FieldSchema {
+            name: "cost_per_1m_input",
+            ty: TypeSchema::F64,
+            comment: "USD cost per 1M input tokens (0 when unknown). Pre-filled \
+                      from the pricing catalog for known vendor models.",
+            required: true,
+        },
+        FieldSchema {
+            name: "cost_per_1m_cached_input",
+            ty: TypeSchema::F64,
+            comment: "USD cost per 1M cached-prefix input tokens (0 when unknown).",
+            required: true,
+        },
+        FieldSchema {
             name: "cost_per_1m_output",
             ty: TypeSchema::F64,
             comment: "USD cost per 1M output tokens from local config.",
+            required: true,
+        },
+        FieldSchema {
+            name: "context_window",
+            ty: TypeSchema::U64,
+            comment: "Maximum context window in tokens (0 when unknown). \
+                      Pre-filled from the pricing catalog for known vendor models.",
             required: true,
         },
         FieldSchema {

@@ -41,6 +41,7 @@ use openhuman_core::openhuman::memory_sync::composio::providers::slack::ingest a
 use openhuman_core::openhuman::memory_sync::composio::providers::slack::{
     SlackMessage, SlackProvider,
 };
+use openhuman_core::openhuman::memory_sync::composio::providers::sync_state::SyncState;
 use openhuman_core::openhuman::memory_sync::composio::providers::{
     ComposioProvider, ProviderContext, SyncReason, TaskFetchFilter,
 };
@@ -992,6 +993,161 @@ async fn gmail_sync_max_items_caps_ingest_to_exact_count() {
     server.abort();
 }
 
+#[tokio::test]
+async fn gmail_sync_depth_days_injects_after_floor_into_query() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+
+    // Gmail applies sync_depth_days server-side: on the first sync (no cursor)
+    // it must inject an `after:<epoch>` qualifier into the GMAIL_FETCH_EMAILS
+    // query, proving the window actually narrows what is fetched.
+    let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let (base, server) = loopback_router(gmail_cap_router(
+        gmail_cap_messages(1),
+        Arc::clone(&requests),
+    ))
+    .await;
+
+    let mut config = config_in(&tmp);
+    config.api_url = Some(base);
+    persist_config(&config).await;
+    store_session(&config);
+    memory_global::init(config.workspace_dir.clone()).expect("init global memory");
+
+    let ctx = ProviderContext {
+        config: Arc::new(config),
+        toolkit: "gmail".to_string(),
+        connection_id: Some("conn-gmail-depth".to_string()),
+        usage: Default::default(),
+        max_items: None,
+        sync_depth_days: Some(7),
+    };
+
+    GmailProvider::new()
+        .sync(&ctx, SyncReason::ConnectionCreated)
+        .await
+        .expect("gmail depth sync");
+
+    let reqs = requests.lock().unwrap();
+    let fetch = reqs
+        .iter()
+        .find(|b| b.get("tool").and_then(Value::as_str) == Some("GMAIL_FETCH_EMAILS"))
+        .expect("a GMAIL_FETCH_EMAILS request was issued");
+    let query = fetch
+        .get("arguments")
+        .and_then(|a| a.get("query"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        query.contains("after:"),
+        "sync_depth_days=7 must inject an `after:` floor into the query, got: {query}"
+    );
+
+    server.abort();
+}
+
+/// Router whose `GMAIL_FETCH_EMAILS` always returns the same page **with a
+/// non-empty `nextPageToken`** — so absent an all-synced early stop the provider
+/// would paginate to the page ceiling. Used to pin `stop_on_empty_pending`.
+fn gmail_repeating_router(messages: Vec<Value>, requests: Arc<Mutex<Vec<Value>>>) -> Router {
+    Router::new().route(
+        "/agent-integrations/composio/execute",
+        any(move |Json(body): Json<Value>| {
+            let messages = messages.clone();
+            let requests = Arc::clone(&requests);
+            async move {
+                requests.lock().unwrap().push(body.clone());
+                let tool = body.get("tool").and_then(Value::as_str).unwrap_or("");
+                let resp = match tool {
+                    "GMAIL_GET_PROFILE" => {
+                        execute_envelope(json!({ "emailAddress": "stop@example.test" }))
+                    }
+                    "GMAIL_FETCH_EMAILS" => execute_envelope(json!({
+                        "messages": messages,
+                        "nextPageToken": "more"
+                    })),
+                    _ => execute_envelope(json!({})),
+                };
+                Json(resp)
+            }
+        }),
+    )
+}
+
+// Replaces gmail's dropped `last_seen_id` head-unchanged optimization: prove the
+// provider halts after a single `GMAIL_FETCH_EMAILS` round-trip when the first
+// page is already fully synced. We pre-seed `synced_ids` with the page's message
+// ids and leave the cursor `None` — so the cursor/depth boundary cannot fire and
+// **only** `stop_on_empty_pending` can stop the loop. The router hands back a
+// perpetual `nextPageToken`, so without the early stop the provider would walk
+// every page up to the ceiling.
+#[tokio::test]
+async fn gmail_sync_stops_after_an_all_already_synced_page() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+
+    let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let (base, server) = loopback_router(gmail_repeating_router(
+        gmail_cap_messages(3),
+        Arc::clone(&requests),
+    ))
+    .await;
+
+    let mut config = config_in(&tmp);
+    config.api_url = Some(base);
+    persist_config(&config).await;
+    store_session(&config);
+    let memory = memory_global::init(config.workspace_dir.clone()).expect("init global memory");
+
+    // Pre-seed: the 3 page-1 message ids are already synced; cursor stays None.
+    let mut state = SyncState::new("gmail", "conn-gmail-stop");
+    for i in 1..=3 {
+        state.mark_synced(format!("gmail-cap-msg-{i}"));
+    }
+    state
+        .save(&memory)
+        .await
+        .expect("save pre-seeded sync state");
+
+    let ctx = ProviderContext {
+        config: Arc::new(config),
+        toolkit: "gmail".to_string(),
+        connection_id: Some("conn-gmail-stop".to_string()),
+        usage: Default::default(),
+        max_items: None,
+        sync_depth_days: None,
+    };
+
+    let outcome = GmailProvider::new()
+        .sync(&ctx, SyncReason::ConnectionCreated)
+        .await
+        .expect("gmail sync");
+
+    assert_eq!(
+        outcome.items_ingested, 0,
+        "every page-1 message was already synced — nothing to ingest"
+    );
+    let fetch_calls = requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|b| b.get("tool").and_then(Value::as_str) == Some("GMAIL_FETCH_EMAILS"))
+        .count();
+    assert_eq!(
+        fetch_calls, 1,
+        "stop_on_empty_pending must halt after one all-synced page, not paginate the \
+         perpetual nextPageToken — got {fetch_calls} GMAIL_FETCH_EMAILS calls"
+    );
+
+    server.abort();
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Notion cap enforcement
 //
@@ -1097,6 +1253,87 @@ async fn notion_sync_max_items_caps_ingest_to_exact_count() {
     assert_eq!(
         outcome.items_ingested, 2,
         "max_items=2 must cap Notion ingest to exactly 2 even though the page held 5"
+    );
+
+    server.abort();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Notion sync_depth_days enforcement (via the shared orchestrator)
+//
+// Proves the generic orchestrator's depth window actually drops items older
+// than the floor end-to-end through the real Notion provider. The mock returns
+// 2 recent pages (far-future `last_edited_time`, always inside the window) and
+// 3 ancient pages (year-2000, always outside it), in the descending order the
+// provider requests. With sync_depth_days=7 only the 2 recent pages persist —
+// the orchestrator truncates the page at the first item below the floor.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Build `recent` + `old` Notion pages in descending `last_edited_time` order.
+/// Recent pages use a far-future timestamp (always within any depth window);
+/// old pages use a year-2000 timestamp (always outside it).
+fn notion_depth_pages(recent: usize, old: usize) -> Vec<Value> {
+    let mut pages = Vec::new();
+    for i in 0..recent {
+        pages.push(json!({
+            "id": format!("notion-recent-{i:04}"),
+            "object": "page",
+            "last_edited_time": format!("2099-12-{:02}T10:00:00.000Z", 28 - i),
+            "properties": { "Name": { "type": "title", "title": [{ "plain_text": format!("Recent {i}") }] } }
+        }));
+    }
+    for i in 0..old {
+        pages.push(json!({
+            "id": format!("notion-old-{i:04}"),
+            "object": "page",
+            "last_edited_time": format!("2000-01-{:02}T10:00:00.000Z", 3 - i),
+            "properties": { "Name": { "type": "title", "title": [{ "plain_text": format!("Old {i}") }] } }
+        }));
+    }
+    pages
+}
+
+#[tokio::test]
+async fn notion_sync_depth_days_filters_old_pages() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+
+    // One page: 2 recent + 3 ancient. With a 7-day window only the 2 recent
+    // pages must be ingested.
+    let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let (base, server) = loopback_router(notion_cap_router(
+        notion_depth_pages(2, 3),
+        Arc::clone(&requests),
+    ))
+    .await;
+
+    let mut config = config_in(&tmp);
+    config.api_url = Some(base);
+    persist_config(&config).await;
+    store_session(&config);
+    memory_global::init(config.workspace_dir.clone()).expect("init global memory");
+
+    let ctx = ProviderContext {
+        config: Arc::new(config),
+        toolkit: "notion".to_string(),
+        connection_id: Some("conn-notion-depth".to_string()),
+        usage: Default::default(),
+        max_items: None,
+        // 7-day window: drops the year-2000 pages, keeps the far-future ones.
+        sync_depth_days: Some(7),
+    };
+
+    let outcome = NotionProvider::new()
+        .sync(&ctx, SyncReason::ConnectionCreated)
+        .await
+        .expect("notion depth sync");
+
+    assert_eq!(
+        outcome.items_ingested, 2,
+        "sync_depth_days=7 must drop the 3 year-2000 pages and keep the 2 recent ones"
     );
 
     server.abort();
@@ -1213,6 +1450,86 @@ async fn linear_sync_max_items_caps_ingest_to_exact_count() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Linear sync_depth_days enforcement (via the shared orchestrator)
+//
+// Linear applies the depth window client-side (RFC3339 `updatedAt`). The mock
+// returns 2 recent issues (far-future) + 3 ancient (year-2000) in descending
+// order; with sync_depth_days=7 only the 2 recent issues persist — the
+// orchestrator truncates the page at the first item below the floor.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Build `recent` + `old` Linear issues in descending `updatedAt` order.
+fn linear_depth_issues(recent: usize, old: usize) -> Vec<Value> {
+    let mut issues = Vec::new();
+    for i in 0..recent {
+        issues.push(json!({
+            "id": format!("linear-recent-{i:04}"),
+            "identifier": format!("ENG-R{i}"),
+            "title": format!("Recent {i}"),
+            "updatedAt": format!("2099-12-{:02}T10:00:00.000Z", 28 - i),
+            "url": format!("https://linear.app/cap/issue/ENG-R{i}"),
+            "description": "recent",
+        }));
+    }
+    for i in 0..old {
+        issues.push(json!({
+            "id": format!("linear-old-{i:04}"),
+            "identifier": format!("ENG-O{i}"),
+            "title": format!("Old {i}"),
+            "updatedAt": format!("2000-01-{:02}T10:00:00.000Z", 3 - i),
+            "url": format!("https://linear.app/cap/issue/ENG-O{i}"),
+            "description": "old",
+        }));
+    }
+    issues
+}
+
+#[tokio::test]
+async fn linear_sync_depth_days_filters_old_issues() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+
+    // One page: 2 recent + 3 ancient. With a 7-day window only the 2 recent
+    // issues must be ingested.
+    let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let (base, server) = loopback_router(linear_cap_router(
+        linear_depth_issues(2, 3),
+        Arc::clone(&requests),
+    ))
+    .await;
+
+    let mut config = config_in(&tmp);
+    config.api_url = Some(base);
+    persist_config(&config).await;
+    store_session(&config);
+    memory_global::init(config.workspace_dir.clone()).expect("init global memory");
+
+    let ctx = ProviderContext {
+        config: Arc::new(config),
+        toolkit: "linear".to_string(),
+        connection_id: Some("conn-linear-depth".to_string()),
+        usage: Default::default(),
+        max_items: None,
+        sync_depth_days: Some(7),
+    };
+
+    let outcome = LinearProvider::new()
+        .sync(&ctx, SyncReason::ConnectionCreated)
+        .await
+        .expect("linear depth sync");
+
+    assert_eq!(
+        outcome.items_ingested, 2,
+        "sync_depth_days=7 must drop the 3 year-2000 issues and keep the 2 recent ones"
+    );
+
+    server.abort();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // ClickUp cap enforcement
 //
 // Proves that max_items=N caps ClickUp ingestion to exactly N tasks even
@@ -1323,6 +1640,87 @@ async fn clickup_sync_max_items_caps_ingest_to_exact_count() {
     assert_eq!(
         outcome.items_ingested, 2,
         "max_items=2 must cap ClickUp ingest to exactly 2 even though the page held 5"
+    );
+
+    server.abort();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ClickUp sync_depth_days enforcement (via the shared orchestrator)
+//
+// ClickUp's `date_updated` is an epoch-millis string, so the orchestrator's
+// depth floor must be epoch-ms too (ClickUpSource::depth_floor override). The
+// mock returns 2 recent tasks (year-2030 epoch-ms) + 3 ancient (year-2001) in
+// descending order; with sync_depth_days=7 only the 2 recent tasks persist.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Build `recent` + `old` ClickUp tasks in descending `date_updated` order,
+/// using epoch-millis strings so the epoch-ms depth floor compares correctly.
+fn clickup_depth_tasks(recent: usize, old: usize) -> Vec<Value> {
+    let mut tasks = Vec::new();
+    for i in 0..recent {
+        tasks.push(json!({
+            "id": format!("clickup-recent-{i:04}"),
+            "name": format!("Recent {i}"),
+            "text_content": "recent",
+            "status": { "status": "open" },
+            "date_updated": format!("{}", 1_900_000_000_000_u64 + (recent - i) as u64),
+            "url": format!("https://app.clickup.com/t/clickup-recent-{i:04}")
+        }));
+    }
+    for i in 0..old {
+        tasks.push(json!({
+            "id": format!("clickup-old-{i:04}"),
+            "name": format!("Old {i}"),
+            "text_content": "old",
+            "status": { "status": "open" },
+            "date_updated": format!("{}", 1_000_000_000_000_u64 + (old - i) as u64),
+            "url": format!("https://app.clickup.com/t/clickup-old-{i:04}")
+        }));
+    }
+    tasks
+}
+
+#[tokio::test]
+async fn clickup_sync_depth_days_filters_old_tasks() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+
+    // One workspace, one page: 2 recent + 3 ancient. With a 7-day window only
+    // the 2 recent tasks must be ingested.
+    let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let (base, server) = loopback_router(clickup_cap_router(
+        clickup_depth_tasks(2, 3),
+        Arc::clone(&requests),
+    ))
+    .await;
+
+    let mut config = config_in(&tmp);
+    config.api_url = Some(base);
+    persist_config(&config).await;
+    store_session(&config);
+    memory_global::init(config.workspace_dir.clone()).expect("init global memory");
+
+    let ctx = ProviderContext {
+        config: Arc::new(config),
+        toolkit: "clickup".to_string(),
+        connection_id: Some("conn-clickup-depth".to_string()),
+        usage: Default::default(),
+        max_items: None,
+        sync_depth_days: Some(7),
+    };
+
+    let outcome = ClickUpProvider::new()
+        .sync(&ctx, SyncReason::ConnectionCreated)
+        .await
+        .expect("clickup depth sync");
+
+    assert_eq!(
+        outcome.items_ingested, 2,
+        "sync_depth_days=7 must drop the 3 year-2001 tasks and keep the 2 recent ones"
     );
 
     server.abort();

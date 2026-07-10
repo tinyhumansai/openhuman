@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use serde_json::json;
 use serde_json::Value;
 
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
+use crate::openhuman::tools::traits::{
+    PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult,
+};
+use tinyagents::harness::tool::ToolExecutionContext;
 
 pub struct ArchetypeDelegationTool {
     pub tool_name: String,
@@ -74,6 +77,16 @@ impl Tool for ArchetypeDelegationTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let raw_prompt = args
             .get("prompt")
             .and_then(|v| v.as_str())
@@ -101,6 +114,7 @@ impl Tool for ArchetypeDelegationTool {
             &prompt,
             None,
             model_override,
+            tool_context.and_then(|ctx| ctx.workspace.clone()),
         )
         .await
     }

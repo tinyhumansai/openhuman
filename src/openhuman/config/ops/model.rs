@@ -37,6 +37,7 @@ pub struct ModelSettingsPatch {
     pub reasoning_provider: Option<String>,
     pub agentic_provider: Option<String>,
     pub coding_provider: Option<String>,
+    pub vision_provider: Option<String>,
     pub memory_provider: Option<String>,
     pub embeddings_provider: Option<String>,
     pub heartbeat_provider: Option<String>,
@@ -82,6 +83,7 @@ pub struct LocalAiSettingsPatch {
     pub usage_heartbeat: Option<bool>,
     pub usage_learning_reflection: Option<bool>,
     pub usage_subconscious: Option<bool>,
+    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -219,6 +221,9 @@ pub async fn apply_model_settings(
     if let Some(s) = update.coding_provider {
         config.coding_provider = normalise_provider(s);
     }
+    if let Some(s) = update.vision_provider {
+        config.vision_provider = normalise_provider(s);
+    }
     if let Some(s) = update.memory_provider {
         config.memory_provider = normalise_provider(s);
     }
@@ -276,6 +281,16 @@ pub async fn apply_memory_settings(
         config.memory.embedding_provider = provider;
     }
     if let Some(model) = update.embedding_model {
+        // Source-gate (TAURI-RUST-9SK): reject an unmistakably non-embedding
+        // model id before persisting it. This save path has no live verify
+        // probe (unlike the Custom-provider setup flow in
+        // `embeddings::rpc::update_settings`), so a chat model id pasted here
+        // would otherwise be stored unchecked and 400 "does not exist" on every
+        // memory re-embed (2205 events from one user). Conservative check — see
+        // `embeddings::non_embedding_model_reason`.
+        if let Some(reason) = crate::openhuman::embeddings::non_embedding_model_reason(&model) {
+            return Err(format!("invalid embeddings model `{model}`: {reason}"));
+        }
         config.memory.embedding_model = model;
     }
     if let Some(dimensions) = update.embedding_dimensions {
@@ -368,9 +383,15 @@ pub async fn apply_local_ai_settings(
         config.local_ai.base_url = match base_url {
             None => None,
             Some(base_url) if base_url.trim().is_empty() => None,
+            // OMLX is an OpenAI-v1 endpoint: the `/v1` suffix is significant, so it
+            // must NOT go through `validate_ollama_url` (which strips the path).
+            // `provider_from_config` maps omlx → Ollama, so guard on the slug here.
             Some(base_url)
-                if crate::openhuman::inference::local::provider::provider_from_config(config)
-                    == crate::openhuman::inference::local::provider::LocalAiProvider::Ollama =>
+                if crate::openhuman::inference::local::provider::normalize_provider(
+                    &config.local_ai.provider,
+                ) != "omlx"
+                    && crate::openhuman::inference::local::provider::provider_from_config(config)
+                        == crate::openhuman::inference::local::provider::LocalAiProvider::Ollama =>
             {
                 Some(crate::openhuman::inference::local::validate_ollama_url(
                     &base_url,
@@ -396,6 +417,22 @@ pub async fn apply_local_ai_settings(
     }
     if let Some(v) = update.usage_subconscious {
         config.local_ai.usage.subconscious = v;
+    }
+    if let Some(api_key) = update.api_key {
+        let trimmed = api_key.trim();
+        config.local_ai.api_key = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+        log::debug!(
+            "[config][local_ai] api_key {}",
+            if config.local_ai.api_key.is_some() {
+                "set"
+            } else {
+                "cleared"
+            }
+        );
     }
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(config)?;

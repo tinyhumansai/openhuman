@@ -22,6 +22,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update_status"),
         schemas("set_session_thread"),
         schemas("decide_plan"),
+        schemas("revise_plan"),
         schemas("remove"),
         schemas("replace"),
         schemas("clear"),
@@ -56,6 +57,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("decide_plan"),
             handler: handle_decide_plan,
+        },
+        RegisteredController {
+            schema: schemas("revise_plan"),
+            handler: handle_revise_plan,
         },
         RegisteredController {
             schema: schemas("remove"),
@@ -206,6 +211,22 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "true to approve (card becomes runnable), false to reject.",
                     required: true,
                 },
+            ],
+            outputs: vec![snapshot_output()],
+        },
+        "revise_plan" => ControllerSchema {
+            namespace: "todos",
+            function: "revise_plan",
+            description: "Reject every card awaiting plan approval so the orchestrator can \
+                          re-plan from the user's feedback (the feedback is sent back into the \
+                          thread as a message by the caller). Idempotent no-op when nothing is \
+                          awaiting.",
+            inputs: vec![
+                thread_id_input(),
+                optional_string(
+                    "feedback",
+                    "User's free-text revision request (recorded for logging/audit).",
+                ),
             ],
             outputs: vec![snapshot_output()],
         },
@@ -410,6 +431,13 @@ struct DecidePlanParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct RevisePlanParams {
+    thread_id: String,
+    #[serde(default)]
+    feedback: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct ReplaceParams {
     thread_id: String,
     cards: Vec<TaskBoardCard>,
@@ -513,6 +541,19 @@ fn handle_decide_plan(params: Map<String, Value>) -> ControllerFuture {
             "[rpc][todos] decide_plan entry"
         );
         snapshot_to_json(ops::decide_plan(&loc, &p.id, p.approve)?)
+    })
+}
+
+fn handle_revise_plan(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<RevisePlanParams>(params)?;
+        let loc = thread_location(&p.thread_id).await?;
+        tracing::debug!(
+            thread_id = %p.thread_id,
+            feedback_len = p.feedback.len(),
+            "[rpc][todos] revise_plan entry"
+        );
+        snapshot_to_json(ops::revise_plan(&loc, &p.feedback)?)
     })
 }
 

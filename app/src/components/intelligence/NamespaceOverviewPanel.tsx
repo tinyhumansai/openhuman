@@ -5,6 +5,7 @@
  */
 import { useT } from '../../lib/i18n/I18nContext';
 import type { NamespaceOverviewReport } from '../../lib/memory/namespaceOverview';
+import Button from '../ui/Button';
 
 const MAX_ROWS = 50;
 
@@ -26,7 +27,7 @@ const NamespaceOverviewPanel = ({
   const intro = (
     <div
       role="note"
-      className="rounded-lg border border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-xs text-stone-700 dark:text-neutral-200">
+      className="rounded-lg border border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-xs text-content-secondary">
       <p className="font-medium mb-1">{t('namespaceOverview.title')}</p>
       <p>{t('namespaceOverview.intro')}</p>
     </div>
@@ -45,14 +46,14 @@ const NamespaceOverviewPanel = ({
             {[0, 1, 2].map(i => (
               <div
                 key={i}
-                className="animate-pulse rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 h-16"
+                className="animate-pulse rounded-lg border border-line bg-surface-muted h-16"
               />
             ))}
           </div>
           {[0, 1, 2].map(i => (
             <div
               key={i}
-              className="animate-pulse rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 h-6"
+              className="animate-pulse rounded-lg border border-line bg-surface-muted h-6"
             />
           ))}
         </div>
@@ -69,12 +70,9 @@ const NamespaceOverviewPanel = ({
             {t('namespaceOverview.errorPrefix')} {error}
           </p>
           {onRetry && (
-            <button
-              type="button"
-              onClick={onRetry}
-              className="mt-2 rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-600">
+            <Button variant="primary" size="sm" onClick={onRetry} className="mt-2">
               {t('namespaceOverview.retry')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -86,12 +84,10 @@ const NamespaceOverviewPanel = ({
       <div className="space-y-4">
         {intro}
         <div className="py-8 text-center">
-          <h3 className="text-sm font-semibold text-stone-700 dark:text-neutral-200">
+          <h3 className="text-sm font-semibold text-content-secondary">
             {t('namespaceOverview.empty')}
           </h3>
-          <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
-            {t('namespaceOverview.emptyHint')}
-          </p>
+          <p className="mt-1 text-xs text-content-muted">{t('namespaceOverview.emptyHint')}</p>
         </div>
       </div>
     );
@@ -112,15 +108,11 @@ const NamespaceOverviewPanel = ({
           { label: t('namespaceOverview.metricFacts'), value: report.totalFacts },
           { label: t('namespaceOverview.metricEntities'), value: report.totalEntities },
         ].map(tile => (
-          <div
-            key={tile.label}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 p-3">
-            <div className="text-[10px] uppercase tracking-wider text-stone-400 dark:text-neutral-500">
+          <div key={tile.label} className="rounded-lg border border-line p-3">
+            <div className="text-[10px] uppercase tracking-wider text-content-faint">
               {tile.label}
             </div>
-            <div className="text-lg font-semibold tabular-nums text-stone-900 dark:text-neutral-100">
-              {tile.value}
-            </div>
+            <div className="text-lg font-semibold tabular-nums text-content">{tile.value}</div>
           </div>
         ))}
       </div>
@@ -129,7 +121,7 @@ const NamespaceOverviewPanel = ({
       <section aria-labelledby="namespace-overview-heading" className="space-y-1">
         <h3
           id="namespace-overview-heading"
-          className="text-xs font-semibold uppercase tracking-wider text-stone-500 dark:text-neutral-400">
+          className="text-xs font-semibold uppercase tracking-wider text-content-muted">
           {t('namespaceOverview.heading')}
         </h3>
         <ul className="space-y-1">
@@ -139,21 +131,19 @@ const NamespaceOverviewPanel = ({
               className="flex items-center gap-2 text-[11px] tabular-nums">
               <span
                 className={`w-28 shrink-0 truncate ${
-                  stat.namespace === null
-                    ? 'italic text-stone-400 dark:text-neutral-500'
-                    : 'text-stone-700 dark:text-neutral-200'
+                  stat.namespace === null ? 'italic text-content-faint' : 'text-content-secondary'
                 }`}
                 title={stat.namespace ?? t('namespaceOverview.unnamespaced')}>
                 {stat.namespace ?? t('namespaceOverview.unnamespaced')}
               </span>
-              <div className="flex-1 h-3 rounded bg-stone-100 dark:bg-neutral-800 overflow-hidden">
+              <div className="flex-1 h-3 rounded bg-surface-subtle overflow-hidden">
                 <div
                   className="h-full bg-primary-400/70"
                   style={{ width: `${(stat.factCount / maxFacts) * 100}%` }}
                 />
               </div>
               <span
-                className="w-16 shrink-0 text-right text-stone-500 dark:text-neutral-400"
+                className="w-16 shrink-0 text-right text-content-muted"
                 title={t('namespaceOverview.factsLabel').replace(
                   '{count}',
                   String(stat.factCount)
@@ -161,7 +151,7 @@ const NamespaceOverviewPanel = ({
                 {stat.factCount}
               </span>
               <span
-                className="w-16 shrink-0 text-right text-stone-400 dark:text-neutral-500"
+                className="w-16 shrink-0 text-right text-content-faint"
                 title={t('namespaceOverview.entitiesLabel').replace(
                   '{count}',
                   String(stat.entityCount)
@@ -172,7 +162,7 @@ const NamespaceOverviewPanel = ({
           ))}
         </ul>
         {truncated && (
-          <p className="text-center text-xs text-stone-400 dark:text-neutral-500">
+          <p className="text-center text-xs text-content-faint">
             {t('namespaceOverview.truncated')
               .replace('{shown}', String(rows.length))
               .replace('{total}', String(report.namespaces.length))}

@@ -14,7 +14,7 @@ use crate::openhuman::memory::{
 };
 use crate::openhuman::memory_conversations::{
     self as conversations, ConversationMessage, ConversationMessagePatch, ConversationStore,
-    ConversationThread, CreateConversationThread,
+    ConversationThread, CreateConversationThread, CrossThreadHit,
 };
 use crate::openhuman::threads::title::{
     build_title_prompt, is_auto_generated_thread_title, sanitize_generated_title,
@@ -22,8 +22,8 @@ use crate::openhuman::threads::title::{
     THREAD_TITLE_MODEL_HINT, THREAD_TITLE_SYSTEM_PROMPT,
 };
 use crate::openhuman::threads::turn_state::{
-    self, ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateRequest, GetTurnStateResponse,
-    ListTurnStatesResponse,
+    self, ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateForRequestRequest,
+    GetTurnStateRequest, GetTurnStateResponse, ListTurnStatesResponse,
 };
 use crate::openhuman::threads::ThreadsError;
 use crate::rpc::RpcOutcome;
@@ -229,6 +229,34 @@ pub async fn messages_list(
         Some(counts([("num_messages", count)])),
         None,
     ))
+}
+
+/// Search messages across **every** thread in the workspace for a query,
+/// returning up to `limit` of the most-recent matches (newest first). Backed
+/// by the trigram/CJK-bigram inverted index in `memory_conversations` — the
+/// same cross-chat reader the durable-context pipeline uses (issue #1505).
+///
+/// Read-only and workspace-scoped. `exclude_thread_id` lets a caller drop the
+/// active chat from the results when it already has that context in hand.
+pub async fn transcript_search(
+    query: &str,
+    limit: usize,
+    exclude_thread_id: Option<&str>,
+) -> Result<Vec<CrossThreadHit>, String> {
+    let dir = workspace_dir().await?;
+    log::debug!(
+        "[threads][transcript_search] query_chars={} limit={} exclude={:?}",
+        query.chars().count(),
+        limit,
+        exclude_thread_id
+    );
+    let hits = ConversationStore::new(dir).search_cross_thread_messages(
+        query,
+        limit,
+        exclude_thread_id,
+    )?;
+    log::debug!("[threads][transcript_search] hits={}", hits.len());
+    Ok(hits)
 }
 
 /// Appends a message to a conversation thread.
@@ -514,6 +542,24 @@ pub async fn thread_delete(
     // session for the now-deleted thread could linger and try to
     // append to a thread index row that no longer exists.
     web_channel::invalidate_thread_sessions(&request.thread_id).await;
+    // Cancel any detached sub-agents this thread spawned BEFORE clearing their
+    // queued results: abort the in-flight ones first so a child can't record a
+    // completion in the gap between the two calls, then discard anything already
+    // queued for delivery. Both target a thread that's being deleted, so there's
+    // nowhere left to deliver to — abort + cleanup is the whole behavior.
+    let cancelled = crate::openhuman::agent_orchestration::running_subagents::cancel_for_thread(
+        &request.thread_id,
+    );
+    let discarded =
+        crate::openhuman::agent_orchestration::background_completions::discard_for_thread(
+            &request.thread_id,
+        );
+    log::debug!(
+        "[threads] thread_delete thread_id={} cancelled_subagents={} discarded_completions={}",
+        request.thread_id,
+        cancelled,
+        discarded
+    );
     // Drop any persisted in-flight turn snapshot for this thread —
     // otherwise `threads_turn_state_list` keeps surfacing it (as
     // `Interrupted` on next restart) for a thread that no longer
@@ -541,6 +587,24 @@ pub async fn threads_purge(
 ) -> Result<RpcOutcome<ApiEnvelope<PurgeConversationThreadsResponse>>, String> {
     let dir = workspace_dir().await?;
     let stats = conversations::purge_threads(dir.clone())?;
+    // No parent thread survives a purge, so cancel every detached sub-agent and
+    // wipe every queued result. Same ordering as `thread_delete`: abort the
+    // in-flight runs first, then clear the delivery queue. Tombstone each
+    // cancelled sub-agent's thread BEFORE the final wipe so a straggler that
+    // wins the cooperative-abort race (records after the wipe) is still dropped
+    // by `record_completion` rather than delivered into a purged thread.
+    use crate::openhuman::agent_orchestration::{background_completions, running_subagents};
+    let cancelled_threads = running_subagents::cancel_all();
+    let mut discarded = 0;
+    for thread_id in &cancelled_threads {
+        discarded += background_completions::discard_for_thread(thread_id);
+    }
+    discarded += background_completions::clear_all();
+    log::debug!(
+        "[threads] threads_purge cancelled_threads={} discarded_completions={}",
+        cancelled_threads.len(),
+        discarded
+    );
     // Threads are gone, so any orphan turn snapshots can never be
     // reattached to a live thread. Wipe them in the same call so
     // `turn_state_list` returns an empty set after a purge. Use the
@@ -590,6 +654,37 @@ pub async fn turn_state_list(
     ))
 }
 
+/// Lists every persisted turn snapshot for one thread, newest first — the
+/// per-turn history that lets the UI render each answer's own process trail.
+pub async fn turn_state_history(
+    request: GetTurnStateRequest,
+) -> Result<RpcOutcome<ApiEnvelope<ListTurnStatesResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let turn_states = turn_state::store::list_thread(dir, &request.thread_id)?;
+    let count = turn_states.len();
+    Ok(envelope(
+        ListTurnStatesResponse { turn_states, count },
+        Some(counts([("num_turn_states", count)])),
+        None,
+    ))
+}
+
+/// Returns one specific turn of a thread by its producing request id — used by
+/// the UI to lazily load a past turn's full timeline when its insights block is
+/// first expanded.
+pub async fn turn_state_get_turn(
+    request: GetTurnStateForRequestRequest,
+) -> Result<RpcOutcome<ApiEnvelope<GetTurnStateResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let turn_state = turn_state::store::get_turn(dir, &request.thread_id, &request.request_id)?;
+    let present = turn_state.is_some();
+    Ok(envelope(
+        GetTurnStateResponse { turn_state },
+        Some(counts([("present", usize::from(present))])),
+        None,
+    ))
+}
+
 /// Clears the persisted turn snapshot for a thread (e.g. after the user
 /// dismisses an "interrupted" banner).
 pub async fn turn_state_clear(
@@ -598,6 +693,164 @@ pub async fn turn_state_clear(
     let dir = workspace_dir().await?;
     let cleared = turn_state::store::delete(dir, &request.thread_id)?;
     Ok(envelope(ClearTurnStateResponse { cleared }, None, None))
+}
+
+/// Request for [`token_usage`]: the thread whose persisted usage to total.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ThreadTokenUsageRequest {
+    pub thread_id: String,
+}
+
+/// Aggregated token/cost usage for one thread, read back from its persisted
+/// session transcripts. Seeds the UI footer when the user selects a thread so
+/// the totals reflect prior turns instead of starting at zero.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ThreadTokenUsageResponse {
+    pub thread_id: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub cost_usd: f64,
+    pub turn_count: usize,
+    /// Tokens of the most recent turn — numerator for the context-window gauge.
+    pub last_turn_input_tokens: u64,
+    pub last_turn_output_tokens: u64,
+    /// Context window (tokens) inferred from the last model; `0` when unknown.
+    pub context_window: u64,
+    pub model: Option<String>,
+    pub updated: Option<String>,
+    /// `false` when the thread has no persisted turns yet (all zeros).
+    pub has_usage: bool,
+    /// Per-archetype sub-agent spend (re-audited at current pricing). The
+    /// top-level totals already include this; it's broken out for the UI's
+    /// per-agent footer rows.
+    pub subagents: Vec<SubagentUsageDto>,
+}
+
+/// One sub-agent archetype's contribution within a thread.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SubagentUsageDto {
+    pub agent_id: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_usd: f64,
+    pub runs: usize,
+}
+
+/// Total a thread's persisted token/cost usage across its root transcripts.
+pub async fn token_usage(
+    request: ThreadTokenUsageRequest,
+) -> Result<RpcOutcome<ApiEnvelope<ThreadTokenUsageResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let summary = crate::openhuman::agent::harness::session::transcript::read_thread_usage_summary(
+        &dir,
+        &request.thread_id,
+    );
+
+    // Re-audit cost at CURRENT pricing rather than trusting the
+    // `charged_amount_usd` persisted in the transcript: those values were
+    // stamped at turn time and don't reflect later tier-pricing corrections.
+    // Recompute from the persisted token counts using the last-known model's
+    // rates; falls back to `fallback` only when the model is unknown.
+    let audit_cost =
+        |model: Option<&str>, input: u64, output: u64, cached: u64, fallback: f64| match model {
+            Some(m) => crate::openhuman::agent::cost::estimate_call_cost_usd(
+                m,
+                &crate::openhuman::inference::provider::UsageInfo {
+                    input_tokens: input,
+                    output_tokens: output,
+                    cached_input_tokens: cached,
+                    ..Default::default()
+                },
+            ),
+            None => fallback,
+        };
+
+    let response = match summary {
+        Some(s) => {
+            let context_window = s
+                .model
+                .as_deref()
+                .and_then(crate::openhuman::inference::model_context::context_window_for_model)
+                .unwrap_or(0);
+
+            // Orchestrator (root) spend, re-audited.
+            let orchestrator_cost = audit_cost(
+                s.model.as_deref(),
+                s.input_tokens,
+                s.output_tokens,
+                s.cached_input_tokens,
+                s.cost_usd,
+            );
+
+            // Sub-agent archetypes, each re-audited with its own model. Older
+            // sub-agent transcripts didn't persist a model on their messages, so
+            // fall back to the thread's (root) model rather than pricing them at
+            // $0 — sub-agents usually run on the same managed tier as the parent.
+            let mut subagents = Vec::with_capacity(s.subagents.len());
+            let (mut sub_in, mut sub_out, mut sub_cached, mut sub_cost) = (0u64, 0u64, 0u64, 0.0);
+            for g in &s.subagents {
+                let sub_model = g.model.as_deref().or(s.model.as_deref());
+                let cost = audit_cost(
+                    sub_model,
+                    g.input_tokens,
+                    g.output_tokens,
+                    g.cached_input_tokens,
+                    0.0,
+                );
+                sub_in = sub_in.saturating_add(g.input_tokens);
+                sub_out = sub_out.saturating_add(g.output_tokens);
+                sub_cached = sub_cached.saturating_add(g.cached_input_tokens);
+                sub_cost += cost;
+                subagents.push(SubagentUsageDto {
+                    agent_id: g.agent_id.clone(),
+                    input_tokens: g.input_tokens,
+                    output_tokens: g.output_tokens,
+                    cost_usd: cost,
+                    runs: g.runs,
+                });
+            }
+
+            // Top-level totals = orchestrator + all sub-agents.
+            ThreadTokenUsageResponse {
+                thread_id: request.thread_id.clone(),
+                input_tokens: s.input_tokens.saturating_add(sub_in),
+                output_tokens: s.output_tokens.saturating_add(sub_out),
+                cached_input_tokens: s.cached_input_tokens.saturating_add(sub_cached),
+                cost_usd: orchestrator_cost + sub_cost,
+                turn_count: s.turn_count,
+                last_turn_input_tokens: s.last_turn_input_tokens,
+                last_turn_output_tokens: s.last_turn_output_tokens,
+                context_window,
+                model: s.model,
+                updated: Some(s.updated),
+                has_usage: true,
+                subagents,
+            }
+        }
+        None => ThreadTokenUsageResponse {
+            thread_id: request.thread_id.clone(),
+            input_tokens: 0,
+            output_tokens: 0,
+            cached_input_tokens: 0,
+            cost_usd: 0.0,
+            turn_count: 0,
+            last_turn_input_tokens: 0,
+            last_turn_output_tokens: 0,
+            context_window: 0,
+            model: None,
+            updated: None,
+            has_usage: false,
+            subagents: Vec::new(),
+        },
+    };
+
+    let has_usage = response.has_usage;
+    Ok(envelope(
+        response,
+        Some(counts([("has_usage", usize::from(has_usage))])),
+        None,
+    ))
 }
 
 #[cfg(test)]

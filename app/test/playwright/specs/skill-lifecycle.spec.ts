@@ -9,7 +9,7 @@ test.describe('Skill lifecycle smoke', () => {
     await bootAuthenticatedPage(page, 'pw-skill-lifecycle-' + testSlug, '/connections');
   });
 
-  test('connections page mounts and the workflows_list RPC is reachable', async ({ page }) => {
+  test('connections page mounts and the flows_list RPC is reachable', async ({ page }) => {
     await waitForAppReady(page);
     await expect
       .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
@@ -22,12 +22,16 @@ test.describe('Skill lifecycle smoke', () => {
       )
     ).toBe(true);
 
-    const rpcResult = await callCoreRpc<unknown>('openhuman.workflows_list', {});
+    const rpcResult = await callCoreRpc<unknown>('openhuman.flows_list', {});
     const root = (rpcResult ?? {}) as Record<string, unknown>;
     const payload =
       root && typeof root === 'object' && 'result' in root
         ? (root.result as Record<string, unknown>)
         : root;
-    expect(Array.isArray(payload.skills ?? [])).toBe(true);
+    const flows =
+      payload && typeof payload === 'object' && 'result' in payload
+        ? (payload.result as unknown)
+        : ((payload as Record<string, unknown>).flows ?? payload);
+    expect(Array.isArray(flows)).toBe(true);
   });
 });

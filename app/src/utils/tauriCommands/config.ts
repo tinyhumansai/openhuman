@@ -57,7 +57,16 @@ export interface CloudProviderCreds {
 export interface ModelRegistryEntry {
   id: string;
   provider: string;
+  /** USD per 1M input tokens. `0`/absent ⇒ unknown. Pre-filled for known
+   *  vendor models from the Rust pricing catalog (`cost/catalog.rs`). */
+  cost_per_1m_input?: number;
+  /** USD per 1M cached-prefix input tokens. `0`/absent ⇒ unknown. */
+  cost_per_1m_cached_input?: number;
   cost_per_1m_output: number;
+  /** Max context window in tokens. `0`/absent ⇒ unknown. Pre-filled for known
+   *  vendor models from the Rust pricing catalog. Used to budget prompts and
+   *  trigger compaction — providers differ widely (128K–1M+). */
+  context_window?: number;
   vision: boolean;
 }
 
@@ -102,6 +111,7 @@ export interface ModelSettingsUpdate {
   reasoning_provider?: string | null;
   agentic_provider?: string | null;
   coding_provider?: string | null;
+  vision_provider?: string | null;
   memory_provider?: string | null;
   embeddings_provider?: string | null;
   heartbeat_provider?: string | null;
@@ -140,6 +150,7 @@ export interface RuntimeSettingsUpdate {
 
 export interface BrowserSettingsUpdate {
   enabled?: boolean | null;
+  backend?: 'agent_browser' | 'playwright' | 'rust_native' | 'computer_use' | 'auto' | null;
 }
 
 export interface ScreenIntelligenceSettingsUpdate {
@@ -167,6 +178,12 @@ export interface LocalAiSettingsUpdate {
   opt_in_confirmed?: boolean | null;
   provider?: string | null;
   base_url?: string | null;
+  /**
+   * Bearer credential for OpenAI-compatible local runtimes that require a key
+   * (e.g. OMLX). Stored in `config.local_ai.api_key` and sent as a Bearer token
+   * on inference. Keyless runtimes (Ollama / LM Studio) omit this.
+   */
+  api_key?: string | null;
   model_id?: string | null;
   chat_model_id?: string | null;
   usage_embeddings?: boolean | null;
@@ -237,11 +254,21 @@ export interface ClientConfig {
   model_registry: ModelRegistryEntry[];
   /** Id of the `cloud_providers` entry resolved by the `"cloud"` sentinel. */
   primary_cloud: string | null;
+  /**
+   * #3767: authoritative, core-side per-tier flags — for each chat-mode tier
+   * (`chat` = Quick mode, `reasoning` = Reasoning mode), true when that tier runs
+   * on a non-managed provider the user funds themselves (a usable BYO key, local
+   * runtime, or claude-code). The UI checks whichever tier the user has selected;
+   * when true the "buy credits" prompt is suppressed for that mode. Optional for
+   * back-compat with older snapshots.
+   */
+  credits_bypass?: { chat?: boolean; reasoning?: boolean };
   /** Per-workload provider strings (e.g. `"cloud"`, `"ollama:llama3.1:8b"`, `"openai:gpt-4o"`). */
   chat_provider: string | null;
   reasoning_provider: string | null;
   agentic_provider: string | null;
   coding_provider: string | null;
+  vision_provider: string | null;
   memory_provider: string | null;
   embeddings_provider: string | null;
   heartbeat_provider: string | null;
@@ -287,32 +314,80 @@ export async function openhumanClaudeCodeStatus(): Promise<CommandResponse<Claud
 /**
  * Auth state for the Claude Code CLI provider — mirrors Rust
  * `claude_code::auth_status::AuthSource`. The `source` discriminator is
- * the snake_case Serde rename. `account_email` / `expires_at` are
- * best-effort: absent when the CLI's credentials schema drifts.
+ * the snake_case Serde rename. `account_email` / `subscription_type` /
+ * `expires_at` are best-effort: absent when the CLI's auth-status schema
+ * drifts. `unknown` means we couldn't determine the state (binary missing,
+ * spawn failed, or a CLI older than `auth status`) — it is NEVER signed-out.
  */
 export type ClaudeCodeAuthStatus =
   | {
       source: 'subscription';
       account_email: string | null;
+      subscription_type: string | null;
       expires_at: string | null;
       last_checked: number;
     }
   | { source: 'api_key_env'; last_checked: number }
-  | { source: 'none'; last_checked: number };
+  | { source: 'none'; last_checked: number }
+  | { source: 'unknown'; reason: string | null; last_checked: number };
 
 /**
- * Detect Claude Code CLI auth state (Pro/Max subscription via
- * `~/.claude/.credentials.json`, `ANTHROPIC_API_KEY` env, or none).
- * Pure FS — no CLI spawn, safe to call on a tight refresh loop.
+ * Detect Claude Code CLI auth state via `claude auth status --json`
+ * (cross-platform: abstracts the macOS Keychain vs. Linux/Windows file
+ * stores), or `ANTHROPIC_API_KEY` env. Spawns the CLI — call on-demand /
+ * Recheck, not on a tight loop.
  */
-export async function openhumanClaudeCodeAuthStatus(): Promise<
-  CommandResponse<ClaudeCodeAuthStatus>
-> {
+export async function openhumanClaudeCodeAuthStatus(): Promise<ClaudeCodeAuthStatus> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<CommandResponse<ClaudeCodeAuthStatus>>({
+  // The core handler returns the value via `RpcOutcome::new(_, vec![])` with no
+  // logs, which `into_cli_compatible_json` serializes as the BARE value (not a
+  // `{ result, logs }` envelope). `callCoreRpc` returns the JSON-RPC `result`,
+  // so this resolves directly to the AuthStatus — do NOT read `.result`.
+  return await callCoreRpc<ClaudeCodeAuthStatus>({
     method: 'openhuman.inference_claude_code_auth_status',
+  });
+}
+
+/**
+ * Persisted Claude Code provider settings — mirrors Rust
+ * `claude_code::settings::ClaudeCodeSettings`. `full_access=true` runs the
+ * CLI with `--permission-mode bypassPermissions` + its full native toolset
+ * (Bash/network/subagents); `false` (default) is the safer `acceptEdits`
+ * posture (auto-apply file edits, gate the rest). On macOS the Seatbelt jail
+ * still walls off `~/.openhuman` in either mode.
+ */
+export interface ClaudeCodeSettings {
+  full_access: boolean;
+}
+
+/**
+ * Read the persisted Claude Code full-access toggle. Bare value (no
+ * `{ result, logs }` envelope) — see {@link openhumanClaudeCodeAuthStatus}.
+ */
+export async function openhumanClaudeCodeSettings(): Promise<ClaudeCodeSettings> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<ClaudeCodeSettings>({
+    method: 'openhuman.inference_claude_code_settings',
+  });
+}
+
+/**
+ * Persist the Claude Code full-access toggle. Returns the saved settings.
+ * Takes effect on the next chat turn (the driver reads the file per-turn).
+ */
+export async function openhumanClaudeCodeSetFullAccess(
+  enabled: boolean
+): Promise<ClaudeCodeSettings> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<ClaudeCodeSettings>({
+    method: 'openhuman.inference_claude_code_set_full_access',
+    params: { enabled },
   });
 }
 
@@ -499,6 +574,40 @@ export async function openhumanUpdateAutonomySettings(
   });
 }
 
+// ── "Super context" toggle ───────────────────────────────────────────────────
+
+/**
+ * Reads the "super context" flag (`context.super_context_enabled`). When on,
+ * the harness runs a read-only context-collection pass on the first turn of a
+ * new thread — before the orchestrator LLM runs — and folds the result into the
+ * user message. Surfaced as the toggle below the chat composer.
+ */
+export async function openhumanGetSuperContextEnabled(): Promise<CommandResponse<boolean>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<boolean>>({
+    method: CORE_RPC_METHODS.configGetSuperContextEnabled,
+  });
+}
+
+/**
+ * Enables or disables "super context". Takes effect for threads started after
+ * the change (the value is baked into the frozen turn-1 prefix), so toggling it
+ * mid-conversation only affects the next new thread.
+ */
+export async function openhumanSetSuperContextEnabled(
+  value: boolean
+): Promise<CommandResponse<boolean>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<boolean>>({
+    method: CORE_RPC_METHODS.configSetSuperContextEnabled,
+    params: { value },
+  });
+}
+
 // ── Sandbox execution backend settings ───────────────────────────────────────
 
 export type SandboxBackendId = 'auto' | 'docker' | 'landlock' | 'firejail' | 'bubblewrap' | 'none';
@@ -670,9 +779,51 @@ export async function openhumanGetAnalyticsSettings(): Promise<
   });
 }
 
-export async function openhumanUpdateMeetSettings(update: {
+/** Meeting Assistant calendar auto-join policy (issue #3511). */
+export type MeetAutoJoinPolicy = 'ask_each_time' | 'always' | 'never';
+/** Meeting Assistant post-call summary policy. */
+export type MeetAutoSummarizePolicy = 'ask' | 'always' | 'never';
+
+/** Full shape returned by `openhuman.config_get_meet_settings`. */
+export interface MeetSettings {
+  auto_orchestrator_handoff: boolean;
+  auto_join_policy: MeetAutoJoinPolicy;
+  auto_summarize_policy: MeetAutoSummarizePolicy;
+  listen_only_default: boolean;
+  ingest_backend_transcripts: boolean;
+  /** Per-platform auto-join policy overrides. Keys: "gmeet"|"zoom"|"teams"|"webex". */
+  platform_auto_join_policies?: Record<string, MeetAutoJoinPolicy>;
+  /**
+   * Master switch for calendar-driven meeting actions (auto-join / ask-to-join).
+   * Decoupled from the heartbeat reminder-notification toggle.
+   */
+  watch_calendar: boolean;
+  /** Calendar detection source for Google Meet: composio (default) | recall. */
+  calendar_provider?: 'composio' | 'recall';
+  /** The user's meeting display name, reused as the bot's reply anchor on join. */
+  reply_display_name?: string;
+}
+
+/** Partial update accepted by `openhuman.config_update_meet_settings`. */
+export interface MeetSettingsUpdate {
   auto_orchestrator_handoff?: boolean;
-}): Promise<CommandResponse<ConfigSnapshot>> {
+  auto_join_policy?: MeetAutoJoinPolicy;
+  auto_summarize_policy?: MeetAutoSummarizePolicy;
+  listen_only_default?: boolean;
+  ingest_backend_transcripts?: boolean;
+  /** Per-platform auto-join policy overrides. Keys: "gmeet"|"zoom"|"teams"|"webex". */
+  platform_auto_join_policies?: Record<string, MeetAutoJoinPolicy>;
+  /** Master switch for calendar-driven auto-join / ask-to-join. */
+  watch_calendar?: boolean;
+  /** Calendar detection source for Google Meet: composio (default) | recall. */
+  calendar_provider?: 'composio' | 'recall';
+  /** The user's meeting display name, reused as the bot's reply anchor on join. */
+  reply_display_name?: string;
+}
+
+export async function openhumanUpdateMeetSettings(
+  update: MeetSettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
@@ -682,13 +833,11 @@ export async function openhumanUpdateMeetSettings(update: {
   });
 }
 
-export async function openhumanGetMeetSettings(): Promise<
-  CommandResponse<{ auto_orchestrator_handoff: boolean }>
-> {
+export async function openhumanGetMeetSettings(): Promise<CommandResponse<MeetSettings>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<CommandResponse<{ auto_orchestrator_handoff: boolean }>>({
+  return await callCoreRpc<CommandResponse<MeetSettings>>({
     method: 'openhuman.config_get_meet_settings',
   });
 }

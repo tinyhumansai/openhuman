@@ -9,7 +9,9 @@ use rusqlite::{params, Connection};
 
 use crate::openhuman::config::Config;
 
-use super::types::{IntegrationNotification, NotificationSettings, NotificationStatus};
+use super::types::{
+    CoreNotificationEvent, IntegrationNotification, NotificationSettings, NotificationStatus,
+};
 
 /// SQL schema applied on every `with_connection` call (idempotent).
 const SCHEMA: &str = "
@@ -42,6 +44,24 @@ CREATE TABLE IF NOT EXISTS notification_settings (
     importance_threshold  REAL NOT NULL DEFAULT 0.0,
     route_to_orchestrator INTEGER NOT NULL DEFAULT 1
 );
+
+-- #3805: core notification events (cron completions, webhook failures,
+-- sub-agent results, triaged alerts, …) are broadcast over an in-memory
+-- channel that drops the event when no client is connected. Persist them
+-- here so a notification fired while the app is closed/minimised/disconnected
+-- survives and is surfaced on the next app open. The full wire payload is
+-- stored as JSON; `id` is the PK so re-publishes dedupe naturally.
+CREATE TABLE IF NOT EXISTS core_notifications (
+    id            TEXT PRIMARY KEY,
+    payload       TEXT NOT NULL,
+    timestamp_ms  INTEGER NOT NULL,
+    read          INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_core_notifications_read
+    ON core_notifications(read);
+CREATE INDEX IF NOT EXISTS idx_core_notifications_ts
+    ON core_notifications(timestamp_ms);
 ";
 
 /// Open (and migrate) the notifications DB, then call `f` with the live
@@ -110,6 +130,105 @@ pub fn insert(config: &Config, n: &IntegrationNotification) -> Result<()> {
         )
         .context("[notifications::store] insert failed")?;
         Ok(())
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Core notification persistence (#3805)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Persist a core notification event so it survives an app restart / a window
+/// where no client was connected to the broadcast bus.
+///
+/// Idempotent: the event `id` is the primary key, so a re-publish of the same
+/// event is ignored (no duplicates). Returns `true` when a new row was written,
+/// `false` when an event with the same id already existed.
+pub fn insert_core_notification(config: &Config, event: &CoreNotificationEvent) -> Result<bool> {
+    with_connection(config, |conn| {
+        let payload = serde_json::to_string(event)
+            .context("[notifications::store] serialize core notification failed")?;
+        let affected = conn
+            .execute(
+                "INSERT OR IGNORE INTO core_notifications
+                 (id, payload, timestamp_ms, read, created_at)
+                 VALUES (?1, ?2, ?3, 0, ?4)",
+                params![
+                    event.id,
+                    payload,
+                    event.timestamp_ms as i64,
+                    Utc::now().to_rfc3339(),
+                ],
+            )
+            .context("[notifications::store] insert_core_notification failed")?;
+        Ok(affected > 0)
+    })
+}
+
+/// Return persisted core notifications, newest first. When `only_unread` is
+/// true only rows with `read = 0` are returned. Used by the frontend to
+/// sync-down notifications missed while the app was closed.
+pub fn list_core_notifications(
+    config: &Config,
+    only_unread: bool,
+    limit: usize,
+) -> Result<Vec<CoreNotificationEvent>> {
+    with_connection(config, |conn| {
+        let sql = if only_unread {
+            "SELECT payload FROM core_notifications WHERE read = 0
+             ORDER BY timestamp_ms DESC LIMIT ?1"
+        } else {
+            "SELECT payload FROM core_notifications
+             ORDER BY timestamp_ms DESC LIMIT ?1"
+        };
+        let mut stmt = conn
+            .prepare(sql)
+            .context("[notifications::store] prepare list_core_notifications failed")?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| row.get::<_, String>(0))
+            .context("[notifications::store] query list_core_notifications failed")?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            let payload =
+                row.context("[notifications::store] read core notification row failed")?;
+            match serde_json::from_str::<CoreNotificationEvent>(&payload) {
+                Ok(event) => out.push(event),
+                // A single corrupt row must not break the whole sync-down.
+                Err(err) => tracing::warn!(
+                    error = %err,
+                    "[notifications::store] skipping undeserializable core notification"
+                ),
+            }
+        }
+        Ok(out)
+    })
+}
+
+/// Mark a persisted core notification as read so it isn't re-surfaced on the
+/// next sync-down. Returns `true` when a row was updated.
+pub fn mark_core_notification_read(config: &Config, id: &str) -> Result<bool> {
+    with_connection(config, |conn| {
+        let affected = conn
+            .execute(
+                "UPDATE core_notifications SET read = 1 WHERE id = ?1",
+                params![id],
+            )
+            .context("[notifications::store] mark_core_notification_read failed")?;
+        Ok(affected > 0)
+    })
+}
+
+/// Count unread persisted core notifications.
+pub fn unread_core_notification_count(config: &Config) -> Result<i64> {
+    with_connection(config, |conn| {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM core_notifications WHERE read = 0",
+                [],
+                |row| row.get(0),
+            )
+            .context("[notifications::store] unread_core_notification_count failed")?;
+        Ok(count)
     })
 }
 

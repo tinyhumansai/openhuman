@@ -24,15 +24,15 @@ const RoutineCard = ({ job, runs, busyKeys, onToggle, onRunNow, onLoadRuns }: Ro
   const typeLabel = job.job_type === 'agent' ? t('routines.typeAgent') : t('routines.typeCommand');
 
   return (
-    <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-stone-200 dark:border-neutral-800 p-4 space-y-3">
+    <div className="bg-surface rounded-2xl border border-line p-4 space-y-3">
       {/* Header: name + type badge + toggle */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 truncate">
+            <h3 className="text-sm font-semibold text-content truncate">
               {formatRoutineName(job.name)}
             </h3>
-            <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded-full bg-stone-100 dark:bg-neutral-800 text-stone-500 dark:text-neutral-400">
+            <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded-full bg-surface-subtle text-content-muted">
               {typeLabel}
             </span>
           </div>
@@ -50,7 +50,7 @@ const RoutineCard = ({ job, runs, busyKeys, onToggle, onRunNow, onLoadRuns }: Ro
           aria-checked={job.enabled}
           aria-label={t('routines.toggleEnabled')}>
           <span
-            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white dark:bg-neutral-900 shadow ring-0 transition duration-200 ease-in-out ${
+            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-surface shadow ring-0 transition duration-200 ease-in-out ${
               job.enabled ? 'translate-x-5' : 'translate-x-0'
             }`}
           />
@@ -60,9 +60,9 @@ const RoutineCard = ({ job, runs, busyKeys, onToggle, onRunNow, onLoadRuns }: Ro
       {/* Schedule + next run + status */}
       <div className="space-y-1.5">
         {/* Schedule */}
-        <div className="flex items-center gap-2 text-xs text-stone-600 dark:text-neutral-300">
+        <div className="flex items-center gap-2 text-xs text-content-secondary">
           <svg
-            className="w-3.5 h-3.5 text-stone-400 dark:text-neutral-500 flex-shrink-0"
+            className="w-3.5 h-3.5 text-content-faint flex-shrink-0"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24">
@@ -78,7 +78,7 @@ const RoutineCard = ({ job, runs, busyKeys, onToggle, onRunNow, onLoadRuns }: Ro
 
         {/* Next run */}
         {job.enabled && (
-          <div className="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400">
+          <div className="flex items-center gap-2 text-xs text-content-muted">
             <svg
               className="w-3.5 h-3.5 flex-shrink-0"
               fill="none"
@@ -101,11 +101,7 @@ const RoutineCard = ({ job, runs, busyKeys, onToggle, onRunNow, onLoadRuns }: Ro
         <div className="flex items-center gap-2 text-xs">
           <span
             className={`w-2 h-2 rounded-full flex-shrink-0 ${
-              isSuccess
-                ? 'bg-sage-500'
-                : isError
-                  ? 'bg-coral-500'
-                  : 'bg-stone-300 dark:bg-neutral-600'
+              isSuccess ? 'bg-sage-500' : isError ? 'bg-coral-500' : 'bg-surface-strong'
             }`}
           />
           <span
@@ -114,7 +110,7 @@ const RoutineCard = ({ job, runs, busyKeys, onToggle, onRunNow, onLoadRuns }: Ro
                 ? 'text-sage-700 dark:text-sage-300'
                 : isError
                   ? 'text-coral-600 dark:text-coral-400'
-                  : 'text-stone-400 dark:text-neutral-500'
+                  : 'text-content-faint'
             }>
             {isSuccess
               ? t('routines.lastRunSuccess')

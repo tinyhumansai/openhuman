@@ -9,7 +9,6 @@ import {
   listCapabilities,
   type PrivacyDataKind,
 } from '../../../utils/tauriCommands/aboutApp';
-import SettingsHeader from '../components/SettingsHeader';
 import {
   SettingsBadge,
   type SettingsBadgeVariant,
@@ -17,7 +16,8 @@ import {
   SettingsSection,
   SettingsSwitch,
 } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
+import PrivacyModeSection from './PrivacyModeSection';
 
 const log = debug('privacy-panel');
 
@@ -49,7 +49,6 @@ function kindLabel(kind: PrivacyDataKind, t: (key: string) => string): string {
 }
 
 const PrivacyPanel = () => {
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { snapshot, setAnalyticsEnabled, setMeetAutoOrchestratorHandoff } = useCoreState();
   const analyticsEnabled = snapshot.analyticsEnabled;
   const meetAutoHandoff = snapshot.meetAutoOrchestratorHandoff;
@@ -100,33 +99,25 @@ const PrivacyPanel = () => {
   };
 
   return (
-    <div data-testid="settings-privacy-panel" className="z-10 relative">
-      <SettingsHeader
-        title={t('privacy.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+    <SettingsPanel
+      testId="settings-privacy-panel"
+      description={t('pages.settings.account.privacyDesc')}>
+      <>
+        {/* Privacy Mode selector (#4435) — data-egress posture */}
+        <PrivacyModeSection />
 
-      <div className="p-4 space-y-4">
         {/* What leaves my computer */}
         <SettingsSection title={t('privacy.whatLeavesComputer')}>
           {loadState === 'loading' && (
-            <p className="p-4 text-xs text-neutral-500 dark:text-neutral-400">
-              {t('privacy.loading')}
-            </p>
+            <p className="p-4 text-xs text-content-muted">{t('privacy.loading')}</p>
           )}
           {loadState === 'error' && (
-            <p
-              className="p-4 text-xs text-neutral-500 dark:text-neutral-400"
-              data-testid="privacy-load-error">
+            <p className="p-4 text-xs text-content-muted" data-testid="privacy-load-error">
               {t('privacy.loadError')}
             </p>
           )}
           {loadState === 'ready' && capabilities.length === 0 && (
-            <p className="p-4 text-xs text-neutral-500 dark:text-neutral-400">
-              {t('privacy.noCapabilities')}
-            </p>
+            <p className="p-4 text-xs text-content-muted">{t('privacy.noCapabilities')}</p>
           )}
           {loadState === 'ready' && capabilities.length > 0 && (
             <ul data-testid="privacy-capability-list">
@@ -134,14 +125,12 @@ const PrivacyPanel = () => {
                 <li key={cap.id} className="p-4" data-testid={`privacy-row-${cap.id}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
-                        {cap.name}
-                      </p>
-                      <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-relaxed">
+                      <p className="text-sm font-medium text-content">{cap.name}</p>
+                      <p className="text-xs text-content-muted mt-1 leading-relaxed">
                         {cap.description}
                       </p>
                       {cap.privacy.destinations.length > 0 && (
-                        <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1">
+                        <p className="text-xs text-content-faint mt-1">
                           {t('privacy.sentTo')}: {cap.privacy.destinations.join(', ')}
                         </p>
                       )}
@@ -150,7 +139,7 @@ const PrivacyPanel = () => {
                       <SettingsBadge variant={KIND_BADGE_VARIANT[cap.privacy.data_kind]}>
                         {kindLabel(cap.privacy.data_kind, t)}
                       </SettingsBadge>
-                      <span className="text-[10px] text-neutral-500 dark:text-neutral-400">
+                      <span className="text-[10px] text-content-muted">
                         {cap.privacy.leaves_device
                           ? t('privacy.leavesDevice')
                           : t('privacy.staysLocal')}
@@ -203,10 +192,10 @@ const PrivacyPanel = () => {
         </SettingsSection>
 
         {/* Info Box */}
-        <div className="p-4 bg-neutral-50 dark:bg-neutral-800/60 rounded-xl border border-neutral-200 dark:border-neutral-800">
+        <div className="p-4 bg-surface-muted rounded-xl border border-line">
           <div className="flex items-start space-x-3">
             <svg
-              className="w-5 h-5 text-neutral-400 dark:text-neutral-500 mt-0.5 flex-shrink-0"
+              className="w-5 h-5 text-content-faint mt-0.5 flex-shrink-0"
               fill="currentColor"
               viewBox="0 0 20 20">
               <path
@@ -216,14 +205,14 @@ const PrivacyPanel = () => {
               />
             </svg>
             <div>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+              <p className="text-xs text-content-muted leading-relaxed">
                 {t('privacy.analyticsDisclaimer')}
               </p>
             </div>
           </div>
         </div>
-      </div>
-    </div>
+      </>
+    </SettingsPanel>
   );
 };
 

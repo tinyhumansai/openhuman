@@ -31,7 +31,7 @@
 //! rows by stability. Excess Active rows are demoted to Provisional. A cross-class
 //! overflow pool holds up to `BUDGET_OVERFLOW` extra Provisional rows.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::core::event_bus;
 use crate::core::event_bus::DomainEvent;
@@ -226,7 +226,7 @@ impl StabilityDetector {
             let final_stability = stability(
                 dominant_cue(cands, existing),
                 total_evidence_count(cands, existing),
-                most_recent_reinforcement(cands, existing, now),
+                most_recent_reinforcement(cands, existing, now, *class),
                 now,
                 *class,
                 has_explicit,
@@ -262,13 +262,10 @@ impl StabilityDetector {
             let new_refs: Vec<crate::openhuman::learning::candidate::EvidenceRef> =
                 cands.iter().map(|c| c.evidence.clone()).collect();
 
-            let mut all_refs = existing
-                .map(|f| f.evidence_refs.clone())
-                .unwrap_or_default();
-            all_refs.extend(new_refs);
-            // Deduplicate refs by serialised form (cheap for small vecs).
-            all_refs
-                .dedup_by(|a, b| serde_json::to_string(a).ok() == serde_json::to_string(b).ok());
+            let all_refs = merge_evidence_refs(
+                existing.map(|f| f.evidence_refs.as_slice()).unwrap_or(&[]),
+                new_refs,
+            );
 
             // Build cue-families counts from this cycle's candidates.
             let mut cue_counts: HashMap<String, u32> = HashMap::new();
@@ -493,6 +490,27 @@ fn dominant_cue(cands: &[LearningCandidate], _existing: Option<&ProfileFacet>) -
         .unwrap_or(CueFamily::Behavioral)
 }
 
+/// Merge the existing row's evidence refs with this cycle's new refs,
+/// deduplicating while preserving first-seen order.
+///
+/// `Vec::dedup_by` only collapses *consecutive* equal elements, so a ref that
+/// recurs non-adjacently — present in the existing row and re-emitted by a new
+/// candidate, or repeated within one cycle — would slip through and accumulate
+/// without bound across rebuilds. `EvidenceRef: Eq + Hash`, so tracking seen
+/// refs in a set removes every duplicate exactly and cheaply.
+fn merge_evidence_refs(
+    existing_refs: &[candidate::EvidenceRef],
+    new_refs: Vec<candidate::EvidenceRef>,
+) -> Vec<candidate::EvidenceRef> {
+    let mut seen: HashSet<candidate::EvidenceRef> = HashSet::new();
+    existing_refs
+        .iter()
+        .cloned()
+        .chain(new_refs)
+        .filter(|r| seen.insert(r.clone()))
+        .collect()
+}
+
 /// Total evidence count from candidates + existing row.
 fn total_evidence_count(cands: &[LearningCandidate], existing: Option<&ProfileFacet>) -> u32 {
     let from_existing = existing.map(|f| f.evidence_count as u32).unwrap_or(0);
@@ -500,10 +518,18 @@ fn total_evidence_count(cands: &[LearningCandidate], existing: Option<&ProfileFa
 }
 
 /// The most recent observation timestamp across candidates and the existing row.
+///
+/// The result is floored at `now - half_life(class)` so a facet's recency decay
+/// in [`stability`] bottoms out at one (class-specific) half-life. The floor
+/// must use the facet's own `class`: every other per-group computation in
+/// `rebuild` is class-scoped, and the half-lives span 7d (Channel) to 90d
+/// (Identity), so a hardcoded class would over-retain longer-lived facets and
+/// evict shorter-lived ones too early.
 fn most_recent_reinforcement(
     cands: &[LearningCandidate],
     existing: Option<&ProfileFacet>,
     now: f64,
+    class: FacetClass,
 ) -> f64 {
     let newest_cand = cands
         .iter()
@@ -512,9 +538,7 @@ fn most_recent_reinforcement(
     let existing_ts = existing
         .map(|f| f.last_seen_at)
         .unwrap_or(f64::NEG_INFINITY);
-    newest_cand
-        .max(existing_ts)
-        .max(now - half_life(FacetClass::Style))
+    newest_cand.max(existing_ts).max(now - half_life(class))
 }
 
 /// Map a stability score + user_state to a lifecycle state.
@@ -841,5 +865,108 @@ mod tests {
         assert_eq!(class_budget(FacetClass::Veto), 3);
         assert_eq!(class_budget(FacetClass::Goal), 3);
         assert_eq!(class_budget(FacetClass::Channel), 1);
+    }
+
+    // ── most_recent_reinforcement floor ───────────────────────────────────────
+
+    #[test]
+    fn reinforcement_floor_scopes_to_facet_class() {
+        // With no candidates and no existing row, the result is purely the
+        // class-scoped floor `now - half_life(class)`. This pins that the floor
+        // tracks the facet's own class rather than a hardcoded one — the longer
+        // half-lives (Goal, Identity) must floor further in the past than Style,
+        // and Channel (shortest) closer to now.
+        let now = 10_000_000.0;
+        for class in [
+            FacetClass::Identity,
+            FacetClass::Veto,
+            FacetClass::Tooling,
+            FacetClass::Goal,
+            FacetClass::Style,
+            FacetClass::Channel,
+        ] {
+            let floor = most_recent_reinforcement(&[], None, now, class);
+            assert_eq!(
+                floor,
+                now - half_life(class),
+                "floor must use {class:?}'s own half-life"
+            );
+        }
+        // Guard against a regression to a single hardcoded class: a class with a
+        // different half-life than Style must produce a different floor.
+        assert_ne!(
+            most_recent_reinforcement(&[], None, now, FacetClass::Goal),
+            most_recent_reinforcement(&[], None, now, FacetClass::Style),
+        );
+    }
+
+    // ── merge_evidence_refs deduplication ─────────────────────────────────────
+
+    #[test]
+    fn merge_evidence_refs_removes_non_consecutive_duplicates() {
+        // The bug this guards: a ref already in the existing row (Episodic 1)
+        // that is re-emitted by a new candidate lands non-adjacent to its twin
+        // once the two lists are concatenated ([1, 2, 1]). `Vec::dedup_by` only
+        // collapses *consecutive* equals, so it would leave the duplicate in and
+        // the refs list would grow every rebuild cycle. The set-based merge must
+        // drop it, keeping the first occurrence and preserving order.
+        let existing = vec![EvidenceRef::Episodic { episodic_id: 1 }];
+        let new = vec![
+            EvidenceRef::Episodic { episodic_id: 2 },
+            EvidenceRef::Episodic { episodic_id: 1 },
+        ];
+        let merged = merge_evidence_refs(&existing, new);
+        assert_eq!(
+            merged,
+            vec![
+                EvidenceRef::Episodic { episodic_id: 1 },
+                EvidenceRef::Episodic { episodic_id: 2 },
+            ],
+            "non-consecutive duplicate must be removed, first-seen order preserved"
+        );
+    }
+
+    #[test]
+    fn merge_evidence_refs_dedups_within_a_single_cycle() {
+        // Two candidates in the same cycle can reference the same evidence with
+        // an unrelated ref between them; that also defeats consecutive-only dedup.
+        let new = vec![
+            EvidenceRef::TreeTopic {
+                topic_id: "a".into(),
+            },
+            EvidenceRef::Episodic { episodic_id: 7 },
+            EvidenceRef::TreeTopic {
+                topic_id: "a".into(),
+            },
+        ];
+        let merged = merge_evidence_refs(&[], new);
+        assert_eq!(
+            merged,
+            vec![
+                EvidenceRef::TreeTopic {
+                    topic_id: "a".into(),
+                },
+                EvidenceRef::Episodic { episodic_id: 7 },
+            ],
+        );
+    }
+
+    #[test]
+    fn merge_evidence_refs_is_idempotent_across_rebuilds() {
+        // Re-running with the merged result as the new existing row and the same
+        // candidates must not grow the list — the core invariant that the old
+        // consecutive-only dedup violated.
+        let existing = vec![
+            EvidenceRef::Episodic { episodic_id: 1 },
+            EvidenceRef::Episodic { episodic_id: 2 },
+        ];
+        let cands = vec![
+            EvidenceRef::Episodic { episodic_id: 2 },
+            EvidenceRef::Episodic { episodic_id: 1 },
+        ];
+        let first = merge_evidence_refs(&existing, cands.clone());
+        let second = merge_evidence_refs(&first, cands);
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 2);
     }
 }

@@ -468,6 +468,12 @@ impl OfficialListResponse {
         let mut seen = std::collections::HashSet::new();
         self.servers
             .into_iter()
+            .filter(|env| {
+                // Drop servers that can't actually be installed (no hosted
+                // remote and no package) and ones the registry marks
+                // deprecated — both are noise in the catalog.
+                env.is_installable() && !env.is_deprecated()
+            })
             .filter_map(|env| {
                 if seen.insert(env.server.name.clone()) {
                     Some(env.server.into_summary())
@@ -515,8 +521,28 @@ struct OfficialMetadata {
 struct OfficialServerEnvelope {
     server: OfficialServer,
     #[serde(default, rename = "_meta")]
-    #[allow(dead_code)]
     meta: Option<Value>,
+}
+
+impl OfficialServerEnvelope {
+    /// A server is installable when it offers at least one way to connect: a
+    /// hosted remote or an installable package. A handful of registry entries
+    /// declare neither and can never be installed — they're catalog noise.
+    fn is_installable(&self) -> bool {
+        !self.server.remotes.is_empty() || !self.server.packages.is_empty()
+    }
+
+    /// `true` when the registry marks this version deprecated. The status lives
+    /// at `_meta["io.modelcontextprotocol.registry/official"].status`; absent
+    /// meta (e.g. legacy cache) is treated as not-deprecated.
+    fn is_deprecated(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|m| m.get("io.modelcontextprotocol.registry/official"))
+            .and_then(|o| o.get("status"))
+            .and_then(Value::as_str)
+            == Some("deprecated")
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -537,9 +563,40 @@ struct OfficialServer {
     /// Installable subprocess packages (npm, pip, brew, …).
     #[serde(default)]
     packages: Vec<OfficialPackage>,
+    /// Vendor/site URL, when declared. Trust/quality signal required by the
+    /// strict "perfect server" catalog filter and rendered as a clickable link.
+    #[serde(default, rename = "websiteUrl")]
+    website_url: Option<String>,
 }
 
 impl OfficialServer {
+    /// Non-empty declared `websiteUrl`, if any.
+    fn website(&self) -> Option<String> {
+        self.website_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    }
+
+    /// Whether the server *declares* a named static secret credential in its
+    /// schema — a secret/`Authorization` header or a secret env var. This is the
+    /// metadata signal for "static API key / token", with no probe and no
+    /// guessing; it drives `auth_kind == "api_key"`.
+    fn declares_secret_credential(&self) -> bool {
+        let header = self.remotes.iter().any(|r| {
+            r.headers
+                .iter()
+                .any(|h| h.is_secret == Some(true) || h.name.eq_ignore_ascii_case("authorization"))
+        });
+        let env = self.packages.iter().any(|p| {
+            p.environment_variables
+                .iter()
+                .any(|e| e.is_secret == Some(true))
+        });
+        header || env
+    }
+
     fn display_name(&self) -> String {
         if let Some(title) = self.title.as_deref().filter(|s| !s.trim().is_empty()) {
             return title.to_string();
@@ -553,11 +610,17 @@ impl OfficialServer {
             .map(|(_, s)| s)
             .or_else(|| raw.rsplit_once('.').map(|(_, s)| s))
             .unwrap_or(raw);
-        segment.replace('-', " ").replace('_', " ")
+        segment.replace(['-', '_'], " ")
     }
 
     fn into_summary(self) -> SmitheryServerSummary {
         let display = self.display_name();
+        let website_url = self.website();
+        let auth_kind = if self.declares_secret_credential() {
+            Some("api_key".to_string())
+        } else {
+            None
+        };
         SmitheryServerSummary {
             qualified_name: self.name.clone(),
             display_name: display,
@@ -566,6 +629,9 @@ impl OfficialServer {
             use_count: 0,
             is_deployed: !self.remotes.is_empty(),
             source: SOURCE_MCP_OFFICIAL.to_string(),
+            official: false, // tagged later by the registry dispatcher
+            website_url,
+            auth_kind,
             extra: std::collections::HashMap::new(),
         }
     }
@@ -577,7 +643,9 @@ impl OfficialServer {
             connections.push(SmitheryConnection {
                 r#type: "http".to_string(),
                 deployment_url: r.url.clone(),
-                config_schema: None,
+                // Declared `headers` (e.g. `Authorization`) become the install
+                // form's input fields so the user can supply the remote's token.
+                config_schema: r.to_config_schema(),
                 example_config: None,
                 published: true,
                 extra: std::collections::HashMap::new(),
@@ -609,6 +677,63 @@ impl OfficialServer {
 struct OfficialRemote {
     #[serde(default)]
     url: Option<String>,
+    /// Auth/config inputs the remote requires, sent as HTTP request headers
+    /// (e.g. `Authorization: Bearer <token>`). Surfaced to the install form
+    /// as a config schema so labelled remotes prompt for their secret.
+    #[serde(default)]
+    headers: Vec<OfficialHeader>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OfficialHeader {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default, rename = "isRequired")]
+    is_required: Option<bool>,
+    #[serde(default, rename = "isSecret")]
+    is_secret: Option<bool>,
+}
+
+impl OfficialRemote {
+    /// Build a config schema (same shape as a package's env-var schema) from
+    /// the remote's declared headers, so the install form renders an input per
+    /// required header. Returns `None` when the remote declares no headers.
+    fn to_config_schema(&self) -> Option<Value> {
+        if self.headers.is_empty() {
+            return None;
+        }
+        let mut properties = serde_json::Map::new();
+        for h in &self.headers {
+            if h.name.is_empty() {
+                continue;
+            }
+            let mut prop = serde_json::Map::new();
+            if let Some(desc) = &h.description {
+                prop.insert("description".into(), Value::String(desc.clone()));
+            }
+            if h.is_secret == Some(true) {
+                prop.insert("x-secret".into(), Value::Bool(true));
+            }
+            properties.insert(h.name.clone(), Value::Object(prop));
+        }
+        if properties.is_empty() {
+            return None;
+        }
+        let required: Vec<Value> = self
+            .headers
+            .iter()
+            .filter(|h| h.is_required == Some(true) && !h.name.is_empty())
+            .map(|h| Value::String(h.name.clone()))
+            .collect();
+        let mut schema = serde_json::Map::new();
+        schema.insert("properties".into(), Value::Object(properties));
+        if !required.is_empty() {
+            schema.insert("required".into(), Value::Array(required));
+        }
+        Some(Value::Object(schema))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -731,6 +856,63 @@ mod tests {
         let sum = s.into_summary();
         assert_eq!(sum.qualified_name, "io.github.example/server");
         assert_eq!(sum.source, SOURCE_MCP_OFFICIAL);
+    }
+
+    #[test]
+    fn into_summary_stamps_website_and_api_key_from_declared_secret_header() {
+        // A server declaring a secret Authorization header + a websiteUrl is a
+        // "perfect" server: auth_kind=api_key (from metadata, no probe) + site.
+        let s: OfficialServer = serde_json::from_value(json!({
+            "name": "com.acme/mcp",
+            "websiteUrl": "https://www.acme.ai",
+            "remotes": [{
+                "url": "https://api.acme.ai/mcp",
+                "headers": [{ "name": "Authorization", "isSecret": true }],
+            }],
+        }))
+        .unwrap();
+        let sum = s.into_summary();
+        assert_eq!(sum.website_url.as_deref(), Some("https://www.acme.ai"));
+        assert_eq!(sum.auth_kind.as_deref(), Some("api_key"));
+    }
+
+    #[test]
+    fn into_summary_secret_env_var_also_counts_as_api_key() {
+        let s: OfficialServer = serde_json::from_value(json!({
+            "name": "io.github.x/y",
+            "websiteUrl": "https://site.example",
+            "packages": [{
+                "registryType": "npm",
+                "environmentVariables": [{ "name": "API_KEY", "isSecret": true }],
+            }],
+        }))
+        .unwrap();
+        assert_eq!(s.into_summary().auth_kind.as_deref(), Some("api_key"));
+    }
+
+    #[test]
+    fn into_summary_no_auth_kind_when_no_secret_declared() {
+        // OAuth/open servers declare no key in metadata → auth_kind=None. The
+        // strict catalog filter drops these even though they carry a website.
+        let s: OfficialServer = serde_json::from_value(json!({
+            "name": "open/server",
+            "websiteUrl": "https://x.example",
+            "remotes": [{ "url": "https://open.example.com/mcp" }],
+        }))
+        .unwrap();
+        let sum = s.into_summary();
+        assert_eq!(sum.website_url.as_deref(), Some("https://x.example"));
+        assert_eq!(sum.auth_kind, None);
+    }
+
+    #[test]
+    fn into_summary_trims_blank_website_to_none() {
+        let s: OfficialServer = serde_json::from_value(json!({
+            "name": "blank/site",
+            "websiteUrl": "   ",
+        }))
+        .unwrap();
+        assert_eq!(s.into_summary().website_url, None);
     }
 
     #[test]
@@ -1065,6 +1247,59 @@ mod tests {
         assert_eq!(detail.connections[0].r#type, "http");
     }
 
+    #[test]
+    fn into_detail_surfaces_remote_headers_as_config_schema() {
+        // A remote that declares an `Authorization` header (isRequired/isSecret)
+        // must produce an http connection whose config_schema lists it, so the
+        // install form renders a (secret) input and registry_get reports it as a
+        // required env key.
+        let s: OfficialServer = serde_json::from_value(json!({
+            "name": "ai.adadvisor/mcp-server",
+            "remotes": [{
+                "type": "streamable-http",
+                "url": "https://api.adadvisor.ai/mcp",
+                "headers": [{
+                    "name": "Authorization",
+                    "description": "Bearer token (adv_sk_...)",
+                    "isRequired": true,
+                    "isSecret": true
+                }]
+            }],
+        }))
+        .unwrap();
+        let detail = s.into_detail();
+        assert_eq!(detail.connections.len(), 1);
+        let conn = &detail.connections[0];
+        assert_eq!(conn.r#type, "http");
+        let schema = conn
+            .config_schema
+            .as_ref()
+            .expect("remote with headers should carry a config_schema");
+        let props = schema.get("properties").and_then(Value::as_object).unwrap();
+        assert!(
+            props.contains_key("Authorization"),
+            "header surfaced as property"
+        );
+        assert_eq!(
+            props["Authorization"].get("x-secret"),
+            Some(&Value::Bool(true)),
+            "secret header marked x-secret"
+        );
+        let required = schema.get("required").and_then(Value::as_array).unwrap();
+        assert!(required.contains(&Value::String("Authorization".into())));
+    }
+
+    #[test]
+    fn into_detail_no_config_schema_for_headerless_remote() {
+        let s: OfficialServer = serde_json::from_value(json!({
+            "name": "io.github.x/open",
+            "remotes": [{ "type": "streamable-http", "url": "https://open.example.com/mcp" }],
+        }))
+        .unwrap();
+        let detail = s.into_detail();
+        assert!(detail.connections[0].config_schema.is_none());
+    }
+
     // ── realistic multi-server list response with mixed title presence ───────
 
     #[test]
@@ -1093,6 +1328,7 @@ mod tests {
                     "server": {
                         "name": "io.github.someuser/untitled-tool",
                         "description": "A server without a title field",
+                        "packages": [{ "registryType": "npm", "identifier": "untitled-tool" }],
                     },
                     "_meta": {}
                 }
@@ -1131,16 +1367,47 @@ mod tests {
     /// `into_summaries` — only the first occurrence survives.
     #[test]
     fn list_response_deduplicates_by_name() {
+        let pkg = json!([{ "registryType": "npm", "identifier": "dup" }]);
         let raw = json!({
             "servers": [
-                { "server": { "name": "io.github.x/dup", "title": "First" } },
-                { "server": { "name": "io.github.x/dup", "title": "Second" } },
+                { "server": { "name": "io.github.x/dup", "title": "First", "packages": pkg } },
+                { "server": { "name": "io.github.x/dup", "title": "Second", "packages": pkg } },
             ]
         });
         let parsed: OfficialListResponse = serde_json::from_value(raw).unwrap();
         let summaries = parsed.into_summaries();
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].display_name, "First");
+    }
+
+    /// `into_summaries` drops servers that can't be installed (no remote, no
+    /// package) and ones the registry marks deprecated — catalog noise.
+    #[test]
+    fn list_response_filters_unusable_and_deprecated() {
+        let raw = json!({
+            "servers": [
+                {
+                    "server": { "name": "ok/installable",
+                        "packages": [{ "registryType": "npm", "identifier": "x" }] },
+                    "_meta": { "io.modelcontextprotocol.registry/official": { "status": "active" } }
+                },
+                // No remote and no package → unusable, dropped.
+                { "server": { "name": "bad/unusable", "title": "Nope" }, "_meta": {} },
+                // Installable but deprecated → dropped.
+                {
+                    "server": { "name": "old/deprecated",
+                        "remotes": [{ "url": "https://x.example/mcp" }] },
+                    "_meta": { "io.modelcontextprotocol.registry/official": { "status": "deprecated" } }
+                }
+            ]
+        });
+        let parsed: OfficialListResponse = serde_json::from_value(raw).unwrap();
+        let summaries = parsed.into_summaries();
+        let slugs: Vec<_> = summaries
+            .iter()
+            .map(|s| s.qualified_name.as_str())
+            .collect();
+        assert_eq!(slugs, vec!["ok/installable"]);
     }
 
     #[test]

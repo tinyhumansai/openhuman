@@ -1,7 +1,6 @@
 import { useT } from '../../../lib/i18n/I18nContext';
 import IntelligenceTasksTab from '../../intelligence/IntelligenceTasksTab';
-import SettingsHeader from '../components/SettingsHeader';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 /**
  * Settings → Developer Options → Tasks.
@@ -14,24 +13,14 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
  */
 const TasksPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   return (
-    <div className="z-10 relative" data-testid="tasks-panel">
-      <SettingsHeader
-        title={t('memory.tab.tasks')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
-      <div className="p-4">
-        <p className="mb-4 text-xs text-neutral-500 dark:text-neutral-400">
-          {t('memory.tab.tasksDescription')}
-        </p>
+    <SettingsPanel testId="tasks-panel" description={t('settings.developerMenu.tasks.desc')}>
+      <>
+        <p className="mb-4 text-xs text-content-muted">{t('memory.tab.tasksDescription')}</p>
         <IntelligenceTasksTab />
-      </div>
-    </div>
+      </>
+    </SettingsPanel>
   );
 };
 

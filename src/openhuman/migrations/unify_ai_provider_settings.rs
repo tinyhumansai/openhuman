@@ -273,7 +273,7 @@ fn looks_like_openhuman(url: &str) -> bool {
     let without_scheme = lower.split("://").nth(1).unwrap_or(&lower);
     // Strip userinfo and take only the host[:port] part before any path.
     let authority = without_scheme.split('/').next().unwrap_or("");
-    let host = authority.split('@').last().unwrap_or(authority);
+    let host = authority.split('@').next_back().unwrap_or(authority);
     let host_no_port = host.split(':').next().unwrap_or(host);
     host_no_port == "api.openhuman.ai"
         || host_no_port.ends_with(".openhuman.ai")

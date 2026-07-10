@@ -16,7 +16,7 @@ use super::{NoopEmbedding, OllamaEmbedding, OpenAiEmbedding};
 /// arbitrary OpenAI-compatible servers (vLLM, text-embeddings-inference,
 /// stricter LocalAI builds) makes those servers 400 on an unknown field, so we
 /// gate on the model id rather than the provider kind. (Reviewer sanil-23, #3076.)
-fn model_supports_dimensions(model: &str) -> bool {
+pub(crate) fn model_supports_dimensions(model: &str) -> bool {
     model.starts_with("text-embedding-3-")
 }
 
@@ -50,7 +50,8 @@ pub fn create_embedding_provider(
         }
         "openai" => Ok(Box::new(
             OpenAiEmbedding::new("https://api.openai.com", "", model, dims)
-                .with_send_dimensions(model_supports_dimensions(model)),
+                .with_send_dimensions(model_supports_dimensions(model))
+                .with_required_api_key(true),
         )),
         "cohere" => Ok(Box::new(CohereEmbedding::new("", model, dims))),
         name if name.starts_with("custom:") => {
@@ -91,7 +92,8 @@ pub fn create_embedding_provider_with_credentials(
         }
         "openai" => Ok(Box::new(
             OpenAiEmbedding::new("https://api.openai.com", api_key, model, dims)
-                .with_send_dimensions(model_supports_dimensions(model)),
+                .with_send_dimensions(model_supports_dimensions(model))
+                .with_required_api_key(true),
         )),
         "cohere" => Ok(Box::new(CohereEmbedding::new(api_key, model, dims))),
         "custom" => {

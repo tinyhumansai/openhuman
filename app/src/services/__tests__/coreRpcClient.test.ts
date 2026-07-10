@@ -146,6 +146,68 @@ describe('coreRpcClient', () => {
     await expect(callCoreRpc({ method: 'openhuman.config_get' })).rejects.toThrow('boom from core');
   });
 
+  test('broadcasts core-rpc-auth-expired on a SESSION_EXPIRED error by default', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 4,
+        error: {
+          code: -32000,
+          message:
+            'SESSION_EXPIRED: backend rejected session token on GET /agent-integrations/composio/triggers/available — sign in again to resume',
+        },
+      }),
+    } as Response);
+
+    const listener = vi.fn();
+    window.addEventListener('core-rpc-auth-expired', listener);
+    try {
+      await expect(callCoreRpc({ method: 'openhuman.team_get' })).rejects.toThrow(
+        'SESSION_EXPIRED'
+      );
+    } finally {
+      window.removeEventListener('core-rpc-auth-expired', listener);
+    }
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  test('suppressAuthExpiredEvent skips the global sign-out broadcast but still throws auth_expired', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 5,
+        error: {
+          code: -32000,
+          message:
+            'SESSION_EXPIRED: backend rejected session token on GET /agent-integrations/composio/triggers/available — sign in again to resume',
+        },
+      }),
+    } as Response);
+
+    const listener = vi.fn();
+    window.addEventListener('core-rpc-auth-expired', listener);
+    let caught: unknown;
+    try {
+      await callCoreRpc({
+        method: 'openhuman.composio_list_available_triggers',
+        suppressAuthExpiredEvent: true,
+      });
+    } catch (err) {
+      caught = err;
+    } finally {
+      window.removeEventListener('core-rpc-auth-expired', listener);
+    }
+    // The error still surfaces (so the panel can render its in-place CTA)…
+    expect(caught).toBeInstanceOf(CoreRpcError);
+    expect((caught as CoreRpcError).kind).toBe('auth_expired');
+    // …but the global teardown event is NOT broadcast.
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   test('throws on non-ok HTTP response', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({
@@ -622,7 +684,10 @@ describe('coreRpcClient', () => {
       const fetchMock = vi.mocked(fetch);
       fetchMock.mockResolvedValueOnce({ ok: true, status: 200 } as Response);
 
-      await testCoreRpcConnection('http://example.test:7788/rpc');
+      // Trustworthy localhost http stays on the direct fetch path even in
+      // Tauri (no shell relay), so the bearer header is attached here. A
+      // non-trustworthy LAN host would relay instead — covered separately below.
+      await testCoreRpcConnection('http://127.0.0.1:7788/rpc');
 
       const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
       const headers = requestInit.headers as Record<string, string>;
@@ -642,6 +707,86 @@ describe('coreRpcClient', () => {
 
       expect(response).toBe(probe);
       expect(response.status).toBe(405);
+    });
+
+    test('relays through the Rust host for non-trustworthy http URLs in Tauri (#3865)', async () => {
+      vi.resetModules();
+      vi.mocked(isTauri).mockReturnValue(true);
+      const invokeMock = vi.mocked(invoke);
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === 'core_rpc_token') return 'deadbeef';
+        if (cmd === 'relay_http_rpc') {
+          return { status: 200, body: '{"jsonrpc":"2.0","id":1,"result":{}}' };
+        }
+        throw new Error(`unexpected command: ${cmd}`);
+      });
+      const { testCoreRpcConnection } = await import('../coreRpcClient');
+
+      const response = await testCoreRpcConnection('http://192.168.1.50:7788/rpc');
+
+      // LAN http can't be fetched cross-origin from the secure tauri webview,
+      // so it must be relayed through the Rust host carrying the bearer token.
+      const relayCall = invokeMock.mock.calls.find(call => call[0] === 'relay_http_rpc');
+      expect(relayCall).toBeDefined();
+      const relayArgs = relayCall![1] as { url: string; token: string | null; body: string };
+      expect(relayArgs.url).toContain('192.168.1.50');
+      expect(relayArgs.token).toBe('deadbeef');
+      expect(response.status).toBe(200);
+    });
+
+    test('rpcUrlNeedsShellRelay flags only non-trustworthy http URLs', async () => {
+      vi.resetModules();
+      const { rpcUrlNeedsShellRelay } = await import('../coreRpcClient');
+      expect(rpcUrlNeedsShellRelay('http://192.168.1.50:7788/rpc')).toBe(true);
+      expect(rpcUrlNeedsShellRelay('http://127.0.0.1:7788/rpc')).toBe(false);
+      expect(rpcUrlNeedsShellRelay('http://localhost:7788/rpc')).toBe(false);
+      expect(rpcUrlNeedsShellRelay('https://example.test:7788/rpc')).toBe(false);
+      expect(rpcUrlNeedsShellRelay('not a url')).toBe(false);
+    });
+
+    test('rejects with AbortError when the relay signal is already aborted', async () => {
+      vi.resetModules();
+      vi.mocked(isTauri).mockReturnValue(true);
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'core_rpc_token') return 'deadbeef';
+        if (cmd === 'relay_http_rpc') return { status: 200, body: '{}' };
+        throw new Error(`unexpected command: ${cmd}`);
+      });
+      const { testCoreRpcConnection } = await import('../coreRpcClient');
+
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        testCoreRpcConnection('http://192.168.1.50:7788/rpc', undefined, {
+          signal: controller.signal,
+        })
+      ).rejects.toThrow(/abort/i);
+    });
+  });
+
+  describe('callCoreRpc shell relay (#3865)', () => {
+    test('relays via the Rust host for a non-trustworthy http core URL in Tauri', async () => {
+      vi.resetModules();
+      vi.mocked(isTauri).mockReturnValue(true);
+      const invokeMock = vi.mocked(invoke);
+      invokeMock.mockImplementation(async (cmd: string) => {
+        if (cmd === 'core_rpc_url') return 'http://192.168.1.50:7788/rpc';
+        if (cmd === 'core_rpc_token') return 'deadbeef';
+        if (cmd === 'relay_http_rpc') {
+          return { status: 200, body: '{"jsonrpc":"2.0","id":1,"result":{"ok":true}}' };
+        }
+        throw new Error(`unexpected command: ${cmd}`);
+      });
+      const fetchMock = vi.mocked(fetch);
+      const { callCoreRpc } = await import('../coreRpcClient');
+
+      const result = await callCoreRpc<{ ok: boolean }>({ method: 'openhuman.threads_list' });
+
+      // A LAN http core URL must be relayed through the Rust host (with the
+      // call's abort signal), never fetched cross-origin from the webview.
+      expect(result).toEqual({ ok: true });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(invokeMock.mock.calls.some(call => call[0] === 'relay_http_rpc')).toBe(true);
     });
   });
 });

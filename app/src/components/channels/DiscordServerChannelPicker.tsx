@@ -157,7 +157,7 @@ const DiscordServerChannelPicker = ({
 
   return (
     <div className="mt-3 space-y-3">
-      <p className="text-xs font-medium text-stone-600 dark:text-neutral-300">
+      <p className="text-xs font-medium text-content-secondary">
         {t('channels.discord.picker.serverChannelSelection')}
       </p>
 
@@ -170,9 +170,7 @@ const DiscordServerChannelPicker = ({
 
       {/* Guild selector */}
       <div>
-        <label
-          htmlFor="discord-guild-select"
-          className="block text-xs text-stone-500 dark:text-neutral-400 mb-1">
+        <label htmlFor="discord-guild-select" className="block text-xs text-content-muted mb-1">
           {t('channels.discord.picker.server')}
         </label>
         <select
@@ -180,7 +178,7 @@ const DiscordServerChannelPicker = ({
           value={selectedGuildId}
           onChange={e => handleGuildChange(e.target.value)}
           disabled={isLoading || guilds.length === 0}
-          className="w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none disabled:opacity-50">
+          className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content focus:border-primary-500 focus:outline-none disabled:opacity-50">
           <option value="">
             {state === 'loading_guilds'
               ? t('channels.discord.picker.loadingServers')
@@ -195,7 +193,7 @@ const DiscordServerChannelPicker = ({
           ))}
         </select>
         {guilds.length === 0 && state === 'guilds_loaded' && (
-          <p className="mt-1 text-xs text-stone-400 dark:text-neutral-500">
+          <p className="mt-1 text-xs text-content-faint">
             {t('channels.discord.picker.botNotInServers')}
           </p>
         )}
@@ -204,9 +202,7 @@ const DiscordServerChannelPicker = ({
       {/* Channel selector */}
       {selectedGuildId && (
         <div>
-          <label
-            htmlFor="discord-channel-select"
-            className="block text-xs text-stone-500 dark:text-neutral-400 mb-1">
+          <label htmlFor="discord-channel-select" className="block text-xs text-content-muted mb-1">
             {t('channels.discord.picker.channel')}
           </label>
           <select
@@ -214,7 +210,7 @@ const DiscordServerChannelPicker = ({
             value={selectedChannelId}
             onChange={e => handleChannelChange(e.target.value)}
             disabled={isLoading || channels.length === 0}
-            className="w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none disabled:opacity-50">
+            className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-content focus:border-primary-500 focus:outline-none disabled:opacity-50">
             <option value="">
               {state === 'loading_channels'
                 ? t('channels.discord.picker.loadingChannels')
@@ -248,8 +244,8 @@ const DiscordServerChannelPicker = ({
 
       {/* Permission check result */}
       {state === 'checking_permissions' && (
-        <div className="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400">
-          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-stone-300 dark:border-neutral-700 border-t-primary-500" />
+        <div className="flex items-center gap-2 text-xs text-content-muted">
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-line-strong border-t-primary-500" />
           {t('channels.discord.picker.checkingPermissions')}
         </div>
       )}

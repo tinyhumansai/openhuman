@@ -13,7 +13,10 @@ export interface ParsedShortcut {
 
 export interface Action {
   id: string;
+  /** English fallback label (used for cmdk search + when no `labelKey`). */
   label: string;
+  /** i18n key resolved through `useT()` at display time; falls back to `label`. */
+  labelKey?: string;
   hint?: string;
   group?: string;
   icon?: ComponentType<{ className?: string }>;

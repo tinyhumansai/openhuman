@@ -354,9 +354,50 @@ describe('mcpClientsApi', () => {
           user_message: 'How do I configure this?',
           history: [],
         },
+        // config_assist runs a full agent turn (web search + fetch) and is given
+        // a generous 5-minute ceiling instead of the default RPC budget.
+        timeoutMs: 300_000,
       });
       expect(result.reply).toBe('Set API_KEY to your token');
       expect(result.suggested_env).toEqual({ API_KEY: 'token-value' });
+    });
+  });
+
+  describe('detectAuth', () => {
+    it('calls detect_auth and returns the detected kind', async () => {
+      mockCallCoreRpc.mockResolvedValueOnce({
+        kind: 'oauth',
+        authorization_endpoint: 'https://auth.example/authorize',
+        grant_types: ['authorization_code'],
+      });
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+      const result = await mcpClientsApi.detectAuth('srv-1');
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.mcp_clients_detect_auth',
+        params: { server_id: 'srv-1' },
+      });
+      expect(result.kind).toBe('oauth');
+      expect(result.authorization_endpoint).toBe('https://auth.example/authorize');
+      expect(result.grant_types).toEqual(['authorization_code']);
+    });
+  });
+
+  describe('oauthBegin', () => {
+    it('calls oauth_begin and unwraps the authorize URL', async () => {
+      mockCallCoreRpc.mockResolvedValueOnce({
+        authorize_url: 'https://auth.example/authorize?code_challenge=x',
+      });
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+      const result = await mcpClientsApi.oauthBegin('srv-1');
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.mcp_clients_oauth_begin',
+        params: { server_id: 'srv-1' },
+      });
+      expect(result).toBe('https://auth.example/authorize?code_challenge=x');
     });
   });
 

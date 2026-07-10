@@ -16,7 +16,7 @@ Embedding providers for the OpenHuman memory system. Converts text into numerica
 
 | File | Role |
 | --- | --- |
-| `src/openhuman/embeddings/mod.rs` | Module docstring + module decls + `pub use` re-exports; re-exports `VectorStore` et al. from `memory_store::vectors`; exposes `all_embeddings_controller_schemas` / `all_embeddings_registered_controllers`. |
+| `src/openhuman/embeddings/mod.rs` | Module docstring + module decls + embedding provider `pub use` re-exports; exposes `all_embeddings_controller_schemas` / `all_embeddings_registered_controllers`. |
 | `src/openhuman/embeddings/provider_trait.rs` | `EmbeddingProvider` trait (`name`/`model_id`/`dimensions`/`signature`/`embed`/`embed_one`) and `format_embedding_signature`. |
 | `src/openhuman/embeddings/factory.rs` | `create_embedding_provider`, `create_embedding_provider_with_credentials`, `default_embedding_provider` (cloud), `default_local_embedding_provider` (Ollama). Maps provider slugs to concrete impls; unknown slugs error. |
 | `src/openhuman/embeddings/catalog.rs` | Static catalog of `EmbeddingProviderEntry` + `EmbeddingModelPreset`; slug constants; `all_providers` / `find_provider` / `find_model` / `default_model_for`. |
@@ -42,7 +42,6 @@ From `mod.rs` re-exports:
 - Factory fns: `create_embedding_provider`, `default_embedding_provider`, `default_local_embedding_provider`.
 - Config-driven builder: `provider_from_config` (re-exported from `rpc`) — same construction `embed` uses, for callers like `codegraph` that need a provider without a JSON-RPC round-trip.
 - Defaults/consts: `DEFAULT_CLOUD_EMBEDDING_MODEL`, `DEFAULT_CLOUD_EMBEDDING_DIMENSIONS`, `DEFAULT_OLLAMA_MODEL`, `DEFAULT_OLLAMA_DIMENSIONS`.
-- Vector-store re-exports (moved to `memory_store::vectors`, re-exported here for callers): `store`, `bytes_to_vec`, `cosine_similarity`, `vec_to_bytes`, `SearchResult`, `VectorStore`.
 - RPC registry: `all_embeddings_controller_schemas`, `all_embeddings_registered_controllers`.
 
 ## RPC / controllers
@@ -70,13 +69,13 @@ None. No `bus.rs` / `EventHandler` impls. Cross-module side effects in `update_s
 
 ## Persistence
 
-No `store.rs`. Settings live in the global `Config` (`config.memory.embedding_provider` / `embedding_model` / `embedding_dimensions` / `embedding_rate_limit_per_min`, plus `config.embeddings_provider`). API keys are persisted via the credentials domain (`AuthService`) under provider key `embeddings:<slug>`. Vectors themselves are stored by `memory_store::vectors` (re-exported here, not owned).
+No `store.rs`. Settings live in the global `Config` (`config.memory.embedding_provider` / `embedding_model` / `embedding_dimensions` / `embedding_rate_limit_per_min`, plus `config.embeddings_provider`). API keys are persisted via the credentials domain (`AuthService`) under provider key `embeddings:<slug>`. Vectors themselves are stored by `memory_store::vectors`.
 
 ## Dependencies
 
 - `crate::openhuman::config` — `Config`, `config::ops::load_config_with_timeout`, `build_runtime_proxy_client` (proxy-aware reqwest), config save.
 - `crate::openhuman::credentials` — `AuthService`, `APP_SESSION_PROVIDER` for resolving the session JWT (cloud) and storing/loading provider API keys.
-- `crate::openhuman::memory_store::vectors` — vector store types re-exported from `mod.rs`.
+- `crate::openhuman::memory_store::vectors` — canonical vector store owner used by memory storage and retrieval.
 - `crate::openhuman::memory::read_rpc` — `wipe_all_rpc` on a dimension change.
 - `crate::openhuman::memory_queue` — `ensure_reembed_backfill` on a signature change.
 - `crate::openhuman::inference::local` — `ollama_base_url()` when constructing the Ollama provider.

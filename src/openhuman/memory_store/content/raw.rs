@@ -234,8 +234,8 @@ pub fn slug_account_email(email: &str) -> String {
     let lower = email.trim().to_lowercase();
     let mut out = String::with_capacity(lower.len() + 8);
     let mut last_dash = true;
-    let mut chars = lower.chars().peekable();
-    while let Some(ch) = chars.next() {
+    let chars = lower.chars().peekable();
+    for ch in chars {
         match ch {
             '@' => {
                 if !last_dash {

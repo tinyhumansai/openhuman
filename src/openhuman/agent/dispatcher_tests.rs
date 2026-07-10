@@ -272,6 +272,7 @@ fn assistant_tool_calls(id: &str) -> ConversationMessage {
             extra_content: None,
         }],
         reasoning_content: None,
+        extra_metadata: None,
     }
 }
 
@@ -403,6 +404,7 @@ fn assistant_tool_calls_multi(ids: &[&str]) -> ConversationMessage {
             })
             .collect(),
         reasoning_content: None,
+        extra_metadata: None,
     }
 }
 
@@ -419,6 +421,7 @@ fn native_dispatcher_serializes_reasoning_content_for_tool_call_turns() {
                 extra_content: None,
             }],
             reasoning_content: Some("chain-of-thought replay blob".into()),
+            extra_metadata: None,
         },
         tool_results("tc-1"),
     ];

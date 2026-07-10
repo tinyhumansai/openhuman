@@ -7,6 +7,9 @@ export type { CardProps, CardVariant, CardPadding } from './Card';
 export { default as Input } from './Input';
 export type { InputProps, InputSize } from './Input';
 
+export { default as Tooltip } from './Tooltip';
+export type { TooltipProps, TooltipSide } from './Tooltip';
+
 export { Spinner, CheckIcon, CloseIcon, WarningIcon } from './icons';
 export { CenteredLoadingState, ErrorBanner, InlineLoadingStatus } from './LoadingState';
 export { ModalShell } from './ModalShell';

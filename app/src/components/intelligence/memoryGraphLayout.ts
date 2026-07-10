@@ -57,6 +57,7 @@ export function levelColor(level: number | null | undefined): string {
 }
 
 export function nodeColor(node: GraphNode): string {
+  if (node.color) return node.color; // UI override (e.g. dimmed offline agents)
   if (node.kind === 'root') return ROOT_COLOR;
   if (node.kind === 'source') return SOURCE_COLOR;
   if (node.kind === 'summary') return levelColor(node.level);
@@ -104,12 +105,15 @@ export const ROOT_NODE_ID = '__root__';
 export function buildGraph(
   nodes: GraphNode[],
   edges: GraphEdge[],
-  mode: GraphMode
+  mode: GraphMode,
+  rootLabel = 'Memory'
 ): { simNodes: SimNode[]; links: SimLink[] } {
   const ids = new Set(nodes.map(n => n.id));
 
   // Synthetic master root at the origin — all source nodes fan out from it.
-  const rootNode: SimNode = { kind: 'root', id: ROOT_NODE_ID, label: 'Memory', x: 0, y: 0 };
+  // `rootLabel` lets non-memory reuses (e.g. the orchestration overview) name
+  // the hub; defaults to "Memory".
+  const rootNode: SimNode = { kind: 'root', id: ROOT_NODE_ID, label: rootLabel, x: 0, y: 0 };
 
   const simNodes: SimNode[] = [rootNode];
   for (let i = 0; i < nodes.length; i++) {
@@ -156,11 +160,11 @@ export function createSimulation(
       'charge',
       forceManyBody<SimNode>()
         .strength(n => {
-          if (n.kind === 'root') return -2000;
-          if (n.kind === 'source') return -800;
-          return -400;
+          if (n.kind === 'root') return -650;
+          if (n.kind === 'source') return -280;
+          return -140;
         })
-        .distanceMax(600)
+        .distanceMax(300)
     )
     .force(
       'link',
@@ -169,13 +173,13 @@ export function createSimulation(
         .distance(link => {
           const src = link.source as SimNode;
           const tgt = link.target as SimNode;
-          if (src.kind === 'root' || tgt.kind === 'root') return 250;
-          if (src.kind === 'source' || tgt.kind === 'source') return 100;
-          return 58;
+          if (src.kind === 'root' || tgt.kind === 'root') return 90;
+          if (src.kind === 'source' || tgt.kind === 'source') return 40;
+          return 22;
         })
-        .strength(0.35)
+        .strength(0.7)
     )
-    .force('center', forceCenter(0, 0).strength(0.04))
+    .force('center', forceCenter(0, 0).strength(0.12))
     .force(
       'collide',
       forceCollide<SimNode>().radius(n => {

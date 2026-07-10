@@ -77,10 +77,19 @@ interface ConfigAssistResult {
 
 interface UpdateEnvResult {
   server_id: string;
-  status: 'connected' | 'disconnected';
+  status: 'connected' | 'disconnected' | 'disabled' | 'unauthorized';
   env_keys: string[];
   tools?: McpTool[];
   error?: string;
+  /**
+   * Stable auth-failure reason code present when `status === 'unauthorized'`:
+   * `'oauth_required'` (use Sign in — a pasted token won't work),
+   * `'token_rejected'` (credential sent but refused), or
+   * `'credential_required'` (auth needed, none provided). The raw 401 message
+   * is intentionally withheld server-side (it leaks the OAuth metadata URL),
+   * so the UI maps this code to localized copy (#4289).
+   */
+  auth_hint?: string;
 }
 
 /** Non-secret registry-credentials snapshot. Secret *values* are never returned. */
@@ -98,6 +107,8 @@ export const mcpClientsApi = {
   /** Search the Smithery registry. Returns paged results. */
   registrySearch: async (params: {
     query?: string;
+    /** Transport filter: 'stdio' | 'hosted' | 'all' (omit for all). */
+    transport?: string;
     page?: number;
     page_size?: number;
   }): Promise<RegistrySearchResult> => {
@@ -119,6 +130,44 @@ export const mcpClientsApi = {
     });
     log('registry_get returned server=%s', result.server?.qualified_name);
     return result.server;
+  },
+
+  /**
+   * Probe how an installed server authenticates so the connect modal can show
+   * the right control: `none` (open), `token` (static bearer/API key), or
+   * `oauth` (browser sign-in). Registry metadata is unreliable, so this is the
+   * source of truth.
+   */
+  detectAuth: async (
+    server_id: string
+  ): Promise<{
+    kind: 'none' | 'token' | 'oauth';
+    authorization_endpoint?: string;
+    grant_types: string[];
+  }> => {
+    log('detect_auth server_id=%s', server_id);
+    const result = await callCoreRpc<{
+      kind: 'none' | 'token' | 'oauth';
+      authorization_endpoint?: string;
+      grant_types: string[];
+    }>({ method: 'openhuman.mcp_clients_detect_auth', params: { server_id } });
+    log('detect_auth -> %s', result.kind);
+    return result;
+  },
+
+  /**
+   * Begin browser OAuth (discover + dynamic client registration + PKCE) and
+   * return the live authorize URL to open in a browser. The core's
+   * `/oauth/mcp/callback` route completes the exchange and reconnects.
+   */
+  oauthBegin: async (server_id: string): Promise<string> => {
+    log('oauth_begin server_id=%s', server_id);
+    const result = await callCoreRpc<{ authorize_url: string }>({
+      method: 'openhuman.mcp_clients_oauth_begin',
+      params: { server_id },
+    });
+    log('oauth_begin returned authorize_url');
+    return result.authorize_url;
   },
 
   /** List all locally installed MCP servers. */
@@ -289,6 +338,10 @@ export const mcpClientsApi = {
     const result = await callCoreRpc<ConfigAssistResult>({
       method: 'openhuman.mcp_clients_config_assist',
       params,
+      // config_assist now runs a full agent turn (web search + fetch to read
+      // the provider's docs), which legitimately takes far longer than the 30s
+      // default RPC budget. Give it a generous 5-minute ceiling.
+      timeoutMs: 300_000,
     });
     log(
       'config_assist reply length=%d suggested_env=%s',

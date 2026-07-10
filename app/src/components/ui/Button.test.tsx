@@ -17,22 +17,62 @@ describe('Button', () => {
   it('applies secondary variant classes', () => {
     render(<Button variant="secondary">Cancel</Button>);
     const btn = screen.getByRole('button', { name: 'Cancel' });
-    expect(btn.className).toMatch(/border-neutral-300/);
-    expect(btn.className).toMatch(/bg-neutral-0/);
+    // Migrated to semantic surface/line tokens (themeable).
+    expect(btn.className).toMatch(/border-line-strong/);
+    expect(btn.className).toMatch(/bg-surface/);
   });
 
-  it('applies ghost variant classes', () => {
-    render(<Button variant="ghost">Skip</Button>);
+  it('applies tertiary variant classes', () => {
+    render(<Button variant="tertiary">Skip</Button>);
     const btn = screen.getByRole('button', { name: 'Skip' });
     expect(btn.className).toMatch(/bg-transparent/);
-    expect(btn.className).toMatch(/text-neutral-700/);
+    expect(btn.className).toMatch(/text-content-secondary/);
   });
 
-  it('applies danger variant classes', () => {
-    render(<Button variant="danger">Delete</Button>);
+  it('renders a filled coral button for primary + tone="danger"', () => {
+    render(
+      <Button variant="primary" tone="danger">
+        Delete
+      </Button>
+    );
     const btn = screen.getByRole('button', { name: 'Delete' });
+    expect(btn.className).toMatch(/bg-coral-500/);
+    expect(btn.className).toMatch(/text-content-inverted/);
+  });
+
+  it('renders a coral outline for secondary + tone="danger"', () => {
+    render(
+      <Button variant="secondary" tone="danger">
+        Remove
+      </Button>
+    );
+    const btn = screen.getByRole('button', { name: 'Remove' });
     expect(btn.className).toMatch(/text-coral-600/);
+    expect(btn.className).toMatch(/border-coral-300\/50/);
     expect(btn.className).toMatch(/hover:bg-coral-50/);
+  });
+
+  it('renders coral text for tertiary + tone="danger"', () => {
+    render(
+      <Button variant="tertiary" tone="danger">
+        Discard
+      </Button>
+    );
+    const btn = screen.getByRole('button', { name: 'Discard' });
+    expect(btn.className).toMatch(/text-coral-600/);
+    expect(btn.className).not.toMatch(/border-coral/);
+  });
+
+  it('squares the footprint for iconOnly (no horizontal padding)', () => {
+    render(
+      <Button iconOnly size="md" aria-label="Close">
+        <span data-testid="icon" />
+      </Button>
+    );
+    const btn = screen.getByRole('button', { name: 'Close' });
+    expect(btn.className).toMatch(/h-9/);
+    expect(btn.className).toMatch(/w-9/);
+    expect(btn.className).not.toMatch(/px-4/);
   });
 
   it('honors size=xl classes', () => {

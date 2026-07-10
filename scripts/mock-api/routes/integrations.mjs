@@ -146,15 +146,31 @@ export function handleIntegrations(ctx) {
     const inputs = Array.isArray(parsedBody?.input)
       ? parsedBody.input
       : [parsedBody?.input ?? ""];
+    // Honor the OpenAI `dimensions` parameter when present (the embeddings
+    // client sends it for `text-embedding-3-*` models). The save-time
+    // verification probe validates `vector.len() == configured dims`, so the
+    // returned vector must match the requested size; default to 4 for callers
+    // that don't request a specific size.
+    const requestedDims =
+      Number.isInteger(parsedBody?.dimensions) && parsedBody.dimensions > 0
+        ? parsedBody.dimensions
+        : 4;
     const data = inputs.map((input, index) => {
       const text = String(input ?? "");
-      // Keep the vector tiny but deterministic so callers that cache /
-      // compare embeddings can still observe stable output.
+      // Keep the vector deterministic so callers that cache / compare
+      // embeddings can still observe stable output: the first components keep
+      // the original `[basis, basis/10, basis/100, 1]` pattern, padded to the
+      // requested length.
       const basis = text.length || index + 1;
+      const seed = [basis, basis / 10, basis / 100, 1];
+      const embedding = Array.from(
+        { length: requestedDims },
+        (_, i) => seed[i] ?? 0,
+      );
       return {
         object: "embedding",
         index,
-        embedding: [basis, basis / 10, basis / 100, 1],
+        embedding,
       };
     });
     json(res, 200, {
@@ -181,6 +197,15 @@ export function handleIntegrations(ctx) {
   // (chat/completions is handled by routes/llm.mjs ahead of this route)
 
   // ── Composio ───────────────────────────────────────────────
+  if (
+    method === "GET" &&
+    /^\/(?:api\/v3\/)?connected_accounts\/?(\?.*)?$/.test(url)
+  ) {
+    const items = parseBehaviorJson("composioDirectConnectedAccounts", []);
+    json(res, 200, { items });
+    return true;
+  }
+
   if (
     method === "GET" &&
     /^\/agent-integrations\/composio\/toolkits\/?(\?.*)?$/.test(url)
@@ -334,11 +359,23 @@ export function handleIntegrations(ctx) {
     /^\/agent-integrations\/composio\/tools\/?(\?.*)?$/.test(url)
   ) {
     // Parse toolkits and tags from the query string.
-    const qs = url.includes("?") ? new URLSearchParams(url.split("?")[1]) : new URLSearchParams();
+    const qs = url.includes("?")
+      ? new URLSearchParams(url.split("?")[1])
+      : new URLSearchParams();
     const toolkitsParam = qs.get("toolkits") ?? "";
     const tagsParam = qs.get("tags") ?? "";
-    const requestedToolkits = toolkitsParam ? toolkitsParam.split(",").map(t => t.trim().toLowerCase()).filter(Boolean) : [];
-    const requestedTags = tagsParam ? tagsParam.split(",").map(t => t.trim().toLowerCase()).filter(Boolean) : [];
+    const requestedToolkits = toolkitsParam
+      ? toolkitsParam
+          .split(",")
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean)
+      : [];
+    const requestedTags = tagsParam
+      ? tagsParam
+          .split(",")
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean)
+      : [];
 
     // Allow tests to inject per-tag tool lists via
     //   composioToolsByTag_<tag>  (e.g. "composioToolsByTag_stars")
@@ -373,9 +410,11 @@ export function handleIntegrations(ctx) {
       // Filter by toolkits when requested and the knob returns a list with a
       // "function.name" slug we can match (e.g. "GITHUB_*").
       if (requestedToolkits.length > 0 && tools.length > 0) {
-        tools = tools.filter(t => {
+        tools = tools.filter((t) => {
           const name = (t?.function?.name ?? t?.name ?? "").toUpperCase();
-          return requestedToolkits.some(tk => name.startsWith(tk.toUpperCase() + "_"));
+          return requestedToolkits.some((tk) =>
+            name.startsWith(tk.toUpperCase() + "_"),
+          );
         });
       }
     }
@@ -514,6 +553,39 @@ export function handleIntegrations(ctx) {
       return true;
     }
     json(res, 200, { success: true, data: { items_synced: 3 } });
+    return true;
+  }
+
+  // ── Parallel search ────────────────────────────────────────
+  if (
+    method === "POST" &&
+    /^\/agent-integrations\/parallel\/search\/?$/.test(url)
+  ) {
+    const objective =
+      typeof parsedBody?.objective === "string" &&
+      parsedBody.objective.trim().length > 0
+        ? parsedBody.objective.trim()
+        : "unknown objective";
+    const queries = Array.isArray(parsedBody?.searchQueries)
+      ? parsedBody.searchQueries
+          .map((query) => String(query ?? "").trim())
+          .filter(Boolean)
+      : [];
+    const effectiveQueries = queries.length > 0 ? queries : [objective];
+    const results = effectiveQueries.map((query, index) => ({
+      url: `https://search.example.com/${index}`,
+      title: `Result for ${query}`,
+      publish_date: "2026-05-16",
+      excerpts: [`Objective: ${objective}; query: ${query}`],
+    }));
+    json(res, 200, {
+      success: true,
+      data: {
+        searchId: `search-${effectiveQueries.length}`,
+        results,
+        costUsd: 0.02,
+      },
+    });
     return true;
   }
 

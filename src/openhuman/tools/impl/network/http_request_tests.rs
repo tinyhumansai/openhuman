@@ -180,3 +180,28 @@ fn redirect_policy_is_none() {
     let tool = test_tool(vec!["example.com"]);
     assert_eq!(tool.name(), "http_request");
 }
+
+#[test]
+fn supervised_http_request_is_external_effect_for_approval_gate() {
+    let tool = test_tool(vec!["example.com"]);
+    assert_eq!(tool.permission_level(), PermissionLevel::Write);
+    assert!(tool.external_effect_with_args(&json!({
+        "url": "https://example.com/api",
+        "method": "POST",
+        "headers": { "Authorization": "Bearer token" },
+        "body": "{}"
+    })));
+}
+
+#[test]
+fn readonly_http_request_is_not_external_effect_because_execute_blocks() {
+    let security = Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::ReadOnly,
+        ..SecurityPolicy::default()
+    });
+    let tool = HttpRequestTool::new(security, vec!["example.com".into()], 1_000_000, 30);
+    assert!(!tool.external_effect_with_args(&json!({
+        "url": "https://example.com/api",
+        "method": "GET"
+    })));
+}

@@ -332,7 +332,9 @@ mod tests {
     // drops its guard before the next so the env is in a known state.
     #[test]
     fn resolve_sync_interval_honors_per_toolkit_env() {
-        let _lock = crate::openhuman::config::TEST_ENV_LOCK.lock().unwrap();
+        let _lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let key = sync_interval_env_var("slack");
         let default = 15 * 60;

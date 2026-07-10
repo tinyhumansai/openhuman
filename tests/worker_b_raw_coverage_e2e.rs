@@ -592,6 +592,7 @@ async fn approval_gate_rpc_decision_resumes_parked_tool_and_records_execution() 
             AgentTurnOrigin::WebChat {
                 thread_id: "worker-b-thread".to_string(),
                 client_id: "worker-b-client".to_string(),
+                request_id: None,
             },
             APPROVAL_CHAT_CONTEXT.scope(
                 ApprovalChatContext {

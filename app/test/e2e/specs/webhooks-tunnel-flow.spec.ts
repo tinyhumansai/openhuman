@@ -64,7 +64,10 @@ function unwrapRpcValue<T = unknown>(raw: unknown): T | undefined {
 }
 
 describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
-  before(async () => {
+  before(async function () {
+    // resetApp bring-up can run ~25-30s and race the default 30s Mocha hook
+    // budget; raise it.
+    this.timeout(90_000);
     await startMockServer();
     await resetMockBehavior();
     await waitForApp();
@@ -82,9 +85,13 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
 
   it('reached the logged-in shell after onboarding', async () => {
     // Home.tsx: t('home.askAssistant') is the stable home page CTA button text.
+    // After the /home → /chat redirect (AppRoutes.tsx), the chat new-window hero
+    // renders t('home.statusOk') instead of the old CTA button.
     const atHome =
       (await textExists('Ask your assistant anything')) ||
-      (await textExists('Your device is connected'));
+      (await textExists('Your device is connected')) ||
+      (await textExists('Your assistant is ready when you are')) ||
+      (await textExists('Type something below to get started'));
     expect(atHome).toBe(true);
   });
 
@@ -176,7 +183,10 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
   });
 
   it('Webhooks page loads (ComposeIO trigger history surface)', async () => {
-    await navigateViaHash('/settings/webhooks-triggers');
+    // The webhooks/trigger-history surface was merged into the Integrations
+    // settings page under the `#webhooks` tab; the legacy /settings/webhooks-triggers
+    // slug redirects to /settings/integrations#webhooks (see Settings.tsx).
+    await navigateViaHash('/settings/integrations#webhooks');
 
     await browser.waitUntil(
       async () => {
@@ -191,7 +201,7 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
     );
 
     const hash = await browser.execute(() => window.location.hash);
-    expect(String(hash)).toContain('/settings/webhooks-triggers');
+    expect(String(hash)).toContain('/settings/integrations');
 
     const visible =
       (await textExists('ComposeIO Triggers')) ||

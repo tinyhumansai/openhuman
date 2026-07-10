@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::ControllerSchema;
 use crate::openhuman::skill_registry::types::CatalogEntry;
-use crate::openhuman::workflows::ops_types::WorkflowScope;
+use crate::openhuman::skills::ops_types::WorkflowScope;
 
 // ── Params ──────────────────────────────────────────────────────────────────
 

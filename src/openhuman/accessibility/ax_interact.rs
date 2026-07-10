@@ -115,7 +115,7 @@ pub fn ax_list_elements_filtered(app_name: &str, filter: &str) -> Result<Vec<AXE
         if !needle.is_empty() {
             elements.retain(|e| e.label.to_lowercase().contains(&needle));
         }
-        return Ok(elements);
+        Ok(elements)
     }
     #[cfg(target_os = "windows")]
     {
@@ -157,7 +157,7 @@ pub fn ax_press_element(app_name: &str, label: &str) -> Result<String, String> {
             .and_then(|v| v.as_str())
             .unwrap_or(label)
             .to_string();
-        return Ok(format!("Pressed '{pressed}' in '{app_name}'."));
+        Ok(format!("Pressed '{pressed}' in '{app_name}'."))
     }
     #[cfg(target_os = "windows")]
     {
@@ -252,9 +252,9 @@ pub fn ax_set_field_value(app_name: &str, label: &str, value: &str) -> Result<St
             .and_then(|v| v.as_str())
             .unwrap_or(label)
             .to_string();
-        return Ok(format!(
+        Ok(format!(
             "Set '{field}' in '{app_name}' to the provided value."
-        ));
+        ))
     }
     #[cfg(target_os = "windows")]
     {

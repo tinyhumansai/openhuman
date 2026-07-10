@@ -24,10 +24,14 @@ vi.mock('../../components/intelligence/Toast', () => ({ ToastContainer: () => nu
 vi.mock('../../components/intelligence/ConfirmationModal', () => ({
   ConfirmationModal: () => null,
 }));
-vi.mock('../../components/PillTabBar', () => ({
-  default: ({ selected, onChange }: { selected: string; onChange: (tab: string) => void }) => (
+interface MockChipTabsProps {
+  value: string;
+  onChange: (tab: string) => void;
+}
+vi.mock('../../components/layout/ChipTabs', () => ({
+  default: ({ value, onChange }: MockChipTabsProps) => (
     <div data-testid="pilltabs">
-      <span>selected:{selected}</span>
+      <span>selected:{value}</span>
       {['memory', 'subconscious', 'tasks', 'workflows', 'council'].map(tab => (
         <button key={tab} type="button" onClick={() => onChange(tab)}>
           go-{tab}
@@ -92,5 +96,15 @@ describe('Intelligence URL-backed tab', () => {
     fireEvent.click(screen.getByText('go-council'));
     expect(screen.getByTestId('tab-council')).toBeInTheDocument();
     expect(screen.getByText('selected:council')).toBeInTheDocument();
+  });
+
+  // Regression for #4267: rendered inside Brain's `overflow-hidden` card, the
+  // panel must own a vertical scroll region that wraps the tab content, or the
+  // content is clipped with no scrollbar.
+  it('wraps the tab content in an overflow-y-auto scroll container', () => {
+    renderAt('/intelligence');
+    const scroll = screen.getByTestId('intelligence-scroll');
+    expect(scroll).toHaveClass('overflow-y-auto');
+    expect(scroll).toContainElement(screen.getByTestId('tab-tasks'));
   });
 });

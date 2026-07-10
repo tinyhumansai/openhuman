@@ -10,9 +10,9 @@ use crate::openhuman::agent::dispatcher::ToolDispatcher;
 use crate::openhuman::agent::harness::archivist::ArchivistHook;
 use crate::openhuman::agent::harness::definition::TriggerMemoryAgent;
 use crate::openhuman::agent::hooks::PostTurnHook;
-use crate::openhuman::agent::memory_loader::MemoryLoader;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::tool_policy::ToolPolicy;
+use crate::openhuman::agent_memory::memory_loader::MemoryLoader;
 use crate::openhuman::agent_tool_policy::ToolPolicySession;
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::context::ContextManager;
@@ -46,22 +46,21 @@ pub struct Agent {
     pub(super) visible_tool_names: std::collections::HashSet<String>,
     pub(super) tool_policy_session: ToolPolicySession,
     pub(super) memory: Arc<dyn Memory>,
-    // `Arc` (not `Box`) so the turn engine's parser seam can hold a cheap clone
-    // of the dispatcher without borrowing the `Agent` (which the turn observer
-    // borrows mutably) — see `engine::DispatcherParser`.
+    // `Arc` (not `Box`) so the tinyagents turn path can hold a cheap clone of
+    // the dispatcher without borrowing the `Agent` while session state mutates.
     pub(super) tool_dispatcher: Arc<dyn ToolDispatcher>,
     pub(super) memory_loader: Box<dyn MemoryLoader>,
     pub(super) config: crate::openhuman::config::AgentConfig,
     pub(super) model_name: String,
     /// User-configured vision capability for [`Self::model_name`], evaluated at
     /// session build from `model_vision_enabled(&model, config)`. Surfaced to the
-    /// turn engine's image gate via the `current_model_vision` task-local so a
+    /// tinyagents image gate via the `current_model_vision` task-local so a
     /// custom/BYOK model the user flagged can forward images. Defaults to `false`.
     pub(super) model_vision: bool,
     pub(super) temperature: f64,
     pub(super) workspace_dir: std::path::PathBuf,
     pub(super) action_dir: std::path::PathBuf,
-    pub(super) workflows: Vec<crate::openhuman::workflows::Workflow>,
+    pub(super) workflows: Vec<crate::openhuman::skills::Workflow>,
     /// Agent workflows discovered at session start.
     pub(super) auto_save: bool,
     /// Last memory context loaded for the current turn. Stored so it can
@@ -69,7 +68,14 @@ pub struct Agent {
     pub(super) last_memory_context: Option<String>,
     /// Citation metadata collected from memory recall for the most recent turn.
     /// Consumed by web-channel delivery to render source chips in the UI.
-    pub(super) last_turn_citations: Vec<crate::openhuman::agent::memory_loader::MemoryCitation>,
+    pub(super) last_turn_citations:
+        Vec<crate::openhuman::agent_memory::memory_loader::MemoryCitation>,
+    /// Holistic token/cost/context accounting for the most recent turn (parent +
+    /// any sub-agents spawned during it). Consumed by web-channel delivery to
+    /// surface session token/cost/context meters in the UI footer. `None` until
+    /// the first turn completes.
+    pub(super) last_turn_usage_totals:
+        Option<crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage>,
     pub(super) history: Vec<ConversationMessage>,
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) learning_enabled: bool,
@@ -169,15 +175,18 @@ pub struct Agent {
     pub(super) omit_memory_md: bool,
     /// Optional payload-summarizer wired in at agent-build time.
     /// Currently set only for the orchestrator session
-    /// (see [`super::builder`]). When `Some`, oversized tool results
-    /// produced by [`Agent::execute_tool_call`] are routed through the
-    /// summarizer sub-agent before they enter agent history.
+    /// (see [`super::builder`]). TinyAgents `ToolOutputMiddleware` uses this
+    /// when oversized tool results need summarizer-subagent compression before
+    /// they enter agent history.
     pub(super) payload_summarizer:
-        Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
+        Option<Arc<dyn crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer>>,
     /// Mirrors the agent definition's `trigger_memory_agent` policy.
     /// `Always` runs the dedicated memory retrieval agent once before
     /// the user's prompt is sent to this agent.
     pub(super) trigger_memory_agent: TriggerMemoryAgent,
+    /// Per-agent TokenJuice profile for tool results entering this session's
+    /// model context.
+    pub(super) tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
     /// Pre-execution policy hook for tool calls in this session. The
     /// default policy allows all calls so existing agents keep their
     /// behaviour unless a caller opts into stricter policy.
@@ -201,6 +210,12 @@ pub struct Agent {
     /// ACTIVE mid-turn can refresh the delegation schema in the same thread.
     pub(super) composio_integrations_rx:
         Option<tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>>,
+    /// Lazily-armed global-bus receiver for [`DomainEvent::WorkflowsChanged`]
+    /// (skill install / uninstall / create). Drained at each turn boundary so
+    /// `refresh_workflows` only re-scans disk when the installed set actually
+    /// changed — no per-turn filesystem walk on the steady-state hot path.
+    pub(super) skill_events_rx:
+        Option<tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>>,
     /// Toolkit slugs already surfaced to the model as freshly-connected
     /// this session. Seeded at turn 1 with the startup connected set, then
     /// extended whenever a mid-session connect is announced — so each new
@@ -218,6 +233,38 @@ pub struct Agent {
     /// its slug instead of overwriting the first's note. Order-preserving +
     /// de-duped on insert.
     pub(super) pending_integration_announcement: Vec<String>,
+    /// MCP server qualified-names already surfaced to the model as
+    /// freshly-connected this session. The MCP analogue of
+    /// [`Self::announced_integrations`]: seeded at turn 1 with the startup
+    /// connected set, extended as mid-session connects are announced, so each
+    /// server is announced exactly once (never re-announced per turn).
+    pub(super) announced_mcp_servers: std::collections::HashSet<String>,
+    /// MCP servers that connected mid-session and still need announcing on the
+    /// next user message. The MCP analogue of
+    /// [`Self::pending_integration_announcement`]. `use_mcp_server` is a single
+    /// static delegate (no per-server schema to refresh), so this prose note on
+    /// the user turn is the entire mid-session-connect mechanism for MCP. The
+    /// note rides the user turn (NOT the system prompt) so the KV-cache prefix
+    /// stays byte-identical. Order-preserving + de-duped on insert.
+    pub(super) pending_mcp_announcement: Vec<String>,
+    /// Skill ids discovered mid-session (installed after session build) that
+    /// still need announcing on the next user message. Mirrors
+    /// [`Self::pending_integration_announcement`] for the `## Installed Skills`
+    /// catalogue: parked by `refresh_workflows`, rendered + cleared when the
+    /// next user message is built so the note rides the user turn (NOT the
+    /// system prompt) and the KV-cache prefix stays byte-identical.
+    pub(super) pending_skill_announcement: Vec<String>,
+    /// Skill ids removed mid-session (uninstalled after session build) that
+    /// still need retracting on the next user message. Symmetric to
+    /// [`Self::pending_skill_announcement`]: parked by `refresh_workflows`,
+    /// rendered + cleared when the next user message is built so the retraction
+    /// note rides the user turn (NOT the system prompt) and the KV-cache prefix
+    /// stays byte-identical.
+    pub(super) pending_skill_retraction: Vec<String>,
+    /// Skill ids already surfaced to the model as installed this session, so
+    /// each newly-installed skill is announced exactly once and never
+    /// re-announced per turn. Seeded from the session-build catalogue.
+    pub(super) announced_skills: std::collections::HashSet<String>,
     /// Optional reference to the `ArchivistHook` registered in
     /// `post_turn_hooks`. Kept separately so the turn loop can call
     /// `flush_open_segment` at session-memory-extraction time (the
@@ -282,7 +329,7 @@ pub struct AgentBuilder {
     pub(super) temperature: Option<f64>,
     pub(super) workspace_dir: Option<std::path::PathBuf>,
     pub(super) action_dir: Option<std::path::PathBuf>,
-    pub(super) workflows: Option<Vec<crate::openhuman::workflows::Workflow>>,
+    pub(super) workflows: Option<Vec<crate::openhuman::skills::Workflow>>,
     /// Agent workflows to surface in the prompt. Populated from `load_workflows`
     /// at session start; defaults to empty when not explicitly set.
     pub(super) auto_save: Option<bool>,
@@ -309,23 +356,17 @@ pub struct AgentBuilder {
     /// [`super::builder::Agent::build_session_agent_inner`] sets this
     /// to a `SubagentPayloadSummarizer` instance.
     pub(super) payload_summarizer:
-        Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
+        Option<Arc<dyn crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer>>,
     /// Forwarded to [`Agent::trigger_memory_agent`] at build time.
     pub(super) trigger_memory_agent: Option<TriggerMemoryAgent>,
+    /// Per-agent TokenJuice tool-output compression profile.
+    pub(super) tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression,
     /// Optional pre-execution tool policy. Defaults to allow-all.
     pub(super) tool_policy: Option<Arc<dyn ToolPolicy>>,
     /// Optional reference to the production `ArchivistHook`. Set when
     /// `config.learning.episodic_capture_enabled` is true. Used to call
     /// `flush_open_segment` at the closest available session-end signal.
     pub(super) archivist_hook: Option<Arc<ArchivistHook>>,
-    /// Phase 1.5 — when `true` AND `archivist_hook` is `Some`, the
-    /// `ContextManager`'s summarizer is wrapped with a
-    /// `SegmentRecapSummarizer` that routes compaction through the
-    /// archivist's rolling segment recap (one summarizer, soft-fallback).
-    /// When `false` (or archivist absent), the plain `ProviderSummarizer`
-    /// is used and Phase 1.5 is completely absent from the hot path.
-    /// Default: `true` (mirrors `LearningConfig::unified_compaction_enabled`).
-    pub(super) unified_compaction_enabled: bool,
 }
 
 impl Default for AgentBuilder {

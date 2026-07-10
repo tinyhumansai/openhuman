@@ -21,6 +21,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -83,7 +84,7 @@ describe('Chat conversation history', () => {
   it('H1.1 — first message and response rendered', async () => {
     console.log(`${LOG_PREFIX} H1.1: navigating to /chat and opening new thread`);
     await navigateViaHash('/chat');
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations panel did not mount',
     });

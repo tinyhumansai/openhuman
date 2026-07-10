@@ -66,12 +66,12 @@ const SettingsNumberField = ({
       {hasMeta && (
         <div className="flex flex-col leading-tight">
           {unit && (
-            <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
+            <span className="text-xs font-medium text-content-secondary dark:text-content-muted">
               {unit}
             </span>
           )}
           {hasRange && (
-            <span className="text-[11px] text-neutral-400 dark:text-neutral-500">
+            <span className="text-[11px] text-content-faint">
               {min}&#x2013;{max}
             </span>
           )}

@@ -73,8 +73,10 @@ describe('CommandPalette', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it('renders footer hint', () => {
+  it('renders footer hint advertising the in-palette shortcuts key', () => {
     render(<Harness open={true} onOpenChange={() => {}} />);
-    expect(screen.getByText(/Press \? for all shortcuts/i)).toBeInTheDocument();
+    // Advertises ⌘/ (works while the search box is focused), not ? (skipped in
+    // inputs). The label reuses the shared "Keyboard Shortcuts" string.
+    expect(screen.getByText('Keyboard Shortcuts')).toBeInTheDocument();
   });
 });

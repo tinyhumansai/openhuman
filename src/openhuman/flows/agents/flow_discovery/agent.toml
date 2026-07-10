@@ -1,0 +1,71 @@
+id = "flow_discovery"
+display_name = "Flow Scout"
+delegate_name = "discover_workflows"
+when_to_use = "Workflow discovery specialist — the 'Flow Scout'. Reads the user's memory, past threads, known people, connected integrations, and existing flows (and the web when it helps) to figure out which automations would genuinely help THIS user, then proposes a handful of concrete, buildable workflow suggestions. Read-only: it never creates, enables, or runs a flow — it ends by calling `suggest_workflows`, which records ideas for the user to review on the Flows page and build with one click. Route here for 'what workflows should I set up?', 'suggest some automations', 'discover flows for me', or the Flows page 'Discover' action. NOT for building a specific named workflow (that is `build_workflow` / workflow_builder)."
+temperature = 0.4
+# Multi-step read → correlate → ground → propose loop. It recalls memory,
+# skims recent threads, lists connections + existing flows, grounds a couple of
+# ideas against the real tool catalog, then emits. 12 gives headroom for that
+# gathering without letting it wander.
+max_iterations = 12
+iteration_policy = "extended"
+# Cap on the returned bundle handed back to the caller. `suggest_workflows`
+# already persisted the full suggestions; the returned text is just a compact
+# confirmation, so this stays small.
+max_result_chars = 6000
+# Read-only sandbox: write/execute tools are filtered out and `composio_execute`
+# (if ever added) is gated to Read-scoped slugs. The discovery agent must never
+# mutate the user's data — its ONLY write is `suggest_workflows`, which is
+# PermissionLevel::None (its designated emit sink) and therefore survives the
+# read-only filter. This agent can run on prompt-injectable input (thread/memory
+# content), so every other tool in scope must be genuinely read-only.
+sandbox_mode = "read_only"
+
+# Spawn hierarchy: deep-thinking reasoning tier. It correlates disparate signals
+# (goals, recurring conversations, connected apps) into automation ideas — a
+# reasoning job. It is a leaf: it never delegates onward (no `[subagents]`).
+agent_tier = "reasoning"
+
+omit_identity = true
+omit_memory_context = false
+omit_safety_preamble = true
+omit_skills_catalog = true
+# Keep PROFILE.md (the user's stated goals from onboarding) and MEMORY.md
+# (archivist-curated long-term memory) IN the prompt: grounding suggestions in
+# who the user is and what they want is the whole job, so the scout reads them
+# directly rather than paying for a separate recall round-trip.
+omit_profile = false
+omit_memory_md = false
+
+[model]
+# Correlating signals into good, non-generic suggestions is a reasoning task —
+# ride the reasoning tier, not the cheap burst worker.
+hint = "reasoning"
+
+[tools]
+# Read-only discovery surface + the single emit sink. Everything here is
+# genuinely read-only except `suggest_workflows` (PermissionLevel::None emit).
+# No shell, no file writes, no channel sends, no flows_create/update/run.
+named = [
+    # ── Who the user is / what they care about ──────────────────────────────
+    "memory_recall",
+    "memory_hybrid_search",
+    "people_list",
+    # ── What they actually do (recurring conversations, decisions) ──────────
+    "transcript_search",
+    "thread_list",
+    "thread_read",
+    "thread_message_list",
+    # ── What they can already automate against ──────────────────────────────
+    # Existing flows (so we don't re-suggest what they have) + the real
+    # connection refs + real Composio action slugs to ground suggestions.
+    "list_flows",
+    "get_flow",
+    "list_flow_connections",
+    "search_tool_catalog",
+    # ── Fresh external context when an idea needs it ────────────────────────
+    "web_search_tool",
+    "web_fetch",
+    # ── Terminal emit: record the discovered suggestions ────────────────────
+    "suggest_workflows",
+]

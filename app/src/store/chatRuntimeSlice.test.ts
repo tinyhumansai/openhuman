@@ -1,17 +1,262 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { describe, expect, it } from 'vitest';
 
+import type { AgentRun, AgentRunStatus, PersistedTurnState } from '../types/turnState';
 import chatRuntimeReducer, {
+  appendProcessingProse,
+  beginInferenceTurn,
   clearAllChatRuntime,
   clearQueueStatusForThread,
   clearRuntimeForThread,
+  hydrateRuntimeFromRunLedger,
+  hydrateRuntimeFromSnapshot,
+  hydrateThreadUsage,
+  markInferenceTurnStreaming,
   type QueueStatus,
+  recordChatTurnUsage,
+  resetSessionTokenUsage,
+  setPendingApprovalForThread,
   setQueueStatusForThread,
+  setToolTimelineForThread,
 } from './chatRuntimeSlice';
+
+function makeRun(id: string, status: AgentRunStatus): AgentRun {
+  return {
+    id,
+    kind: 'subagent',
+    status,
+    agentId: 'tinyplace_agent',
+    metadata: { displayName: 'Tinyplace Agent' },
+    startedAt: '2026-06-23T00:00:00Z',
+    updatedAt: '2026-06-23T00:00:00Z',
+  };
+}
+
+function makeInterruptedSnapshot(
+  threadId: string,
+  toolTimeline: PersistedTurnState['toolTimeline']
+): PersistedTurnState {
+  return {
+    threadId,
+    requestId: 'req-1',
+    lifecycle: 'interrupted',
+    iteration: 3,
+    maxIterations: 10,
+    streamingText: '',
+    thinking: '',
+    toolTimeline,
+    startedAt: '2026-06-23T00:00:00Z',
+    updatedAt: '2026-06-23T00:00:00Z',
+  };
+}
 
 function makeStore() {
   return configureStore({ reducer: { chatRuntime: chatRuntimeReducer } });
 }
+
+describe('chatRuntimeSlice recordChatTurnUsage', () => {
+  it('accumulates tokens, cost, and context window across turns', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 1000,
+        outputTokens: 200,
+        cachedTokens: 50,
+        costUsd: 0.012,
+        contextWindow: 200_000,
+      })
+    );
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 500,
+        outputTokens: 100,
+        cachedTokens: 10,
+        costUsd: 0.008,
+        contextWindow: 200_000,
+      })
+    );
+    const usage = store.getState().chatRuntime.sessionTokenUsage;
+    expect(usage.inputTokens).toBe(1500);
+    expect(usage.outputTokens).toBe(300);
+    expect(usage.cachedTokens).toBe(60);
+    expect(usage.costUsd).toBeCloseTo(0.02, 6);
+    expect(usage.turns).toBe(2);
+    expect(usage.contextWindow).toBe(200_000);
+    // Context gauge tracks the latest turn's input+output, not the running sum.
+    expect(usage.lastTurnContextUsed).toBe(600);
+  });
+
+  it('rolls sub-agent spend into a per-archetype breakdown keyed by agentId', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 100,
+        outputTokens: 20,
+        subAgents: [
+          { agentId: 'researcher', inputTokens: 40, outputTokens: 10, costUsd: 0.001 },
+          { agentId: 'coder', inputTokens: 80, outputTokens: 30, costUsd: 0.003 },
+        ],
+      })
+    );
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 50,
+        outputTokens: 10,
+        subAgents: [{ agentId: 'researcher', inputTokens: 60, outputTokens: 5, costUsd: 0.002 }],
+      })
+    );
+    const subs = store.getState().chatRuntime.sessionTokenUsage.subAgents;
+    expect(subs.researcher).toEqual({
+      agentId: 'researcher',
+      inputTokens: 100,
+      outputTokens: 15,
+      costUsd: 0.003,
+      runs: 2,
+    });
+    expect(subs.coder.runs).toBe(1);
+    expect(subs.coder.inputTokens).toBe(80);
+  });
+
+  it('excludes sub-agent tokens from the context gauge numerator (#4271)', () => {
+    const store = makeStore();
+    // Core sends combined parent+sub-agent turn totals; the gauge must reflect
+    // the orchestrator thread's own window only, never the sum across agents.
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 1_000_000,
+        outputTokens: 50_000,
+        contextWindow: 1_000_000,
+        subAgents: [
+          { agentId: 'researcher', inputTokens: 600_000, outputTokens: 30_000, costUsd: 0.6 },
+          { agentId: 'context_scout', inputTokens: 150_000, outputTokens: 10_000, costUsd: 0.15 },
+        ],
+      })
+    );
+    const usage = store.getState().chatRuntime.sessionTokenUsage;
+    // orchestrator-only = (1_000_000 + 50_000) - (600_000+30_000 + 150_000+10_000)
+    expect(usage.lastTurnContextUsed).toBe(260_000);
+    // Gauge stays within its window: 260_000 / 1_000_000 = 26% ≤ 100%.
+    expect(usage.lastTurnContextUsed).toBeLessThanOrEqual(usage.contextWindow);
+  });
+
+  it('keeps the full turn as the gauge numerator with no sub-agents (#4271)', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({ inputTokens: 800, outputTokens: 120, contextWindow: 200_000 })
+    );
+    // Single-agent path is unchanged: nothing to subtract.
+    expect(store.getState().chatRuntime.sessionTokenUsage.lastTurnContextUsed).toBe(920);
+  });
+
+  it('clamps the gauge numerator to zero when sub-agents exceed the turn total (#4271)', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 50,
+        outputTokens: 10,
+        subAgents: [{ agentId: 'researcher', inputTokens: 100, outputTokens: 20, costUsd: 0.001 }],
+      })
+    );
+    expect(store.getState().chatRuntime.sessionTokenUsage.lastTurnContextUsed).toBe(0);
+  });
+
+  it('keeps the prior context window when a turn reports an unknown (0) window', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({ inputTokens: 10, outputTokens: 5, contextWindow: 128_000 })
+    );
+    store.dispatch(recordChatTurnUsage({ inputTokens: 10, outputTokens: 5, contextWindow: 0 }));
+    expect(store.getState().chatRuntime.sessionTokenUsage.contextWindow).toBe(128_000);
+  });
+
+  it('coerces non-finite / negative inputs to zero', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({ inputTokens: Number.NaN, outputTokens: -50, costUsd: -1 })
+    );
+    const usage = store.getState().chatRuntime.sessionTokenUsage;
+    expect(usage.inputTokens).toBe(0);
+    expect(usage.outputTokens).toBe(0);
+    expect(usage.costUsd).toBe(0);
+    expect(usage.turns).toBe(1);
+  });
+
+  it('resetSessionTokenUsage clears all accumulated usage', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 100,
+        outputTokens: 20,
+        costUsd: 0.01,
+        subAgents: [{ agentId: 'researcher', inputTokens: 1, outputTokens: 1, costUsd: 0.001 }],
+      })
+    );
+    store.dispatch(resetSessionTokenUsage());
+    const usage = store.getState().chatRuntime.sessionTokenUsage;
+    expect(usage.inputTokens).toBe(0);
+    expect(usage.costUsd).toBe(0);
+    expect(usage.turns).toBe(0);
+    expect(usage.subAgents).toEqual({});
+  });
+
+  it('routes a turn with a threadId into that thread bucket (and the global)', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({ inputTokens: 100, outputTokens: 20, costUsd: 0.01, threadId: 'thr-a' })
+    );
+    store.dispatch(
+      recordChatTurnUsage({ inputTokens: 50, outputTokens: 10, costUsd: 0.005, threadId: 'thr-b' })
+    );
+    const { usageByThread, sessionTokenUsage } = store.getState().chatRuntime;
+    expect(usageByThread['thr-a'].inputTokens).toBe(100);
+    expect(usageByThread['thr-a'].costUsd).toBeCloseTo(0.01, 6);
+    expect(usageByThread['thr-b'].inputTokens).toBe(50);
+    // Global aggregate still sums both threads.
+    expect(sessionTokenUsage.inputTokens).toBe(150);
+  });
+
+  it('hydrateThreadUsage seeds a thread bucket and live turns accumulate on top', () => {
+    const store = makeStore();
+    store.dispatch(
+      hydrateThreadUsage({
+        threadId: 'thr-a',
+        inputTokens: 1000,
+        outputTokens: 300,
+        cachedTokens: 40,
+        costUsd: 0.02,
+        turns: 3,
+        contextWindow: 1_000_000,
+        lastTurnInputTokens: 400,
+        lastTurnOutputTokens: 120,
+        subAgents: [
+          { agentId: 'coder', inputTokens: 300, outputTokens: 80, costUsd: 0.006, runs: 2 },
+        ],
+      })
+    );
+    let bucket = store.getState().chatRuntime.usageByThread['thr-a'];
+    expect(bucket.inputTokens).toBe(1000);
+    expect(bucket.turns).toBe(3);
+    expect(bucket.contextWindow).toBe(1_000_000);
+    expect(bucket.lastTurnContextUsed).toBe(520);
+    // Sub-agent breakdown reconstructed from persisted transcripts.
+    expect(bucket.subAgents.coder).toEqual({
+      agentId: 'coder',
+      inputTokens: 300,
+      outputTokens: 80,
+      costUsd: 0.006,
+      runs: 2,
+    });
+
+    // A live turn for the same thread adds on top of the seeded base.
+    store.dispatch(
+      recordChatTurnUsage({ inputTokens: 200, outputTokens: 50, costUsd: 0.004, threadId: 'thr-a' })
+    );
+    bucket = store.getState().chatRuntime.usageByThread['thr-a'];
+    expect(bucket.inputTokens).toBe(1200);
+    expect(bucket.turns).toBe(4);
+    expect(bucket.costUsd).toBeCloseTo(0.024, 6);
+  });
+});
 
 describe('chatRuntimeSlice queue status', () => {
   it('sets queue status for a thread', () => {
@@ -51,8 +296,15 @@ describe('chatRuntimeSlice queue status', () => {
         status: { active: true, steers: 0, followups: 1, collects: 0, total: 1 },
       })
     );
+    // Also seed a processing transcript so the clear covers it too (a global
+    // reset must not leave stale "View processing" prose behind).
+    store.dispatch(
+      appendProcessingProse({ threadId: 't1', kind: 'narration', round: 1, delta: 'thinking…' })
+    );
+    expect(store.getState().chatRuntime.processingByThread.t1).toHaveLength(1);
     store.dispatch(clearAllChatRuntime());
     expect(store.getState().chatRuntime.queueStatusByThread).toEqual({});
+    expect(store.getState().chatRuntime.processingByThread).toEqual({});
   });
 
   it('updates queue status when set again', () => {
@@ -78,6 +330,140 @@ describe('chatRuntimeSlice queue status', () => {
     });
   });
 
+  it('settles orphaned running rows when hydrating an interrupted snapshot', () => {
+    const store = makeStore();
+    store.dispatch(
+      hydrateRuntimeFromSnapshot({
+        snapshot: makeInterruptedSnapshot('t1', [
+          {
+            id: 't1:subagent:s1:tinyplace_agent',
+            name: 'subagent:tinyplace_agent',
+            round: 1,
+            status: 'running',
+            subagent: {
+              taskId: 's1',
+              agentId: 'tinyplace_agent',
+              status: 'running',
+              toolCalls: [],
+            },
+          },
+          {
+            id: 't1:subagent:s2:tinyplace_agent',
+            name: 'subagent:tinyplace_agent',
+            round: 1,
+            status: 'success',
+            subagent: {
+              taskId: 's2',
+              agentId: 'tinyplace_agent',
+              status: 'completed',
+              toolCalls: [],
+            },
+          },
+          {
+            id: 't1:subagent:s3:tinyplace_agent',
+            name: 'subagent:tinyplace_agent',
+            round: 1,
+            status: 'error',
+            subagent: { taskId: 's3', agentId: 'tinyplace_agent', status: 'failed', toolCalls: [] },
+          },
+        ]),
+      })
+    );
+    const timeline = store.getState().chatRuntime.toolTimelineByThread['t1'];
+    // The dangling 'running' row becomes terminal 'cancelled' (no live driver to settle it)…
+    expect(timeline[0].status).toBe('cancelled');
+    expect(timeline[0].subagent?.status).toBe('cancelled');
+    // …while already-terminal rows are left untouched.
+    expect(timeline[1].status).toBe('success');
+    expect(timeline[1].subagent?.status).toBe('completed');
+    expect(timeline[2].status).toBe('error');
+    expect(timeline[2].subagent?.status).toBe('failed');
+  });
+
+  it('renders interrupted run-ledger rows as muted (cancelled), reserving error for failed', () => {
+    const store = makeStore();
+    store.dispatch(
+      hydrateRuntimeFromRunLedger({
+        threadId: 't1',
+        runs: [
+          makeRun('sub-interrupted', 'interrupted'),
+          makeRun('sub-failed', 'failed'),
+          makeRun('sub-completed', 'completed'),
+        ],
+      })
+    );
+    const byId = Object.fromEntries(
+      store.getState().chatRuntime.toolTimelineByThread['t1'].map(e => [e.id, e.status])
+    );
+    // Orphaned (interrupted) background runs are terminal but NOT user-facing
+    // errors — muted, not alarming red.
+    expect(byId['subagent:sub-interrupted']).toBe('cancelled');
+    // A genuine failure still surfaces as an error.
+    expect(byId['subagent:sub-failed']).toBe('error');
+    expect(byId['subagent:sub-completed']).toBe('success');
+  });
+
+  it('does not duplicate a live subagent row whose taskId is already on screen', () => {
+    const store = makeStore();
+    // Live row created by the socket path — a different entry id scheme than
+    // the ledger's `subagent:<runId>`, but the same delegation taskId.
+    store.dispatch(
+      setToolTimelineForThread({
+        threadId: 't-dup',
+        entries: [
+          {
+            id: 't-dup:subagent:run-1:spawn_subagent',
+            name: 'subagent:tinyplace_agent',
+            round: 1,
+            status: 'running',
+            subagent: { taskId: 'run-1', agentId: 'tinyplace_agent', toolCalls: [] },
+          },
+        ],
+      })
+    );
+    store.dispatch(
+      hydrateRuntimeFromRunLedger({
+        threadId: 't-dup',
+        runs: [makeRun('run-1', 'running'), makeRun('run-2', 'completed')],
+      })
+    );
+    const timeline = store.getState().chatRuntime.toolTimelineByThread['t-dup'];
+    // run-1 is already represented by the live row; only run-2 is added.
+    expect(timeline).toHaveLength(2);
+    expect(timeline.filter(e => e.subagent?.taskId === 'run-1')).toHaveLength(1);
+    expect(timeline.some(e => e.id === 'subagent:run-2')).toBe(true);
+  });
+
+  it('settles the parent row but preserves an awaiting_user subagent on interrupt', () => {
+    const store = makeStore();
+    store.dispatch(
+      hydrateRuntimeFromSnapshot({
+        snapshot: makeInterruptedSnapshot('t2', [
+          {
+            id: 't2:subagent:s1:researcher',
+            name: 'subagent:researcher',
+            round: 1,
+            // Core keeps the row `running` while the child is paused for the user.
+            status: 'running',
+            subagent: {
+              taskId: 's1',
+              agentId: 'researcher',
+              status: 'awaiting_user',
+              workerThreadId: 'worker-1',
+              toolCalls: [],
+            },
+          },
+        ]),
+      })
+    );
+    const row = store.getState().chatRuntime.toolTimelineByThread['t2'][0];
+    // The row stops pulsing (status drives agentNameTone)…
+    expect(row.status).toBe('cancelled');
+    // …but the truthful "was awaiting user" child state is kept, not clobbered.
+    expect(row.subagent?.status).toBe('awaiting_user');
+    expect(row.subagent?.workerThreadId).toBe('worker-1');
+  });
+
   it('isolates queue status across threads', () => {
     const store = makeStore();
     store.dispatch(
@@ -94,5 +480,256 @@ describe('chatRuntimeSlice queue status', () => {
     );
     expect(store.getState().chatRuntime.queueStatusByThread['t1']?.steers).toBe(1);
     expect(store.getState().chatRuntime.queueStatusByThread['t2']?.followups).toBe(2);
+  });
+});
+
+describe('hydrateRuntimeFromSnapshot — sub-agent prose persistence', () => {
+  it('carries live sub-agent thoughts across rehydration (matched by taskId)', () => {
+    const store = makeStore();
+    // Live in-memory row: sub-agent with streamed reasoning + a tool call.
+    // Live and persisted rows use different entry ids, so the merge matches
+    // on the sub-agent taskId.
+    store.dispatch(
+      setToolTimelineForThread({
+        threadId: 't9',
+        entries: [
+          {
+            id: 't9:subagent:task-x:spawn_subagent',
+            name: 'subagent:researcher',
+            round: 1,
+            status: 'running',
+            subagent: {
+              taskId: 'task-x',
+              agentId: 'researcher',
+              toolCalls: [],
+              transcript: [
+                { kind: 'thinking', iteration: 1, text: 'let me search the inbox' },
+                {
+                  kind: 'tool',
+                  iteration: 1,
+                  callId: 'c1',
+                  toolName: 'web_search',
+                  status: 'success',
+                },
+              ],
+            },
+          },
+        ],
+      })
+    );
+
+    // Snapshot rebuilds the sub-agent transcript from tool calls only (no
+    // prose) and uses the persisted entry id `subagent:<taskId>`.
+    const snapshot: PersistedTurnState = {
+      threadId: 't9',
+      requestId: 'req-1',
+      lifecycle: 'streaming',
+      iteration: 1,
+      maxIterations: 10,
+      streamingText: '',
+      thinking: '',
+      toolTimeline: [
+        {
+          id: 'subagent:task-x',
+          name: 'subagent:researcher',
+          round: 1,
+          status: 'running',
+          subagent: {
+            taskId: 'task-x',
+            agentId: 'researcher',
+            toolCalls: [{ callId: 'c1', toolName: 'web_search', status: 'success' }],
+          },
+        },
+      ],
+      startedAt: '2026-06-23T00:00:00Z',
+      updatedAt: '2026-06-23T00:00:00Z',
+    };
+
+    store.dispatch(hydrateRuntimeFromSnapshot({ snapshot }));
+
+    const row = store
+      .getState()
+      .chatRuntime.toolTimelineByThread['t9'].find(e => e.subagent?.taskId === 'task-x');
+    const transcript = row?.subagent?.transcript ?? [];
+    // The streamed thought survives the rehydration instead of being clobbered
+    // by the prose-less snapshot.
+    const thinking = transcript.find(i => i.kind === 'thinking');
+    expect(thinking && 'text' in thinking ? thinking.text : undefined).toBe(
+      'let me search the inbox'
+    );
+  });
+
+  it('replays a persisted sub-agent transcript on a settled turn (no live data)', () => {
+    const store = makeStore();
+    // No live entries seeded — this is the settled / reloaded case. The
+    // snapshot itself now carries the sub-agent prose transcript.
+    const snapshot: PersistedTurnState = {
+      threadId: 't10',
+      requestId: 'req-1',
+      lifecycle: 'completed',
+      iteration: 2,
+      maxIterations: 10,
+      streamingText: '',
+      thinking: '',
+      toolTimeline: [
+        {
+          id: 'subagent:task-y',
+          name: 'subagent:researcher',
+          round: 1,
+          status: 'success',
+          subagent: {
+            taskId: 'task-y',
+            agentId: 'researcher',
+            toolCalls: [{ callId: 'c1', toolName: 'web_search', status: 'success' }],
+            transcript: [
+              { kind: 'thinking', iteration: 1, text: 'planning the search' },
+              {
+                kind: 'tool',
+                iteration: 1,
+                callId: 'c1',
+                toolName: 'web_search',
+                status: 'success',
+              },
+              { kind: 'text', iteration: 1, text: 'here is the summary' },
+            ],
+          },
+        },
+      ],
+      startedAt: '2026-06-23T00:00:00Z',
+      updatedAt: '2026-06-23T00:00:00Z',
+    };
+
+    store.dispatch(hydrateRuntimeFromSnapshot({ snapshot }));
+
+    const row = store
+      .getState()
+      .chatRuntime.toolTimelineByThread['t10'].find(e => e.subagent?.taskId === 'task-y');
+    const transcript = row?.subagent?.transcript ?? [];
+    // The persisted prose survives a reload with no in-memory live data.
+    expect(transcript.map(i => i.kind)).toEqual(['thinking', 'tool', 'text']);
+    const thinking = transcript[0];
+    expect(thinking.kind === 'thinking' ? thinking.text : undefined).toBe('planning the search');
+    const text = transcript[2];
+    expect(text.kind === 'text' ? text.text : undefined).toBe('here is the summary');
+  });
+});
+
+describe('hydrateRuntimeFromSnapshot — live-driver guard', () => {
+  function makeStreamingSnapshot(threadId: string): PersistedTurnState {
+    return {
+      threadId,
+      requestId: 'req-stale',
+      lifecycle: 'streaming',
+      iteration: 1,
+      maxIterations: 10,
+      streamingText: '',
+      thinking: '',
+      // Flush-boundary snapshot: one lonely row, behind the live state.
+      toolTimeline: [{ id: 'c-old', name: 'web_search', round: 1, status: 'running' }],
+      taskBoard: {
+        threadId,
+        cards: [
+          {
+            id: 'card-1',
+            title: 'Do the thing',
+            status: 'in_progress',
+            order: 0,
+            updatedAt: '2026-06-23T00:00:00Z',
+          },
+        ],
+        updatedAt: '2026-06-23T00:00:00Z',
+      },
+      startedAt: '2026-06-23T00:00:00Z',
+      updatedAt: '2026-06-23T00:00:00Z',
+    };
+  }
+
+  it('does not clobber a thread with a live in-flight turn (tab-switch case)', () => {
+    const store = makeStore();
+    // Live driver: the user sent, events are streaming into Redux.
+    store.dispatch(beginInferenceTurn({ threadId: 't-live' }));
+    store.dispatch(markInferenceTurnStreaming({ threadId: 't-live' }));
+    store.dispatch(
+      setToolTimelineForThread({
+        threadId: 't-live',
+        entries: [
+          { id: 'c1', name: 'web_search', round: 1, status: 'success', result: 'found 3 hits' },
+          { id: 'c2', name: 'read_file', round: 2, status: 'running' },
+        ],
+      })
+    );
+    store.dispatch(
+      setPendingApprovalForThread({
+        threadId: 't-live',
+        approval: { requestId: 'req-live', toolName: 'shell', message: 'Run `ls`?' },
+      })
+    );
+
+    // A thread-switch hydration lands with a stale flush-boundary snapshot.
+    store.dispatch(hydrateRuntimeFromSnapshot({ snapshot: makeStreamingSnapshot('t-live') }));
+
+    const state = store.getState().chatRuntime;
+    // The richer live timeline (2 rows, with a result) survives untouched…
+    expect(state.toolTimelineByThread['t-live'].map(e => e.id)).toEqual(['c1', 'c2']);
+    expect(state.toolTimelineByThread['t-live'][0].result).toBe('found 3 hits');
+    // …the pending approval card is not wiped mid-turn…
+    expect(state.pendingApprovalByThread['t-live']?.requestId).toBe('req-live');
+    // …and the lifecycle stays live.
+    expect(state.inferenceTurnLifecycleByThread['t-live']).toBe('streaming');
+    // The task board (monotonic, cheap) is still applied.
+    expect(state.taskBoardByThread['t-live']?.cards[0]?.id).toBe('card-1');
+  });
+
+  it('applies the snapshot when there is no live driver (cold boot / new window)', () => {
+    const store = makeStore();
+    store.dispatch(hydrateRuntimeFromSnapshot({ snapshot: makeStreamingSnapshot('t-cold') }));
+    const state = store.getState().chatRuntime;
+    expect(state.toolTimelineByThread['t-cold'].map(e => e.id)).toEqual(['c-old']);
+    expect(state.inferenceTurnLifecycleByThread['t-cold']).toBe('streaming');
+  });
+});
+
+describe('hydrateRuntimeFromSnapshot — persisted tool result output', () => {
+  it('maps the persisted output onto parent and sub-agent rows as result', () => {
+    const store = makeStore();
+    const snapshot: PersistedTurnState = {
+      threadId: 't-out',
+      requestId: 'req-1',
+      lifecycle: 'completed',
+      iteration: 2,
+      maxIterations: 10,
+      streamingText: '',
+      thinking: '',
+      toolTimeline: [
+        {
+          id: 'c1',
+          name: 'web_search',
+          round: 1,
+          status: 'success',
+          output: 'top hit: openhuman.dev',
+        },
+        {
+          id: 'subagent:task-z',
+          name: 'subagent:researcher',
+          round: 2,
+          status: 'success',
+          subagent: {
+            taskId: 'task-z',
+            agentId: 'researcher',
+            toolCalls: [
+              { callId: 'cc1', toolName: 'read_file', status: 'success', output: 'file body' },
+            ],
+          },
+        },
+      ],
+      startedAt: '2026-06-23T00:00:00Z',
+      updatedAt: '2026-06-23T00:00:00Z',
+    };
+
+    store.dispatch(hydrateRuntimeFromSnapshot({ snapshot }));
+
+    const timeline = store.getState().chatRuntime.toolTimelineByThread['t-out'];
+    expect(timeline[0].result).toBe('top hit: openhuman.dev');
+    expect(timeline[1].subagent?.toolCalls[0]?.result).toBe('file body');
   });
 });

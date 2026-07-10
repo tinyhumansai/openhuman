@@ -7,12 +7,17 @@ module.exports = {
   ],
   theme: {
     extend: {
-      // Premium font stack optimized for crypto professionals
+      // Font roles — each maps to a CSS variable (defined in styles/tokens.css)
+      // so themes can swap any role at runtime. The historical aliases
+      // (sans/display) point at the matching role var for backwards compat.
       fontFamily: {
-        'sans': ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Helvetica', 'Arial', 'sans-serif'],
-        'display': ['Cabinet Grotesk', 'Inter', '-apple-system', 'system-ui', 'sans-serif'],
-        'mono': ['JetBrains Mono', 'SF Mono', 'Consolas', 'Liberation Mono', 'Courier', 'monospace'],
-        'serif': ['Newsreader', 'Georgia', 'Cambria', 'Times New Roman', 'Times', 'serif'],
+        'body': ['var(--font-body)'],
+        'heading': ['var(--font-heading)'],
+        'title': ['var(--font-title)'],
+        'sans': ['var(--font-body)'],
+        'display': ['var(--font-title)'],
+        'mono': ['var(--font-mono)'],
+        'serif': ['var(--font-serif)'],
       },
 
       // Elevated color system - Clean, light, professional
@@ -28,6 +33,32 @@ module.exports = {
         'cmd-ring':             'var(--cmd-ring)',
         'cmd-accent':           'var(--cmd-accent)',
         'cmd-overlay':          'var(--cmd-overlay)',
+
+        // ── Semantic theme tokens (var-backed, themeable at runtime) ─────────
+        // Backed by channel vars in styles/tokens.css via rgb(... / <alpha-value>)
+        // so opacity modifiers (bg-surface/50) keep working. These are the
+        // canonical surface/text/border names the app migrates onto.
+        surface: {
+          DEFAULT:  'rgb(var(--surface) / <alpha-value>)',
+          canvas:   'rgb(var(--surface-canvas) / <alpha-value>)',
+          muted:    'rgb(var(--surface-muted) / <alpha-value>)',
+          subtle:   'rgb(var(--surface-subtle) / <alpha-value>)',
+          strong:   'rgb(var(--surface-strong) / <alpha-value>)',
+          hover:    'rgb(var(--surface-hover) / <alpha-value>)',
+          overlay:  'rgb(var(--surface-overlay) / <alpha-value>)',
+        },
+        content: {
+          DEFAULT:   'rgb(var(--content) / <alpha-value>)',
+          secondary: 'rgb(var(--content-secondary) / <alpha-value>)',
+          muted:     'rgb(var(--content-muted) / <alpha-value>)',
+          faint:     'rgb(var(--content-faint) / <alpha-value>)',
+          inverted:  'rgb(var(--content-inverted) / <alpha-value>)',
+        },
+        line: {
+          DEFAULT: 'rgb(var(--line) / <alpha-value>)',
+          strong:  'rgb(var(--line-strong) / <alpha-value>)',
+          subtle:  'rgb(var(--line-subtle) / <alpha-value>)',
+        },
 
         // Neutral - Light theme grayscale (from Figma design tokens)
         neutral: {
@@ -54,64 +85,65 @@ module.exports = {
           300: '#D4D4D4',   // Hover states
         },
 
-        // Primary - Complementary blue from Figma
+        // Primary - Complementary blue from Figma. Var-backed (styles/tokens.css)
+        // so the whole accent ramp is themeable without touching any classes.
         primary: {
-          50: '#EFF6FF',
-          100: '#DBEAFE',
-          200: '#BFDBFE',
-          300: '#93C5FD',
-          400: '#60A5FA',
-          500: '#2F6EF4',   // Complementary Blue (Figma)
-          600: '#2563EB',   // Gradient end
-          700: '#1D4ED8',   // Active state
-          800: '#1E40AF',
-          900: '#1E3A8A',
-          950: '#172554',
+          50:  'rgb(var(--primary-50) / <alpha-value>)',
+          100: 'rgb(var(--primary-100) / <alpha-value>)',
+          200: 'rgb(var(--primary-200) / <alpha-value>)',
+          300: 'rgb(var(--primary-300) / <alpha-value>)',
+          400: 'rgb(var(--primary-400) / <alpha-value>)',
+          500: 'rgb(var(--primary-500) / <alpha-value>)',
+          600: 'rgb(var(--primary-600) / <alpha-value>)',
+          700: 'rgb(var(--primary-700) / <alpha-value>)',
+          800: 'rgb(var(--primary-800) / <alpha-value>)',
+          900: 'rgb(var(--primary-900) / <alpha-value>)',
+          950: 'rgb(var(--primary-950) / <alpha-value>)',
         },
 
         // Sage - Success (from Figma: #34C759)
         sage: {
-          50: '#F0FDF4',
-          100: '#DCFCE7',
-          200: '#BBF7D0',
-          300: '#86EFAC',
-          400: '#4ADE80',
-          500: '#34C759',   // Success Green (Figma)
-          600: '#16A34A',
-          700: '#15803D',
-          800: '#166534',
-          900: '#14532D',
-          950: '#052E16',
+          50:  'rgb(var(--sage-50) / <alpha-value>)',
+          100: 'rgb(var(--sage-100) / <alpha-value>)',
+          200: 'rgb(var(--sage-200) / <alpha-value>)',
+          300: 'rgb(var(--sage-300) / <alpha-value>)',
+          400: 'rgb(var(--sage-400) / <alpha-value>)',
+          500: 'rgb(var(--sage-500) / <alpha-value>)',
+          600: 'rgb(var(--sage-600) / <alpha-value>)',
+          700: 'rgb(var(--sage-700) / <alpha-value>)',
+          800: 'rgb(var(--sage-800) / <alpha-value>)',
+          900: 'rgb(var(--sage-900) / <alpha-value>)',
+          950: 'rgb(var(--sage-950) / <alpha-value>)',
         },
 
         // Amber - Attention and caution (from Figma: #E8A728)
         amber: {
-          50: '#FFFBEB',
-          100: '#FEF3C7',
-          200: '#FDE68A',
-          300: '#FCD34D',
-          400: '#FBBF24',
-          500: '#E8A728',   // Alert Orange (Figma)
-          600: '#D97706',
-          700: '#B45309',
-          800: '#92400E',
-          900: '#78350F',
-          950: '#451A03',
+          50:  'rgb(var(--amber-50) / <alpha-value>)',
+          100: 'rgb(var(--amber-100) / <alpha-value>)',
+          200: 'rgb(var(--amber-200) / <alpha-value>)',
+          300: 'rgb(var(--amber-300) / <alpha-value>)',
+          400: 'rgb(var(--amber-400) / <alpha-value>)',
+          500: 'rgb(var(--amber-500) / <alpha-value>)',
+          600: 'rgb(var(--amber-600) / <alpha-value>)',
+          700: 'rgb(var(--amber-700) / <alpha-value>)',
+          800: 'rgb(var(--amber-800) / <alpha-value>)',
+          900: 'rgb(var(--amber-900) / <alpha-value>)',
+          950: 'rgb(var(--amber-950) / <alpha-value>)',
         },
 
         // Coral - Errors and dangers (from Figma: #EF4444)
         coral: {
-          50: '#FEF2F2',
-          100: '#FEE2E2',
-          200: '#FECACA',
-          300: '#FCA5A5',
-          400: '#F87171',
-          500: '#EF4444',   // Error Red (Figma)
-          600: '#DC2626',
-          700: '#B91C1C',
-          800: '#991B1B',
-          900: '#7F1D1D',
-          950: '#450A0A',
+          50:  'rgb(var(--coral-50) / <alpha-value>)',
+          100: 'rgb(var(--coral-100) / <alpha-value>)',
+          200: 'rgb(var(--coral-200) / <alpha-value>)',
+          300: 'rgb(var(--coral-300) / <alpha-value>)',
+          400: 'rgb(var(--coral-400) / <alpha-value>)',
+          500: 'rgb(var(--coral-500) / <alpha-value>)',
+          600: 'rgb(var(--coral-600) / <alpha-value>)',
+          700: 'rgb(var(--coral-700) / <alpha-value>)',
+          800: 'rgb(var(--coral-800) / <alpha-value>)',
+          900: 'rgb(var(--coral-900) / <alpha-value>)',
+          950: 'rgb(var(--coral-950) / <alpha-value>)',
         },
 
         // Stone - Neutral scale (keeping for backward compat, mapped to neutral)
@@ -239,6 +271,10 @@ module.exports = {
         'float': 'float 3s ease-in-out infinite',
         'ticker': 'ticker 30s linear infinite',
         'wiggle': 'wiggle 0.5s ease-in-out',
+        // Gentle ping-pong scroll for overflowing single-line labels (e.g. a
+        // long thread-goal objective). Distance is supplied per-element via the
+        // `--goal-marquee-shift` CSS var; `alternate` returns it to the start.
+        'goal-marquee': 'goalMarquee 6s ease-in-out infinite alternate',
       },
 
       keyframes: {
@@ -282,6 +318,10 @@ module.exports = {
           '0%, 100%': { transform: 'rotate(0deg)' },
           '25%': { transform: 'rotate(-9deg)' },
           '75%': { transform: 'rotate(9deg)' },
+        },
+        goalMarquee: {
+          '0%, 18%': { transform: 'translateX(0)' },
+          '82%, 100%': { transform: 'translateX(var(--goal-marquee-shift, 0px))' },
         },
       },
 

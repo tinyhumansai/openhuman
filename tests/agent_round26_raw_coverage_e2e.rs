@@ -19,9 +19,9 @@ use openhuman_core::openhuman::inference::provider::{
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
 };
+use openhuman_core::openhuman::skills::ops_types::Workflow;
 use openhuman_core::openhuman::subconscious::SourceChunk;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
-use openhuman_core::openhuman::workflows::ops_types::Workflow;
 use parking_lot::Mutex;
 use serde_json::json;
 use std::collections::{HashSet, VecDeque};
@@ -223,6 +223,8 @@ fn text_response(text: &str) -> ChatResponse {
             output_tokens: 2,
             context_window: 16_000,
             cached_input_tokens: 1,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.0001,
         }),
         reasoning_content: None,
@@ -433,7 +435,6 @@ async fn builder_dedupes_visible_native_tools_and_seed_resume_bounds_history() -
             ..AgentConfig::default()
         })
         .explicit_preferences_enabled(false)
-        .unified_compaction_enabled(false)
         .build()?;
 
     let original_key = agent.session_key().to_string();
@@ -466,11 +467,15 @@ async fn builder_dedupes_visible_native_tools_and_seed_resume_bounds_history() -
         .messages
         .iter()
         .any(|msg| msg.role == "user" && msg.content == "falls back to user"));
+    // The live turn's user message is stamped with the per-turn
+    // `Current Date & Time:` line (#3602), so match by suffix rather than
+    // exact equality — the dedup contract (exactly one "current message"
+    // user turn after resume) still holds.
     assert_eq!(
         requests[0]
             .messages
             .iter()
-            .filter(|msg| msg.role == "user" && msg.content == "current message")
+            .filter(|msg| msg.role == "user" && msg.content.ends_with("current message"))
             .count(),
         1
     );

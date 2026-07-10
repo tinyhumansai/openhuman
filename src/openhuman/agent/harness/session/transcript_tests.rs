@@ -1,4 +1,5 @@
 use super::*;
+use crate::openhuman::inference::provider::ToolCall;
 use tempfile::TempDir;
 
 fn sample_messages() -> Vec<ChatMessage> {
@@ -16,7 +17,11 @@ fn sample_messages() -> Vec<ChatMessage> {
 fn sample_meta() -> TranscriptMeta {
     TranscriptMeta {
         agent_name: "code_executor".into(),
+        agent_id: Some("code_executor".into()),
+        agent_type: Some("subagent".into()),
         dispatcher: "native".into(),
+        provider: Some("openhuman-backend".into()),
+        model: Some("claude-sonnet-4-6".into()),
         created: "2026-04-11T14:30:00Z".into(),
         updated: "2026-04-11T14:35:22Z".into(),
         turn_count: 3,
@@ -25,19 +30,30 @@ fn sample_meta() -> TranscriptMeta {
         cached_input_tokens: 3500,
         charged_amount_usd: 0.0045,
         thread_id: None,
+        task_id: Some("task-123".into()),
     }
 }
 
 fn sample_turn_usage() -> TurnUsage {
     TurnUsage {
+        provider: "openhuman-backend".into(),
         model: "claude-sonnet-4-6".into(),
         usage: MessageUsage {
             input: 1234,
             output: 567,
             cached_input: 1000,
+            context_window: 200_000,
             cost_usd: 0.0012,
         },
         ts: "2026-04-17T10:00:00Z".into(),
+        reasoning_content: Some("private reasoning trace".into()),
+        tool_calls: vec![ToolCall {
+            id: "call-1".into(),
+            name: "shell".into(),
+            arguments: "{\"cmd\":\"ls\"}".into(),
+            extra_content: None,
+        }],
+        iteration: 1,
     }
 }
 
@@ -426,6 +442,22 @@ fn usage_round_trips_on_last_assistant_message() {
         "model missing from last assistant line"
     );
     assert!(
+        last_assistant_line.contains("openhuman-backend"),
+        "provider missing from last assistant line"
+    );
+    assert!(
+        last_assistant_line.contains("\"context_window\":200000"),
+        "context window missing from usage"
+    );
+    assert!(
+        last_assistant_line.contains("private reasoning trace"),
+        "reasoning content missing from assistant metadata"
+    );
+    assert!(
+        last_assistant_line.contains("\"tool_calls\""),
+        "native tool calls missing from assistant metadata"
+    );
+    assert!(
         last_assistant_line.contains("\"cost_usd\""),
         "cost_usd missing"
     );
@@ -437,6 +469,52 @@ fn usage_round_trips_on_last_assistant_message() {
         assert_eq!(orig.role, got.role);
         assert_eq!(orig.content, got.content);
     }
+}
+
+#[test]
+fn embedded_usage_preserves_earlier_assistant_messages_on_rewrite() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("multi_usage.jsonl");
+    let mut messages = vec![
+        ChatMessage::user("start"),
+        ChatMessage::assistant("first"),
+        ChatMessage::user("continue"),
+        ChatMessage::assistant("second"),
+    ];
+    let first_usage = TurnUsage {
+        provider: "provider-a".into(),
+        model: "model-a".into(),
+        iteration: 1,
+        ..sample_turn_usage()
+    };
+    let second_usage = TurnUsage {
+        provider: "provider-b".into(),
+        model: "model-b".into(),
+        iteration: 2,
+        ..sample_turn_usage()
+    };
+    attach_turn_usage_metadata(&mut messages[1], &first_usage);
+
+    write_transcript(&path, &messages, &sample_meta(), Some(&second_usage)).unwrap();
+
+    let raw = fs::read_to_string(&path).unwrap();
+    let assistant_lines: Vec<&str> = raw
+        .lines()
+        .filter(|line| line.contains("\"role\":\"assistant\""))
+        .collect();
+    assert_eq!(assistant_lines.len(), 2);
+    assert!(assistant_lines[0].contains("provider-a"));
+    assert!(assistant_lines[0].contains("model-a"));
+    assert!(assistant_lines[1].contains("provider-b"));
+    assert!(assistant_lines[1].contains("model-b"));
+
+    let loaded = read_transcript(&path).unwrap();
+    write_transcript(&path, &loaded.messages, &loaded.meta, None).unwrap();
+    let rewritten = fs::read_to_string(&path).unwrap();
+    assert!(rewritten.contains("provider-a"));
+    assert!(rewritten.contains("model-a"));
+    assert!(rewritten.contains("provider-b"));
+    assert!(rewritten.contains("model-b"));
 }
 
 #[test]
@@ -453,10 +531,15 @@ fn md_companion_file_is_written() {
     assert!(md_path.exists(), ".md companion should be written");
     let md = fs::read_to_string(&md_path).unwrap();
     assert!(md.contains("# Session transcript — code_executor"));
+    assert!(md.contains("Agent ID: `code_executor`"));
+    assert!(md.contains("Agent type: `subagent`"));
+    assert!(md.contains("Provider: `openhuman-backend`"));
+    assert!(md.contains("Task: `task-123`"));
     assert!(
         md.contains("claude-sonnet-4-6"),
         "model should appear in md"
     );
+    assert!(md.contains("private reasoning trace"));
     assert!(md.contains("## [system]"), "system section missing");
     assert!(md.contains("## [user]"), "user section missing");
 }
@@ -737,4 +820,159 @@ fn find_root_transcript_for_thread_excludes_subagent_files() {
         "returned path must not be a subagent file (contains __): {}",
         found.display()
     );
+}
+
+#[test]
+fn read_thread_usage_summary_totals_last_turn_and_model() {
+    let ws = TempDir::new().unwrap();
+    let raw = raw_session_dir(ws.path());
+    std::fs::create_dir_all(&raw).unwrap();
+
+    let mut meta = sample_meta();
+    meta.thread_id = Some("thr-xyz".into());
+    meta.input_tokens = 5000;
+    meta.output_tokens = 1200;
+    meta.cached_input_tokens = 800;
+    meta.charged_amount_usd = 0.0045;
+    meta.turn_count = 3;
+
+    let tu = TurnUsage {
+        provider: "openhuman-backend".into(),
+        model: "reasoning-v1".into(),
+        usage: MessageUsage {
+            input: 400,
+            output: 120,
+            cached_input: 50,
+            context_window: 1_000_000,
+            cost_usd: 0.0009,
+        },
+        ts: "2026-04-11T14:35:22Z".into(),
+        reasoning_content: None,
+        tool_calls: Vec::new(),
+        iteration: 0,
+    };
+    let path = raw.join("1700000000_main.jsonl");
+    write_transcript(&path, &sample_messages(), &meta, Some(&tu)).unwrap();
+
+    let summary = read_thread_usage_summary(ws.path(), "thr-xyz").expect("summary present");
+    assert_eq!(summary.input_tokens, 5000);
+    assert_eq!(summary.output_tokens, 1200);
+    assert_eq!(summary.cached_input_tokens, 800);
+    assert!((summary.cost_usd - 0.0045).abs() < 1e-9);
+    assert_eq!(summary.turn_count, 3);
+    assert_eq!(summary.last_turn_input_tokens, 400);
+    assert_eq!(summary.last_turn_output_tokens, 120);
+    assert_eq!(summary.model.as_deref(), Some("reasoning-v1"));
+}
+
+#[test]
+fn read_thread_usage_summary_sums_multiple_transcripts() {
+    let ws = TempDir::new().unwrap();
+    let raw = raw_session_dir(ws.path());
+    std::fs::create_dir_all(&raw).unwrap();
+
+    let mut mk = |stem: &str, input: u64, cost: f64| {
+        let mut meta = sample_meta();
+        meta.thread_id = Some("thr-multi".into());
+        meta.input_tokens = input;
+        meta.output_tokens = 0;
+        meta.cached_input_tokens = 0;
+        meta.charged_amount_usd = cost;
+        meta.turn_count = 1;
+        write_transcript(
+            &raw.join(format!("{stem}.jsonl")),
+            &sample_messages(),
+            &meta,
+            None,
+        )
+        .unwrap();
+    };
+    mk("1700000000_main", 100, 0.01);
+    mk("1700000100_main", 250, 0.02);
+
+    let s = read_thread_usage_summary(ws.path(), "thr-multi").expect("summary present");
+    assert_eq!(s.input_tokens, 350);
+    assert!((s.cost_usd - 0.03).abs() < 1e-9);
+    assert_eq!(s.turn_count, 2);
+}
+
+#[test]
+fn read_thread_usage_summary_none_for_unknown_thread() {
+    let ws = TempDir::new().unwrap();
+    assert!(read_thread_usage_summary(ws.path(), "no-such-thread").is_none());
+    // Empty thread id is rejected too.
+    assert!(read_thread_usage_summary(ws.path(), "   ").is_none());
+}
+
+#[test]
+fn read_thread_usage_summary_groups_subagents_by_archetype() {
+    let ws = TempDir::new().unwrap();
+    let raw = raw_session_dir(ws.path());
+    std::fs::create_dir_all(&raw).unwrap();
+
+    // Root (orchestrator) transcript — never includes sub-agent calls.
+    let mut root = sample_meta();
+    root.thread_id = Some("thr-sub".into());
+    root.agent_name = "main".into();
+    root.input_tokens = 1000;
+    root.output_tokens = 200;
+    root.cached_input_tokens = 0;
+    root.charged_amount_usd = 0.0;
+    root.turn_count = 2;
+    write_transcript(
+        &raw.join("1700000000_main.jsonl"),
+        &sample_messages(),
+        &root,
+        None,
+    )
+    .unwrap();
+
+    // Sub-agent transcripts (stems contain `__`): coder x2 + researcher x1.
+    let mut sub = |stem: &str, agent: &str, input: u64, output: u64| {
+        let mut m = sample_meta();
+        m.thread_id = Some("thr-sub".into());
+        m.agent_name = agent.into();
+        m.input_tokens = input;
+        m.output_tokens = output;
+        m.cached_input_tokens = 0;
+        m.charged_amount_usd = 0.0;
+        m.turn_count = 1;
+        write_transcript(
+            &raw.join(format!("{stem}.jsonl")),
+            &sample_messages(),
+            &m,
+            None,
+        )
+        .unwrap();
+    };
+    sub("1700000000_main__1700000001_coder", "coder", 300, 60);
+    sub("1700000000_main__1700000002_coder", "coder", 100, 20);
+    sub(
+        "1700000000_main__1700000003_researcher",
+        "researcher",
+        500,
+        90,
+    );
+
+    let s = read_thread_usage_summary(ws.path(), "thr-sub").expect("summary present");
+    // Root totals are orchestrator-only (sub-agents are separate).
+    assert_eq!(s.input_tokens, 1000);
+    assert_eq!(s.output_tokens, 200);
+    // Grouped by archetype.
+    assert_eq!(s.subagents.len(), 2);
+    let coder = s
+        .subagents
+        .iter()
+        .find(|g| g.agent_id == "coder")
+        .expect("coder group");
+    assert_eq!(coder.input_tokens, 400);
+    assert_eq!(coder.output_tokens, 80);
+    assert_eq!(coder.runs, 2);
+    let researcher = s
+        .subagents
+        .iter()
+        .find(|g| g.agent_id == "researcher")
+        .expect("researcher group");
+    assert_eq!(researcher.input_tokens, 500);
+    assert_eq!(researcher.runs, 1);
 }

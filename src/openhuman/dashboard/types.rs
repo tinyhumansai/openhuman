@@ -5,15 +5,22 @@ use serde::{Deserialize, Serialize};
 /// One row in the model health comparison table.
 ///
 /// Mirrors the JSON shape consumed by the frontend
-/// `ModelHealthPanel` — `id`/`provider`/`cost_per_1m_output`/`vision`
-/// come from `Config::model_registry`; the four metric fields are
-/// emitted as placeholder (`null` / `0`) values until a local telemetry
-/// pipeline is wired in.
+/// `ModelHealthPanel` — `id`/`provider`/`cost_per_1m_input`/
+/// `cost_per_1m_cached_input`/`cost_per_1m_output`/`vision` come from
+/// `Config::model_registry` (pricing pre-filled from the cost catalog);
+/// the four metric fields are emitted as placeholder (`null` / `0`)
+/// values until a local telemetry pipeline is wired in.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModelHealthEntry {
     pub id: String,
     pub provider: String,
+    /// USD per 1M input tokens (`0.0` when unknown).
+    pub cost_per_1m_input: f64,
+    /// USD per 1M cached-prefix input tokens (`0.0` when unknown).
+    pub cost_per_1m_cached_input: f64,
     pub cost_per_1m_output: f64,
+    /// Maximum context window in tokens (`0` when unknown).
+    pub context_window: u32,
     pub vision: bool,
     pub quality_score: Option<f64>,
     pub hallucination_rate: Option<f64>,

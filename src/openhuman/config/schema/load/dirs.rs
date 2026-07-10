@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 pub use load_user_state::{
-    clear_active_user, pre_login_user_dir, read_active_user_id, user_openhuman_dir,
-    write_active_user_id, PRE_LOGIN_USER_ID,
+    active_user_marker_path, clear_active_user, pre_login_user_dir, read_active_user_id,
+    user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
 };
 
 #[path = "../load_user_state.rs"]

@@ -12,8 +12,9 @@ import {
   memoryRecallNamespace,
 } from '../../../utils/tauriCommands';
 import { MemoryTextWithEntities } from '../../intelligence/MemoryTextWithEntities';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import {
   SettingsEmptyState,
   SettingsSection,
@@ -27,7 +28,7 @@ import { normalizeMemoryDocuments } from './memoryDebugUtils';
 
 const MemoryDebugPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const [documents, setDocuments] = useState<MemoryDebugDocument[]>([]);
   const [documentsRaw, setDocumentsRaw] = useState<unknown>(null);
   const [documentsNamespaceFilter, setDocumentsNamespaceFilter] = useState('');
@@ -196,15 +197,13 @@ const MemoryDebugPanel = () => {
   }, [clearNamespaceInput, refreshAll, t]);
 
   return (
-    <div className="z-10 relative" data-testid="memory-debug-panel">
-      <SettingsHeader
-        title={t('memory.debugTitle')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
-      <div className="p-4 space-y-4">
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      testId="memory-debug-panel"
+      description={t('devOptions.debugPanelsDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
+      <div className="p-4 space-y-5">
         {/* Documents */}
         <SettingsSection title={t('memory.documents')}>
           <div className="px-4 py-3 space-y-3">
@@ -234,23 +233,21 @@ const MemoryDebugPanel = () => {
                 {documents.map(doc => (
                   <div
                     key={`${doc.namespace}:${doc.documentId}`}
-                    className="flex items-start justify-between gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-2">
+                    className="flex items-start justify-between gap-2 rounded-lg border border-line bg-surface-muted p-2">
                     <div className="min-w-0">
-                      <div className="text-xs font-medium text-neutral-800 dark:text-neutral-100 break-all">
+                      <div className="text-xs font-medium text-content break-all">
                         {doc.documentId}
                       </div>
-                      <div className="text-[11px] text-neutral-500 dark:text-neutral-400 break-all">
+                      <div className="text-[11px] text-content-muted break-all">
                         {doc.namespace}
                       </div>
                       {doc.title && (
-                        <div className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                          {doc.title}
-                        </div>
+                        <div className="text-[11px] text-content-muted">{doc.title}</div>
                       )}
                     </div>
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant="tertiary"
                       size="xs"
                       disabled={Boolean(deleteLoadingId)}
                       onClick={() => void handleDelete(doc)}>
@@ -261,10 +258,10 @@ const MemoryDebugPanel = () => {
               </div>
             )}
             <details className="text-xs">
-              <summary className="cursor-pointer text-neutral-500 dark:text-neutral-400">
+              <summary className="cursor-pointer text-content-muted">
                 {t('memory.rawResponse')}
               </summary>
-              <pre className="mt-1 max-h-32 overflow-auto rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-950 dark:bg-neutral-50 p-2 text-[11px] text-neutral-100 whitespace-pre-wrap break-words">
+              <pre className="mt-1 max-h-32 overflow-auto rounded-lg border border-line bg-neutral-950 dark:bg-neutral-50 p-2 text-[11px] text-neutral-100 whitespace-pre-wrap break-words">
                 {JSON.stringify(documentsRaw, null, 2)}
               </pre>
             </details>
@@ -290,7 +287,7 @@ const MemoryDebugPanel = () => {
                 {namespaces.map(ns => (
                   <span
                     key={ns}
-                    className="rounded-full bg-neutral-100 dark:bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-500 dark:text-neutral-400">
+                    className="rounded-full bg-surface-subtle px-2 py-0.5 text-[11px] text-content-muted">
                     {ns}
                   </span>
                 ))}
@@ -327,9 +324,7 @@ const MemoryDebugPanel = () => {
                 aria-label={t('memory.maxChunks')}
                 inputSize="sm"
               />
-              <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                {t('memory.maxChunks')}
-              </span>
+              <span className="text-[11px] text-content-muted">{t('memory.maxChunks')}</span>
               <div className="flex-1" />
               <Button
                 type="button"
@@ -363,25 +358,25 @@ const MemoryDebugPanel = () => {
               <div className="space-y-2">
                 {queryResult && (
                   <div>
-                    <div className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 mb-1">
+                    <div className="text-[11px] font-medium text-content-muted mb-1">
                       {t('memory.queryResult')}
                     </div>
                     <MemoryTextWithEntities
                       text={queryResult.text ?? ''}
                       entities={queryResult.entities}
-                      className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-2 text-[11px] leading-5 min-h-12 whitespace-pre-wrap"
+                      className="rounded-lg border border-line bg-surface-muted p-2 text-[11px] leading-5 min-h-12 whitespace-pre-wrap"
                     />
                   </div>
                 )}
                 {recallResult && (
                   <div>
-                    <div className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 mb-1">
+                    <div className="text-[11px] font-medium text-content-muted mb-1">
                       {t('memory.recallResult')}
                     </div>
                     <MemoryTextWithEntities
                       text={recallResult.text ?? ''}
                       entities={recallResult.entities}
-                      className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 p-2 text-[11px] leading-5 min-h-12 whitespace-pre-wrap"
+                      className="rounded-lg border border-line bg-surface-muted p-2 text-[11px] leading-5 min-h-12 whitespace-pre-wrap"
                     />
                   </div>
                 )}
@@ -422,7 +417,8 @@ const MemoryDebugPanel = () => {
               )}
               <Button
                 type="button"
-                variant="danger"
+                variant="secondary"
+                tone="danger"
                 size="xs"
                 onClick={() => void handleClearNamespace()}
                 disabled={clearLoading || !clearNamespaceInput.trim()}>
@@ -438,7 +434,7 @@ const MemoryDebugPanel = () => {
           </div>
         </SettingsSection>
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

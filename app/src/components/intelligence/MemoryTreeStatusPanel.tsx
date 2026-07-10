@@ -30,6 +30,7 @@ import {
   type MemoryTreePipelineStatus,
   memoryTreeSetEnabled,
 } from '../../utils/tauriCommands';
+import Button from '../ui/Button';
 
 /** Translator function shape exposed by `useT()`. */
 type TFn = (key: string, fallback?: string) => string;
@@ -259,7 +260,7 @@ function IntegrationHealthStrip({
 }) {
   return (
     <div className="space-y-2" data-testid="memory-tree-integrations">
-      <div className="text-[11px] uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+      <div className="text-[11px] uppercase tracking-wide text-content-muted">
         {t('memoryTree.status.integrationsTitle')}
       </div>
       {loading && integrations.length === 0 ? (
@@ -268,17 +269,17 @@ function IntegrationHealthStrip({
         // before data arrives (CodeRabbit feedback on #2763).
         <div
           data-testid="memory-tree-integrations-skeleton"
-          className="h-9 animate-pulse rounded-lg bg-stone-200 dark:bg-neutral-800"
+          className="h-9 animate-pulse rounded-lg bg-surface-strong"
         />
       ) : integrations.length === 0 ? (
         <div
           data-testid="memory-tree-integrations-empty"
-          className="rounded-lg border border-dashed border-stone-200 dark:border-neutral-800 px-3 py-2 text-xs text-stone-500 dark:text-neutral-400">
+          className="rounded-lg border border-dashed border-line px-3 py-2 text-xs text-content-muted">
           {t('memoryTree.status.integrationsEmpty')}
         </div>
       ) : (
         <ul
-          className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50/40 dark:bg-neutral-800/30 p-2"
+          className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-line bg-surface-muted/40 dark:bg-surface-muted/30 p-2"
           aria-label={t('memoryTree.status.integrationsTitle')}>
           {integrations.map(row => {
             const health = classifyIntegration(row.freshness);
@@ -291,16 +292,14 @@ function IntegrationHealthStrip({
               <li
                 key={row.provider}
                 data-testid={`memory-tree-integration-row-${row.provider}`}
-                className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-stone-100/60 dark:hover:bg-neutral-800/60">
+                className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-surface-subtle/60 dark:hover:bg-surface-muted/60">
                 <div className="flex min-w-0 items-center gap-2">
                   <span aria-hidden className="text-base leading-none">
                     {providerIconChar(row.provider)}
                   </span>
-                  <span className="truncate text-sm font-medium text-stone-800 dark:text-neutral-200">
-                    {row.provider}
-                  </span>
+                  <span className="truncate text-sm font-medium text-content">{row.provider}</span>
                 </div>
-                <div className="flex shrink-0 items-center gap-3 text-xs text-stone-500 dark:text-neutral-400">
+                <div className="flex shrink-0 items-center gap-3 text-xs text-content-muted">
                   <span>
                     {t('memoryTree.status.integrationChunks').replace(
                       '{count}',
@@ -310,7 +309,7 @@ function IntegrationHealthStrip({
                   <span>
                     {formatRelativeMs(row.last_chunk_at_ms ?? 0, t, t('memoryTree.status.never'))}
                   </span>
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white dark:bg-neutral-900 px-2 py-0.5 text-[11px] font-medium text-stone-700 dark:text-neutral-200 ring-1 ring-stone-200 dark:ring-neutral-700">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-surface px-2 py-0.5 text-[11px] font-medium text-content-secondary ring-1 ring-stone-200 dark:ring-neutral-700">
                     <span aria-hidden className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
                     {healthLabel}
                   </span>
@@ -381,18 +380,15 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
   const checked = !(status?.is_paused ?? false);
 
   const tileClass =
-    'rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800';
-  const labelClass =
-    'text-[11px] uppercase tracking-wide text-stone-500 dark:text-neutral-400 mb-1';
-  const valueClass = 'text-xl font-semibold text-stone-900 dark:text-neutral-100';
-  const skeletonClass = 'h-7 w-16 rounded bg-stone-200 dark:bg-neutral-800 animate-pulse';
+    'rounded-xl border border-line bg-surface-muted p-3 transition-colors hover:bg-surface-hover';
+  const labelClass = 'text-[11px] uppercase tracking-wide text-content-muted mb-1';
+  const valueClass = 'text-xl font-semibold text-content';
+  const skeletonClass = 'h-7 w-16 rounded bg-surface-strong animate-pulse';
 
   return (
     <div className="space-y-3" data-testid="memory-tree-status-panel">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-          {t('memoryTree.status.title')}
-        </h2>
+        <h2 className="text-sm font-semibold text-content">{t('memoryTree.status.title')}</h2>
       </div>
 
       {error && !loading ? (
@@ -401,14 +397,15 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
           className="flex items-center justify-between gap-3 rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-sm text-coral-700 dark:text-coral-300"
           data-testid="memory-tree-status-error">
           <span>{t('memoryTree.status.fetchError')}</span>
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            tone="danger"
+            size="xs"
             onClick={() => {
               void refresh();
-            }}
-            className="rounded-md border border-coral-300 dark:border-coral-500/40 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-coral-700 dark:text-coral-300 hover:bg-coral-50 dark:hover:bg-coral-500/20">
+            }}>
             {t('memoryTree.status.retry')}
-          </button>
+          </Button>
         </div>
       ) : null}
 
@@ -461,9 +458,7 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
                 </span>
               </div>
               {status.reason ? (
-                <div className="mt-0.5 text-[11px] text-stone-500 dark:text-neutral-400">
-                  {status.reason}
-                </div>
+                <div className="mt-0.5 text-[11px] text-content-muted">{status.reason}</div>
               ) : null}
             </>
           )}
@@ -510,9 +505,7 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
           exist; near-0% with chunks present means the wiki is built but has no
           structure (the extraction model is failing). */}
       {!loading && status && status.total_chunks > 0 && status.extraction_coverage != null ? (
-        <div
-          className="text-xs text-stone-500 dark:text-neutral-400"
-          data-testid="memory-tree-extraction-coverage">
+        <div className="text-xs text-content-muted" data-testid="memory-tree-extraction-coverage">
           {t('memoryTree.status.extractionCoverage').replace(
             '{pct}',
             String(Math.round((status.extraction_coverage ?? 0) * 100))
@@ -524,13 +517,13 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
 
       {/* Auto-sync toggle row — markup mirrors AIPanel's inline ToggleRow */}
       <div
-        className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2"
+        className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface px-3 py-2"
         data-testid="memory-tree-status-toggle-row">
         <div className="min-w-0">
-          <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+          <div className="text-sm font-medium text-content">
             {t('memoryTree.status.autoSyncLabel')}
           </div>
-          <div className="text-xs text-stone-500 dark:text-neutral-400">
+          <div className="text-xs text-content-muted">
             {t('memoryTree.status.autoSyncDescription')}
           </div>
         </div>
@@ -545,11 +538,11 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
           }}
           data-testid="memory-tree-status-toggle"
           className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60 ${
-            checked ? 'bg-primary-500' : 'bg-stone-300 dark:bg-neutral-700'
+            checked ? 'bg-primary-500' : 'bg-surface-strong'
           }`}>
           <span
             aria-hidden
-            className={`inline-block h-4 w-4 transform rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${
+            className={`inline-block h-4 w-4 transform rounded-full bg-surface shadow transition-transform ${
               checked ? 'translate-x-4' : 'translate-x-0.5'
             }`}
           />

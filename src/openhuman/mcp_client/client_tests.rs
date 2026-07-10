@@ -394,6 +394,55 @@ fn parse_sse_events_handles_multiple_frames() {
     assert_eq!(events[1].data.as_ref().unwrap()["b"], 2);
 }
 
+// #4195 — the incremental SSE reader must surface the JSON-RPC reply the moment
+// a complete `data:` frame is buffered, so a server that holds the stream open
+// after replying no longer stalls the tool call until the request timeout.
+
+#[test]
+fn first_complete_sse_data_returns_none_until_event_terminated() {
+    // The data line has arrived but the terminating blank line has not — a
+    // half-received frame must NOT be parsed (it could be truncated JSON).
+    assert!(first_complete_sse_data("event: message\ndata: {\"a\":1}\n")
+        .expect("ok")
+        .is_none());
+    // Nothing complete at all.
+    assert!(first_complete_sse_data("event: mess")
+        .expect("ok")
+        .is_none());
+}
+
+#[test]
+fn first_complete_sse_data_returns_first_complete_frame() {
+    // A fully-terminated event yields its data immediately, even though more
+    // bytes (here, the start of a second frame) trail behind it.
+    let buffer = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n\ndata: {\"b\":2}";
+    let data = first_complete_sse_data(buffer)
+        .expect("ok")
+        .expect("first complete frame");
+    assert_eq!(data["result"]["ok"], true);
+}
+
+#[test]
+fn first_complete_sse_data_skips_keepalive_and_dataless_events() {
+    // Leading SSE comment + a dataless event must be skipped, returning the
+    // first event that actually carries a data frame.
+    let buffer = ": keepalive\n\nevent: ping\n\ndata: {\"id\":7}\n\n";
+    let data = first_complete_sse_data(buffer)
+        .expect("ok")
+        .expect("data frame after keepalive");
+    assert_eq!(data["id"], 7);
+}
+
+#[test]
+fn first_complete_sse_data_handles_crlf_boundaries() {
+    // CRLF streams must split on the same blank-line boundary.
+    let buffer = "event: message\r\ndata: {\"id\":9}\r\n\r\n";
+    let data = first_complete_sse_data(buffer)
+        .expect("ok")
+        .expect("crlf data frame");
+    assert_eq!(data["id"], 9);
+}
+
 #[test]
 fn parse_www_authenticate_extracts_resource_metadata() {
     let mut headers = HeaderMap::new();
@@ -470,6 +519,105 @@ async fn bearer_auth_is_attached_to_initialize() {
     );
     let init = client.initialize().await.expect("initialize");
     assert_eq!(init.server_info["name"], "bearer-server");
+}
+
+/// 401 unless the single custom header `X-Custom-Token: tok-xyz` is present —
+/// proves the `McpAuthConfig::Header` arm reaches the wire (#4289).
+async fn custom_header_required_handler(
+    headers: AxumHeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    if headers.get("x-custom-token").and_then(|v| v.to_str().ok()) != Some("tok-xyz") {
+        return (
+            StatusCode::UNAUTHORIZED,
+            "missing custom header".to_string(),
+        )
+            .into_response();
+    }
+    Json(json!({
+        "jsonrpc": "2.0",
+        "id": body["id"].clone(),
+        "result": {
+            "protocolVersion": LATEST_PROTOCOL_VERSION,
+            "capabilities": {},
+            "serverInfo": { "name": "custom-header-server", "version": "1.0.0" }
+        }
+    }))
+    .into_response()
+}
+
+/// 401 unless BOTH `X-Client-Key` and `Authorization` are present — proves the
+/// `McpAuthConfig::Headers` (multi-header) arm sends every header (#4289).
+async fn multi_header_required_handler(
+    headers: AxumHeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let key_ok = headers.get("x-client-key").and_then(|v| v.to_str().ok()) == Some("ck-1");
+    let auth_ok =
+        headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()) == Some("Bearer multi-secret");
+    if !(key_ok && auth_ok) {
+        return (StatusCode::UNAUTHORIZED, "missing a header".to_string()).into_response();
+    }
+    Json(json!({
+        "jsonrpc": "2.0",
+        "id": body["id"].clone(),
+        "result": {
+            "protocolVersion": LATEST_PROTOCOL_VERSION,
+            "capabilities": {},
+            "serverInfo": { "name": "multi-header-server", "version": "1.0.0" }
+        }
+    }))
+    .into_response()
+}
+
+#[tokio::test]
+async fn custom_header_auth_is_attached_to_initialize() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = Router::new().route("/", post(custom_header_required_handler));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = McpHttpClient::with_options(
+        format!("http://{addr}/"),
+        2,
+        McpAuthConfig::Header {
+            name: "X-Custom-Token".into(),
+            value: "tok-xyz".into(),
+        },
+        McpClientIdentityConfig::default(),
+    );
+    let init = client.initialize().await.expect("initialize");
+    assert_eq!(init.server_info["name"], "custom-header-server");
+}
+
+#[tokio::test]
+async fn multi_header_auth_all_attached_to_initialize() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = Router::new().route("/", post(multi_header_required_handler));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = McpHttpClient::with_options(
+        format!("http://{addr}/"),
+        2,
+        McpAuthConfig::Headers {
+            headers: vec![
+                crate::openhuman::config::HttpHeader {
+                    name: "X-Client-Key".into(),
+                    value: "ck-1".into(),
+                },
+                crate::openhuman::config::HttpHeader {
+                    name: "Authorization".into(),
+                    value: "Bearer multi-secret".into(),
+                },
+            ],
+        },
+        McpClientIdentityConfig::default(),
+    );
+    let init = client.initialize().await.expect("initialize");
+    assert_eq!(init.server_info["name"], "multi-header-server");
 }
 
 #[test]

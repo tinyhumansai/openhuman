@@ -15,8 +15,8 @@ import WelcomePage from './pages/WelcomePage';
  * Routed onboarding flow.
  *
  *   welcome → runtime-choice
- *     ├── cloud  → /home
- *     └── custom → /custom/inference → voice → oauth → search → embeddings → vault → /home
+ *     ├── cloud  → /chat
+ *     └── custom → /custom/inference → voice → oauth → search → embeddings → vault → /chat
  *
  * Each custom step asks Default (let OpenHuman manage it) vs Configure
  * (let me pick). Default is a one-click pick; Configure renders inline

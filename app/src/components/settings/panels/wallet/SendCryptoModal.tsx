@@ -13,6 +13,7 @@ import {
   type PreparedTransaction,
   prepareTransfer,
 } from '../../../../services/walletApi';
+import Button from '../../../ui/Button';
 import { ModalShell } from '../../../ui/ModalShell';
 
 interface SendCryptoModalProps {
@@ -115,7 +116,7 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
   }, [onSuccess, onClose]);
 
   const fieldClass =
-    'w-full rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500';
+    'w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-content placeholder-content-faint focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500';
 
   return (
     <ModalShell
@@ -133,16 +134,14 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
 
       {step === 'form' && (
         <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between rounded-lg bg-stone-50 dark:bg-neutral-800/60 px-3 py-2 text-xs">
-            <span className="text-stone-500 dark:text-neutral-400">
-              {t('walletSend.available')}
-            </span>
-            <span className="font-mono font-medium text-stone-800 dark:text-neutral-100">
+          <div className="flex items-center justify-between rounded-lg bg-surface-muted px-3 py-2 text-xs">
+            <span className="text-content-muted">{t('walletSend.available')}</span>
+            <span className="font-mono font-medium text-content">
               {balance.formatted} {balance.assetSymbol}
             </span>
           </div>
           <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+            <span className="text-xs font-medium text-content-secondary">
               {t('walletSend.recipient')}
             </span>
             <input
@@ -157,7 +156,7 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+            <span className="text-xs font-medium text-content-secondary">
               {t('walletSend.amount')}
             </span>
             <div className="relative">
@@ -170,81 +169,78 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
                 className={`${fieldClass} pr-16 font-mono`}
                 data-testid="send-amount"
               />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-stone-400 dark:text-neutral-500">
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-content-faint">
                 {balance.assetSymbol}
               </span>
             </div>
           </label>
-          <button
+          <Button
             type="button"
             onClick={() => void handleReview()}
             disabled={busy}
-            className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-60"
+            className="w-full"
             data-testid="send-review">
             {busy ? t('walletSend.preparing') : t('walletSend.review')}
-          </button>
+          </Button>
         </div>
       )}
 
       {step === 'review' && prepared && (
         <div className="flex flex-col gap-3">
-          <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
+          <p className="text-xs text-content-muted leading-relaxed">
             {t('walletSend.confirmHint')}
           </p>
-          <dl className="rounded-xl border border-stone-200 dark:border-neutral-800 divide-y divide-stone-100 dark:divide-neutral-800 text-xs">
+          <dl className="rounded-xl border border-line divide-y divide-line-subtle dark:divide-neutral-800 text-xs">
             <div className="flex items-center justify-between px-3 py-2">
-              <dt className="text-stone-500 dark:text-neutral-400">{t('walletSend.amount')}</dt>
-              <dd className="font-mono font-medium text-stone-800 dark:text-neutral-100">
+              <dt className="text-content-muted">{t('walletSend.amount')}</dt>
+              <dd className="font-mono font-medium text-content">
                 {prepared.amountFormatted} {prepared.assetSymbol}
               </dd>
             </div>
             <div className="flex items-center justify-between px-3 py-2">
-              <dt className="text-stone-500 dark:text-neutral-400">{t('walletSend.recipient')}</dt>
-              <dd className="font-mono text-stone-800 dark:text-neutral-100">
-                {truncate(prepared.toAddress)}
-              </dd>
+              <dt className="text-content-muted">{t('walletSend.recipient')}</dt>
+              <dd className="font-mono text-content">{truncate(prepared.toAddress)}</dd>
             </div>
             <div className="flex items-center justify-between px-3 py-2">
-              <dt className="text-stone-500 dark:text-neutral-400">
-                {t('walletSend.estimatedFee')}
-              </dt>
-              <dd className="font-mono text-stone-800 dark:text-neutral-100" data-testid="send-fee">
+              <dt className="text-content-muted">{t('walletSend.estimatedFee')}</dt>
+              <dd className="font-mono text-content" data-testid="send-fee">
                 {feeFormatted} {balance.assetSymbol}
               </dd>
             </div>
           </dl>
           {prepared.notes.length > 0 && (
-            <ul className="list-disc pl-4 text-[11px] text-stone-500 dark:text-neutral-400 space-y-0.5">
+            <ul className="list-disc pl-4 text-[11px] text-content-muted space-y-0.5">
               {prepared.notes.map((note, i) => (
                 <li key={i}>{note}</li>
               ))}
             </ul>
           )}
           <div className="flex gap-2">
-            <button
+            <Button
               type="button"
+              variant="secondary"
               onClick={() => {
                 setStep('form');
                 setPrepared(null);
               }}
               disabled={busy}
-              className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-stone-300 dark:border-neutral-700 text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:opacity-60">
+              className="flex-1">
               {t('common.back')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={() => void handleConfirm()}
               disabled={busy}
-              className="btn-primary flex-1 py-2.5 text-sm font-medium rounded-xl disabled:opacity-60"
+              className="flex-1"
               data-testid="send-confirm">
               {t('walletSend.confirmSend')}
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
       {step === 'sending' && (
-        <div className="flex flex-col items-center gap-3 py-8 text-stone-500 dark:text-neutral-400">
+        <div className="flex flex-col items-center gap-3 py-8 text-content-muted">
           <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle
               className="opacity-25"
@@ -276,15 +272,13 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
           </div>
-          <p className="text-sm font-medium text-stone-800 dark:text-neutral-100">
-            {t('walletSend.sent')}
-          </p>
-          <div className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
-            <span className="block text-[11px] text-stone-500 dark:text-neutral-400 mb-0.5">
+          <p className="text-sm font-medium text-content">{t('walletSend.sent')}</p>
+          <div className="w-full rounded-xl border border-line bg-surface-muted px-3 py-2">
+            <span className="block text-[11px] text-content-muted mb-0.5">
               {t('walletSend.txHash')}
             </span>
             <span
-              className="font-mono text-xs text-stone-700 dark:text-neutral-200 break-all"
+              className="font-mono text-xs text-content-secondary break-all"
               data-testid="send-tx-hash">
               {result.transactionHash}
             </span>
@@ -298,12 +292,9 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
               {t('walletSend.viewExplorer')}
             </a>
           )}
-          <button
-            type="button"
-            onClick={handleDone}
-            className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl mt-1">
+          <Button type="button" onClick={handleDone} className="mt-1 w-full">
             {t('walletSend.done')}
-          </button>
+          </Button>
         </div>
       )}
     </ModalShell>

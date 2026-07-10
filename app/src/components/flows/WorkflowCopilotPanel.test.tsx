@@ -1,0 +1,527 @@
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { WorkflowGraph, WorkflowNode } from '../../lib/flows/types';
+import type { ToolTimelineEntry, WorkflowProposal } from '../../store/chatRuntimeSlice';
+import WorkflowCopilotPanel from './WorkflowCopilotPanel';
+
+vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (key: string) => key }) }));
+
+interface MockMessage {
+  id: string;
+  content: string;
+  sender: 'user' | 'agent';
+  extraMetadata?: { isInterim?: boolean };
+}
+
+const hookState = vi.hoisted(() => ({
+  sending: false,
+  proposal: null as WorkflowProposal | null,
+  // Panel renders `displayMessages` (already interim-filtered upstream by
+  // `useWorkflowBuilderChat`) — kept separate from `messages` in these tests
+  // so a mismatch between the two proves the panel is reading the right field.
+  displayMessages: [] as MockMessage[],
+  toolTimeline: [] as ToolTimelineEntry[],
+  liveResponse: '',
+  error: null as string | null,
+  send: vi.fn(),
+  clearProposal: vi.fn(),
+}));
+vi.mock('../../hooks/useWorkflowBuilderChat', () => ({ useWorkflowBuilderChat: () => hookState }));
+
+function node(id: string): WorkflowNode {
+  return { id, kind: 'agent', name: id, config: {}, ports: [] };
+}
+function graph(ids: string[]): WorkflowGraph {
+  return { schema_version: 1, name: 'g', nodes: ids.map(node), edges: [] };
+}
+
+function proposalWith(ids: string[]): WorkflowProposal {
+  return {
+    name: 'Revised flow',
+    graph: graph(ids),
+    requireApproval: true,
+    summary: { trigger: 'manual', steps: [] },
+  };
+}
+
+const baseGraph = graph(['a', 'b']);
+
+describe('WorkflowCopilotPanel', () => {
+  beforeEach(() => {
+    hookState.sending = false;
+    hookState.proposal = null;
+    hookState.displayMessages = [];
+    hookState.toolTimeline = [];
+    hookState.liveResponse = '';
+    hookState.error = null;
+    hookState.send = vi.fn().mockResolvedValue({ outcome: 'dispatched', proposed: false });
+    hookState.clearProposal = vi.fn();
+  });
+
+  it('sends a revise turn that injects the current graph', async () => {
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    // The copilot now uses the shared ChatComposer (textarea by placeholder,
+    // `send-message-button` for send).
+    fireEvent.change(screen.getByPlaceholderText('flows.copilot.placeholder'), {
+      target: { value: 'add a Slack notification on failure' },
+    });
+    fireEvent.click(screen.getByTestId('send-message-button'));
+
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    const arg = hookState.send.mock.calls[0][0];
+    expect(arg.displayText).toBe('add a Slack notification on failure');
+    // The brief is rendered server-side now; the panel sends a structured
+    // revise request carrying the current graph as context.
+    expect(arg.request.mode).toBe('revise');
+    expect(arg.request.instruction).toBe('add a Slack notification on failure');
+    expect(arg.request.graph).toEqual(baseGraph);
+  });
+
+  it('carries the original ask forward across a clarifying-question turn, then drops it once a proposal lands', async () => {
+    hookState.send = vi
+      .fn()
+      // Turn 1: the agent asks a clarifying question instead of proposing.
+      .mockResolvedValueOnce({ proposed: false })
+      // Turn 2: the user's answer resolves it and a proposal lands.
+      .mockResolvedValueOnce({ proposed: true })
+      // Turn 3 (and any further calls): a normal revise turn, already resolved.
+      .mockResolvedValue({ proposed: true });
+
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('flows.copilot.placeholder'), {
+      target: { value: 'post a daily summary to slack' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('send-message-button'));
+      // Flush the microtasks `submit` awaits before it records `pendingAskRef`.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByPlaceholderText('flows.copilot.placeholder'), {
+      target: { value: '#eng' },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('send-message-button'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(hookState.send).toHaveBeenCalledTimes(2);
+    const secondArg = hookState.send.mock.calls[1][0];
+    // The follow-up must carry the ORIGINAL ask forward — a bare "#eng" alone
+    // would strand the agent with no idea what it was asked to build (the
+    // current graph is still blank/unchanged since no proposal has landed).
+    expect(secondArg.request.mode).toBe('revise');
+    expect(secondArg.request.instruction).toContain('post a daily summary to slack');
+    expect(secondArg.request.instruction).toContain('#eng');
+
+    // Turn 3, after a proposal has landed: the graph itself now carries the
+    // state, so the original ask must NOT be repeated.
+    fireEvent.change(screen.getByPlaceholderText('flows.copilot.placeholder'), {
+      target: { value: 'also add a filter step' },
+    });
+    fireEvent.click(screen.getByTestId('send-message-button'));
+    expect(hookState.send).toHaveBeenCalledTimes(3);
+    const thirdArg = hookState.send.mock.calls[2][0];
+    expect(thirdArg.request.instruction).toBe('also add a filter step');
+  });
+
+  it('renders the conversation transcript (user + agent turns)', () => {
+    hookState.displayMessages = [
+      { id: 'm1', content: 'add a Slack step', sender: 'user' },
+      { id: 'm2', content: 'Done — proposed a Slack notification.', sender: 'agent' },
+    ];
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    expect(screen.getByTestId('workflow-copilot-user')).toHaveTextContent('add a Slack step');
+    expect(screen.getByTestId('workflow-copilot-agent')).toHaveTextContent(
+      'Done — proposed a Slack notification.'
+    );
+    // With a transcript present, the empty-state hint is gone.
+    expect(screen.queryByTestId('workflow-copilot-empty')).not.toBeInTheDocument();
+  });
+
+  it('does not render an isInterim agent message as a bubble, only the terminal one', () => {
+    // The panel only ever renders `displayMessages` — the same filtered set
+    // `useWorkflowBuilderChat` computes from the raw transcript (isInterim
+    // agent messages dropped since that narration already streams live via
+    // the tool timeline / live text). Mirror that filter here so this test
+    // documents (and would catch a regression in) the composition: an
+    // isInterim message must never reach the panel as a bubble, while the
+    // terminal (non-interim) answer still does.
+    const raw: MockMessage[] = [
+      { id: 'm1', content: 'build me a Slack digest', sender: 'user' },
+      {
+        id: 'm2',
+        content: 'Let me check your calendar first.',
+        sender: 'agent',
+        extraMetadata: { isInterim: true },
+      },
+      { id: 'm3', content: 'Done — proposed a Slack notification.', sender: 'agent' },
+    ];
+    hookState.displayMessages = raw.filter(m => m.sender === 'user' || !m.extraMetadata?.isInterim);
+
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    expect(screen.queryByText('Let me check your calendar first.')).not.toBeInTheDocument();
+    expect(screen.getByTestId('workflow-copilot-agent')).toHaveTextContent(
+      'Done — proposed a Slack notification.'
+    );
+  });
+
+  it('renders the shared tool timeline + streaming reply during a builder turn', () => {
+    hookState.sending = true;
+    hookState.toolTimeline = [
+      { id: 'call-1', name: 'propose_workflow', round: 0, status: 'running' } as ToolTimelineEntry,
+    ];
+    hookState.liveResponse = 'Drafting your workflow…';
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    // The shared ToolTimelineBlock renders (not the bespoke transcript), and the
+    // one-shot "thinking" placeholder is suppressed once activity is streaming.
+    expect(screen.getByTestId('workflow-copilot-timeline')).toBeInTheDocument();
+    expect(screen.queryByTestId('workflow-copilot-thinking')).not.toBeInTheDocument();
+  });
+
+  it('shows the live reply as a bubble before the first tool call streams', () => {
+    hookState.sending = true;
+    hookState.toolTimeline = [];
+    hookState.liveResponse = 'Thinking about your Slack digest…';
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    expect(screen.getByTestId('workflow-copilot-streaming')).toHaveTextContent(
+      'Thinking about your Slack digest…'
+    );
+    // No tool timeline yet, and the plain "thinking" line is replaced by the
+    // streamed text.
+    expect(screen.queryByTestId('workflow-copilot-timeline')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('workflow-copilot-thinking')).not.toBeInTheDocument();
+  });
+
+  it('surfaces a new proposal to the host and shows the added/removed diff', () => {
+    const onProposal = vi.fn();
+    // proposed drops "b" and adds "c" vs. base [a, b].
+    hookState.proposal = proposalWith(['a', 'c']);
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={onProposal}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    expect(onProposal).toHaveBeenCalledWith(hookState.proposal);
+    // Both a single added ("c") and a single removed ("b") badge appear.
+    expect(screen.getByTestId('workflow-copilot-added')).toBeInTheDocument();
+    expect(screen.getByTestId('workflow-copilot-removed')).toBeInTheDocument();
+  });
+
+  it('Accept applies to the draft and clears the proposal (never persists)', () => {
+    const onAccept = vi.fn();
+    hookState.proposal = proposalWith(['a', 'c']);
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={onAccept}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByTestId('workflow-copilot-accept'));
+    expect(onAccept).toHaveBeenCalledWith(hookState.proposal);
+    expect(hookState.clearProposal).toHaveBeenCalledTimes(1);
+  });
+
+  it('Reject discards the proposal without applying it', () => {
+    const onReject = vi.fn();
+    const onAccept = vi.fn();
+    hookState.proposal = proposalWith(['a', 'c']);
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={onAccept}
+        onReject={onReject}
+        onClose={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByTestId('workflow-copilot-reject'));
+    expect(onReject).toHaveBeenCalledTimes(1);
+    expect(onAccept).not.toHaveBeenCalled();
+    expect(hookState.clearProposal).toHaveBeenCalledTimes(1);
+  });
+
+  it('auto-sends a repair turn once when opened with a repair seed', () => {
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        repairSeed={{ runId: 'run-7', error: 'boom', graph: baseGraph }}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    const arg = hookState.send.mock.calls[0][0];
+    expect(arg.request.mode).toBe('repair');
+    expect(arg.request.runId).toBe('run-7');
+    expect(arg.request.error).toBe('boom');
+    expect(arg.request.graph).toEqual(baseGraph);
+  });
+
+  it('auto-sends a build turn once when opened with a prompt-bar build seed', () => {
+    const { rerender } = render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'digest my Slack every morning' }}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    const arg = hookState.send.mock.calls[0][0];
+    // The user's description reads as their own first turn in the transcript;
+    // the structured build request carries the blank graph + flow id so the
+    // server's brief asks for a build → dry-run → propose arc (propose-only —
+    // see #4596; persistence still waits on Accept + Save).
+    expect(arg.displayText).toBe('digest my Slack every morning');
+    expect(arg.request.mode).toBe('build');
+    expect(arg.request.instruction).toBe('digest my Slack every morning');
+    expect(arg.request.graph).toEqual(baseGraph);
+    expect(arg.request.flowId).toBe('flow-1');
+
+    // A re-render (e.g. a graph edit) must not re-fire the seed turn.
+    rerender(
+      <WorkflowCopilotPanel
+        graph={graph(['a', 'b', 'c'])}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'digest my Slack every morning' }}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the build seed as consumed once the turn actually dispatched', async () => {
+    const onBuildSeedConsumed = vi.fn();
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'digest my Slack every morning' }}
+        onBuildSeedConsumed={onBuildSeedConsumed}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    // Fires exactly once, after the dispatched build turn resolves, so the
+    // route seed can be stripped.
+    await waitFor(() => expect(onBuildSeedConsumed).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not consume the seed when send no-ops (socket not connected) (#4597)', async () => {
+    // `send` resolves `outcome: 'skipped'` when the socket isn't connected —
+    // the turn never dispatched, so the seed must be preserved (not cleared) so
+    // the build can still fire once the socket connects.
+    hookState.send = vi.fn().mockResolvedValue({ outcome: 'skipped', proposed: false });
+    const onBuildSeedConsumed = vi.fn();
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'digest my Slack every morning' }}
+        onBuildSeedConsumed={onBuildSeedConsumed}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    // Flush the actual send() promise so the effect's `.then` runs, then assert
+    // the no-op path never consumed the seed.
+    await hookState.send.mock.results[0]?.value;
+    await waitFor(() => expect(onBuildSeedConsumed).not.toHaveBeenCalled());
+  });
+
+  it('does not consume or resend the seed when send fails (#4597)', async () => {
+    // A dispatch error resolves 'failed' (not 'skipped'): the seed is NOT
+    // consumed, and — crucially — the guard stays set so the effect does not
+    // auto-resend the turn (which would duplicate the user message and hammer
+    // the backend). The error surfaces separately for the user to retry.
+    hookState.send = vi.fn().mockResolvedValue({ outcome: 'failed', proposed: false });
+    const onBuildSeedConsumed = vi.fn();
+    const { rerender } = render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'digest my Slack every morning' }}
+        onBuildSeedConsumed={onBuildSeedConsumed}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    await hookState.send.mock.results[0]?.value;
+    expect(onBuildSeedConsumed).not.toHaveBeenCalled();
+
+    // A re-render with a fresh `send` identity (as happens on any state change)
+    // must NOT resend — the guard remains set for a failed dispatch.
+    hookState.send = vi.fn().mockResolvedValue({ outcome: 'failed', proposed: false });
+    rerender(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'digest my Slack every morning' }}
+        onBuildSeedConsumed={onBuildSeedConsumed}
+      />
+    );
+    expect(hookState.send).not.toHaveBeenCalled();
+    expect(onBuildSeedConsumed).not.toHaveBeenCalled();
+  });
+
+  it('does not re-fire the build turn when remounted after the seed is cleared (#4597)', async () => {
+    const onBuildSeedConsumed = vi.fn();
+    // First mount with the seed present (as the prompt-bar route lands).
+    const { unmount } = render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'digest my Slack every morning' }}
+        onBuildSeedConsumed={onBuildSeedConsumed}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onBuildSeedConsumed).toHaveBeenCalledTimes(1));
+
+    // The host clears the route seed (buildSeed -> null) in response. Closing
+    // and reopening the copilot fully remounts the panel — the per-mount
+    // `buildSentRef` resets to false — but with no seed there is nothing to
+    // re-fire, so the build turn must NOT be sent a second time.
+    unmount();
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={null}
+        onBuildSeedConsumed={onBuildSeedConsumed}
+      />
+    );
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    expect(onBuildSeedConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries the build seed description forward when the auto-sent build turn asks a clarifying question instead of proposing', async () => {
+    hookState.send = vi
+      .fn()
+      // The auto-sent build turn dispatches but asks a question rather than
+      // proposing.
+      .mockResolvedValueOnce({ outcome: 'dispatched', proposed: false })
+      // The user's free-text answer then resolves it.
+      .mockResolvedValueOnce({ outcome: 'dispatched', proposed: true });
+
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        buildSeed={{ description: 'post a daily summary to slack' }}
+      />
+    );
+    // Flush the microtasks the seed effect awaits before recording
+    // `pendingAskRef` from the resolved `{ proposed: false }`.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByPlaceholderText('flows.copilot.placeholder'), {
+      target: { value: '#eng' },
+    });
+    fireEvent.click(screen.getByTestId('send-message-button'));
+
+    expect(hookState.send).toHaveBeenCalledTimes(2);
+    const secondArg = hookState.send.mock.calls[1][0];
+    // The follow-up must carry the build seed's original description forward,
+    // not just the bare "#eng" answer.
+    expect(secondArg.request.instruction).toContain('post a daily summary to slack');
+    expect(secondArg.request.instruction).toContain('#eng');
+  });
+});

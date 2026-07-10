@@ -45,6 +45,7 @@ import {
 } from '../../lib/composio/types';
 import { useT } from '../../lib/i18n/I18nContext';
 import { openUrl } from '../../utils/openUrl';
+import Button from '../ui/Button';
 import type { ComposioToolkitMeta } from './toolkitMeta';
 import {
   getRequiredFieldsForToolkit,
@@ -298,7 +299,9 @@ export default function ComposioConnectModal({
           if (state === 'error') {
             stopPolling();
             setPhase('error');
-            setError(`${t('composio.connect.connectionFailed')} (status: ${hit.status}).`);
+            setError(
+              t('composio.connect.connectionFailed').replace('{status}', String(hit.status))
+            );
             return;
           }
           if (state === 'expired') {
@@ -539,7 +542,7 @@ export default function ComposioConnectModal({
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setPhase('error');
-        setError(`${t('composio.connect.disconnectFailed')}: ${msg}`);
+        setError(t('composio.connect.disconnectFailed').replace('{msg}', msg));
         setClearMemoryOnDisconnect(false);
       }
     },
@@ -566,7 +569,7 @@ export default function ComposioConnectModal({
       aria-labelledby="composio-setup-title">
       <div
         ref={modalRef}
-        className="bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-3xl shadow-large w-full max-w-[460px] overflow-hidden animate-fade-up focus:outline-none focus:ring-0"
+        className="bg-surface border border-line rounded-3xl shadow-large w-full max-w-[460px] overflow-hidden animate-fade-up focus:outline-none focus:ring-0"
         style={{
           animationDuration: '200ms',
           animationTimingFunction: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)',
@@ -575,25 +578,25 @@ export default function ComposioConnectModal({
         tabIndex={-1}
         onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div className="p-4 border-b border-stone-200 dark:border-neutral-800">
+        <div className="p-4 border-b border-line">
           <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0 pr-2">
               <div className="flex items-center gap-2">
                 {toolkit.icon}
-                <h2
-                  id="composio-setup-title"
-                  className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+                <h2 id="composio-setup-title" className="text-base font-semibold text-content">
                   {headerTitle}
                 </h2>
               </div>
-              <p className="text-xs text-stone-400 dark:text-neutral-500 mt-1.5 line-clamp-2">
+              <p className="text-xs text-content-faint mt-1.5 line-clamp-2">
                 {toolkit.description}
               </p>
             </div>
-            <button
-              type="button"
+            <Button
+              iconOnly
+              variant="tertiary"
+              size="sm"
               onClick={onClose}
-              className="p-1 text-stone-400 dark:text-neutral-500 hover:text-stone-900 dark:hover:text-neutral-100 dark:text-neutral-100 dark:hover:text-neutral-100 transition-colors rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 flex-shrink-0"
+              className="text-content-faint hover:text-content flex-shrink-0"
               aria-label={t('common.close')}>
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -603,7 +606,7 @@ export default function ComposioConnectModal({
                   d="M6 18L18 6M6 6l12 12"
                 />
               </svg>
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -611,11 +614,11 @@ export default function ComposioConnectModal({
         <div className="p-4 space-y-3">
           {phase === 'idle' && (
             <>
-              <p className="text-sm text-stone-600 dark:text-neutral-300">
+              <p className="text-sm text-content-secondary">
                 {`${t('composio.connect.idleDescription')} ${toolkit.name} ${t('composio.connect.idleDescriptionSuffix')}`}
               </p>
-              <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
-                <p className="mt-1 text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
+              <div className="rounded-xl border border-line bg-surface-muted p-3">
+                <p className="mt-1 text-xs leading-relaxed text-content-secondary">
                   {toolkit.name} {t('composio.connect.permissionsNote')}{' '}
                   <span className="font-medium">{toolkit.permissionLabel}</span>.{' '}
                   {t('composio.connect.permissionsNoteSuffix')}
@@ -637,19 +640,20 @@ export default function ComposioConnectModal({
                 }}
               />
               {error && phase === 'idle' && <p className="text-[11px] text-coral-600">{error}</p>}
-              <button
-                type="button"
+              <Button
+                variant="primary"
+                size="lg"
                 disabled={connectInFlight}
                 onClick={() => void handleConnect()}
-                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
+                className="w-full">
                 {`${t('composio.connect.connect')} ${toolkit.name}`}
-              </button>
+              </Button>
             </>
           )}
 
           {phase === 'needs-fields' && (
             <>
-              <p className="text-sm text-stone-600 dark:text-neutral-300">
+              <p className="text-sm text-content-secondary">
                 {`${t('composio.connect.needsFieldsPrefix')} ${toolkit.name} ${t('composio.connect.needsFieldsSuffix')}`}
               </p>
               <RequiredFieldsForm
@@ -668,49 +672,48 @@ export default function ComposioConnectModal({
                   }
                 }}
               />
-              <button
-                type="button"
+              <Button
+                variant="primary"
+                size="lg"
                 disabled={connectInFlight}
                 onClick={() => void handleConnect()}
-                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
+                className="w-full">
                 {t('composio.connect.retryConnection')}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="secondary"
+                size="md"
                 onClick={() => {
                   setPhase('idle');
                   setFieldErrors({});
                   setError(null);
                 }}
-                className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-600 dark:text-neutral-300 text-xs font-medium py-2 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors">
+                className="w-full">
                 {t('common.cancel')}
-              </button>
+              </Button>
             </>
           )}
 
           {phase === 'authorizing' && (
-            <p className="text-sm text-stone-500 dark:text-neutral-400">
-              {t('composio.connect.requestingUrl')}
-            </p>
+            <p className="text-sm text-content-muted">{t('composio.connect.requestingUrl')}</p>
           )}
 
           {phase === 'waiting' && (
             <>
-              <div className="flex items-center gap-2 text-sm text-stone-700 dark:text-neutral-200">
+              <div className="flex items-center gap-2 text-sm text-content-secondary">
                 <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                 {`${t('composio.connect.waitingFor')} ${toolkit.name} ${t('composio.connect.oauthComplete')}`}
               </div>
               {connectUrl && (
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="md"
                   onClick={() => void openUrl(connectUrl)}
-                  className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 text-stone-700 dark:text-neutral-200 text-xs font-medium py-2 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 transition-colors">
+                  className="w-full">
                   {t('composio.connect.reopenBrowser')}
-                </button>
+                </Button>
               )}
-              <p className="text-xs text-stone-400 dark:text-neutral-500">
-                {t('composio.connect.waitingHint')}
-              </p>
+              <p className="text-xs text-content-faint">{t('composio.connect.waitingHint')}</p>
             </>
           )}
 
@@ -725,13 +728,14 @@ export default function ComposioConnectModal({
                   {t('composio.expiredDescription').replace('{name}', toolkit.name)}
                 </p>
               </div>
-              <button
-                type="button"
+              <Button
+                variant="primary"
+                size="lg"
                 disabled={connectInFlight}
                 onClick={() => void handleConnect()}
-                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
+                className="w-full">
                 {`${t('composio.reconnect')} ${toolkit.name}`}
-              </button>
+              </Button>
             </>
           )}
 
@@ -745,7 +749,7 @@ export default function ComposioConnectModal({
                     {`${toolkit.name} ${t('composio.connect.isConnected')}`} &nbsp;
                     {(activeConnections[0] ?? activeConnection) &&
                       deriveConnectionLabel(activeConnections[0] ?? activeConnection!) && (
-                        <span className="text-[11px] text-stone-400 dark:text-neutral-500 font-mono">
+                        <span className="text-[11px] text-content-faint font-mono">
                           ({deriveConnectionLabel((activeConnections[0] ?? activeConnection)!)})
                         </span>
                       )}
@@ -755,16 +759,16 @@ export default function ComposioConnectModal({
               {/* Multiple connections: list with per-connection controls */}
               {activeConnections.length > 1 && (
                 <div className="space-y-2">
-                  <p className="text-xs font-medium text-stone-500 dark:text-neutral-400 uppercase tracking-wide">
+                  <p className="text-xs font-medium text-content-muted uppercase tracking-wide">
                     {t('composio.connect.connectedAccounts')} ({activeConnections.length})
                   </p>
                   {activeConnections.map(conn => (
                     <div
                       key={conn.id}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+                      className="flex items-center justify-between gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <div className="w-2 h-2 rounded-full bg-sage-500 shrink-0" />
-                        <span className="text-sm text-stone-800 dark:text-neutral-100 truncate">
+                        <span className="text-sm text-content truncate">
                           {deriveConnectionLabel(conn) ?? toolkit.name}
                         </span>
                         {conn.id === activeConnections[0]?.id && (
@@ -773,12 +777,14 @@ export default function ComposioConnectModal({
                           </span>
                         )}
                       </div>
-                      <button
-                        type="button"
+                      <Button
+                        variant="tertiary"
+                        tone="danger"
+                        size="xs"
                         onClick={() => void handleDisconnect(conn)}
-                        className="text-[11px] text-coral-600 hover:text-coral-700 font-medium shrink-0">
+                        className="shrink-0">
                         {t('composio.connect.disconnectAccount')}
-                      </button>
+                      </Button>
                     </div>
                   ))}
                 </div>
@@ -807,50 +813,48 @@ export default function ComposioConnectModal({
                   connectionId={activeConnection.id}
                 />
               )}
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="lg"
                 disabled={connectInFlight}
                 onClick={() => void handleConnect()}
-                className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-700 dark:text-neutral-200 text-sm font-medium py-2.5 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
+                className="w-full">
                 {t('composio.connect.addAnotherAccount')}
-              </button>
-              <label className="flex items-start gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+              </Button>
+              <label className="flex items-start gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2">
                 <input
                   type="checkbox"
                   checked={clearMemoryOnDisconnect}
                   onChange={event => setClearMemoryOnDisconnect(event.currentTarget.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
+                  className="mt-0.5 h-4 w-4 rounded border-line-strong text-primary-600 focus:ring-primary-500"
                 />
                 <span className="min-w-0">
-                  <span className="block text-sm font-medium text-stone-800 dark:text-neutral-100">
+                  <span className="block text-sm font-medium text-content">
                     {t('accounts.disconnectClearMemory')}
                   </span>
-                  <span className="block text-xs text-stone-500 dark:text-neutral-400">
+                  <span className="block text-xs text-content-muted">
                     {t('accounts.disconnectClearMemoryHint')}
                   </span>
                 </span>
               </label>
               <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  tone="danger"
+                  size="lg"
                   onClick={() => void handleDisconnect()}
-                  className="w-full rounded-xl border border-coral-200 bg-coral-50 text-coral-700 text-sm font-medium py-2.5 hover:bg-coral-100 transition-colors">
+                  className="w-full">
                   {t('skills.disconnect')}
-                </button>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
+                </Button>
+                <Button variant="primary" size="lg" onClick={onClose} className="w-full">
                   {t('common.close')}
-                </button>
+                </Button>
               </div>
             </>
           )}
 
           {phase === 'disconnecting' && (
-            <p className="text-sm text-stone-500 dark:text-neutral-400">
-              {t('composio.connect.disconnecting')}
-            </p>
+            <p className="text-sm text-content-muted">{t('composio.connect.disconnecting')}</p>
           )}
 
           {phase === 'error' && (
@@ -858,8 +862,9 @@ export default function ComposioConnectModal({
               <div className="rounded-xl border border-coral-200 bg-coral-50 p-3">
                 <p className="text-sm text-coral-700">{error ?? t('misc.somethingWentWrong')}</p>
               </div>
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="md"
                 onClick={() => {
                   setClearMemoryOnDisconnect(false);
                   setPhase(
@@ -867,9 +872,9 @@ export default function ComposioConnectModal({
                   );
                   setError(null);
                 }}
-                className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-700 dark:text-neutral-200 text-sm font-medium py-2 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors">
+                className="w-full">
                 {t('common.dismiss')}
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -916,14 +921,12 @@ function ScopeToggles({ scopes, savingScope, onToggle, error }: ScopeTogglesProp
   const loading = scopes === null;
 
   return (
-    <div className="border-t border-stone-100 dark:border-neutral-800 pt-3 mt-1 space-y-2">
+    <div className="border-t border-line-subtle pt-3 mt-1 space-y-2">
       <div className="flex items-baseline justify-between">
-        <h3 className="text-xs font-semibold text-stone-700 dark:text-neutral-200 uppercase tracking-wide">
+        <h3 className="text-xs font-semibold text-content-secondary uppercase tracking-wide">
           {t('composio.connect.permissions')}
         </h3>
-        <p className="text-[10px] text-stone-400 dark:text-neutral-500">
-          {t('composio.connect.permissionsDefault')}
-        </p>
+        <p className="text-[10px] text-content-faint">{t('composio.connect.permissionsDefault')}</p>
       </div>
       <ul className="space-y-1.5">
         {SCOPE_ROWS.map(row => {
@@ -934,14 +937,10 @@ function ScopeToggles({ scopes, savingScope, onToggle, error }: ScopeTogglesProp
           return (
             <li
               key={row.key}
-              className="flex items-start justify-between gap-3 rounded-lg px-2 py-1.5 hover:bg-stone-50 dark:hover:bg-neutral-800/60">
+              className="flex items-start justify-between gap-3 rounded-lg px-2 py-1.5 hover:bg-surface-hover">
               <div className="min-w-0 flex-1">
-                <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                  {rowLabel}
-                </span>
-                <p className="text-[11px] text-stone-400 dark:text-neutral-500 leading-snug">
-                  {rowHint}
-                </p>
+                <span className="text-sm font-medium text-content">{rowLabel}</span>
+                <p className="text-[11px] text-content-faint leading-snug">{rowHint}</p>
               </div>
               <button
                 type="button"
@@ -954,7 +953,7 @@ function ScopeToggles({ scopes, savingScope, onToggle, error }: ScopeTogglesProp
                   enabled ? 'bg-primary-500' : 'bg-stone-300'
                 }`}>
                 <span
-                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white dark:bg-neutral-900 shadow transition-transform ${
+                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-surface shadow transition-transform ${
                     enabled ? 'translate-x-5' : 'translate-x-0.5'
                   } ${isSaving ? 'animate-pulse' : ''}`}
                 />
@@ -1006,13 +1005,11 @@ function RequiredFieldsForm({
         const errorText = errorKey ? t(errorKey) : null;
         return (
           <div key={field.key} className="space-y-1.5">
-            <label
-              htmlFor={inputId}
-              className="block text-xs font-medium text-stone-700 dark:text-neutral-200">
+            <label htmlFor={inputId} className="block text-xs font-medium text-content-secondary">
               {t(field.labelKey)}
               <span className="ml-1 text-coral-500">*</span>
             </label>
-            <div className="flex items-center rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100 overflow-hidden">
+            <div className="flex items-center rounded-xl border border-line bg-surface focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100 overflow-hidden">
               <input
                 id={inputId}
                 data-testid={inputId}
@@ -1020,13 +1017,13 @@ function RequiredFieldsForm({
                 value={value}
                 autoFocus={autoFocusFirst && idx === 0}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(field.key, e.target.value)}
-                placeholder={field.placeholder}
+                placeholder={field.placeholderKey ? t(field.placeholderKey) : undefined}
                 aria-describedby={hintId}
                 aria-invalid={!!errorText}
-                className="flex-1 min-w-0 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 bg-transparent focus:outline-none"
+                className="flex-1 min-w-0 px-3 py-2 text-sm text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 bg-transparent focus:outline-none"
               />
               {field.suffix && (
-                <span className="pr-3 text-xs text-stone-400 dark:text-neutral-500 select-none whitespace-nowrap">
+                <span className="pr-3 text-xs text-content-faint select-none whitespace-nowrap">
                   {field.suffix}
                 </span>
               )}
@@ -1039,9 +1036,7 @@ function RequiredFieldsForm({
               </p>
             ) : (
               field.hintKey && (
-                <p
-                  id={hintId}
-                  className="text-[11px] leading-relaxed text-stone-400 dark:text-neutral-500">
+                <p id={hintId} className="text-[11px] leading-relaxed text-content-faint">
                   {t(field.hintKey)}
                 </p>
               )

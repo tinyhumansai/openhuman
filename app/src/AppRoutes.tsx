@@ -1,5 +1,7 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { type Location, Navigate, Route, Routes } from 'react-router-dom';
 
+import AgentWorldShell from './agentworld/AgentWorldShell';
+import AgentWorld from './agentworld/pages/AgentWorld';
 import AppRoutesIOS from './AppRoutesIOS';
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -9,20 +11,31 @@ import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
 import Brain from './pages/Brain';
 import AgentInsightsPreview from './pages/dev/AgentInsightsPreview';
-import Home from './pages/Home';
+import Feedback from './pages/Feedback';
+import FlowCanvasPage, { FlowCanvasDraftPage } from './pages/FlowCanvasPage';
+import FlowsPage from './pages/FlowsPage';
 import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
+import OrchestrationPage from './pages/OrchestrationPage';
 import { PttOverlayPage } from './pages/PttOverlayPage';
 import Rewards from './pages/Rewards';
-import Settings from './pages/Settings';
 import Skills from './pages/Skills';
 import WebCallbackPage from './pages/WebCallbackPage';
 import Welcome from './pages/Welcome';
-import WorkflowNew from './pages/WorkflowNew';
 import WorkflowsRun from './pages/WorkflowsRun';
 
-const AppRoutes = () => {
+interface AppRoutesProps {
+  /**
+   * Optional location override. The desktop shell passes the *background*
+   * location here while the Settings modal is open, so the page behind the
+   * modal stays rendered even though the URL is `/settings/*`. Omitted
+   * everywhere else (router uses the ambient location).
+   */
+  location?: Location | string;
+}
+
+const AppRoutes = ({ location }: AppRoutesProps = {}) => {
   // Mobile target (iOS or Android): pair → Human/Chat/Settings only.
   // Desktop routes are not rendered.
   if (getIsMobile()) {
@@ -30,7 +43,7 @@ const AppRoutes = () => {
   }
 
   return (
-    <Routes>
+    <Routes location={location}>
       {/* Public routes - redirect to /home if logged in */}
       <Route
         path="/"
@@ -41,6 +54,7 @@ const AppRoutes = () => {
         }
       />
 
+      <Route path="/auth" element={<WebCallbackPage callbackKind="auth" />} />
       <Route path="/callback/:kind" element={<WebCallbackPage />} />
       <Route path="/callback/:kind/:status" element={<WebCallbackPage />} />
 
@@ -55,14 +69,9 @@ const AppRoutes = () => {
       />
 
       {/* Protected routes */}
-      <Route
-        path="/home"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Home />
-          </ProtectedRoute>
-        }
-      />
+      {/* Home is merged into the unified chat surface — /home redirects to /chat
+          (the chat's empty "new window" state is the former Home greeting). */}
+      <Route path="/home" element={<Navigate to="/chat" replace />} />
 
       {/* Human — first-class destination again (restored after the IA Phase 6
           merge into Assistant). Renders the Human/mascot surface. iOS serves
@@ -87,6 +96,62 @@ const AppRoutes = () => {
         }
       />
 
+      {/* Workflows — the `flows::` domain's discoverable list hub (issue
+          B5a) plus the read-only Workflow Canvas (issue B5b.1) at
+          `/flows/:id`. Distinct from the legacy SKILL.md `/workflows/*`
+          Skill routes below (create/run) and their `/workflows` →
+          `/settings/automations` back-compat redirect, which stay untouched.
+          Not a tab-level route (unlike `/flows` itself, `/flows/:id` isn't
+          reached from the BottomTabBar), so `navigation.spec.ts`'s ROUTES
+          table needs no change. Full editing (B5b.2+) and the agent-proposal
+          surface (B4) are separate, later work. */}
+      <Route
+        path="/flows"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <FlowsPage />
+          </ProtectedRoute>
+        }
+      />
+      {/* Unsaved draft canvas (Phase 4e) — the chat WorkflowProposalCard's
+          "Open in canvas" action lands here with the proposed graph in
+          `location.state`. Declared BEFORE `/flows/:id` so it matches first;
+          otherwise `:id` would capture "draft" and try to `flows_get('draft')`.
+          Opening a draft never persists — the canvas's own Save is the gate. */}
+      <Route
+        path="/flows/draft"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <FlowCanvasDraftPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/flows/:id"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <FlowCanvasPage />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Orchestration — TinyPlace multi-agent coordination surface, promoted
+          from a Brain sub-tab into a first-class sidebar destination (sits
+          right after Workflows). */}
+      <Route
+        path="/orchestration"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <OrchestrationPage />
+          </ProtectedRoute>
+        }
+      />
+      {/* Back-compat: the old Brain deep link → the promoted top-level tab. */}
+      <Route
+        path="/brain/tinyplace-orchestration"
+        element={<Navigate to="/orchestration" replace />}
+      />
+
       {/* Back-compat: /activity and /intelligence → settings notifications page. */}
       <Route path="/activity" element={<Navigate to="/settings/notifications" replace />} />
       <Route path="/intelligence" element={<Navigate to="/settings/notifications" replace />} />
@@ -95,19 +160,9 @@ const AppRoutes = () => {
           The old /skills path is kept as a back-compat redirect so bookmarks
           and deep links continue to work.  `?tab=` query params are preserved
           by Navigate (replace) so existing deep links still land on the right
-          sub-tab.
-          `/workflows/new` is the create-a-skill authoring page.
-          Order matters: keep `/workflows/new` before `/connections` so it wins
-          the prefix match. */}
-      <Route
-        path="/workflows/new"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <WorkflowNew />
-          </ProtectedRoute>
-        }
-      />
-
+          sub-tab. */}
+      {/* `/workflows/run` is the single-purpose Skill runner page — the live
+          destination of the Run button in the Automations tab (WorkflowsTab). */}
       <Route
         path="/workflows/run"
         element={
@@ -132,7 +187,7 @@ const AppRoutes = () => {
       {/* Unified chat = agent + connected web apps. Replaces the old
           /conversations and /accounts routes. */}
       <Route
-        path="/chat"
+        path="/chat/:threadId?"
         element={
           <ProtectedRoute requireAuth={true}>
             <Accounts />
@@ -149,6 +204,15 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireAuth={true}>
             <Invites />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/feedback"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Feedback />
           </ProtectedRoute>
         }
       />
@@ -180,19 +244,28 @@ const AppRoutes = () => {
 
       <Route path="/webhooks" element={<Navigate to="/settings/integrations#webhooks" replace />} />
 
-      <Route
-        path="/settings/*"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Settings />
-          </ProtectedRoute>
-        }
-      />
+      {/* Desktop Settings renders as a modal overlay mounted by AppShellDesktop
+          (App.tsx) using the backgroundLocation pattern — it is no longer an
+          inline route here. iOS keeps its own /settings/* route in
+          AppRoutesIOS.tsx. */}
 
       <Route path="/ptt-overlay" element={<PttOverlayPage />} />
 
       {/* Dev-only visual preview of the Agentic task insights surface. */}
       <Route path="/dev/agent-insights" element={<AgentInsightsPreview />} />
+
+      {/* Agent World — tiny.place A2A social network integration.
+          Nested routes (explore, directory, …) are handled inside AgentWorld. */}
+      <Route
+        path="/agent-world/*"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <AgentWorldShell>
+              <AgentWorld />
+            </AgentWorldShell>
+          </ProtectedRoute>
+        }
+      />
 
       {/* Default redirect based on auth status */}
       <Route path="*" element={<DefaultRedirect />} />

@@ -25,20 +25,16 @@ use serde::{Deserialize, Serialize};
 /// and retrieval (to sort high-priority guidance ahead of advisory notes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ToolMemoryPriority {
     /// Soft suggestion — surfaced on demand, not eagerly injected.
+    #[default]
     Normal,
     /// Important guidance — eagerly injected at tool-selection time.
     High,
     /// Safety-critical rule — pinned into the (compression-resistant)
     /// system prompt so it survives the agent's full session.
     Critical,
-}
-
-impl Default for ToolMemoryPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 impl ToolMemoryPriority {
@@ -56,6 +52,7 @@ impl ToolMemoryPriority {
 /// edicts apart from auto-captured observations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ToolMemorySource {
     /// User explicitly asked the agent to remember this rule.
     UserExplicit,
@@ -63,13 +60,8 @@ pub enum ToolMemorySource {
     /// repeated correction, etc.).
     PostTurn,
     /// Written by another subsystem (e.g. an integration provisioner).
+    #[default]
     Programmatic,
-}
-
-impl Default for ToolMemorySource {
-    fn default() -> Self {
-        Self::Programmatic
-    }
 }
 
 /// A single tool-scoped memory rule.

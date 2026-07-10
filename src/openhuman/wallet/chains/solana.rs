@@ -635,6 +635,29 @@ pub async fn lookup_tx(hash: &str) -> Result<TxLookupInfo, String> {
     })
 }
 
+/// Returns the 32-byte Ed25519 seed for the tiny.place `LocalSigner`, derived
+/// from the user's primary Solana wallet key via the same SLIP-0010 path used
+/// for all Solana signing operations.
+///
+/// The seed is consumed immediately by the caller and **never logged, never
+/// returned across any IPC boundary, never persisted**.  Mirrors the exact
+/// derivation at `wallet/chains/solana.rs:369–376`.
+pub(crate) async fn tinyplace_signer_seed() -> Result<[u8; 32], String> {
+    log::debug!("[tinyplace] deriving signer seed from Solana wallet key");
+    let secret = secret_material(WalletChain::Solana).await?;
+    let config = config_rpc::load_config_with_timeout().await?;
+    // Mirror exactly the decrypt call at solana.rs:371-374 (.value extraction).
+    let mnemonic =
+        crate::openhuman::encryption::rpc::decrypt_secret(&config, &secret.encrypted_mnemonic)
+            .await?
+            .value;
+    let signing_key = derive_solana_keypair(&mnemonic, &secret.derivation_path)?;
+    // Extract 32-byte SLIP-0010 secret — same bytes LocalSigner::from_seed expects.
+    // Never logged: the log below omits the seed.
+    log::debug!("[tinyplace] signer seed derived (seed not logged)");
+    Ok(signing_key.to_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -785,12 +808,9 @@ mod tests {
     #[tokio::test]
     async fn execute_solana_quote_signs_and_broadcasts_native_transfer() {
         let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         let fake_sig = "5xS9pXmqVz8R1nuRZTfsdsAxBdBFmtnAtuYbCsmK5DYzGn5vR4VqWGmiR5McLnYx8oFqLdo62q4qiUZpQyR4Hkn3";
         let (addr, calls) = start_solana_mock(fake_sig).await;
@@ -841,12 +861,9 @@ mod tests {
     #[tokio::test]
     async fn execute_solana_quote_signs_and_broadcasts_spl_transfer() {
         let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         let fake_sig = "5xS9pXmqVz8R1nuRZTfsdsAxBdBFmtnAtuYbCsmK5DYzGn5vR4VqWGmiR5McLnYx8oFqLdo62q4qiUZpQyR4Hkn3";
         let (addr, calls) = start_solana_mock(fake_sig).await;
@@ -914,12 +931,9 @@ mod tests {
     #[tokio::test]
     async fn execute_solana_quote_refuses_spl_when_destination_ata_missing() {
         let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         // Custom mock that returns null for getAccountInfo — simulates an ATA
         // that was never created on-chain.
@@ -1046,12 +1060,9 @@ mod tests {
     #[tokio::test]
     async fn sign_and_broadcast_versioned_fills_signature_and_broadcasts() {
         let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         let fake_sig = "5xS9pXmqVz8R1nuRZTfsdsAxBdBFmtnAtuYbCsmK5DYzGn5vR4VqWGmiR5McLnYx8oFqLdo62q4qiUZpQyR4Hkn3";
         let (addr, calls) = start_solana_mock(fake_sig).await;
@@ -1085,12 +1096,9 @@ mod tests {
     #[tokio::test]
     async fn sign_and_broadcast_versioned_rejects_non_signer() {
         let _guard = TEST_LOCK.lock();
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         reset_quote_store_for_tests();
         let temp = TempDir::new().unwrap();
-        setup_wallet_in(&temp).await.unwrap();
+        let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
 
         // A signer pubkey that is NOT our wallet — sign must refuse.
         let other = [7u8; 32];

@@ -29,7 +29,11 @@ impl Tool for MemoryStoreTool {
         "Store a general fact or note in a namespace (e.g. global, background, autocomplete, skill-{id}). \
          Do NOT use this for user preferences — for any preference (how the user wants you to behave, \
          their tastes, settings, standing instructions) call `save_preference` instead, which routes it \
-         to the preference store the assistant actually reads. Requires an explicit namespace."
+         to the preference store the assistant actually reads. Requires an explicit namespace. \
+         Memory protocol (only with tools you actually have available): if you have a memory-recall \
+         tool (e.g. `memory_recall`), check for a near-duplicate before storing so you don't create \
+         one; and if `update_memory_md` is available, call it after storing to keep the MEMORY.md \
+         index in sync with the store."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -145,6 +149,13 @@ mod tests {
         let schema = tool.parameters_schema();
         assert!(schema["properties"]["key"].is_object());
         assert!(schema["properties"]["content"].is_object());
+        // The memory protocol (#4116) must be stated up front so the model recalls
+        // for dedupe before writing and reconciles the index after.
+        let desc = tool.description();
+        assert!(
+            desc.contains("memory_recall") && desc.contains("update_memory_md"),
+            "memory_store description must state the read→dedupe→write→update contract: {desc}"
+        );
     }
 
     #[tokio::test]

@@ -1,5 +1,6 @@
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::error::AgentError;
+use crate::openhuman::agent::Agent;
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{
     due_jobs, next_run_for_schedule, record_last_run, record_run, remove_job, reschedule_after_run,
@@ -17,8 +18,24 @@ use tokio::time::{self, Duration};
 const MIN_POLL_SECONDS: u64 = 5;
 const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord-report\">Report on Discord</openhuman-link>";
+// Actionable, static failure copy for the three permanent cron halt states
+// (TAURI-RUST-514 / -BMW / -HCK). Surfaced verbatim in the alerts tab + run
+// history in place of the generic `AGENT_JOB_USER_FAILURE_MESSAGE`, so a user
+// whose job halts on a permanent config/billing state sees the exact next step
+// instead of "Something went wrong". Static `&'static str` only — they carry no
+// `err` fields, honouring the no-leak contract on `agent_error_to_user_message`.
+const CRON_HALT_API_KEY_UNSET_MESSAGE: &str =
+    "No API key is set for your AI provider. Add it in Connections \u{2192} API keys \u{2192} LLM, then re-run.";
+const CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE: &str =
+    "Your AI provider is out of credits. Top it up or update its key in Connections \u{2192} API keys \u{2192} LLM.";
+const CRON_HALT_BUDGET_EXHAUSTED_MESSAGE: &str =
+    "You've reached your managed AI budget. Raise it in Settings \u{2192} Billing.";
 const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
 const MORNING_BRIEFING_FAILURE_NOTIFICATION: &str = "Morning briefing could not run. Check your AI provider, API key, and connected apps, then run it again from Settings > Cron Jobs.";
+/// Recency window the morning briefing installs around its turn so Composio
+/// task-fetch tools only surface tasks created/changed in the last day. Read
+/// by the `composio_execute` handler via `current_task_recency_window`.
+const MORNING_BRIEFING_TASK_RECENCY_SECS: u64 = 24 * 60 * 60;
 
 /// Map a typed [`AgentError`] to a canned, user-facing message for cron-job
 /// failure notifications.
@@ -40,7 +57,7 @@ fn agent_error_to_user_message(err: &AgentError) -> &'static str {
             "The model provider is temporarily unavailable. The next run will retry automatically."
         }
         AgentError::ProviderError { retryable: false, .. } => {
-            "The model provider rejected the request. Check your provider credentials in Settings \u{2192} AI \u{2192} LLM."
+            "The model provider rejected the request. Check provider credentials in Connections \u{2192} API keys \u{2192} LLM."
         }
         AgentError::ContextLimitExceeded { .. } => {
             "The conversation grew too long for the model. Start a new session or pick a model with a larger context window."
@@ -49,10 +66,19 @@ fn agent_error_to_user_message(err: &AgentError) -> &'static str {
             "You've reached the daily cost budget for this agent. Raise it in Settings \u{2192} Billing or wait for the next budget window."
         }
         AgentError::MaxIterationsExceeded { .. } => {
-            "The agent stopped after too many tool iterations. Raise the iteration cap in Settings \u{2192} AI \u{2192} LLM or simplify the task."
+            "Too many tool iterations. Raise the iteration cap in Connections \u{2192} API keys \u{2192} LLM or simplify the task."
         }
         AgentError::EmptyProviderResponse { .. } => {
-            "The model returned an empty response. Try a different model or check your local provider in Settings \u{2192} AI \u{2192} LLM."
+            // Issue #3335: the prior copy named a "local provider"
+            // remedy that doesn't exist on the Managed route. This
+            // shorter form (≤120 chars per the
+            // `agent_error_to_user_message_canned_strings_are_short`
+            // contract, for clean notification-drawer rendering) names
+            // the two highest-signal remedies — credits and model
+            // configuration. The richer three-remedy copy lives on the
+            // chat-surface side (`channels/providers/web_errors.rs`'s
+            // empty_response arm) where there's no drawer-width limit.
+            "Empty model response. Out of credits (Settings \u{2192} Billing) or try another model in Connections \u{2192} API keys \u{2192} LLM."
         }
         AgentError::CompactionFailed { .. } => {
             "Automatic history compaction failed. The next run will start with a fresh context."
@@ -63,9 +89,13 @@ fn agent_error_to_user_message(err: &AgentError) -> &'static str {
         // ToolExecutionError and Other have no actionable canned message —
         // their error bodies are too freeform to summarise safely without
         // interpolating contents. Fall back to the generic copy.
-        AgentError::ToolExecutionError { .. } | AgentError::Other(_) => {
-            AGENT_JOB_USER_FAILURE_MESSAGE
-        }
+        // RegistryValidationFailed carries diagnostic message bodies that name
+        // internal tool/component identifiers — too freeform to summarise safely
+        // without interpolation, so fall back to the generic copy like the other
+        // non-actionable variants.
+        AgentError::ToolExecutionError { .. }
+        | AgentError::RegistryValidationFailed { .. }
+        | AgentError::Other(_) => AGENT_JOB_USER_FAILURE_MESSAGE,
     }
 }
 
@@ -255,9 +285,11 @@ pub(crate) async fn tick_once(
 
 /// Public entry point for delivering a job's output via the configured
 /// delivery mode (proactive / announce). Called by `cron_run` ("Run Now")
-/// so manual runs also push notifications and alerts.
+/// so manual runs also push notifications and alerts. Manual runs are treated
+/// as `success = true` so the user always sees the result they explicitly
+/// triggered (empty output is still skipped).
 pub async fn deliver_job(config: &Config, job: &CronJob, output: &str) {
-    if let Err(e) = deliver_if_configured(config, job, output).await {
+    if let Err(e) = deliver_if_configured(config, job, output, true).await {
         if job.delivery.best_effort {
             tracing::warn!("[cron] delivery failed (best_effort, Run Now): {e}");
         } else {
@@ -289,8 +321,9 @@ pub async fn execute_job_now(config: &Config, job: &CronJob) -> (bool, String) {
 /// after a single JWT lapse, every retries-exhausted capture pointing at a
 /// problem the user can only fix from the UI.
 ///
-/// The right move is the same halt-on-first-occurrence pattern as
-/// `agent::harness::tool_loop::BACKEND_USER_STATE_MARKER` (#3334): the
+/// The right move is the same halt-on-first-occurrence pattern as the
+/// legacy tool loop's `BACKEND_USER_STATE_MARKER` convention (#3334, the
+/// loop itself was retired in the tinyagents migration, #4249): the
 /// condition is global and retries can't recover it, so we stop after the
 /// first attempt. Skipping the `report_error` call too is correct because
 /// the existing classifier
@@ -321,6 +354,119 @@ fn is_session_expired_failure(
     crate::core::observability::is_session_expired_message(signal)
 }
 
+/// Did this failed agent-job attempt hit a provider **insufficient-credits
+/// 402** state (BYO account out of balance, e.g. OpenRouter)?
+///
+/// Same shape as [`is_session_expired_failure`], for the same reason: the
+/// condition is a deterministic, permanent user-state error with no local
+/// lever — retrying it across the backoff loop cannot recover, it only burns
+/// cycles and (pre-this-guard) multiplied the per-attempt
+/// `report_error` events that flooded Sentry (TAURI-RUST-514: the residual
+/// after #3617 capped the extraction path, surfacing here via the cron
+/// `agent_job` `report_error` which the desktop `before_send` chain did not
+/// yet filter). So we halt after the first occurrence and skip the report,
+/// matching the source demotion already applied at the provider emit site
+/// (`is_provider_insufficient_credits_402`).
+///
+/// Routes on `last_agent_error` first (the raw anyhow chain carrying the
+/// provider's 402 wire body), falling back to `last_output`, identical to
+/// [`is_session_expired_failure`]. Restricted to `JobType::Agent`.
+fn is_insufficient_credits_failure(
+    job_type: &JobType,
+    last_agent_error: Option<&str>,
+    last_output: &str,
+) -> bool {
+    if !matches!(job_type, JobType::Agent) {
+        return false;
+    }
+    let signal = last_agent_error.unwrap_or(last_output);
+    crate::core::observability::is_insufficient_credits_message(signal)
+}
+
+/// Did this failed agent-job attempt hit a managed-backend **budget-exhausted
+/// 400** state (`USER_INSUFFICIENT_CREDITS` — the OpenHuman account is out of
+/// its spend budget)?
+///
+/// The sibling of [`is_insufficient_credits_failure`] for the managed-backend
+/// billing 400 instead of the BYO provider 402. Same rationale: a permanent
+/// user-state error with no local lever, so retrying across the backoff loop
+/// cannot recover and the per-attempt `report_error` floods Sentry
+/// (TAURI-RUST-BMW). The existing `before_send` filter
+/// [`crate::core::observability::is_budget_event`] is **tag-gated**
+/// (`failure=non_2xx` + `status=400`), tags the cron `agent_job` re-report
+/// does not carry — so the residual leaks here. Halt on the first occurrence
+/// and skip the report, reusing the same body classifier as that filter
+/// (`provider::is_budget_exhausted_message`). Restricted to `JobType::Agent`.
+fn is_budget_exhausted_failure(
+    job_type: &JobType,
+    last_agent_error: Option<&str>,
+    last_output: &str,
+) -> bool {
+    if !matches!(job_type, JobType::Agent) {
+        return false;
+    }
+    let signal = last_agent_error.unwrap_or(last_output);
+    crate::openhuman::inference::provider::is_budget_exhausted_message(signal)
+}
+
+/// TAURI-RUST-HCK — a cron **agent** job pinned to a provider with no
+/// configured API key fails deterministically at the credential guard
+/// (`credential_for_request`), before any HTTP, with "<provider> API key not
+/// set. Configure via the web UI …". This is a permanent user-config state: it
+/// cannot recover across the backoff loop, so the loop should halt on the first
+/// occurrence instead of burning every retry and then emitting the
+/// `failure=retries_exhausted` `report_error` on every cron cycle (3428 events
+/// / 1 user). The bare cron `report_error` bypasses the `ApiKeyMissing`
+/// `expected_error_kind` demotion (that only runs on the `report_error_or_expected`
+/// path), so we suppress at source here — mirroring -514 / -BMW. Delegates to
+/// the single-source matcher so the wording cannot drift from the emit site.
+fn is_api_key_unset_failure(
+    job_type: &JobType,
+    last_agent_error: Option<&str>,
+    last_output: &str,
+) -> bool {
+    if !matches!(job_type, JobType::Agent) {
+        return false;
+    }
+    let signal = last_agent_error.unwrap_or(last_output);
+    crate::core::observability::is_api_key_unset_message(signal)
+}
+
+/// TAURI-RUST-12K — a cron **agent** job pinned to a **local** LLM provider
+/// (LM Studio / Ollama / llama.cpp on `localhost:<port>`) fails at the TCP
+/// layer with "connection refused" because the user's local server isn't
+/// running. This is a genuinely unpreventable user-environment state: the app
+/// has no lever to start a user's local model server, and retrying across the
+/// backoff loop cannot bring the port up within one cron cycle.
+///
+/// The provider / agent emit sites already demote this via
+/// `report_error_or_expected` (the `expected_error_kind` classifier routes it
+/// to `LoopbackUnavailable`), so it never reaches Sentry there. But the bare
+/// cron `report_error` below bypasses that demotion and re-emitted the
+/// `failure=retries_exhausted` capture on every cron cycle — 2802 events / 29
+/// users. So we halt on the first occurrence and skip the report, mirroring
+/// the source demotion and the sibling billing / api-key guards
+/// (TAURI-RUST-514 / -BMW / -HCK).
+///
+/// Delegates to the single-source matcher
+/// [`crate::core::observability::is_local_provider_unreachable_message`] so
+/// the wording cannot drift from the classifier emit site. Narrow by design:
+/// only **loopback** connection-refused matches, so a transient *remote*
+/// provider / backend network error still retries and still reports. Routes on
+/// `last_agent_error` first (the raw anyhow chain carrying the wire message),
+/// falling back to `last_output`. Restricted to `JobType::Agent`.
+fn is_local_provider_unreachable_failure(
+    job_type: &JobType,
+    last_agent_error: Option<&str>,
+    last_output: &str,
+) -> bool {
+    if !matches!(job_type, JobType::Agent) {
+        return false;
+    }
+    let signal = last_agent_error.unwrap_or(last_output);
+    crate::core::observability::is_local_provider_unreachable_message(signal)
+}
+
 async fn execute_job_with_retry(
     config: &Config,
     security: &SecurityPolicy,
@@ -331,6 +477,10 @@ async fn execute_job_with_retry(
     let retries = config.reliability.scheduler_retries;
     let mut backoff_ms = config.reliability.provider_backoff_ms.max(200);
     let mut session_expired = false;
+    let mut credits_exhausted = false;
+    let mut budget_exhausted = false;
+    let mut key_unset = false;
+    let mut local_unreachable = false;
 
     for attempt in 0..=retries {
         let (success, output, agent_error) = match job.job_type {
@@ -339,6 +489,10 @@ async fn execute_job_with_retry(
                 (success, output, None)
             }
             JobType::Agent => run_agent_job(config, job).await,
+            JobType::Flow => {
+                let (success, output) = run_flow_schedule_job(job);
+                (success, output, None)
+            }
         };
         last_output = output;
         if agent_error.is_some() {
@@ -368,6 +522,97 @@ async fn execute_job_with_retry(
             break;
         }
 
+        if is_insufficient_credits_failure(
+            &job.job_type,
+            last_agent_error.as_deref(),
+            last_output.as_str(),
+        ) {
+            // Halt on the first occurrence — a BYO provider 402 (out of
+            // balance) is permanent across the backoff loop, and the
+            // provider emit site already demoted it from Sentry. Skipping
+            // the retries-exhausted `report_error` below keeps the residual
+            // off Sentry at source, independent of the `before_send` chain
+            // (TAURI-RUST-514). See `is_insufficient_credits_failure`.
+            // Metadata-only log (no raw provider body — see CLAUDE.md).
+            log::debug!(
+                "[cron] action=halt_on_insufficient_credits_402 job_id={} attempt={} retries={}",
+                job.id.as_str(),
+                attempt,
+                retries
+            );
+            credits_exhausted = true;
+            break;
+        }
+
+        if is_budget_exhausted_failure(
+            &job.job_type,
+            last_agent_error.as_deref(),
+            last_output.as_str(),
+        ) {
+            // Halt on the first occurrence — a managed-backend budget 400
+            // (USER_INSUFFICIENT_CREDITS) is permanent across the backoff
+            // loop. The tag-gated `is_budget_event` before_send filter never
+            // matches this cron re-report, so suppressing the report here
+            // keeps it off Sentry at source (TAURI-RUST-BMW). See
+            // `is_budget_exhausted_failure`. Metadata-only log (no raw body).
+            log::debug!(
+                "[cron] action=halt_on_budget_exhausted_400 job_id={} attempt={} retries={}",
+                job.id.as_str(),
+                attempt,
+                retries
+            );
+            budget_exhausted = true;
+            break;
+        }
+
+        if is_api_key_unset_failure(
+            &job.job_type,
+            last_agent_error.as_deref(),
+            last_output.as_str(),
+        ) {
+            // Halt on the first occurrence — a configured provider with no
+            // API key fails deterministically at the credential guard before
+            // any HTTP, so the missing key is permanent across the backoff
+            // loop. The bare cron `report_error` below bypasses the
+            // `ApiKeyMissing` `expected_error_kind` demotion, so suppressing
+            // here keeps the residual off Sentry at source (TAURI-RUST-HCK).
+            // The failure stays visible to the user via the alerts tab
+            // (`push_cron_alert`) + run history. See `is_api_key_unset_failure`.
+            // Metadata-only log (no raw provider body — see CLAUDE.md).
+            log::debug!(
+                "[cron] action=halt_on_api_key_unset job_id={} attempt={} retries={}",
+                job.id.as_str(),
+                attempt,
+                retries
+            );
+            key_unset = true;
+            break;
+        }
+
+        if is_local_provider_unreachable_failure(
+            &job.job_type,
+            last_agent_error.as_deref(),
+            last_output.as_str(),
+        ) {
+            // Halt on the first occurrence — a local LLM provider refusing the
+            // loopback connection (LM Studio / Ollama not running) cannot
+            // recover across the backoff loop, and the provider/agent emit
+            // sites already demoted it from Sentry (`LoopbackUnavailable`).
+            // The bare cron `report_error` below bypasses that demotion, so
+            // suppressing here keeps the residual off Sentry at source
+            // (TAURI-RUST-12K). The failure stays visible via the run history
+            // + cron alert. See `is_local_provider_unreachable_failure`.
+            // Metadata-only log (no raw provider body — see CLAUDE.md).
+            log::debug!(
+                "[cron] action=halt_on_local_provider_unreachable job_id={} attempt={} retries={}",
+                job.id.as_str(),
+                attempt,
+                retries
+            );
+            local_unreachable = true;
+            break;
+        }
+
         if attempt < retries {
             let jitter_ms = u64::from(Utc::now().timestamp_subsec_millis() % 250);
             time::sleep(Duration::from_millis(backoff_ms + jitter_ms)).await;
@@ -375,10 +620,23 @@ async fn execute_job_with_retry(
         }
     }
 
-    if matches!(job.job_type, JobType::Agent) && !session_expired {
-        let report_message = last_agent_error
-            .as_deref()
-            .unwrap_or_else(|| last_output.as_str());
+    // Permanent user-config / billing states are demoted at source: halt the
+    // loop and skip the retries-exhausted report, independent of the tag-gated
+    // before_send filters that the cron re-report does not match. Covers BYO
+    // 402 out-of-credit + managed-backend 400 out-of-budget (TAURI-RUST-514 /
+    // -BMW) and a configured provider with no API key (TAURI-RUST-HCK). The
+    // `session_expired` (TAURI-RUST-N) and `local_unreachable` (a local LLM
+    // server refusing the loopback connection, TAURI-RUST-12K) halts are the
+    // same shape — suppress the bypassing bare report — but carry no
+    // user-config remediation surface, so they gate the report directly rather
+    // than routing through `permanent_config_halt`'s UserErrorCenter swap.
+    let permanent_config_halt = credits_exhausted || budget_exhausted || key_unset;
+    if matches!(job.job_type, JobType::Agent)
+        && !session_expired
+        && !local_unreachable
+        && !permanent_config_halt
+    {
+        let report_message = last_agent_error.as_deref().unwrap_or(last_output.as_str());
         crate::core::observability::report_error(
             report_message,
             "cron",
@@ -393,9 +651,79 @@ async fn execute_job_with_retry(
                 ("failure", "retries_exhausted"),
             ],
         );
+    } else if matches!(job.job_type, JobType::Agent) && permanent_config_halt {
+        // Suppressed the retries-exhausted Sentry report for a permanent
+        // user-config / billing state. Metadata-only breadcrumb so the
+        // suppression is diagnosable in production without the raw provider body.
+        let (reason, user_error_kind) = if credits_exhausted {
+            ("insufficient_credits_402", "insufficient_credits")
+        } else if budget_exhausted {
+            ("budget_exhausted_400", "budget_exceeded")
+        } else {
+            ("api_key_unset", "api_key_missing")
+        };
+        log::debug!(
+            "[cron] action=suppress_retries_exhausted_report reason={reason} job_id={} retries={}",
+            job.id.as_str(),
+            retries
+        );
+        // Replace the generic agent-failure copy with the specific, actionable
+        // (static, leak-safe) reason so the hoisted /notifications alert + run
+        // history tell the user the exact next step rather than "Something went
+        // wrong" (CodeRabbit #4169). The raw `last_agent_error` chain is NEVER
+        // surfaced here — only the `&'static str` constants from
+        // `permanent_halt_message`.
+        last_output = permanent_halt_message(credits_exhausted, budget_exhausted).to_string();
+        // Also surface the actionable state to the UserErrorCenter so the user
+        // can fix it (add an API key / top up credits / raise the budget) even
+        // with no chat thread open. Broadcast-only + metadata-only — see
+        // `publish_cron_user_error` (#4165 / TAURI-RUST-HCK follow-up).
+        publish_cron_user_error(user_error_kind);
     }
 
     (false, last_output)
+}
+
+/// Static, leak-safe actionable alert copy for a permanent cron halt state.
+/// Returns the user-facing `/notifications` body matching the halt reason —
+/// `&'static str` only, so it can never carry a raw error field (the no-leak
+/// contract that governs [`agent_error_to_user_message`]). Precedence mirrors
+/// the halt classifiers' evaluation order: credits → budget → missing key.
+fn permanent_halt_message(credits_exhausted: bool, budget_exhausted: bool) -> &'static str {
+    if credits_exhausted {
+        CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE
+    } else if budget_exhausted {
+        CRON_HALT_BUDGET_EXHAUSTED_MESSAGE
+    } else {
+        CRON_HALT_API_KEY_UNSET_MESSAGE
+    }
+}
+
+/// Surface a permanent cron user-config / billing halt to every connected
+/// client's UserErrorCenter.
+///
+/// Broadcasts a metadata-only `user_error` web-channel event to the `"system"`
+/// room (which every socket auto-joins). The payload carries only the stable
+/// `kind` token in `error_type` — one of `api_key_missing` / `insufficient_credits`
+/// / `budget_exceeded`, mirroring the frontend `UserErrorKind` discriminator —
+/// plus `error_source = "cron"`. It NEVER carries the raw provider body (see the
+/// metadata-only rule in CLAUDE.md), so no secrets / PII leave the core.
+///
+/// The frontend `socketService` listens for `user_error` and routes it through
+/// the same classifier the chat runtime uses, so a background (no-delivery) job
+/// failure is no longer silent — it lands in the shell's UserErrorCenter with a
+/// deep-link action even though no chat thread is active.
+fn publish_cron_user_error(kind: &str) {
+    log::debug!("[cron] action=surface_user_error kind={kind}");
+    crate::openhuman::channels::providers::web::publish_web_channel_event(
+        crate::core::socketio::WebChannelEvent {
+            event: "user_error".to_string(),
+            client_id: "system".to_string(),
+            error_type: Some(kind.to_string()),
+            error_source: Some("cron".to_string()),
+            ..Default::default()
+        },
+    );
 }
 
 async fn process_due_jobs(config: &Config, security: &Arc<SecurityPolicy>, jobs: Vec<CronJob>) {
@@ -463,8 +791,6 @@ async fn execute_and_persist_job(
 }
 
 async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<String>) {
-    use crate::openhuman::agent::Agent;
-
     let name = job.name.clone().unwrap_or_else(|| "cron-job".to_string());
     let prompt = job.prompt.clone().unwrap_or_default();
     let prefixed_prompt = format!("[cron:{} {name}] {prompt}", job.id);
@@ -562,7 +888,7 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                 target = ?job.session_target,
                 "[cron] building isolated agent for scheduled job"
             );
-            match Agent::from_config(&effective) {
+            match build_agent_for_cron_job(&effective, job) {
                 Ok(mut agent) => {
                     // Tag events so downstream subscribers can correlate
                     // cron-triggered turns. `cron` is the channel so the
@@ -579,11 +905,32 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                             source:
                                 crate::openhuman::agent::turn_origin::TrustedAutomationSource::Cron,
                         };
-                    crate::openhuman::agent::turn_origin::with_origin(
+                    let turn = crate::openhuman::agent::turn_origin::with_origin(
                         origin,
                         agent.run_single(&prefixed_prompt),
-                    )
-                    .await
+                    );
+                    // Morning briefing only: install a 24h task-recency window
+                    // so Composio task-fetch tools (Linear/ClickUp/Notion/Asana)
+                    // surface only recently created/changed tasks. Other cron
+                    // agents and all chat turns leave the window unset.
+                    if is_morning_briefing_job(job) {
+                        tracing::debug!(
+                            job_id = %job.id,
+                            recency_window_secs = MORNING_BRIEFING_TASK_RECENCY_SECS,
+                            "[cron] applying morning-briefing task recency window"
+                        );
+                        crate::openhuman::agent::harness::with_task_recency_window(
+                            std::time::Duration::from_secs(MORNING_BRIEFING_TASK_RECENCY_SECS),
+                            turn,
+                        )
+                        .await
+                    } else {
+                        tracing::trace!(
+                            job_id = %job.id,
+                            "[cron] task recency window not applied for this job"
+                        );
+                        turn.await
+                    }
                 }
                 Err(e) => Err(e),
             }
@@ -594,7 +941,7 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
         Ok(response) => (
             true,
             if response.trim().is_empty() {
-                "agent job executed".to_string()
+                EMPTY_AGENT_OUTPUT.to_string()
             } else {
                 response
             },
@@ -614,6 +961,59 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
     }
 }
 
+/// Fires a `JobType::Flow` job: publishes `DomainEvent::FlowScheduleTick` for
+/// the bound flow id (stored in `job.command`, see `JobType::Flow`'s doc) and
+/// returns immediately. This job type does no work itself — dispatching the
+/// actual `flows::ops::flows_run` happens asynchronously in
+/// `flows::bus::FlowTriggerSubscriber`, which is the sole consumer of this
+/// event (kept out of the cron domain so cron stays flow-agnostic).
+fn run_flow_schedule_job(job: &CronJob) -> (bool, String) {
+    let flow_id = job.command.clone();
+    tracing::info!(
+        target: "flows",
+        job_id = %job.id,
+        %flow_id,
+        "[cron] flow schedule tick — publishing FlowScheduleTick"
+    );
+    publish_global(DomainEvent::FlowScheduleTick {
+        flow_id: flow_id.clone(),
+    });
+    (
+        true,
+        format!("flow schedule tick emitted for flow {flow_id}"),
+    )
+}
+
+/// Placeholder recorded in run history when an agent job succeeds but returns
+/// no text. Never delivered to chat — used only for the run-history record.
+const EMPTY_AGENT_OUTPUT: &str = "agent job executed";
+
+fn build_agent_for_cron_job(config: &Config, job: &CronJob) -> anyhow::Result<Agent> {
+    if let Some(agent_id) = job.agent_id.as_deref() {
+        match Agent::from_config_for_agent(config, agent_id) {
+            Ok(agent) => {
+                tracing::debug!(
+                    job_id = %job.id,
+                    agent_id = %agent_id,
+                    "[cron] built scheduled job agent from definition"
+                );
+                Ok(agent)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    job_id = %job.id,
+                    agent_id = %agent_id,
+                    error = %e,
+                    "[cron] failed to build agent from definition; falling back to generic agent"
+                );
+                Agent::from_config(config)
+            }
+        }
+    } else {
+        Agent::from_config(config)
+    }
+}
+
 async fn persist_job_result(
     config: &Config,
     job: &CronJob,
@@ -624,7 +1024,7 @@ async fn persist_job_result(
 ) -> bool {
     let duration_ms = (finished_at - started_at).num_milliseconds();
 
-    if let Err(e) = deliver_if_configured(config, job, output).await {
+    if let Err(e) = deliver_if_configured(config, job, output, success).await {
         if job.delivery.best_effort {
             tracing::warn!("Cron delivery failed (best_effort): {e}");
         } else {
@@ -702,34 +1102,91 @@ fn warn_if_high_frequency_agent_job(job: &CronJob) {
     }
 }
 
-async fn deliver_if_configured(config: &Config, job: &CronJob, output: &str) -> Result<()> {
+/// True when an agent job produced no meaningful text — blank output or the
+/// [`EMPTY_AGENT_OUTPUT`] placeholder. Such runs are never injected into chat.
+fn cron_output_is_empty(output: &str) -> bool {
+    output.trim().is_empty() || output == EMPTY_AGENT_OUTPUT
+}
+
+/// Whether a cron job's output should be injected into the user's chat thread.
+/// Skips failed runs and empty/placeholder output; failures still surface in
+/// the alerts tab and run history (handled separately by the caller).
+fn should_deliver_cron_output_to_chat(success: bool, output: &str) -> bool {
+    success && !cron_output_is_empty(output)
+}
+
+/// Whether a completed cron run should surface in the alerts tab
+/// (`/notifications`). Failures stay visible even when they produce no output;
+/// only successful-but-empty runs are dropped entirely.
+fn cron_result_should_alert(success: bool, output: &str) -> bool {
+    !success || !cron_output_is_empty(output)
+}
+
+async fn deliver_if_configured(
+    config: &Config,
+    job: &CronJob,
+    output: &str,
+    success: bool,
+) -> Result<()> {
     let delivery: &DeliveryConfig = &job.delivery;
 
+    // Don't post failed or empty cron runs into the user's chat: a failed turn
+    // (e.g. a transient network error) would otherwise deliver a canned
+    // "Something went wrong" message into the conversation with no user
+    // message behind it. Failures still reach the alerts tab (`push_cron_alert`)
+    // and the run-history / health signals, which are recorded elsewhere.
+    let is_empty = cron_output_is_empty(output);
+    let deliver_to_chat = should_deliver_cron_output_to_chat(success, output);
+    if !deliver_to_chat {
+        tracing::debug!(
+            job_id = %job.id,
+            success,
+            is_empty,
+            "[cron] skipping chat delivery for failed/empty cron run"
+        );
+    }
+
+    // A failed run must stay visible in /notifications regardless of delivery
+    // mode — a no-delivery agent job that halts on a permanent config/billing
+    // state (e.g. a keyless provider, TAURI-RUST-HCK) would otherwise fail
+    // silently. A *successful* non-empty run only alerts in the delivering
+    // modes (proactive/announce); a `none`-mode success stays silent (its
+    // output lives in last_output only — the cron contract), so we don't spam
+    // explicitly-silent background jobs with an unread alert every interval
+    // (Codex #4166).
     let mode = delivery.mode.trim().to_ascii_lowercase();
+    let delivers = matches!(mode.as_str(), "proactive" | "announce");
+    let alert_to_notifications =
+        cron_result_should_alert(success, output) && (!success || delivers);
+    let alert_body = if is_empty {
+        "Scheduled job failed without output."
+    } else {
+        output
+    };
+
     match mode.as_str() {
         // Proactive delivery — the channels module decides where to send.
         // Used by morning briefings, welcome messages, and other
         // user-facing proactive agents.
         "proactive" => {
-            let source = format!("cron:{}", job.id);
-            tracing::debug!(
-                job_id = %job.id,
-                source = %source,
-                "[cron] publishing ProactiveMessageRequested event"
-            );
-            publish_global(DomainEvent::ProactiveMessageRequested {
-                source,
-                message: output.to_string(),
-                job_name: job.name.clone(),
-            });
-
-            // Also push to the alerts tab so the user sees it in /notifications.
-            push_cron_alert(config, job, output);
+            if deliver_to_chat {
+                let source = format!("cron:{}", job.id);
+                tracing::debug!(
+                    job_id = %job.id,
+                    source = %source,
+                    "[cron] publishing ProactiveMessageRequested event"
+                );
+                publish_global(DomainEvent::ProactiveMessageRequested {
+                    source,
+                    message: output.to_string(),
+                    job_name: job.name.clone(),
+                });
+            }
         }
 
         // Announce delivery — the cron job specifies the exact channel
         // and target. Used for explicit channel-targeted output.
-        "announce" => {
+        "announce" if deliver_to_chat => {
             let channel = delivery
                 .channel
                 .as_deref()
@@ -751,12 +1208,22 @@ async fn deliver_if_configured(config: &Config, job: &CronJob, output: &str) -> 
                 target: target.to_string(),
                 output: output.to_string(),
             });
-
-            push_cron_alert(config, job, output);
         }
 
         // No delivery configured — output is stored in last_output only.
+        // The failure still reaches the alerts tab via the hoisted
+        // `push_cron_alert` below.
         _ => {}
+    }
+
+    // Surface in the alerts tab (/notifications) for any result that isn't a
+    // successful-but-empty run — INDEPENDENT of delivery mode. A failed cron
+    // job must stay visible to the user even when it has no chat delivery
+    // configured (the common case: a keyless agent job failing "API key not
+    // set", TAURI-RUST-HCK). Previously this fired only inside the proactive /
+    // announce arms, so no-delivery jobs failed silently in /notifications.
+    if alert_to_notifications {
+        push_cron_alert(config, job, alert_body);
     }
 
     Ok(())

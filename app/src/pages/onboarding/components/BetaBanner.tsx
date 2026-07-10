@@ -29,7 +29,7 @@ const BetaBanner = () => {
   return (
     <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-4 py-3">
       {/* Message */}
-      <p className="flex-1 text-xs leading-relaxed text-stone-700 dark:text-neutral-200">
+      <p className="flex-1 text-xs leading-relaxed text-content-secondary">
         {t('misc.beta')}{' '}
         <a
           href={DISCORD_INVITE_URL}
@@ -45,7 +45,7 @@ const BetaBanner = () => {
         type="button"
         aria-label={t('common.dismiss')}
         onClick={handleDismiss}
-        className="mt-0.5 flex-shrink-0 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:text-neutral-300 transition-colors">
+        className="mt-0.5 flex-shrink-0 text-content-faint hover:text-content-secondary dark:text-content-secondary transition-colors">
         <svg
           className="h-3.5 w-3.5"
           fill="none"

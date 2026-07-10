@@ -20,3 +20,6 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 #[path = "policy_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod proptest_tests;

@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
+import type { TriggerKind } from '../../hooks/useSubconscious';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { SubconsciousMode } from '../../utils/tauriCommands/heartbeat';
-import type { SubconsciousStatus } from '../../utils/tauriCommands/subconscious';
+import type {
+  SubconsciousInstanceStatus,
+  SubconsciousStatus,
+} from '../../utils/tauriCommands/subconscious';
+import { settingsNavState } from '../settings/modal/settingsOverlay';
+import SubconsciousInstanceCard from './SubconsciousInstanceCard';
 
 interface ModeOption {
   id: SubconsciousMode;
@@ -46,32 +52,48 @@ function sliderToMinutes(value: number): number {
 
 interface IntelligenceSubconsciousTabProps {
   status: SubconsciousStatus | null;
+  /** Per-world status rows (falls back to [memory] on an older core). */
+  instances?: SubconsciousInstanceStatus[];
   mode: SubconsciousMode;
   intervalMinutes: number;
-  triggerTick: () => Promise<void>;
+  triggerTick: (kind?: TriggerKind) => Promise<void>;
   triggering: boolean;
+  /** Per-kind in-flight state (two Run buttons must not share one spinner). */
+  isTriggering?: (kind: TriggerKind) => boolean;
   settingMode: boolean;
   setMode: (mode: SubconsciousMode) => Promise<void>;
   setIntervalMinutes: (minutes: number) => Promise<void>;
+  /** Navigate to the TinyPlace Orchestration tab's Subconscious window. */
+  onViewDirectives?: () => void;
 }
 
 export default function IntelligenceSubconsciousTab({
   status,
+  instances,
   mode,
   intervalMinutes,
   triggerTick,
   triggering,
+  isTriggering,
   settingMode,
   setMode,
   setIntervalMinutes,
 }: IntelligenceSubconsciousTabProps) {
   const { t } = useT();
   const navigate = useNavigate();
-  const providerUnavailable = status?.provider_available === false;
-  const providerUnavailableReason = providerUnavailable
-    ? (status?.provider_unavailable_reason ?? t('subconscious.providerUnavailableTitle'))
-    : null;
+  const location = useLocation();
   const isEnabled = mode !== 'off';
+
+  // Derive the per-world rows, tolerating an older core (no `instances`).
+  const rows: SubconsciousInstanceStatus[] =
+    instances && instances.length > 0
+      ? instances
+      : status
+        ? [{ ...status, instance: status.instance ?? 'memory' }]
+        : [];
+  const memoryRow = rows.find(r => r.instance === 'memory') ?? status ?? undefined;
+  const running = (kind: TriggerKind) => (isTriggering ? isTriggering(kind) : triggering);
+  const openProviderSettings = () => navigate('/settings/llm', settingsNavState(location));
 
   const [localSlider, setLocalSlider] = useState(() => minutesToSlider(intervalMinutes));
 
@@ -92,23 +114,20 @@ export default function IntelligenceSubconsciousTab({
     }
   }, [localSlider, intervalMinutes, setIntervalMinutes]);
 
-  const handleRunTick = async () => {
-    try {
-      await triggerTick();
-    } catch (error) {
+  const runTick = (kind: TriggerKind) => {
+    Promise.resolve(triggerTick(kind)).catch(error => {
       console.debug('[subconscious-ui] run tick:error', {
+        kind,
         error: error instanceof Error ? error.message : String(error),
       });
-    }
+    });
   };
 
   return (
     <div className="space-y-5 animate-fade-up">
       {/* Mode selector */}
       <div>
-        <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-2">
-          {t('subconscious.mode.label')}
-        </h3>
+        <h3 className="text-sm font-semibold text-content mb-2">{t('subconscious.mode.label')}</h3>
         <div className="grid grid-cols-3 gap-2">
           {MODE_OPTIONS.map(opt => (
             <button
@@ -119,21 +138,17 @@ export default function IntelligenceSubconsciousTab({
               className={`flex flex-col items-center text-center rounded-lg border p-3 transition ${
                 mode === opt.id
                   ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
-                  : 'border-stone-200 dark:border-neutral-800 hover:border-primary-300 dark:hover:border-primary-500/40'
+                  : 'border-line hover:border-primary-300 dark:hover:border-primary-500/40'
               } ${settingMode ? 'opacity-60 cursor-wait' : ''}`}>
               <span
                 className={`inline-block w-3 h-3 rounded-full border-2 mb-1.5 ${
                   mode === opt.id
                     ? 'bg-primary-500 border-primary-500'
-                    : 'border-stone-300 dark:border-neutral-600'
+                    : 'border-line-strong dark:border-neutral-600'
                 }`}
               />
-              <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                {t(opt.titleKey)}
-              </span>
-              <p className="mt-1 text-[11px] leading-tight text-stone-500 dark:text-neutral-400">
-                {t(opt.descKey)}
-              </p>
+              <span className="text-sm font-medium text-content">{t(opt.titleKey)}</span>
+              <p className="mt-1 text-[11px] leading-tight text-content-muted">{t(opt.descKey)}</p>
             </button>
           ))}
         </div>
@@ -148,10 +163,10 @@ export default function IntelligenceSubconsciousTab({
       {isEnabled && (
         <div>
           <div className="flex items-center justify-between mb-1.5">
-            <label className="text-xs font-medium text-stone-700 dark:text-neutral-300">
+            <label className="text-xs font-medium text-content-secondary">
               {t('subconscious.interval.label')}
             </label>
-            <span className="text-xs text-stone-500 dark:text-neutral-400">
+            <span className="text-xs text-content-muted">
               {formatMinutes(sliderToMinutes(localSlider), t)}
             </span>
           </div>
@@ -164,9 +179,9 @@ export default function IntelligenceSubconsciousTab({
             onChange={handleSliderChange}
             onMouseUp={handleSliderCommit}
             onTouchEnd={handleSliderCommit}
-            className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-stone-200 dark:bg-neutral-700 accent-primary-500"
+            className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-surface-strong accent-primary-500"
           />
-          <div className="flex justify-between mt-1 text-[10px] text-stone-400 dark:text-neutral-500">
+          <div className="flex justify-between mt-1 text-[10px] text-content-faint">
             <span>5m</span>
             <span>1h</span>
             <span>24h</span>
@@ -174,75 +189,18 @@ export default function IntelligenceSubconsciousTab({
         </div>
       )}
 
-      {/* Status bar + Run Now */}
+      {/* Per-world instance cards */}
       {isEnabled && (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs text-stone-400 dark:text-neutral-500">
-            {status && (
-              <>
-                <span>
-                  {status.total_ticks} {t('subconscious.ticks')}
-                </span>
-                {status.last_tick_at && (
-                  <>
-                    <span className="text-stone-300 dark:text-neutral-600">|</span>
-                    <span>
-                      {t('subconscious.last')}:{' '}
-                      {new Date(status.last_tick_at * 1000).toLocaleTimeString()}
-                    </span>
-                  </>
-                )}
-                {status.consecutive_failures > 0 && (
-                  <>
-                    <span className="text-stone-300 dark:text-neutral-600">|</span>
-                    <span className="text-coral-500">
-                      {status.consecutive_failures} {t('subconscious.failed')}
-                    </span>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-          <button
-            onClick={() => void handleRunTick()}
-            disabled={triggering || providerUnavailable}
-            title={providerUnavailable ? t('subconscious.providerUnavailableTitle') : undefined}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:opacity-40 border border-stone-200 dark:border-neutral-800 rounded-lg text-stone-600 dark:text-neutral-300 transition-colors">
-            {triggering ? (
-              <div className="w-3 h-3 border border-stone-400 border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13 10V3L4 14h7v7l9-11h-7z"
-                />
-              </svg>
-            )}
-            {t('subconscious.runNow')}
-          </button>
-        </div>
-      )}
-
-      {isEnabled && providerUnavailable && (
-        <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                {t('subconscious.providerUnavailableTitle')}
-              </p>
-              <p className="mt-1 text-xs text-amber-700 dark:text-amber-300 break-words">
-                {providerUnavailableReason}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => navigate('/settings/llm')}
-              className="flex-shrink-0 rounded-md bg-amber-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-amber-700 transition-colors">
-              {t('subconscious.providerSettings')}
-            </button>
-          </div>
+        <div className="space-y-3">
+          <SubconsciousInstanceCard
+            title={t('subconscious.instance.memory.title')}
+            subtitle={t('subconscious.instance.memory.subtitle')}
+            status={memoryRow}
+            runLabel={t('subconscious.runNow')}
+            triggering={running('memory')}
+            onRun={() => runTick('memory')}
+            onProviderSettings={openProviderSettings}
+          />
         </div>
       )}
 

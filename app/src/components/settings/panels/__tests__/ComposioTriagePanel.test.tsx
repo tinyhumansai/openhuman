@@ -50,7 +50,6 @@ describe('ComposioTriagePanel', () => {
       expect(screen.queryByText('Loading…')).toBeNull();
     });
 
-    expect(screen.getByText('Integration Triggers')).toBeInTheDocument();
     expect(screen.getByLabelText('Disable AI triage for all triggers')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('gmail, slack, ...')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();

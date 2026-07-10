@@ -46,6 +46,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -53,6 +54,7 @@ import {
   waitForAssistantReplyContaining,
   waitForSocketConnected,
 } from '../helpers/chat-harness';
+import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { textExists } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash } from '../helpers/shared-flows';
@@ -74,7 +76,7 @@ const USER_ID = 'e2e-harness-search-tool-flow';
 
 async function navigateChatAndSend(prompt: string): Promise<void> {
   await navigateViaHash('/chat');
-  await browser.waitUntil(async () => await textExists('Threads'), {
+  await browser.waitUntil(async () => await chatMounted(), {
     timeout: 15_000,
     timeoutMsg: 'Conversations panel did not mount',
   });
@@ -124,6 +126,10 @@ describe('Harness — Search tool-flow', () => {
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
+    const superContext = await callOpenhumanRpc('openhuman.config_set_super_context_enabled', {
+      value: false,
+    });
+    expect(superContext.ok).toBe(true);
     console.log(`${LOG_PREFIX} Suite setup complete`);
   });
 
@@ -152,7 +158,7 @@ describe('Harness — Search tool-flow', () => {
           {
             id: 'call_memory_recall_1',
             name: 'memory_recall',
-            arguments: JSON.stringify({ query: 'project Atlas' }),
+            arguments: JSON.stringify({ namespace: 'global', query: 'project Atlas' }),
           },
         ],
       },

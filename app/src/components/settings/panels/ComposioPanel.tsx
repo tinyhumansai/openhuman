@@ -23,8 +23,9 @@ import {
   openhumanComposioGetMode,
   openhumanComposioSetApiKey,
 } from '../../../utils/tauriCommands';
+import PanelPage from '../../layout/PanelPage';
 import Button from '../../ui/Button';
-import SettingsHeader from '../components/SettingsHeader';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsRow, SettingsSection, SettingsStatusLine, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -41,7 +42,7 @@ interface ComposioPanelProps {
 
 const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const { snapshot } = useCoreState();
   const allowManagedAuth =
     managedAuthEnabled ??
@@ -204,46 +205,34 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
     setConfirmGate('idle');
   };
 
+  const composioDescription = embedded
+    ? undefined
+    : t('settings.developerMenu.composioRouting.desc');
+  const composioLeading = embedded ? undefined : <SettingsBackButton onBack={navigateBack} />;
+
   if (loading) {
     return (
-      <div>
-        {!embedded && (
-          <SettingsHeader
-            title={t('settings.composio.title')}
-            showBackButton
-            onBack={navigateBack}
-            breadcrumbs={breadcrumbs}
-          />
-        )}
+      <PanelPage contentClassName="" description={composioDescription} leading={composioLeading}>
         <div className={embedded ? '' : 'p-4'}>
-          <p className="text-sm text-neutral-500 dark:text-neutral-400">
-            {t('settings.composio.loading')}
-          </p>
+          <p className="text-sm text-content-muted">{t('settings.composio.loading')}</p>
         </div>
-      </div>
+      </PanelPage>
     );
   }
 
   return (
-    <div className="z-10 relative">
-      {!embedded && (
-        <SettingsHeader
-          title={t('settings.composio.title')}
-          showBackButton
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-      )}
-
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={composioDescription}
+      leading={composioLeading}>
       <div className={embedded ? 'space-y-5' : 'p-4 pt-2 space-y-5'}>
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          {t('settings.composio.intro')}
-        </p>
+        <p className="text-sm text-content-muted">{t('settings.composio.intro')}</p>
 
         {allowManagedAuth ? (
           <SettingsSection>
             <fieldset className="px-4 py-3">
-              <legend className="text-sm font-medium text-neutral-800 dark:text-neutral-100 mb-2">
+              <legend className="text-sm font-medium text-content mb-2">
                 {t('settings.composio.routingMode')}
               </legend>
               <div className="space-y-2">
@@ -258,10 +247,10 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
                     className="mt-1"
                   />
                   <div className="text-left">
-                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                    <span className="text-sm font-medium text-content">
                       {t('settings.composio.modeManaged')}
                     </span>
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    <p className="text-xs text-content-muted mt-0.5">
                       {t('settings.composio.modeManagedDesc')}
                     </p>
                   </div>
@@ -277,10 +266,10 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
                     className="mt-1"
                   />
                   <div className="text-left">
-                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                    <span className="text-sm font-medium text-content">
                       {t('settings.composio.modeDirect')}
                     </span>
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    <p className="text-xs text-content-muted mt-0.5">
                       {t('settings.composio.modeDirectDesc')}
                     </p>
                   </div>
@@ -291,10 +280,10 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
         ) : (
           <SettingsSection>
             <div className="px-4 py-3 space-y-2">
-              <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+              <p className="text-sm font-medium text-content">
                 {t('settings.composio.modeDirect')}
               </p>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              <p className="text-xs text-content-muted">
                 {t(
                   'settings.composio.directOnlyDesc',
                   'Managed Composio auth is unavailable here. Enter your own Composio API key or skip this for now.'
@@ -406,7 +395,7 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
           </div>
         )}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 

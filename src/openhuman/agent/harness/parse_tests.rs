@@ -293,6 +293,58 @@ fn structured_tool_call_and_history_helpers_round_trip_expected_shapes() {
     assert!(xml_history.contains("\"name\":\"echo\""));
 }
 
+/// TAURI-RUST-4PK / 4PJ: the persisted assistant-history JSON must carry each
+/// tool call's `extra_content` (Gemini's `thought_signature`). This is the
+/// writer that the agent loop runs *every* native tool-call turn through, so a
+/// dropped signature here is exactly what re-surfaced the 400 on a history
+/// reload after PR #3553 fixed only the response→request hop. Every call in a
+/// parallel/multi-call turn must keep its own signature; calls without one omit
+/// the field so non-Gemini providers stay byte-identical.
+#[test]
+fn build_native_assistant_history_persists_per_call_extra_content() {
+    let tool_calls = vec![
+        ToolCall {
+            id: "call-a".into(),
+            name: "shell".into(),
+            arguments: "{}".into(),
+            extra_content: Some(serde_json::json!({"google":{"thought_signature":"SIG_A"}})),
+        },
+        ToolCall {
+            id: "call-b".into(),
+            name: "read".into(),
+            arguments: "{}".into(),
+            extra_content: Some(serde_json::json!({"google":{"thought_signature":"SIG_B"}})),
+        },
+        // A call that never had a signature must NOT gain an empty key.
+        ToolCall {
+            id: "call-c".into(),
+            name: "noop".into(),
+            arguments: "{}".into(),
+            extra_content: None,
+        },
+    ];
+
+    let native = build_native_assistant_history("on it", None, &tool_calls);
+    let json: serde_json::Value = serde_json::from_str(&native).expect("valid json");
+
+    assert_eq!(
+        json.pointer("/tool_calls/0/extra_content/google/thought_signature")
+            .and_then(|v| v.as_str()),
+        Some("SIG_A"),
+        "first parallel call's signature must be persisted"
+    );
+    assert_eq!(
+        json.pointer("/tool_calls/1/extra_content/google/thought_signature")
+            .and_then(|v| v.as_str()),
+        Some("SIG_B"),
+        "second parallel call's signature must be persisted (not just the first)"
+    );
+    assert!(
+        json.pointer("/tool_calls/2/extra_content").is_none(),
+        "a call without extra_content must omit the field, keeping non-Gemini history byte-identical"
+    );
+}
+
 #[test]
 fn tools_to_openai_format_uses_tool_metadata() {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(StubTool("echo")), Box::new(StubTool("shell"))];

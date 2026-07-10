@@ -11,7 +11,14 @@ use anyhow::Result;
 pub const GLOBAL_STYLE_SUFFIX: &str = "## Output style\n\n\
     - Do **not** use em-dashes (`—`). Replace them with commas, colons, \
     parentheses, or two short sentences. This applies to every output \
-    you produce: chat replies, summaries, tool args, and file contents.\n";
+    you produce: chat replies, summaries, tool args, and file contents.\n\
+    - **Be concise.** Lead with the answer, then only the detail the task \
+    needs. No preamble, no recap of the request, no filler. Make the \
+    response as long as the task requires and no longer: a one-line answer \
+    for a simple ask, fuller treatment only when the task genuinely needs it.\n\
+    - **Do not repeat yourself.** Don't restate facts, context, or results \
+    already shown earlier in this conversation; reference them instead of \
+    pasting them again.\n";
 
 #[derive(Default)]
 pub struct SystemPromptBuilder {

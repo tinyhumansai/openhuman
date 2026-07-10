@@ -318,6 +318,42 @@ async fn sync_items_individually(
     let items = reader.list_items(source, config).await?;
     let total = items.len();
 
+    // Reconcile before re-ingesting: for LOCAL FOLDER sources only, drop chunks
+    // (rows + on-disk bodies) for items previously ingested under this source
+    // that no longer exist on disk — e.g. a renamed or deleted file. Each item
+    // ingests under the content-addressed composite id
+    // `mem_src:{source_id}:{item_id}` as a Document, so a rename mints a fresh id
+    // and orphans the old chunk + its on-disk body; without this the stale body
+    // lingers forever and can only ever be served as a ≤500-char preview (#4689).
+    //
+    // Runs BEFORE the empty-listing early return so an emptied folder (every file
+    // deleted → total == 0) still reconciles instead of leaving all its chunks
+    // behind. This is safe on an empty or partial listing because
+    // `prune_vanished_items` re-checks each candidate on disk and only deletes
+    // files that are provably absent, so a transient listing miss (EACCES /
+    // EMFILE / stat stall) is never mistaken for a deletion.
+    //
+    // Restricted to Folder: for feed / web / conversation sources, absence from
+    // the current listing means "rolled off / not re-fetched", NOT "deleted", so
+    // pruning them would irrecoverably delete valid archived items.
+    if source_supports_prune(&source.kind) {
+        if let Some(base_path) = source.path.clone() {
+            let config = config.clone();
+            let source_id = source.id.clone();
+            let live: HashSet<String> = items
+                .iter()
+                .map(|item| format!("mem_src:{source_id}:{}", item.id))
+                .collect();
+            if let Err(e) = tokio::task::spawn_blocking(move || {
+                prune_vanished_items(&config, &source_id, std::path::Path::new(&base_path), &live)
+            })
+            .await
+            {
+                tracing::warn!(error = %e, "[memory_sources:sync] prune join error");
+            }
+        }
+    }
+
     if total == 0 {
         return Ok(0);
     }
@@ -399,7 +435,7 @@ async fn sync_items_individually(
 
                 let done = processed.fetch_add(1, Ordering::Relaxed) + 1;
                 let new = ingested.load(Ordering::Relaxed);
-                if done % 10 == 0 || done == total {
+                if done.is_multiple_of(10) || done == total {
                     emit_sync_stage(
                         MemorySyncTrigger::Manual,
                         MemorySyncStage::Ingesting,
@@ -414,6 +450,107 @@ async fn sync_items_individually(
         .await;
 
     Ok(ingested.load(Ordering::Relaxed))
+}
+
+/// Whether a source kind has authoritative present/absent semantics on the
+/// local disk, so that "absent from the current listing" genuinely means
+/// "deleted" and can drive a prune (#4689).
+///
+/// Only `Folder` qualifies: for `RssFeed` / `WebPage`, `list_items` returns a
+/// rolling, `max_items`-truncated window, so an item missing from it merely
+/// rolled off the feed and must never be deleted; `Conversation` threads have
+/// no delete-follows-listing contract. Restricting prune here prevents turning
+/// an append-only archive into a destructive mirror of the latest window.
+fn source_supports_prune(kind: &SourceKind) -> bool {
+    matches!(kind, SourceKind::Folder)
+}
+
+/// Delete chunks (rows + on-disk bodies) for items previously ingested under
+/// `source_id` whose backing file no longer exists under `base_path` — the
+/// reconcile step that keeps a folder resync from orphaning renamed or deleted
+/// files (#4689).
+///
+/// Safety: a candidate is deleted ONLY when its file is provably absent
+/// (`symlink_metadata` returns `NotFound`). A transient listing miss (the reader
+/// dropped a still-present file on an `EACCES` / `EMFILE` / stat stall) leaves
+/// the file on disk, so the re-check keeps it — absence from `live` alone is
+/// never sufficient to delete.
+///
+/// Blocking DB + FS work; call from `spawn_blocking`. Chunks land under the
+/// content (`Document`) `SourceKind`, not the outer `memory_sources` source kind.
+fn prune_vanished_items(
+    config: &Config,
+    source_id: &str,
+    base_path: &std::path::Path,
+    live: &HashSet<String>,
+) {
+    use crate::openhuman::memory_store::chunks::store as chunk_store;
+    use crate::openhuman::memory_store::chunks::types::SourceKind as ChunkSourceKind;
+
+    let prefix = format!("mem_src:{source_id}:");
+    let previously = match chunk_store::list_source_ids_with_prefix(
+        config,
+        ChunkSourceKind::Document,
+        &prefix,
+    ) {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::warn!(
+                source_id = %source_id,
+                error = %format!("{e:#}"),
+                "[memory_sources:sync] prune: failed to list previously-ingested items"
+            );
+            return;
+        }
+    };
+
+    let mut removed_chunks = 0usize;
+    let mut removed_items = 0usize;
+    for stale in previously.into_iter().filter(|sid| !live.contains(sid)) {
+        // Recover the item's relative path from the composite id and confirm the
+        // file is genuinely gone before deleting. Anything other than a definite
+        // NotFound (present file, or an ambiguous EACCES/IO error) is treated as
+        // "keep" so a transient listing miss can never delete live data.
+        let Some(rel) = stale.strip_prefix(&prefix) else {
+            continue;
+        };
+        // Defense-in-depth: `rel` comes from a stored composite id. If it were
+        // ever empty, absolute, or contained `..`, `base_path.join(rel)` could
+        // resolve outside the source folder (on Unix an absolute `rel` silently
+        // discards `base_path`), and a `NotFound` there would delete real chunk
+        // rows. The current folder reader can't produce such ids, so keep any
+        // such candidate rather than risk deleting on a path we can't vouch for.
+        if rel.is_empty() || rel.contains("..") || std::path::Path::new(rel).is_absolute() {
+            tracing::warn!(
+                source_id = %source_id,
+                "[memory_sources:sync] prune: skipping candidate with unsafe relative path"
+            );
+            continue;
+        }
+        match std::fs::symlink_metadata(base_path.join(rel)) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => { /* absent → prune */ }
+            _ => continue,
+        }
+        match chunk_store::delete_chunks_by_source(config, ChunkSourceKind::Document, &stale) {
+            Ok(n) => {
+                removed_chunks += n;
+                removed_items += 1;
+            }
+            Err(e) => tracing::warn!(
+                source_id = %source_id,
+                error = %format!("{e:#}"),
+                "[memory_sources:sync] prune: delete failed for a vanished item"
+            ),
+        }
+    }
+    if removed_items > 0 {
+        tracing::info!(
+            source_id = %source_id,
+            items = removed_items,
+            chunks = removed_chunks,
+            "[memory_sources:sync] pruned chunks for vanished items"
+        );
+    }
 }
 
 /// Derive the tree scope(s) for a source and reconcile any raw files that
@@ -537,5 +674,180 @@ pub(crate) fn derive_scopes(source: &MemorySourceEntry, config: &Config) -> Vec<
             }
         }
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::memory_store::chunks::store as chunk_store;
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind as ChunkSourceKind,
+    };
+    use crate::openhuman::memory_store::content::stage_chunks;
+    use chrono::TimeZone;
+    use tempfile::TempDir;
+
+    fn doc_chunk(source_id: &str) -> Chunk {
+        let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        Chunk {
+            id: chunk_id(ChunkSourceKind::Document, source_id, 0, "body"),
+            content: format!("body of {source_id}"),
+            metadata: Metadata {
+                source_kind: ChunkSourceKind::Document,
+                source_id: source_id.into(),
+                owner: "user".into(),
+                timestamp: ts,
+                time_range: (ts, ts),
+                tags: vec![],
+                source_ref: None,
+                path_scope: None,
+            },
+            token_count: 2,
+            seq_in_source: 0,
+            created_at: ts,
+            partial_message: false,
+        }
+    }
+
+    fn seed(cfg: &Config, chunk: &Chunk) {
+        let staged =
+            stage_chunks(&cfg.memory_tree_content_root(), std::slice::from_ref(chunk)).unwrap();
+        chunk_store::with_connection(cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            chunk_store::upsert_staged_chunks_tx(&tx, &staged)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn source_supports_prune_only_for_folder() {
+        assert!(source_supports_prune(&SourceKind::Folder));
+        assert!(!source_supports_prune(&SourceKind::RssFeed));
+        assert!(!source_supports_prune(&SourceKind::WebPage));
+        assert!(!source_supports_prune(&SourceKind::Conversation));
+    }
+
+    #[test]
+    fn prune_vanished_items_removes_only_files_absent_from_disk() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.workspace_dir = tmp.path().to_path_buf();
+        // Folder base holds only b.md on disk; a.md was renamed/deleted.
+        let base = tmp.path().join("folder");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("b.md"), b"b").unwrap();
+
+        seed(&cfg, &doc_chunk("mem_src:src1:a.md"));
+        seed(&cfg, &doc_chunk("mem_src:src1:b.md"));
+        assert_eq!(chunk_store::count_chunks(&cfg).unwrap(), 2);
+
+        let live: HashSet<String> = ["mem_src:src1:b.md".to_string()].into_iter().collect();
+        prune_vanished_items(&cfg, "src1", &base, &live);
+
+        let remaining = chunk_store::list_source_ids_with_prefix(
+            &cfg,
+            ChunkSourceKind::Document,
+            "mem_src:src1:",
+        )
+        .unwrap();
+        assert_eq!(remaining, vec!["mem_src:src1:b.md".to_string()]);
+        assert_eq!(chunk_store::count_chunks(&cfg).unwrap(), 1);
+    }
+
+    #[test]
+    fn prune_vanished_items_keeps_still_present_file_missed_by_listing() {
+        // Safety guard (#4689 review): a transient listing miss must not delete a
+        // file that is still on disk. 'a.md' is absent from `live` but present on
+        // disk → it must be kept.
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.workspace_dir = tmp.path().to_path_buf();
+        let base = tmp.path().join("folder");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("a.md"), b"still here").unwrap();
+
+        seed(&cfg, &doc_chunk("mem_src:src3:a.md"));
+        // 'a.md' dropped from the listing (e.g. EACCES/EMFILE) though it exists.
+        let live: HashSet<String> = HashSet::new();
+        prune_vanished_items(&cfg, "src3", &base, &live);
+
+        // Not deleted — the on-disk re-check kept it.
+        assert_eq!(chunk_store::count_chunks(&cfg).unwrap(), 1);
+    }
+
+    #[test]
+    fn prune_vanished_items_prunes_when_folder_emptied() {
+        // Emptied folder: listing is empty (live = {}) and no files remain on
+        // disk, so the previously-ingested chunk must be pruned (the reason prune
+        // now runs before the total == 0 early return).
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.workspace_dir = tmp.path().to_path_buf();
+        let base = tmp.path().join("empty_folder");
+        std::fs::create_dir_all(&base).unwrap();
+
+        seed(&cfg, &doc_chunk("mem_src:src4:gone.md"));
+        let live: HashSet<String> = HashSet::new();
+        prune_vanished_items(&cfg, "src4", &base, &live);
+        assert_eq!(chunk_store::count_chunks(&cfg).unwrap(), 0);
+    }
+
+    #[test]
+    fn prune_vanished_items_keeps_candidate_with_unsafe_relative_path() {
+        // Defense-in-depth: a stored id whose relative path is absolute must not
+        // be pruned even when its file is "absent" (join would escape the base).
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.workspace_dir = tmp.path().to_path_buf();
+        let base = tmp.path().join("folder");
+        std::fs::create_dir_all(&base).unwrap();
+
+        seed(&cfg, &doc_chunk("mem_src:src5:/etc/hostname"));
+        let live: HashSet<String> = HashSet::new();
+        prune_vanished_items(&cfg, "src5", &base, &live);
+        // Not deleted — the unsafe-path guard skipped it.
+        assert_eq!(chunk_store::count_chunks(&cfg).unwrap(), 1);
+    }
+
+    #[test]
+    fn list_source_ids_with_prefix_isolates_sibling_prefixes() {
+        // `mem_src:src1:` must not match `mem_src:src10:` items.
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.workspace_dir = tmp.path().to_path_buf();
+
+        seed(&cfg, &doc_chunk("mem_src:src1:a.md"));
+        seed(&cfg, &doc_chunk("mem_src:src1:c.md"));
+        seed(&cfg, &doc_chunk("mem_src:src10:b.md"));
+
+        let mut got = chunk_store::list_source_ids_with_prefix(
+            &cfg,
+            ChunkSourceKind::Document,
+            "mem_src:src1:",
+        )
+        .unwrap();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "mem_src:src1:a.md".to_string(),
+                "mem_src:src1:c.md".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn prune_vanished_items_is_noop_when_all_live() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        cfg.workspace_dir = tmp.path().to_path_buf();
+
+        seed(&cfg, &doc_chunk("mem_src:src2:a.md"));
+        let live: HashSet<String> = ["mem_src:src2:a.md".to_string()].into_iter().collect();
+        prune_vanished_items(&cfg, "src2", tmp.path(), &live);
+        assert_eq!(chunk_store::count_chunks(&cfg).unwrap(), 1);
     }
 }

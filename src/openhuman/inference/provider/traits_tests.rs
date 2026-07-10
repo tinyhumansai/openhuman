@@ -271,6 +271,7 @@ async fn provider_chat_prompt_guided_fallback() {
         messages: &[ChatMessage::user("Hello")],
         tools: Some(&tools),
         stream: None,
+        max_tokens: None,
     };
 
     let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -289,6 +290,7 @@ async fn provider_chat_without_tools() {
         messages: &[ChatMessage::user("Hello")],
         tools: None,
         stream: None,
+        max_tokens: None,
     };
 
     let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -390,6 +392,7 @@ async fn provider_chat_prompt_guided_preserves_existing_system_not_first() {
         ],
         tools: Some(&tools),
         stream: None,
+        max_tokens: None,
     };
 
     let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -413,6 +416,7 @@ async fn provider_chat_prompt_guided_uses_convert_tools_override() {
         messages: &[ChatMessage::system("BASE"), ChatMessage::user("Hello")],
         tools: Some(&tools),
         stream: None,
+        max_tokens: None,
     };
 
     let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -436,10 +440,62 @@ async fn provider_chat_prompt_guided_rejects_non_prompt_payload() {
         messages: &[ChatMessage::user("Hello")],
         tools: Some(&tools),
         stream: None,
+        max_tokens: None,
     };
 
     let err = provider.chat(request, "model", 0.7).await.unwrap_err();
     let message = err.to_string();
 
     assert!(message.contains("non-prompt-guided"));
+}
+
+// Provider that reports a real telemetry name but does not override streaming,
+// so it falls back to the default `stream_chat_with_history` implementation.
+struct NamedNoStreamProvider;
+
+#[async_trait]
+impl Provider for NamedNoStreamProvider {
+    fn telemetry_provider_id(&self) -> String {
+        "acme".to_string()
+    }
+
+    async fn chat_with_system(
+        &self,
+        _system: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+    ) -> anyhow::Result<String> {
+        Ok("ok".to_string())
+    }
+}
+
+#[tokio::test]
+async fn default_stream_chat_with_history_names_provider_when_unsupported() {
+    let provider = NamedNoStreamProvider;
+    let mut stream = provider.stream_chat_with_history(
+        &[ChatMessage::user("Hi")],
+        "model",
+        0.7,
+        StreamOptions::default(),
+    );
+
+    let chunk = stream
+        .next()
+        .await
+        .expect("one chunk")
+        .expect("chunk is Ok");
+
+    assert!(chunk.is_final);
+    assert!(
+        chunk.delta.contains("acme"),
+        "diagnostic should name the provider, got: {}",
+        chunk.delta
+    );
+    assert!(chunk.delta.contains("does not support streaming"));
+    assert!(
+        !chunk.delta.contains("unknown"),
+        "diagnostic must not use the misleading literal 'unknown', got: {}",
+        chunk.delta
+    );
 }

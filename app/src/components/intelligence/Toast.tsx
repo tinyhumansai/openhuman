@@ -41,10 +41,10 @@ const TOAST_ICONS = {
 };
 
 const TOAST_STYLES = {
-  success: 'bg-neutral-0 border-sage-500 text-neutral-900',
-  error: 'bg-neutral-0 border-coral-500 text-neutral-900',
-  warning: 'bg-neutral-0 border-amber-500 text-neutral-900',
-  info: 'bg-neutral-0 border-primary-500 text-neutral-900',
+  success: 'bg-neutral-0 border-sage-500 text-content',
+  error: 'bg-neutral-0 border-coral-500 text-content',
+  warning: 'bg-neutral-0 border-amber-500 text-content',
+  info: 'bg-neutral-0 border-primary-500 text-content',
 };
 
 const TOAST_ICON_STYLES = {
@@ -105,7 +105,7 @@ export function Toast({ notification, onRemove }: ToastProps) {
         <div className="flex-1 min-w-0">
           <h4 className="text-sm font-medium">{notification.title}</h4>
           {notification.message && (
-            <p className="text-xs text-neutral-500 mt-1">{notification.message}</p>
+            <p className="text-xs text-content-muted mt-1">{notification.message}</p>
           )}
         </div>
 
@@ -121,7 +121,7 @@ export function Toast({ notification, onRemove }: ToastProps) {
         {/* Close button */}
         <button
           onClick={handleRemove}
-          className="flex-shrink-0 text-neutral-400 hover:text-neutral-600 transition-colors">
+          className="flex-shrink-0 text-content-faint hover:text-content-secondary transition-colors">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               strokeLinecap="round"

@@ -90,6 +90,10 @@ impl ComposioTool {
         )
     }
 
+    pub(crate) fn auth_key_fingerprint(&self) -> u64 {
+        crate::openhuman::composio::direct_auth::fingerprint_api_key(&self.api_key)
+    }
+
     /// Debug-test seam for raw integration coverage: construct a direct
     /// Composio tool against explicit v2/v3 base URLs. Non-HTTPS URLs are
     /// accepted only for loopback hosts and only in debug builds.
@@ -213,7 +217,10 @@ impl ComposioTool {
         let url = format!("{}/tools", self.base_v3);
         let mut req = self.client().get(&url).header("x-api-key", &self.api_key);
 
-        req = req.query(&[("limit", "200")]);
+        // #3932: pin toolkit_versions=latest. Composio v3 otherwise defaults to
+        // the 00000000_00 snapshot, which lists zero tools for any toolkit
+        // published after it (Outlook and every other post-launch toolkit).
+        req = req.query(&[("limit", "200"), ("toolkit_versions", "latest")]);
         if let Some(app) = app_name.map(str::trim).filter(|app| !app.is_empty()) {
             req = req.query(&[("toolkits", app), ("toolkit_slug", app)]);
         }
@@ -274,7 +281,13 @@ impl ComposioTool {
         toolkits: &[&str],
         tags: Option<&[&str]>,
     ) -> Vec<(&'static str, String)> {
-        let mut params: Vec<(&'static str, String)> = vec![("limit", "200".to_string())];
+        // #3932: pin toolkit_versions=latest. Without it Composio v3 defaults to
+        // the 00000000_00 snapshot, which lists zero tools for any toolkit
+        // published after it (Outlook and every other post-launch toolkit).
+        let mut params: Vec<(&'static str, String)> = vec![
+            ("limit", "200".to_string()),
+            ("toolkit_versions", "latest".to_string()),
+        ];
 
         let trimmed: Vec<&str> = toolkits
             .iter()
@@ -1017,6 +1030,15 @@ struct ComposioV3Tool {
     /// the same model-callable schema backend mode surfaces.
     #[serde(default, alias = "parameters")]
     input_parameters: Option<serde_json::Value>,
+    /// JSON schema for the tool's OUTPUT/return value, per Composio v3
+    /// `/tools`'s `output_parameters` field ("Schema definition of return
+    /// values from the tool" —
+    /// <https://docs.composio.dev/reference/api-reference/tools/getTools>).
+    /// Re-emitted as `ComposioToolFunction::output_parameters` so callers
+    /// can ground a downstream binding in the tool's real output field
+    /// names instead of guessing them.
+    #[serde(default)]
+    output_parameters: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1077,6 +1099,9 @@ pub struct ComposioToolSchemaV3 {
     pub description: Option<String>,
     pub toolkit_slug: Option<String>,
     pub input_parameters: Option<serde_json::Value>,
+    /// See [`ComposioV3Tool::output_parameters`] — Composio v3's schema for
+    /// the action's return value, when published.
+    pub output_parameters: Option<serde_json::Value>,
 }
 
 impl ComposioToolSchemaV3 {
@@ -1096,6 +1121,7 @@ impl ComposioToolSchemaV3 {
             description: item.description.or(item.name),
             toolkit_slug,
             input_parameters: item.input_parameters,
+            output_parameters: item.output_parameters,
         }
     }
 }

@@ -6,14 +6,18 @@
 //!
 //! See epic tinyhumansai/openhuman#3505.
 
+use std::collections::HashMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Controls whether the bot auto-joins meetings from the calendar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AutoJoinPolicy {
     /// Prompt the user before every join (default).
+    #[default]
     AskEachTime,
     /// Always join without prompting.
     Always,
@@ -21,17 +25,13 @@ pub enum AutoJoinPolicy {
     Never,
 }
 
-impl Default for AutoJoinPolicy {
-    fn default() -> Self {
-        Self::AskEachTime
-    }
-}
-
 /// Controls whether post-call summaries are generated automatically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AutoSummarizePolicy {
     /// Ask the user after the call ends (default).
+    #[default]
     Ask,
     /// Always generate a summary.
     Always,
@@ -39,10 +39,16 @@ pub enum AutoSummarizePolicy {
     Never,
 }
 
-impl Default for AutoSummarizePolicy {
-    fn default() -> Self {
-        Self::Ask
-    }
+/// Which calendar data source feeds Google Meet detection and auto-join.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum CalendarProvider {
+    /// Composio-based Google Calendar sync (default; broad OAuth scopes).
+    #[default]
+    Composio,
+    /// Recall.ai Calendar V1 OAuth (less-invasive: read-only events + email).
+    Recall,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -70,6 +76,51 @@ pub struct MeetConfig {
     /// When `true`, the bot joins in listen-only mode (mic muted).
     #[serde(default = "default_listen_only")]
     pub listen_only_default: bool,
+
+    /// Phase 2 in-call agency (epic #3505, PR-6): when `true`, wake-phrase
+    /// commands detected mid-call (`bot:in_call_request`) are routed
+    /// through the orchestrator and the reply is spoken back into the
+    /// call (`bot:speak`). Off by default.
+    #[serde(default = "default_enable_in_call_agency")]
+    pub enable_in_call_agency: bool,
+
+    /// When `true` (default), the in-call reply is streamed back as
+    /// per-sentence `bot:speak` chunks as the LLM generates them, so the
+    /// bot starts speaking on the first sentence instead of after the whole
+    /// reply. Set `false` to fall back to a single buffered `bot:speak`.
+    #[serde(default = "default_in_call_streaming")]
+    pub in_call_streaming: bool,
+
+    /// Per-platform auto-join policy overrides.
+    /// Keys are platform slugs: "gmeet", "zoom", "teams", "webex".
+    /// Falls back to `auto_join_policy` when not set for a platform.
+    #[serde(default)]
+    pub platform_auto_join_policies: HashMap<String, AutoJoinPolicy>,
+
+    /// Master switch for calendar-driven meeting actions. When `true`, the
+    /// heartbeat planner polls the connected calendar so `auto_join_policy`
+    /// (plus per-event / per-platform overrides) can auto-join or prompt for
+    /// meetings. Decoupled from `heartbeat.notify_meetings`, which controls
+    /// only the plain reminder notifications — so a user can have OpenHuman
+    /// join meetings without opting into reminder cards (and vice versa).
+    /// Off by default.
+    #[serde(default)]
+    pub watch_calendar: bool,
+
+    /// Which calendar source drives Google Meet detection and auto-join.
+    /// `Composio` (default) uses Composio Google Calendar; `Recall` uses
+    /// Recall.ai Calendar V1 (less-invasive scopes). Flipped to `Recall`
+    /// automatically when the user connects their calendar via Recall.
+    #[serde(default)]
+    pub calendar_provider: CalendarProvider,
+
+    /// The user's display name as it appears in meetings (e.g. their Google
+    /// Meet caption label). Set once from the Meetings page and reused as the
+    /// bot's reply anchor (`respondToParticipant`) on every join — auto-join and
+    /// manual. Empty = no saved anchor (bot falls back to the calendar `self`
+    /// attendee / account identity, and stays listen-only if none resolves).
+    #[serde(default)]
+    pub reply_display_name: String,
 }
 
 fn default_auto_orchestrator_handoff() -> bool {
@@ -84,6 +135,14 @@ fn default_listen_only() -> bool {
     true
 }
 
+fn default_enable_in_call_agency() -> bool {
+    false
+}
+
+fn default_in_call_streaming() -> bool {
+    true
+}
+
 impl Default for MeetConfig {
     fn default() -> Self {
         Self {
@@ -92,6 +151,12 @@ impl Default for MeetConfig {
             auto_join_policy: AutoJoinPolicy::default(),
             auto_summarize_policy: AutoSummarizePolicy::default(),
             listen_only_default: true,
+            enable_in_call_agency: false,
+            in_call_streaming: true,
+            platform_auto_join_policies: HashMap::new(),
+            watch_calendar: false,
+            calendar_provider: CalendarProvider::default(),
+            reply_display_name: String::new(),
         }
     }
 }
@@ -100,6 +165,17 @@ impl Default for MeetConfig {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn calendar_provider_defaults_and_parses() {
+        assert_eq!(
+            MeetConfig::default().calendar_provider,
+            CalendarProvider::Composio
+        );
+        let cfg: MeetConfig =
+            serde_json::from_value(json!({ "calendar_provider": "recall" })).unwrap();
+        assert_eq!(cfg.calendar_provider, CalendarProvider::Recall);
+    }
 
     #[test]
     fn default_disables_handoff() {
@@ -132,6 +208,21 @@ mod tests {
     }
 
     #[test]
+    fn default_in_call_agency_is_off() {
+        let cfg = MeetConfig::default();
+        assert!(!cfg.enable_in_call_agency);
+    }
+
+    #[test]
+    fn default_in_call_streaming_is_on() {
+        let cfg = MeetConfig::default();
+        assert!(cfg.in_call_streaming);
+        // And a config that predates the field still defaults it on.
+        let parsed: MeetConfig = serde_json::from_value(json!({})).unwrap();
+        assert!(parsed.in_call_streaming);
+    }
+
+    #[test]
     fn deserialize_missing_fields_uses_defaults() {
         let cfg: MeetConfig = serde_json::from_value(json!({})).unwrap();
         assert!(!cfg.auto_orchestrator_handoff);
@@ -139,6 +230,7 @@ mod tests {
         assert_eq!(cfg.auto_join_policy, AutoJoinPolicy::AskEachTime);
         assert_eq!(cfg.auto_summarize_policy, AutoSummarizePolicy::Ask);
         assert!(cfg.listen_only_default);
+        assert!(!cfg.enable_in_call_agency);
     }
 
     #[test]
@@ -162,6 +254,12 @@ mod tests {
             auto_join_policy: AutoJoinPolicy::Never,
             auto_summarize_policy: AutoSummarizePolicy::Always,
             listen_only_default: false,
+            enable_in_call_agency: true,
+            in_call_streaming: false,
+            platform_auto_join_policies: HashMap::new(),
+            watch_calendar: true,
+            calendar_provider: CalendarProvider::Recall,
+            reply_display_name: "Alex Kim".to_string(),
         };
         let s = serde_json::to_string(&original).unwrap();
         let back: MeetConfig = serde_json::from_str(&s).unwrap();
@@ -170,5 +268,60 @@ mod tests {
         assert_eq!(back.auto_join_policy, AutoJoinPolicy::Never);
         assert_eq!(back.auto_summarize_policy, AutoSummarizePolicy::Always);
         assert!(!back.listen_only_default);
+        assert!(back.enable_in_call_agency);
+        assert!(back.watch_calendar);
+        assert_eq!(back.calendar_provider, CalendarProvider::Recall);
+        assert_eq!(back.reply_display_name, "Alex Kim");
+    }
+
+    #[test]
+    fn watch_calendar_defaults_to_false() {
+        let cfg = MeetConfig::default();
+        assert!(!cfg.watch_calendar);
+        // A config that predates the field also defaults it off.
+        let parsed: MeetConfig = serde_json::from_value(json!({})).unwrap();
+        assert!(!parsed.watch_calendar);
+    }
+
+    #[test]
+    fn watch_calendar_round_trips_via_json() {
+        // off → serialise → deserialise
+        let off = MeetConfig {
+            watch_calendar: false,
+            ..MeetConfig::default()
+        };
+        let s_off = serde_json::to_string(&off).unwrap();
+        let back_off: MeetConfig = serde_json::from_str(&s_off).unwrap();
+        assert!(!back_off.watch_calendar);
+
+        // on → serialise → deserialise
+        let on = MeetConfig {
+            watch_calendar: true,
+            ..MeetConfig::default()
+        };
+        let s_on = serde_json::to_string(&on).unwrap();
+        let back_on: MeetConfig = serde_json::from_str(&s_on).unwrap();
+        assert!(back_on.watch_calendar);
+    }
+
+    #[test]
+    fn platform_auto_join_policies_defaults_to_empty() {
+        let config = MeetConfig::default();
+        assert!(config.platform_auto_join_policies.is_empty());
+    }
+
+    #[test]
+    fn deserialize_with_platform_policies() {
+        let json =
+            r#"{"platform_auto_join_policies": {"zoom": "always", "gmeet": "ask_each_time"}}"#;
+        let config: MeetConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            config.platform_auto_join_policies.get("zoom"),
+            Some(&AutoJoinPolicy::Always)
+        );
+        assert_eq!(
+            config.platform_auto_join_policies.get("gmeet"),
+            Some(&AutoJoinPolicy::AskEachTime)
+        );
     }
 }

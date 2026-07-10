@@ -3,6 +3,7 @@
 pub mod bus;
 pub mod cli;
 mod core;
+pub mod http_creds;
 pub mod ops;
 pub mod profiles;
 pub mod responses;
@@ -16,6 +17,9 @@ pub use crate::api::rest::{
     BackendOAuthClient, ConnectResponse, IntegrationSummary, IntegrationTokensHandoff,
 };
 pub use core::*;
+pub use http_creds::{
+    HttpCredential, HttpCredentialScheme, HttpCredentialSummary, HttpCredentialsStore,
+};
 pub use ops as rpc;
 pub use ops::*;
 // Direct-mode (BYO Composio API key) credential helpers.

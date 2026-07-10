@@ -21,9 +21,10 @@ pub use schemas::{
 };
 #[allow(unused_imports)]
 pub use store::{
-    add_agent_job, add_agent_job_with_definition, add_job, add_shell_job, clear_all_jobs,
-    dedup_named_jobs, delete_queued_runs, due_jobs, get_job, list_jobs, list_runs, record_last_run,
-    record_run, remove_job, reschedule_after_run, update_job,
+    add_agent_job, add_agent_job_with_definition, add_flow_schedule_job, add_job, add_shell_job,
+    clear_all_jobs, dedup_named_jobs, delete_queued_runs, due_jobs, find_flow_schedule_job,
+    get_job, list_jobs, list_runs, record_last_run, record_run, remove_job, reschedule_after_run,
+    update_job,
 };
 pub use types::{
     ActiveHours, CronJob, CronJobPatch, CronRun, DeliveryConfig, JobType, Schedule, SessionTarget,

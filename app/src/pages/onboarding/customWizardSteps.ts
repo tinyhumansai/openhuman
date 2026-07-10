@@ -29,7 +29,7 @@ export const CUSTOM_WIZARD_ROUTES: Record<CustomStepKey, string> = {
 export const CUSTOM_WIZARD_SETTINGS_ROUTES: Record<CustomStepKey, string> = {
   inference: '/settings/llm',
   voice: '/settings/voice',
-  oauth: '/settings/integrations#composio',
+  oauth: '/connections?tab=composio-key',
   search: '/settings/tools',
   embeddings: '/settings/embeddings',
   activity: '/settings/activity-level',

@@ -18,11 +18,25 @@ import {
   setIntegrationLoading,
   setIntegrationNotifications,
 } from '../../store/notificationSlice';
+import Button from '../ui/Button';
+import CoreNotificationCard from './CoreNotificationCard';
+import FlowApprovalCard from './FlowApprovalCard';
+import GateApprovalCard, { isGateApprovalNotification } from './GateApprovalCard';
 import NotificationCard from './NotificationCard';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A paused `tinyflows` run's approval prompt (issue B3a) — id set by
+ * `notify_pending_approval` in `src/openhuman/flows/ops.rs`. Routed to
+ * `FlowApprovalCard` instead of the generic `CoreNotificationCard`, which is
+ * hardcoded to the meeting auto-join RPC.
+ */
+function isFlowApproval(item: { id: string }): boolean {
+  return item.id.startsWith('flow-pending-approval:');
+}
 
 const NotificationCenter = () => {
   const { t } = useT();
@@ -32,7 +46,12 @@ const NotificationCenter = () => {
     integrationItems: items,
     integrationLoading: loading,
     integrationError: error,
+    items: coreItems,
   } = useAppSelector(s => s.notifications);
+  // Core-originated notifications that carry action buttons (e.g. the calendar
+  // auto-join prompt, issue #3507). These live in a separate Redux array from
+  // the server-fetched integration notifications and are surfaced at the top.
+  const coreActionItems = coreItems.filter(i => i.actions && i.actions.length > 0);
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>(undefined);
   // All providers seen across unfiltered loads — kept separate so the filter
   // pill row doesn't collapse when a provider filter is active.
@@ -121,37 +140,39 @@ const NotificationCenter = () => {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-stone-200 dark:border-neutral-800">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-line">
         <div className="flex items-center gap-2">
-          <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+          <h2 className="text-base font-semibold text-content">
             {t('notifications.center.title')}
           </h2>
           {filteredUnreadCount > 0 && (
-            <span className="px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-primary-500 text-white">
+            <span className="px-1.5 py-0.5 rounded-full text-[11px] font-semibold bg-primary-500 text-content-inverted">
               {filteredUnreadCount}
             </span>
           )}
         </div>
         {filteredUnreadCount > 0 && (
-          <button
+          <Button
+            variant="tertiary"
+            size="xs"
             onClick={() => {
               void handleMarkAllRead();
             }}
-            className="text-xs text-primary-600 hover:text-primary-700 font-medium transition-colors">
+            className="text-primary-600 hover:text-primary-700">
             {t('notifications.center.markAllRead')}
-          </button>
+          </Button>
         )}
       </div>
 
       {/* Provider filter pills */}
       {allProviders.length > 1 && (
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-stone-100 dark:border-neutral-800 overflow-x-auto">
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-line-subtle overflow-x-auto">
           <button
             onClick={() => setSelectedProvider(undefined)}
             className={`flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
               selectedProvider === undefined
-                ? 'bg-primary-500 text-white'
-                : 'bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300 hover:bg-stone-200 dark:hover:bg-neutral-800/60'
+                ? 'bg-primary-500 text-content-inverted'
+                : 'bg-surface-subtle text-content-secondary hover:bg-surface-strong dark:hover:bg-surface-muted/60'
             }`}>
             {t('notifications.center.filterAll')}
           </button>
@@ -161,8 +182,8 @@ const NotificationCenter = () => {
               onClick={() => setSelectedProvider(p === selectedProvider ? undefined : p)}
               className={`flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                 selectedProvider === p
-                  ? 'bg-primary-500 text-white'
-                  : 'bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300 hover:bg-stone-200 dark:hover:bg-neutral-800/60'
+                  ? 'bg-primary-500 text-content-inverted'
+                  : 'bg-surface-subtle text-content-secondary hover:bg-surface-strong dark:hover:bg-surface-muted/60'
               }`}>
               {p}
             </button>
@@ -172,8 +193,24 @@ const NotificationCenter = () => {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
+        {/* Actionable core notifications (e.g. meeting auto-join prompt) —
+            always shown first, independent of integration load state. */}
+        {coreActionItems.length > 0 && (
+          <div className="divide-y-0">
+            {coreActionItems.map(item => {
+              if (isFlowApproval(item)) {
+                return <FlowApprovalCard key={item.id} notification={item} />;
+              }
+              if (isGateApprovalNotification(item)) {
+                return <GateApprovalCard key={item.id} notification={item} />;
+              }
+              return <CoreNotificationCard key={item.id} notification={item} />;
+            })}
+          </div>
+        )}
+
         {loading && (
-          <div className="flex items-center justify-center py-12 text-stone-400 dark:text-neutral-500 text-sm">
+          <div className="flex items-center justify-center py-12 text-content-faint text-sm">
             {t('common.loading')}
           </div>
         )}
@@ -184,8 +221,8 @@ const NotificationCenter = () => {
           </div>
         )}
 
-        {!loading && !error && visibleItems.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 text-stone-400 dark:text-neutral-500">
+        {!loading && !error && visibleItems.length === 0 && coreActionItems.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-16 text-content-faint">
             <svg
               className="w-10 h-10 mb-3 opacity-40"
               fill="none"

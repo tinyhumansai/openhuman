@@ -489,6 +489,107 @@ fn clear_lock_if_stale_leaves_live_pid_alone() {
     assert!(lock_path.exists(), "lock for live pid must not be removed");
 }
 
+// --- #2318 (TAURI-RUST-B1): immediate self-owned leaked-lock recovery ------
+
+#[test]
+fn reclaim_self_owned_lock_removes_leaked_self_pid_lock() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    // Simulate a lock our own process leaked because a prior guard's Drop
+    // unlink was blocked (Windows AV/indexer): the file carries our live pid.
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, format!("pid={}\n", std::process::id())).unwrap();
+
+    assert!(
+        store.reclaim_self_owned_lock(),
+        "a lock recording our own pid is a leaked Drop unlink and must be reclaimed"
+    );
+    assert!(!lock_path.exists());
+}
+
+#[test]
+fn reclaim_self_owned_lock_leaves_foreign_pid_alone() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, format!("pid={SYNTHETIC_DEAD_PID}\n")).unwrap();
+
+    assert!(
+        !store.reclaim_self_owned_lock(),
+        "a lock owned by another pid must not be removed by the self-owned fast path"
+    );
+    assert!(lock_path.exists());
+}
+
+#[test]
+fn reclaim_self_owned_lock_is_noop_when_lock_missing() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    assert!(!store.reclaim_self_owned_lock());
+}
+
+#[test]
+fn acquire_lock_recovers_immediately_from_leaked_self_pid_lock() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    // A lock leaked by this very process (live pid inside). The only previous
+    // recovery was the 30s age floor — far longer than the 10s RPC timeout —
+    // which produced the retry storm. The self-owned fast path must clear it
+    // well inside that window.
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, format!("pid={}\n", std::process::id())).unwrap();
+
+    let started = std::time::Instant::now();
+    let data = store.load().unwrap();
+    let elapsed = started.elapsed();
+
+    assert!(data.profiles.is_empty());
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "self-owned leaked lock should be reclaimed immediately, not after the \
+         {STALE_LOCK_AGE_MS}ms age floor (took {elapsed:?})"
+    );
+    assert!(
+        !lock_path.exists(),
+        "guard should have removed the lock on drop"
+    );
+}
+
+#[test]
+fn acquire_lock_serializes_same_process_acquirers() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+
+    // Hold the in-process lock for this path directly, forcing a concurrent
+    // acquirer to spin the `try_lock` WouldBlock retry loop until we release —
+    // it must NOT race the on-disk file or bail early. Use the same registry
+    // entry `acquire_lock` resolves (canonicalized parent + filename).
+    let held = in_process_lock_for(&lock_path)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let other = store.clone();
+    let waiter = std::thread::spawn(move || other.load());
+
+    // Let the waiter enter the WouldBlock loop, then release; it should proceed.
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    drop(held);
+
+    let result = waiter.join().expect("waiter thread panicked");
+    assert!(
+        result.is_ok(),
+        "same-process acquirer should succeed once the in-process lock frees: {result:?}"
+    );
+    assert!(
+        !lock_path.exists(),
+        "the waiter's guard should have removed the on-disk lock on drop"
+    );
+}
+
 #[test]
 fn clear_lock_if_stale_leaves_malformed_lock_alone() {
     let tmp = TempDir::new().unwrap();

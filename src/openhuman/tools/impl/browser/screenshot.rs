@@ -194,9 +194,9 @@ impl ScreenshotTool {
         let encoded = base64::engine::general_purpose::STANDARD.encode(data);
         let mut msg = format!("Screenshot saved to: {}\n", output_path.display());
         if let Some((w, h)) = shown_dims {
-            let _ = write!(
+            let _ = writeln!(
                 msg,
-                "Downscaled to {w}x{h}px for inline view (coordinates you read are in this {w}x{h} space).\n"
+                "Downscaled to {w}x{h}px for inline view (coordinates you read are in this {w}x{h} space)."
             );
         }
         let _ = write!(msg, "data:{mime};base64,{encoded}");

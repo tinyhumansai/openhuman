@@ -902,6 +902,11 @@ async fn obsidian_status_blank_override_is_treated_as_none() {
 
 #[tokio::test]
 async fn vault_health_check_reports_missing_content_root_for_fresh_workspace() {
+    // `pipeline_healthy` reads the process-global degraded flags (via
+    // `pipeline_status_rpc` → `current_degraded_state`), which sibling
+    // `memory_tree` tests set and never clear. Serialise + reset to a clean
+    // baseline so the assertion is deterministic. See #4691.
+    let _g = crate::openhuman::memory_tree::health::test_guard();
     let (_tmp, cfg) = test_config();
     let outcome = vault_health_check_rpc(&cfg, None).await.unwrap();
 
@@ -911,6 +916,24 @@ async fn vault_health_check_reports_missing_content_root_for_fresh_workspace() {
     assert!(!outcome.value.obsidian_registered);
     assert!(outcome.value.pipeline_healthy);
     assert_eq!(outcome.value.last_sync_ms, 0);
+}
+
+/// #4278: both vault RPCs stamp the core host's OS so a frontend attached
+/// from a different OS can tell `content_root_abs` is a foreign-host path and
+/// must not open/reveal it locally.
+#[tokio::test]
+async fn vault_rpcs_report_core_host_os() {
+    let (_tmp, cfg) = test_config();
+
+    let status = obsidian_vault_status_rpc(&cfg, None).await.unwrap();
+    assert_eq!(status.value.host_os, std::env::consts::OS);
+
+    let health = vault_health_check_rpc(&cfg, None).await.unwrap();
+    assert_eq!(health.value.host_os, std::env::consts::OS);
+    assert!(
+        !health.value.host_os.is_empty(),
+        "host_os must be populated"
+    );
 }
 
 #[tokio::test]
@@ -939,7 +962,15 @@ async fn vault_health_check_reports_writable_and_obsidian_registered_when_ready(
     assert!(outcome.value.readable);
     assert!(outcome.value.writable);
     assert!(outcome.value.obsidian_registered);
-    assert!(outcome.value.pipeline_healthy);
+    // Intentionally NOT asserting `pipeline_healthy` here: with a seeded chunk
+    // (total_chunks > 0) the derived status depends on the process-global
+    // degraded flags, which unguarded parallel `memory_tree` extraction/pipeline
+    // tests set and never clear (structure degrades only clears on a *successful*
+    // extraction, which never happens under test). Post-#4691 a leaked "degraded"
+    // correctly reads as unhealthy, so asserting healthy here would be flaky.
+    // The health mapping is covered deterministically by the `pipeline_is_healthy`
+    // unit tests in `read_rpc/vault.rs`; this test covers the filesystem readiness
+    // wiring. See also `memory_tree::tree::rpc::pipeline_status_reports_chunk_aggregates_after_ingest`.
     assert!(outcome.value.last_sync_ms > 0);
     assert!(
         !outcome.logs[0].contains(content_root.to_str().unwrap()),

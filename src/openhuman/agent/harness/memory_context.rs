@@ -16,7 +16,7 @@ pub(crate) const CROSS_CHAT_LIMIT: usize = 3;
 /// Maximum characters of any one cross-chat snippet rendered into the
 /// prompt. Keeps the block bounded even if a prior chat had long turns.
 /// Shared across the harness path here and the loader-side path in
-/// `agent::memory_loader` so the same content renders at the same
+/// `agent_memory::memory_loader` so the same content renders at the same
 /// length regardless of which code path emitted it.
 pub(crate) const CROSS_CHAT_SNIPPET_CHARS: usize = 240;
 
@@ -42,10 +42,17 @@ pub(crate) async fn build_context(
     let mut context = String::new();
     let mut seen_keys = HashSet::new();
 
-    // Pull relevant memories for this message
-    if let Ok(entries) = mem
-        .recall(user_msg, 5, crate::openhuman::memory::RecallOpts::default())
-        .await
+    // Pull relevant memories for this message — routed through the tinyagents
+    // retrieval facade (issue #4249, 09.2) so recall is swappable and emits
+    // `MemoryLoaded`. The facade wraps `Memory::recall` verbatim, so the
+    // rendered `[Memory context]` block stays byte-identical.
+    if let Ok(entries) = crate::openhuman::tinyagents::retriever::recall_through_facade(
+        mem,
+        user_msg,
+        5,
+        crate::openhuman::memory::RecallOpts::default(),
+    )
+    .await
     {
         let relevant: Vec<_> = entries
             .iter()
@@ -74,13 +81,13 @@ pub(crate) async fn build_context(
     // Explicitly load bounded user working memory entries so sync-derived profile
     // facts can influence the turn in a controlled way.
     let working_query = format!("working.user {user_msg}");
-    if let Ok(entries) = mem
-        .recall(
-            &working_query,
-            WORKING_MEMORY_LIMIT + 2,
-            crate::openhuman::memory::RecallOpts::default(),
-        )
-        .await
+    if let Ok(entries) = crate::openhuman::tinyagents::retriever::recall_through_facade(
+        mem,
+        &working_query,
+        WORKING_MEMORY_LIMIT + 2,
+        crate::openhuman::memory::RecallOpts::default(),
+    )
+    .await
     {
         let working: Vec<_> = entries
             .iter()
@@ -119,9 +126,13 @@ pub(crate) async fn build_context(
         min_score: Some(min_relevance_score),
         ..Default::default()
     };
-    if let Ok(entries) = mem
-        .recall(user_msg, CROSS_CHAT_LIMIT * 3, cross_session_opts)
-        .await
+    if let Ok(entries) = crate::openhuman::tinyagents::retriever::recall_through_facade(
+        mem,
+        user_msg,
+        CROSS_CHAT_LIMIT * 3,
+        cross_session_opts,
+    )
+    .await
     {
         let cross: Vec<_> = entries
             .iter()
@@ -147,7 +158,7 @@ pub(crate) async fn build_context(
             // primary JSONL path, and the orchestrator prompt's
             // "Capability questions" section that names this header stays
             // in sync. See CROSS_CHAT_HEADER's doc for the rationale.
-            context.push_str(crate::openhuman::agent::memory_loader::CROSS_CHAT_HEADER);
+            context.push_str(crate::openhuman::agent_memory::memory_loader::CROSS_CHAT_HEADER);
             for entry in &cross {
                 let prov = entry
                     .session_id
@@ -365,7 +376,9 @@ mod tests {
 
         let context = build_context(&mem, "what database should I use?", 0.4).await;
         assert!(
-            context.contains(crate::openhuman::agent::memory_loader::CROSS_CHAT_HEADER.trim_end()),
+            context.contains(
+                crate::openhuman::agent_memory::memory_loader::CROSS_CHAT_HEADER.trim_end()
+            ),
             "expected cross-chat header, got:\n{context}"
         );
         assert!(
@@ -431,7 +444,9 @@ mod tests {
         let mem = MockMemory::new(Vec::new(), Vec::new(), false);
         let context = build_context(&mem, "Postgres", 0.4).await;
         assert!(
-            !context.contains(crate::openhuman::agent::memory_loader::CROSS_CHAT_HEADER.trim_end()),
+            !context.contains(
+                crate::openhuman::agent_memory::memory_loader::CROSS_CHAT_HEADER.trim_end()
+            ),
             "no cross-chat hits must produce no header, got:\n{context}"
         );
     }

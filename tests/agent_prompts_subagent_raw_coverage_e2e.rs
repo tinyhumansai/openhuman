@@ -21,6 +21,7 @@ use openhuman_core::openhuman::inference::provider::{
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary as MemoryNamespaceSummary, RecallOpts,
 };
+use openhuman_core::openhuman::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
 use parking_lot::Mutex;
 use serde_json::json;
@@ -212,6 +213,8 @@ fn text_response(text: &str) -> ChatResponse {
             output_tokens: 4,
             context_window: 8192,
             cached_input_tokens: 2,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: 0.001,
         }),
         reasoning_content: None,
@@ -257,14 +260,17 @@ fn definition(prompt: PromptSource) -> AgentDefinition {
         max_iterations: 3,
         iteration_policy: Default::default(),
         max_result_chars: None,
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
         trigger_memory_agent: Default::default(),
+        tokenjuice_compression: AgentTokenjuiceCompression::Auto,
         subagents: Vec::new(),
         delegate_name: None,
         agent_tier: Default::default(),
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 
@@ -283,9 +289,11 @@ fn parent(workspace: PathBuf, provider: Arc<ScriptedProvider>) -> ParentExecutio
         provider,
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
+        visible_tool_names: std::collections::HashSet::new(),
         model_name: "round18-model".to_string(),
         temperature: 0.0,
         workspace_dir: workspace,
+        workspace_descriptor: None,
         memory: Arc::new(StubMemory),
         agent_config: AgentConfig::default(),
         workflows: Arc::new(Vec::new()),
@@ -590,7 +598,13 @@ async fn run_subagent_surfaces_provider_errors_and_can_be_cancelled() -> Result<
         })
         .await
     });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while slow.requests().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("provider request should start before abort");
     handle.abort();
     let cancelled = handle.await;
     assert!(cancelled.is_err());

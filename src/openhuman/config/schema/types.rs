@@ -14,7 +14,14 @@ pub const MODEL_CHAT_V1: &str = "chat-v1";
 /// Legacy low-latency chat tier slug retained for older persisted configs.
 pub const MODEL_REASONING_QUICK_V1: &str = "reasoning-quick-v1";
 pub const MODEL_CODING_V1: &str = "coding-v1";
+/// High-throughput "burst" tier served by the managed backend. Cheap, fast,
+/// non-reasoning, text-only, 128k context, no prompt cache; used by the
+/// super-context scout. Managed-backend only (no BYOK knob).
+pub const MODEL_BURST_V1: &str = "burst-v1";
 pub const MODEL_SUMMARIZATION_V1: &str = "summarization-v1";
+/// Multimodal (image-input) tier. Managed backend serves this with the vision
+/// flag enabled; the vision sub-agent rides this tier via `hint:vision`.
+pub const MODEL_VISION_V1: &str = "vision-v1";
 /// Default model used when no explicit model is configured.
 ///
 /// Set to `chat-v1`, the backend's low-latency conversational tier. The
@@ -33,12 +40,30 @@ pub const DEFAULT_MEMORY_SYNC_INTERVAL_SECS: u64 = 86_400;
 /// "Manual only" is represented separately by `Some(0)`. See issue #3302.
 pub const MEMORY_SYNC_INTERVAL_PRESETS_SECS: [u64; 3] = [14_400, 43_200, 86_400];
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ModelRegistryEntry {
     pub id: String,
     pub provider: String,
+    /// Standard prompt rate, USD per **million input tokens**. Used (together
+    /// with [`Self::cost_per_1m_output`]) to estimate request cost when the
+    /// provider doesn't echo an authoritative `charged_amount_usd`. `0.0` means
+    /// "unknown" — callers fall back to the tier/catalog estimate. Pre-filled
+    /// for known vendor models from [`crate::openhuman::cost::catalog`].
+    #[serde(default)]
+    pub cost_per_1m_input: f64,
+    /// Cached-prefix prompt rate, USD per million cached input tokens (KV-cache
+    /// read hits on supporting backends). `0.0` means "unknown".
+    #[serde(default)]
+    pub cost_per_1m_cached_input: f64,
+    /// Completion rate, USD per **million output tokens**.
     #[serde(default)]
     pub cost_per_1m_output: f64,
+    /// Maximum context window in tokens (published max input). `0` means
+    /// "unknown". Providers differ widely (128K–1M+); callers use this to
+    /// budget prompts, trigger compaction, and route work. Pre-filled for known
+    /// vendor models from [`crate::openhuman::cost::catalog`].
+    #[serde(default)]
+    pub context_window: u32,
     #[serde(default)]
     pub vision: bool,
 }
@@ -111,11 +136,20 @@ pub struct Config {
     #[serde(default)]
     pub autonomy: AutonomyConfig,
 
+    /// Data-egress posture (Privacy Mode). Distinct from `autonomy` (which
+    /// governs agent *act* power). Missing `[privacy]` block → `Standard`
+    /// (#4435, epic #4256).
+    #[serde(default)]
+    pub privacy: PrivacyConfig,
+
     #[serde(default)]
     pub sandbox: SandboxConfig,
 
     #[serde(default)]
     pub runtime: RuntimeConfig,
+
+    #[serde(default)]
+    pub shell: ShellConfig,
 
     #[serde(default)]
     pub screen_intelligence: ScreenIntelligenceConfig,
@@ -135,6 +169,11 @@ pub struct Config {
     /// [`crate::openhuman::scheduler_gate`].
     #[serde(default)]
     pub scheduler_gate: SchedulerGateConfig,
+
+    /// tiny.place harness session-DM ingest layer. See
+    /// [`crate::openhuman::orchestration`].
+    #[serde(default)]
+    pub orchestration: OrchestrationConfig,
 
     /// User-facing activity-level knob (0–4) controlling how proactive
     /// background AI work is. Maps into scheduler_gate mode, periodic sync
@@ -336,6 +375,11 @@ pub struct Config {
     #[serde(default)]
     pub coding_provider: Option<String>,
 
+    /// Provider string for the multimodal / image-understanding workload
+    /// (the vision sub-agent). Managed default resolves to `vision-v1`.
+    #[serde(default)]
+    pub vision_provider: Option<String>,
+
     /// Provider string for memory-tree extract + summarise workloads.
     #[serde(default)]
     pub memory_provider: Option<String>,
@@ -364,6 +408,10 @@ pub struct Config {
     /// other Python subprocess integrations).
     #[serde(default)]
     pub runtime_python: RuntimePythonConfig,
+
+    /// TokenJuice content-router / compaction configuration.
+    #[serde(default)]
+    pub tokenjuice: TokenjuiceConfig,
 
     #[serde(default)]
     pub voice_server: VoiceServerConfig,
@@ -575,6 +623,7 @@ impl Config {
             "reasoning" => self.reasoning_provider.as_deref(),
             "agentic" => self.agentic_provider.as_deref(),
             "coding" => self.coding_provider.as_deref(),
+            "vision" => self.vision_provider.as_deref(),
             "memory" => self.memory_provider.as_deref(),
             "embeddings" => self.embeddings_provider.as_deref(),
             "heartbeat" => self.heartbeat_provider.as_deref(),
@@ -696,13 +745,16 @@ impl Default for Config {
             observability: ObservabilityConfig::default(),
             dashboard: DashboardConfig::default(),
             autonomy: AutonomyConfig::default(),
+            privacy: PrivacyConfig::default(),
             sandbox: SandboxConfig::default(),
             runtime: RuntimeConfig::default(),
+            shell: ShellConfig::default(),
             screen_intelligence: ScreenIntelligenceConfig::default(),
             autocomplete: AutocompleteConfig::default(),
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
             scheduler_gate: SchedulerGateConfig::default(),
+            orchestration: OrchestrationConfig::default(),
             agent_activity_level: AgentActivityLevel::default(),
             memory_sync_interval_secs: None,
             agent: AgentConfig::default(),
@@ -746,6 +798,7 @@ impl Default for Config {
             reasoning_provider: None,
             agentic_provider: None,
             coding_provider: None,
+            vision_provider: None,
             memory_provider: None,
             embeddings_provider: None,
             heartbeat_provider: None,
@@ -753,6 +806,7 @@ impl Default for Config {
             subconscious_provider: None,
             node: NodeConfig::default(),
             runtime_python: RuntimePythonConfig::default(),
+            tokenjuice: TokenjuiceConfig::default(),
             voice_server: VoiceServerConfig::default(),
             voice_providers: Vec::new(),
             stt_provider: None,

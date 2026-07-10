@@ -1,0 +1,7 @@
+{
+  "id": "outlook",
+  "name": "Outlook",
+  "version": "0.1.0",
+  "serviceURL": "https://outlook.live.com/mail/",
+  "icon": "icon.svg"
+}

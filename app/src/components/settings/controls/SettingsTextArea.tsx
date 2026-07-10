@@ -9,13 +9,13 @@ const SettingsTextArea = forwardRef<HTMLTextAreaElement, SettingsTextAreaProps>(
   ({ invalid = false, className, ...rest }, ref) => {
     const ringClass = invalid
       ? 'border-coral-400 focus:border-coral-500 focus:ring-coral-500/20'
-      : 'border-neutral-300 dark:border-neutral-700 focus:border-primary-500 focus:ring-primary-500/20';
+      : 'border-line-strong focus:border-primary-500 focus:ring-primary-500/20';
 
     const classes = [
       'block w-full rounded-lg border',
-      'bg-white dark:bg-neutral-900',
-      'text-neutral-900 dark:text-neutral-100',
-      'placeholder-neutral-400 dark:placeholder-neutral-500',
+      'bg-surface',
+      'text-content',
+      'placeholder-content-faint',
       'text-sm px-3 py-2',
       'focus:outline-none focus:ring-2',
       'transition-colors duration-150',

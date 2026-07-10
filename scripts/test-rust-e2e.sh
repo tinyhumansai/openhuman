@@ -52,7 +52,7 @@ ALL_E2E_SUITES=(
   memory_roundtrip_e2e
   memory_sources_e2e
   memory_tree_summarizer_e2e
-  memory_tree_walk_e2e
+  memory_fast_retrieve_e2e
   ollama_embeddings_fallback_e2e
   screen_intelligence_vision_e2e
   skill_registry_e2e
@@ -126,16 +126,29 @@ echo "[rust-e2e] Mock backend healthy."
 export BACKEND_URL="$MOCK_API_URL"
 export VITE_BACKEND_URL="$MOCK_API_URL"
 
+# The agent-harness E2E surface drives very large async futures in debug builds
+# (the typed sub-agent runner + the full agentic brain turn exercised by
+# json_rpc_meet_agent_session_lifecycle). The default Rust test-thread stack
+# (2 MiB) overflows on that dispatch depth — a stack overflow in otherwise-correct
+# tests, not a logic failure. Mirror scripts/test-rust-with-mock.sh and give the
+# suite a larger stack unless the caller already pinned one explicitly.
+export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
+
 cd "$REPO_ROOT"
 source "$HOME/.cargo/env" 2>/dev/null || true
+RUSTC_BIN="$(command -v rustc)"
+CARGO_BIN="${CARGO_BIN:-$(dirname "$RUSTC_BIN")/cargo}"
+if [ ! -x "$CARGO_BIN" ]; then
+  CARGO_BIN="$(command -v cargo)"
+fi
 
 echo "[rust-e2e] Running ${#SUITES[@]} suite(s) serially."
 for suite in "${SUITES[@]}"; do
   if [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then
-    echo "[rust-e2e]   cargo test --manifest-path Cargo.toml --test $suite -- ${EXTRA_ARGS[*]}"
-    cargo test --manifest-path Cargo.toml --test "$suite" -- "${EXTRA_ARGS[@]}"
+    echo "[rust-e2e]   $CARGO_BIN test --manifest-path Cargo.toml --test $suite -- ${EXTRA_ARGS[*]}"
+    bash "$SCRIPT_DIR/ci-cancel-aware.sh" "$CARGO_BIN" test --manifest-path Cargo.toml --test "$suite" -- "${EXTRA_ARGS[@]}"
   else
-    echo "[rust-e2e]   cargo test --manifest-path Cargo.toml --test $suite"
-    cargo test --manifest-path Cargo.toml --test "$suite"
+    echo "[rust-e2e]   $CARGO_BIN test --manifest-path Cargo.toml --test $suite"
+    bash "$SCRIPT_DIR/ci-cancel-aware.sh" "$CARGO_BIN" test --manifest-path Cargo.toml --test "$suite"
   fi
 done

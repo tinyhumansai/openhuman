@@ -6,13 +6,8 @@ use super::*;
 // spurious failures.
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Test that is_daemon_mode correctly detects daemon flag variations
-#[test]
-fn is_daemon_mode_detects_daemon_flag() {
-    // Note: This test relies on the current process args, so in test mode
-    // it will typically return false. We verify the function is callable.
-    let _result = is_daemon_mode();
-}
+// NOTE: `is_daemon_mode_detects_daemon_flag` removed (plan.md §2.1) — it
+// discarded the result with `let _` and asserted nothing.
 
 /// Test core_rpc_url returns expected format
 #[test]
@@ -58,34 +53,9 @@ fn overlay_parent_rpc_url_handles_empty() {
     }
 }
 
-/// Tests for setup_tray conditional compilation
-/// The PR adds two versions of setup_tray():
-/// 1. No-op for linux + cef: logs warning and returns Ok(())
-/// 2. Full implementation for other platforms
-///
-/// These tests verify the function signatures are correct and
-/// the compile-time cfg blocks are properly set up.
-
-/// Verify setup_tray function exists and has correct signature
-/// This test passes if the code compiles, as the function signature
-/// is validated by the compiler.
-#[test]
-fn setup_tray_function_signature_compiles() {
-    // This test exists to ensure the conditional compilation
-    // of setup_tray is valid. The function is not actually called
-    // here because it requires a full Tauri AppHandle.
-    // The cfg attributes ensure only one version exists at compile time.
-}
-
-/// Test that AppRuntime is defined for the current feature set
-#[test]
-fn app_runtime_type_exists() {
-    // This test verifies AppRuntime is properly defined
-    // based on the cef feature flag.
-    // The type alias exists at module scope and is used throughout.
-    fn _check_runtime<R: tauri::Runtime>() {}
-    // _check_runtime::<AppRuntime>(); // Would require importing
-}
+// NOTE: `setup_tray_function_signature_compiles` and `app_runtime_type_exists`
+// removed (plan.md §2.1) — one had an empty body, the other's only real
+// assertion was commented out; both were compile-only no-ops.
 
 #[test]
 fn no_app_update_available_result_is_quiet_unavailable() {
@@ -97,20 +67,8 @@ fn no_app_update_available_result_is_quiet_unavailable() {
     assert!(info.body.is_none());
 }
 
-/// Verify tray logging patterns exist (grep-friendly)
-#[test]
-fn tray_setup_logging_patterns_exist() {
-    // These log patterns from the PR are grep-friendly:
-    // "[tray] skipping tray setup on linux+cef: ..."
-    // "[tray] setting up tray icon"
-    // "[tray] tray icon ready"
-    // "[tray] action=show_window ..."
-    // "[tray] action=quit ..."
-    // "[tray] failed to setup tray icon ..."
-    // "[app] RunEvent::Ready — GTK initialized, setting up tray"
-    //
-    // This test passes if the code compiles with these log messages.
-}
+// NOTE: `tray_setup_logging_patterns_exist` removed (plan.md §2.1) — a
+// comments-only body that asserted nothing.
 
 // -------------------------------------------------------------------------
 // macos_os_version (issue #1012)
@@ -314,18 +272,29 @@ fn platform_os_is_macos_on_macos_build() {
 }
 
 #[test]
-fn platform_cef_gpu_workarounds_disable_linux_gpu_path() {
+fn platform_cef_gpu_workarounds_force_swiftshader_on_linux() {
     let mut args = Vec::new();
-    append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", None);
+    append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", None, None);
 
-    assert!(args.contains(&("--disable-gpu", None)));
+    // #4193: the GPU process must NOT be killed outright — `--disable-gpu`
+    // takes every WebGL surface (the Tiny Place world renderer) down with it.
+    assert!(
+        !args.contains(&("--disable-gpu", None)),
+        "--disable-gpu kills WebGL and must not be set, got: {args:?}"
+    );
+    // Instead the GPU process is pinned to ANGLE/SwiftShader software GL, which
+    // keeps WebGL available while still avoiding the #1697 hardware-EGL abort.
+    assert!(args.contains(&("--use-gl", Some("angle"))));
+    assert!(args.contains(&("--use-angle", Some("swiftshader"))));
+    assert!(args.contains(&("--enable-unsafe-swiftshader", None)));
+    // Page compositing stays on the CPU exactly as before.
     assert!(args.contains(&("--disable-gpu-compositing", None)));
 }
 
 #[test]
 fn platform_cef_gpu_workarounds_disable_intel_macos_compositing_only() {
     let mut args = Vec::new();
-    append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", None);
+    append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", None, None);
 
     assert_eq!(args, vec![("--disable-gpu-compositing", None)]);
 }
@@ -334,7 +303,7 @@ fn platform_cef_gpu_workarounds_disable_intel_macos_compositing_only() {
 fn platform_cef_gpu_workarounds_leave_other_platforms_alone() {
     for (os, arch) in [("macos", "aarch64"), ("windows", "x86_64")] {
         let mut args = Vec::new();
-        append_platform_cef_gpu_workarounds(&mut args, os, arch, None);
+        append_platform_cef_gpu_workarounds(&mut args, os, arch, None, None);
 
         assert!(
             args.is_empty(),
@@ -381,7 +350,7 @@ fn platform_cef_gpu_workarounds_skip_linux_disable_when_force_gpu_set() {
     // OPENHUMAN-TAURI-K1 branch, which would make a strict `is_empty()`
     // check fail spuriously. We only care about the GPU branch here.
     let mut args = Vec::new();
-    append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", Some("1"));
+    append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", Some("1"), None);
 
     assert!(
         !args.contains(&("--disable-gpu", None)),
@@ -391,6 +360,13 @@ fn platform_cef_gpu_workarounds_skip_linux_disable_when_force_gpu_set() {
         !args.contains(&("--disable-gpu-compositing", None)),
         "OPENHUMAN_FORCE_GPU=1 must suppress --disable-gpu-compositing, got: {args:?}"
     );
+    // With hardware acceleration opted in, the SwiftShader software-GL fallback
+    // must NOT be forced either — otherwise WebGL would still be stuck on the
+    // software rasteriser despite the override.
+    assert!(
+        !args.contains(&("--use-angle", Some("swiftshader"))),
+        "OPENHUMAN_FORCE_GPU=1 must not force SwiftShader, got: {args:?}"
+    );
 }
 
 #[test]
@@ -399,9 +375,185 @@ fn platform_cef_gpu_workarounds_force_gpu_does_not_affect_intel_macos_path() {
     // separate Intel-macOS #1012 disable must still apply, regardless of
     // the env var.
     let mut args = Vec::new();
-    append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", Some("1"));
+    append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", Some("1"), None);
 
     assert_eq!(args, vec![("--disable-gpu-compositing", None)]);
+}
+
+// -------------------------------------------------------------------------
+// OPENHUMAN_DISABLE_GPU override (emergency CEF startup escape hatch)
+// -------------------------------------------------------------------------
+
+#[test]
+fn disable_gpu_default_off_when_env_unset() {
+    assert!(!cef_disable_gpu_enabled(None));
+}
+
+#[test]
+fn disable_gpu_explicit_enable_values_match_force_gpu_pattern() {
+    for v in ["1", "true", "yes", "on", "TRUE", "Yes", "On"] {
+        assert!(
+            cef_disable_gpu_enabled(Some(v)),
+            "OPENHUMAN_DISABLE_GPU={v:?} should opt in"
+        );
+    }
+}
+
+#[test]
+fn disable_gpu_anything_else_is_off() {
+    for v in ["", "0", "false", "no", "off", "FALSE", "Off", "maybe", " "] {
+        assert!(
+            !cef_disable_gpu_enabled(Some(v)),
+            "OPENHUMAN_DISABLE_GPU={v:?} must not silently opt in"
+        );
+    }
+}
+
+#[test]
+fn platform_cef_gpu_workarounds_disable_windows_gpu_when_requested() {
+    let mut args = Vec::new();
+    append_platform_cef_gpu_workarounds(&mut args, "windows", "x86_64", None, Some("1"));
+
+    // #4385: on Windows the escape hatch pins CEF to the pure-software
+    // ANGLE/SwiftShader backend instead of bare `--disable-gpu`, which is
+    // insufficient on NVIDIA Blackwell / RTX 50-series stacks (cef::initialize
+    // still returns 0). This mirrors the proven Linux #1697/#4193 fallback.
+    assert_eq!(
+        args,
+        vec![
+            ("--use-gl", Some("angle")),
+            ("--use-angle", Some("swiftshader")),
+            ("--enable-unsafe-swiftshader", None),
+            ("--disable-gpu-compositing", None),
+        ]
+    );
+}
+
+#[test]
+fn platform_cef_gpu_workarounds_windows_disable_gpu_avoids_bare_disable_gpu() {
+    // Regression guard for #4385: `--disable-gpu` alone leaves CEF without a
+    // working software GL path on unsupported (Blackwell) GPUs and init keeps
+    // failing. The Windows escape hatch must route through SwiftShader and must
+    // NOT emit the lethal `--disable-gpu` switch.
+    let mut args = Vec::new();
+    append_platform_cef_gpu_workarounds(&mut args, "windows", "x86_64", None, Some("1"));
+
+    assert!(
+        !args.contains(&("--disable-gpu", None)),
+        "Windows OPENHUMAN_DISABLE_GPU must not emit bare --disable-gpu (#4385), got: {args:?}"
+    );
+    assert!(
+        args.contains(&("--use-angle", Some("swiftshader"))),
+        "Windows OPENHUMAN_DISABLE_GPU must force SwiftShader software GL (#4385), got: {args:?}"
+    );
+}
+
+#[test]
+fn platform_cef_gpu_workarounds_disable_gpu_wins_over_linux_force_gpu() {
+    let mut args = Vec::new();
+    append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", Some("1"), Some("1"));
+
+    assert!(args.contains(&("--disable-gpu", None)));
+    assert!(args.contains(&("--disable-gpu-compositing", None)));
+    assert!(
+        !args.contains(&("--use-angle", Some("swiftshader"))),
+        "OPENHUMAN_DISABLE_GPU=1 must not also force SwiftShader, got: {args:?}"
+    );
+}
+
+// -------------------------------------------------------------------------
+// #3554 — never forward --time-ticks-at-unix-epoch to CEF (wrong system time)
+// -------------------------------------------------------------------------
+
+#[test]
+fn time_ticks_flag_matches_any_dash_and_casing_form() {
+    for flag in [
+        "--time-ticks-at-unix-epoch",
+        "-time-ticks-at-unix-epoch",
+        "time-ticks-at-unix-epoch",
+        "--Time-Ticks-At-Unix-Epoch",
+    ] {
+        assert!(
+            is_time_ticks_at_unix_epoch_flag(flag),
+            "{flag:?} should be recognised as the time-ticks switch"
+        );
+    }
+}
+
+#[test]
+fn time_ticks_flag_does_not_match_unrelated_flags() {
+    for flag in [
+        "--disable-gpu",
+        "--use-mock-keychain",
+        "--time-zone",
+        "--enable-features",
+    ] {
+        assert!(
+            !is_time_ticks_at_unix_epoch_flag(flag),
+            "{flag:?} must not be treated as the time-ticks switch"
+        );
+    }
+}
+
+#[test]
+fn strip_time_ticks_removes_negative_value_and_keeps_the_rest() {
+    // The corrupt value reported in #3554, alongside flags we must preserve.
+    let mut args = vec![
+        ("--use-mock-keychain", None),
+        ("--time-ticks-at-unix-epoch", Some("-1780937467390432")),
+        ("--disable-gpu", None),
+    ];
+    strip_time_ticks_at_unix_epoch(&mut args);
+
+    assert_eq!(
+        args,
+        vec![("--use-mock-keychain", None), ("--disable-gpu", None)],
+        "the corrupt time-ticks switch must be removed; everything else kept"
+    );
+}
+
+#[test]
+fn strip_time_ticks_removes_inline_value_form() {
+    // The critical bypass case: when the value is carried inline as
+    // `--flag=value` (a single token) rather than as a separate value, the
+    // matcher must still recognise and strip it.
+    let mut args = vec![
+        ("--use-mock-keychain", None),
+        ("--time-ticks-at-unix-epoch=-1780937467390432", None),
+        ("--disable-gpu", None),
+    ];
+    strip_time_ticks_at_unix_epoch(&mut args);
+
+    assert_eq!(
+        args,
+        vec![("--use-mock-keychain", None), ("--disable-gpu", None)],
+        "the inline time-ticks switch must be removed; everything else kept"
+    );
+}
+
+#[test]
+fn strip_time_ticks_removes_the_flag_regardless_of_value() {
+    // Even a non-negative value is dropped: OpenHuman must let Chromium
+    // compute the clock origin rather than anchor it from the shell.
+    let mut args = vec![
+        ("--time-ticks-at-unix-epoch", Some("1780937467390432")),
+        ("--time-ticks-at-unix-epoch", None),
+    ];
+    strip_time_ticks_at_unix_epoch(&mut args);
+
+    assert!(
+        args.is_empty(),
+        "all time-ticks variants must be stripped, got: {args:?}"
+    );
+}
+
+#[test]
+fn strip_time_ticks_is_a_noop_without_the_flag() {
+    let mut args = vec![("--use-mock-keychain", None), ("--disable-gpu", None)];
+    let expected = args.clone();
+    strip_time_ticks_at_unix_epoch(&mut args);
+
+    assert_eq!(args, expected, "unrelated args must be left untouched");
 }
 
 /// On an Intel macOS build the ARCH constant must equal "x86_64".

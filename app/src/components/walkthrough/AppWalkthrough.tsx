@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { type EventData, EVENTS, Joyride, STATUS } from 'react-joyride';
 import { useNavigate } from 'react-router-dom';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import { createWalkthroughSteps } from './walkthroughSteps';
 import WalkthroughTooltip from './WalkthroughTooltip';
 
@@ -32,7 +33,7 @@ export function isWalkthroughPending(userIsOnboarded = false): boolean {
 
 /**
  * Flags the walkthrough as pending. Called by OnboardingLayout when the user
- * completes the wizard and is about to navigate to /home.
+ * completes the wizard and is about to navigate to /chat.
  *
  * Best-effort: if localStorage is unavailable (SecurityError / quota) the
  * error is logged and the call is silently swallowed so navigation always
@@ -65,7 +66,7 @@ export function markWalkthroughComplete(): void {
 }
 
 /**
- * Resets the walkthrough so it will play again on next visit to /home.
+ * Resets the walkthrough so it will play again on the current app shell.
  *
  * - Removes the completed flag from localStorage.
  * - Sets the pending flag so `isWalkthroughPending()` returns true.
@@ -98,13 +99,14 @@ export function resetWalkthrough(): void {
  */
 const AppWalkthrough = ({ onboarded = false }: { onboarded?: boolean }) => {
   const navigate = useNavigate();
+  const { t } = useT();
 
   // Only start running if the walkthrough is pending on first render.
   // Using a lazy initializer keeps this stable across re-renders.
   const [run, setRun] = useState<boolean>(() => isWalkthroughPending(onboarded));
 
   // Memoize steps so they are only recreated when `navigate` identity changes.
-  const steps = useMemo(() => createWalkthroughSteps(navigate), [navigate]);
+  const steps = useMemo(() => createWalkthroughSteps(navigate, t), [navigate, t]);
 
   // Listen for the `walkthrough:restart` custom event (dispatched by
   // `resetWalkthrough()`) and restart the tour immediately.

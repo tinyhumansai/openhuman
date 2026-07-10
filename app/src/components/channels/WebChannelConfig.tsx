@@ -15,9 +15,7 @@ const WebChannelConfig = ({ definition: _definition }: WebChannelConfigProps) =>
           <ChannelStatusBadge status="connected" />
         </div>
       </div>
-      <p className="text-sm text-stone-500 dark:text-neutral-400">
-        {t('channels.web.alwaysAvailable')}
-      </p>
+      <p className="text-sm text-content-muted">{t('channels.web.alwaysAvailable')}</p>
     </div>
   );
 };

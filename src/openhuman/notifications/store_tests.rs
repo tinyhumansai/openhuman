@@ -279,3 +279,101 @@ fn insert_if_not_recent_after_expiry_inserts_again() {
         "both old and fresh entries should be stored"
     );
 }
+
+// ── core notification persistence (#3805) ───────────────────────────────────
+
+fn sample_core_event(id: &str, ts: u64) -> CoreNotificationEvent {
+    CoreNotificationEvent {
+        id: id.to_string(),
+        category: super::super::types::CoreNotificationCategory::Agents,
+        title: "Cron job completed".to_string(),
+        body: "Job daily-digest finished successfully.".to_string(),
+        deep_link: Some("/settings/cron-jobs".to_string()),
+        timestamp_ms: ts,
+        actions: None,
+    }
+}
+
+#[test]
+fn core_notification_insert_persists_and_lists() {
+    let dir = TempDir::new().unwrap();
+    let config = test_config(&dir);
+
+    assert!(insert_core_notification(&config, &sample_core_event("cron:1", 100)).unwrap());
+    assert!(insert_core_notification(&config, &sample_core_event("cron:2", 200)).unwrap());
+
+    let items = list_core_notifications(&config, true, 50).unwrap();
+    assert_eq!(items.len(), 2);
+    // Newest first.
+    assert_eq!(items[0].id, "cron:2");
+    assert_eq!(items[1].id, "cron:1");
+    assert_eq!(unread_core_notification_count(&config).unwrap(), 2);
+}
+
+#[test]
+fn core_notification_insert_is_idempotent_on_id() {
+    let dir = TempDir::new().unwrap();
+    let config = test_config(&dir);
+
+    assert!(insert_core_notification(&config, &sample_core_event("cron:dup", 100)).unwrap());
+    // Same id re-published — must not create a duplicate row.
+    assert!(!insert_core_notification(&config, &sample_core_event("cron:dup", 100)).unwrap());
+
+    assert_eq!(
+        list_core_notifications(&config, false, 50).unwrap().len(),
+        1
+    );
+    assert_eq!(unread_core_notification_count(&config).unwrap(), 1);
+}
+
+#[test]
+fn core_notification_mark_read_excludes_from_unread_list() {
+    let dir = TempDir::new().unwrap();
+    let config = test_config(&dir);
+
+    insert_core_notification(&config, &sample_core_event("cron:a", 100)).unwrap();
+    insert_core_notification(&config, &sample_core_event("cron:b", 200)).unwrap();
+
+    assert!(mark_core_notification_read(&config, "cron:a").unwrap());
+    // Marking a missing id returns false.
+    assert!(!mark_core_notification_read(&config, "cron:missing").unwrap());
+
+    let unread = list_core_notifications(&config, true, 50).unwrap();
+    assert_eq!(unread.len(), 1);
+    assert_eq!(unread[0].id, "cron:b");
+    assert_eq!(unread_core_notification_count(&config).unwrap(), 1);
+
+    // Non-filtered list still returns both (read + unread).
+    assert_eq!(
+        list_core_notifications(&config, false, 50).unwrap().len(),
+        2
+    );
+}
+
+#[test]
+fn core_notification_list_respects_limit() {
+    let dir = TempDir::new().unwrap();
+    let config = test_config(&dir);
+
+    for i in 0..5 {
+        insert_core_notification(&config, &sample_core_event(&format!("cron:{i}"), 100 + i))
+            .unwrap();
+    }
+    assert_eq!(list_core_notifications(&config, true, 3).unwrap().len(), 3);
+}
+
+#[test]
+fn core_notification_roundtrip_preserves_payload() {
+    let dir = TempDir::new().unwrap();
+    let config = test_config(&dir);
+
+    let event = sample_core_event("cron:rt", 1234);
+    insert_core_notification(&config, &event).unwrap();
+
+    let items = list_core_notifications(&config, true, 1).unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0], event,
+        "payload must round-trip through the store unchanged"
+    );
+}

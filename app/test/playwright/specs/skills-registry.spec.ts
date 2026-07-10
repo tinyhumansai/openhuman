@@ -37,9 +37,7 @@ test.describe('Skills registry flow', () => {
     await expect(page.getByTestId('two-pane-nav-channels')).toBeVisible();
     await expect(page.getByTestId('two-pane-nav-mcp')).toBeVisible();
     await page.getByTestId('two-pane-nav-composio').click();
-    await expect(
-      page.getByRole('heading', { name: 'Composio Integrations', exact: true })
-    ).toBeVisible();
+    await expect(page.getByTestId('composio-integrations-card')).toBeVisible();
     await expect(
       page.getByText(/Gmail|Notion|Telegram|GitHub|Google Drive/, { exact: false }).first()
     ).toBeVisible();

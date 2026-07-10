@@ -1,7 +1,13 @@
 use super::*;
 use crate::openhuman::credentials::session_support::local_session_user_id;
+use axum::http::StatusCode;
+use axum::routing::get;
+use axum::Router;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use serde_json::json;
 use tempfile::TempDir;
+use tokio::net::TcpListener;
 
 struct EnvVarGuard {
     key: &'static str,
@@ -34,6 +40,32 @@ fn test_config(tmp: &TempDir) -> Config {
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     }
+}
+
+fn jwt_with_payload(payload: serde_json::Value) -> String {
+    let payload = URL_SAFE_NO_PAD.encode(payload.to_string());
+    format!("eyJhbGciOiJIUzI1NiJ9.{payload}.sig")
+}
+
+fn count_reembed_backfill_jobs(config: &Config) -> i64 {
+    crate::openhuman::memory_store::chunks::store::with_connection(config, |conn| {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_jobs WHERE kind = 'reembed_backfill'",
+            [],
+            |row| row.get(0),
+        )?)
+    })
+    .unwrap()
+}
+
+async fn spawn_auth_me_status(status: StatusCode) -> String {
+    let app = Router::new().route("/auth/me", get(move || async move { status }));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}")
 }
 
 // ── secret_store_for_config ────────────────────────────────────
@@ -97,6 +129,327 @@ fn sanitize_stored_session_user_discards_empty_objects() {
         sanitize_stored_session_user(Some(json!({ "firstName": "steven" }))),
         Some(json!({ "firstName": "steven" }))
     );
+}
+
+#[test]
+fn auth_me_store_failure_classifier_only_accepts_transient_shapes() {
+    assert!(auth_me_store_failure_is_transient(
+        "GET /auth/me failed (503 Service Unavailable): overloaded"
+    ));
+    assert!(auth_me_store_failure_is_transient(
+        "GET /auth/me failed (503 Service Unavailable): session timeout"
+    ));
+    assert!(auth_me_store_failure_is_transient(
+        "GET /auth/me: error sending request for url"
+    ));
+    assert!(!auth_me_store_failure_is_transient(
+        "GET /auth/me failed (401 Unauthorized): bad token"
+    ));
+    assert!(!auth_me_store_failure_is_transient(
+        "GET /auth/me failed (401 Unauthorized): session timeout"
+    ));
+    assert!(!auth_me_store_failure_is_transient(
+        "GET /auth/me failed (403 Forbidden): connection reset"
+    ));
+}
+
+#[tokio::test]
+async fn store_session_rejects_live_jwt_when_auth_me_transient() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_status(StatusCode::SERVICE_UNAVAILABLE).await);
+    let token = jwt_with_payload(json!({
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let err = store_session(&config, &token, None, Some(json!({})))
+        .await
+        .unwrap_err();
+
+    assert!(
+        err.contains("Session validation failed (GET /auth/me)"),
+        "expected auth/me validation error, got: {err}"
+    );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(!state.is_authenticated);
+    assert!(state.user.is_none());
+}
+
+#[tokio::test]
+async fn store_session_rejects_supplied_user_when_auth_me_transient() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_status(StatusCode::SERVICE_UNAVAILABLE).await);
+    let token = jwt_with_payload(json!({
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let err = store_session(
+        &config,
+        &token,
+        None,
+        Some(json!({
+            "name": "Callback User",
+            "email": "callback@example.test"
+        })),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        err.contains("Session validation failed (GET /auth/me)"),
+        "expected auth/me validation error, got: {err}"
+    );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(!state.is_authenticated);
+    assert!(state.user.is_none());
+}
+
+#[tokio::test]
+async fn store_session_rejects_non_object_user_when_auth_me_transient() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_status(StatusCode::SERVICE_UNAVAILABLE).await);
+    let token = jwt_with_payload(json!({
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let err = store_session(&config, &token, None, Some(json!("callback-user")))
+        .await
+        .unwrap_err();
+
+    assert!(
+        err.contains("Session validation failed (GET /auth/me)"),
+        "expected auth/me validation error, got: {err}"
+    );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(!state.is_authenticated);
+    assert!(state.user.is_none());
+}
+
+#[tokio::test]
+async fn store_session_defers_minimal_live_jwt_when_auth_me_transient_and_allowed() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_status(StatusCode::SERVICE_UNAVAILABLE).await);
+    let token = jwt_with_payload(json!({
+        "sub": "unverified-jwt-user",
+        "email": "jwt@example.test",
+        "name": "Unverified JWT User",
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let result = store_session_with_deferred_validation(
+        &config,
+        &token,
+        None,
+        Some(json!({
+            "id": "supplied-callback-user",
+            "name": "Supplied Callback User"
+        })),
+    )
+    .await
+    .unwrap();
+
+    assert!(result.value.has_token);
+    let log_text = result.logs.join(" ");
+    assert!(
+        log_text.contains("session JWT accepted with deferred GET /auth/me validation"),
+        "expected deferred validation log, got: {log_text}"
+    );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(state.is_authenticated);
+    assert_eq!(
+        state.user,
+        Some(json!({ "pendingBackendValidation": true })),
+        "deferred fallback must not copy identity claims from an unverified JWT or callback payload"
+    );
+}
+
+#[tokio::test]
+async fn store_session_requeues_reembed_backfill_after_login() {
+    use crate::openhuman::memory_store::chunks::store::{upsert_chunks, upsert_staged_chunks_tx};
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+    };
+    use crate::openhuman::memory_store::content as content_store;
+    use chrono::TimeZone;
+
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_status(StatusCode::SERVICE_UNAVAILABLE).await);
+
+    let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+    let chunk = Chunk {
+        id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "login-reembed-seed"),
+        content: "memory content that needs embedding after the user logs in".into(),
+        metadata: Metadata {
+            source_kind: SourceKind::Chat,
+            source_id: "slack:#eng".into(),
+            owner: "alice".into(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: vec![],
+            source_ref: Some(SourceRef::new("slack://x")),
+            path_scope: None,
+        },
+        token_count: 12,
+        seq_in_source: 0,
+        created_at: ts,
+        partial_message: false,
+    };
+    upsert_chunks(&config, &[chunk.clone()]).unwrap();
+    let content_root = config.memory_tree_content_root();
+    std::fs::create_dir_all(&content_root).unwrap();
+    let staged = content_store::stage_chunks(&content_root, &[chunk]).unwrap();
+    crate::openhuman::memory_store::chunks::store::with_connection(&config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        upsert_staged_chunks_tx(&tx, &staged)?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(
+        count_reembed_backfill_jobs(&config),
+        0,
+        "precondition: no active reembed backfill job exists before login"
+    );
+
+    let token = jwt_with_payload(json!({
+        "sub": "unverified-jwt-user",
+        "email": "jwt@example.test",
+        "name": "Unverified JWT User",
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let result = store_session_with_deferred_validation(&config, &token, None, Some(json!({})))
+        .await
+        .unwrap();
+
+    let log_text = result.logs.join(" ");
+    assert!(
+        log_text.contains("memory re-embed backfill checked after login"),
+        "store_session should report the post-login backfill probe, got: {log_text}"
+    );
+    assert_eq!(
+        count_reembed_backfill_jobs(&config),
+        1,
+        "login must enqueue exactly one reembed_backfill chain for uncovered rows"
+    );
+}
+
+#[tokio::test]
+async fn deferred_session_without_user_id_does_not_replace_active_user_profile() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let root_dir = default_root_openhuman_dir().unwrap();
+    let active_user_id = "existing-active-user";
+    write_active_user_id(&root_dir, active_user_id).unwrap();
+    let active_user_dir = user_openhuman_dir(&root_dir, active_user_id);
+    std::fs::create_dir_all(active_user_dir.join("workspace")).unwrap();
+    let mut config = Config {
+        config_path: active_user_dir.join("config.toml"),
+        workspace_dir: active_user_dir.join("workspace"),
+        action_dir: active_user_dir.join("workspace"),
+        ..Config::default()
+    };
+    config.api_url = Some(spawn_auth_me_status(StatusCode::SERVICE_UNAVAILABLE).await);
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert("user_id".to_string(), active_user_id.to_string());
+    metadata.insert(
+        "user_json".to_string(),
+        json!({
+            "id": active_user_id,
+            "name": "Existing Active User"
+        })
+        .to_string(),
+    );
+    AuthService::from_config(&config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            "existing.active.session",
+            metadata,
+            true,
+        )
+        .unwrap();
+    let pending_token = jwt_with_payload(json!({
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let err =
+        store_session_with_deferred_validation(&config, &pending_token, None, Some(json!({})))
+            .await
+            .unwrap_err();
+
+    assert!(
+        err.contains("backend user id required before replacing the active session"),
+        "expected active-session protection error, got: {err}"
+    );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(state.is_authenticated);
+    let token = auth_get_session_token_json(&config).await.unwrap().value;
+    assert_eq!(token.get("token"), Some(&json!("existing.active.session")));
+    assert_eq!(state.user_id.as_deref(), Some(active_user_id));
+    assert_eq!(
+        state.user.as_ref().and_then(|value| value.get("id")),
+        Some(&json!(active_user_id))
+    );
+}
+
+#[tokio::test]
+async fn store_session_rejects_live_jwt_when_auth_me_unauthorized() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_status(StatusCode::UNAUTHORIZED).await);
+    let token = jwt_with_payload(json!({
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let err = store_session(&config, &token, None, None)
+        .await
+        .unwrap_err();
+
+    assert!(
+        err.contains("Session validation failed (GET /auth/me)"),
+        "expected auth/me validation error, got: {err}"
+    );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(!state.is_authenticated);
 }
 
 // ── store_session (local session) ─────────────────────────────

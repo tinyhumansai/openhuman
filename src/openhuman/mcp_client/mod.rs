@@ -29,8 +29,10 @@
 //!   persistence, and RPC surface.
 //!
 //! # Modules
-//! - `client`   — [`McpHttpClient`] and shared MCP protocol types
-//! - `stdio`    — [`McpStdioClient`]
+//! - `client`    — [`McpHttpClient`] and shared MCP protocol types
+//! - `stdio`     — [`McpStdioClient`]
+//! - `spawn_env` — PATH reconstruction for stdio child processes (npx/uvx
+//!   resolution under GUI-stripped desktop environments)
 //! - `registry` — [`McpServerRegistry`] built from
 //!   [`crate::openhuman::config::McpClientConfig`]
 
@@ -40,12 +42,13 @@ pub mod sanitize;
 pub mod setup_agent;
 #[cfg(test)]
 mod setup_agent_integration_test;
+mod spawn_env;
 mod stdio;
 
 pub use client::{
     redact_endpoint, AuthorizationServerMetadata, McpAuthChallenge, McpAuthorizationContext,
     McpHttpClient, McpInitializeResult, McpRemoteTool, McpServerToolResult, McpSseEvent,
-    ProtectedResourceMetadata,
+    McpUnauthorizedError, ProtectedResourceMetadata,
 };
 pub(crate) use registry::apply_safety_filter;
 pub use registry::{McpRegistrySource, McpServerDefinition, McpServerRegistry, McpTransportClient};

@@ -7,9 +7,8 @@ import {
   setNotificationSettings,
 } from '../../../services/notificationService';
 import type { NotificationStats } from '../../../types/notifications';
-import SettingsHeader from '../components/SettingsHeader';
 import { SettingsCheckbox, SettingsSection } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 const PROVIDERS = ['gmail', 'slack', 'discord', 'whatsapp'];
 
@@ -27,7 +26,6 @@ interface NotificationRoutingPanelProps {
  */
 const NotificationRoutingPanel = ({ embedded = false }: NotificationRoutingPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const providers = PROVIDERS;
   const [stats, setStats] = useState<NotificationStats | null>(null);
   const [settings, setSettings] = useState<
@@ -109,171 +107,162 @@ const NotificationRoutingPanel = ({ embedded = false }: NotificationRoutingPanel
     }
   };
 
-  return (
-    <div>
-      {!embedded && (
-        <SettingsHeader
-          title={t('notifications.routingTitle')}
-          showBackButton={true}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
+  const body = (
+    <>
+      {stats && (
+        <SettingsSection title={t('notifications.routing.pipelineStats')}>
+          <div className="grid grid-cols-3 divide-x divide-line-subtle dark:divide-neutral-800">
+            {[
+              { label: t('notifications.routing.total'), value: stats.total },
+              { label: t('notifications.routing.unread'), value: stats.unread },
+              { label: t('notifications.routing.unscored'), value: stats.unscored },
+            ].map(({ label, value }) => (
+              <div key={label} className="px-4 py-3 text-center">
+                <p className="text-lg font-semibold text-content">{value}</p>
+                <p className="text-xs text-content-muted">{label}</p>
+              </div>
+            ))}
+          </div>
+        </SettingsSection>
       )}
 
-      <div className="p-4 space-y-4">
-        {stats && (
-          <SettingsSection title={t('notifications.routing.pipelineStats')}>
-            <div className="grid grid-cols-3 divide-x divide-neutral-100 dark:divide-neutral-800">
-              {[
-                { label: t('notifications.routing.total'), value: stats.total },
-                { label: t('notifications.routing.unread'), value: stats.unread },
-                { label: t('notifications.routing.unscored'), value: stats.unscored },
-              ].map(({ label, value }) => (
-                <div key={label} className="px-4 py-3 text-center">
-                  <p className="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-                    {value}
-                  </p>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400">{label}</p>
-                </div>
-              ))}
-            </div>
-          </SettingsSection>
-        )}
-
-        {/* Info card */}
-        <div className="p-4 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 rounded-xl">
-          <div className="flex items-start space-x-3">
-            <svg
-              className="w-5 h-5 text-blue-600 dark:text-blue-300 flex-shrink-0 mt-0.5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-              />
-            </svg>
-            <div>
-              <p className="font-medium text-blue-800 dark:text-blue-200 text-sm">
-                {t('notifications.routing.intelligenceTitle')}
-              </p>
-              <p className="text-blue-700 dark:text-blue-300 text-xs mt-1 leading-relaxed">
-                {t('notifications.routing.intelligenceDesc')}
-              </p>
-            </div>
+      {/* Info card */}
+      <div className="p-4 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 rounded-xl">
+        <div className="flex items-start space-x-3">
+          <svg
+            className="w-5 h-5 text-blue-600 dark:text-blue-300 flex-shrink-0 mt-0.5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+            />
+          </svg>
+          <div>
+            <p className="font-medium text-blue-800 dark:text-blue-200 text-sm">
+              {t('notifications.routing.intelligenceTitle')}
+            </p>
+            <p className="text-blue-700 dark:text-blue-300 text-xs mt-1 leading-relaxed">
+              {t('notifications.routing.intelligenceDesc')}
+            </p>
           </div>
         </div>
-
-        {/* How it works */}
-        <SettingsSection title={t('notifications.routing.howItWorks')}>
-          {[
-            {
-              label: t('notifications.routing.level.drop'),
-              desc: t('notifications.routing.level.dropDesc'),
-              color: 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300',
-            },
-            {
-              label: t('notifications.routing.level.acknowledge'),
-              desc: t('notifications.routing.level.acknowledgeDesc'),
-              color: 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300',
-            },
-            {
-              label: t('notifications.routing.level.react'),
-              desc: t('notifications.routing.level.reactDesc'),
-              color: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300',
-            },
-            {
-              label: t('notifications.routing.level.escalate'),
-              desc: t('notifications.routing.level.escalateDesc'),
-              color: 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300',
-            },
-          ].map(row => (
-            <div key={row.label} className="flex items-center gap-3 px-4 py-3">
-              <span
-                className={`flex-shrink-0 px-2 py-0.5 rounded text-[11px] font-semibold ${row.color}`}>
-                {row.label}
-              </span>
-              <span className="text-xs text-neutral-600 dark:text-neutral-300">{row.desc}</span>
-            </div>
-          ))}
-        </SettingsSection>
-
-        {/* Per-provider routing */}
-        <SettingsSection title={t('notifications.routing.perProvider')}>
-          {providers.map(provider => {
-            const hasLoadError = Boolean(loadErrors[provider]);
-            const isLoaded = Boolean(loadedProviders[provider]);
-            const s = settings[provider] ?? {
-              enabled: true,
-              importance_threshold: 0,
-              route_to_orchestrator: true,
-            };
-            const controlsDisabled = !isLoaded || hasLoadError;
-            return (
-              <div key={provider} className="px-4 py-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-neutral-800 dark:text-neutral-100 capitalize">
-                    {provider}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <label
-                      htmlFor={`notification-enabled-${provider}`}
-                      className="text-xs text-neutral-600 dark:text-neutral-300">
-                      {t('common.enabled')}
-                    </label>
-                    <SettingsCheckbox
-                      id={`notification-enabled-${provider}`}
-                      checked={s.enabled}
-                      disabled={controlsDisabled}
-                      onCheckedChange={next => {
-                        void updateSetting(provider, { enabled: next });
-                      }}
-                    />
-                  </div>
-                </div>
-                <label className="flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-300">
-                  {t('notifications.routing.threshold')}
-                  <input
-                    className="flex-1"
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={s.importance_threshold}
-                    disabled={controlsDisabled}
-                    onChange={e => {
-                      void updateSetting(provider, {
-                        importance_threshold: Number(e.target.value),
-                      });
-                    }}
-                  />
-                  <span>{s.importance_threshold.toFixed(2)}</span>
-                </label>
-                <label className="text-xs text-neutral-600 dark:text-neutral-300 flex items-center gap-2">
-                  {t('notifications.routing.routeToOrchestrator')}
-                  <input
-                    type="checkbox"
-                    checked={s.route_to_orchestrator}
-                    disabled={controlsDisabled}
-                    onChange={e => {
-                      void updateSetting(provider, { route_to_orchestrator: e.target.checked });
-                    }}
-                  />
-                </label>
-                {hasLoadError ? (
-                  <p className="text-xs text-red-600 dark:text-red-300">
-                    {t('notifications.routing.loadSettingsError')}
-                  </p>
-                ) : null}
-              </div>
-            );
-          })}
-        </SettingsSection>
       </div>
-    </div>
+
+      {/* How it works */}
+      <SettingsSection title={t('notifications.routing.howItWorks')}>
+        {[
+          {
+            label: t('notifications.routing.level.drop'),
+            desc: t('notifications.routing.level.dropDesc'),
+            color: 'bg-surface-subtle text-content-secondary',
+          },
+          {
+            label: t('notifications.routing.level.acknowledge'),
+            desc: t('notifications.routing.level.acknowledgeDesc'),
+            color: 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300',
+          },
+          {
+            label: t('notifications.routing.level.react'),
+            desc: t('notifications.routing.level.reactDesc'),
+            color: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300',
+          },
+          {
+            label: t('notifications.routing.level.escalate'),
+            desc: t('notifications.routing.level.escalateDesc'),
+            color: 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300',
+          },
+        ].map(row => (
+          <div key={row.label} className="flex items-center gap-3 px-4 py-3">
+            <span
+              className={`flex-shrink-0 px-2 py-0.5 rounded text-[11px] font-semibold ${row.color}`}>
+              {row.label}
+            </span>
+            <span className="text-xs text-content-secondary">{row.desc}</span>
+          </div>
+        ))}
+      </SettingsSection>
+
+      {/* Per-provider routing */}
+      <SettingsSection title={t('notifications.routing.perProvider')}>
+        {providers.map(provider => {
+          const hasLoadError = Boolean(loadErrors[provider]);
+          const isLoaded = Boolean(loadedProviders[provider]);
+          const s = settings[provider] ?? {
+            enabled: true,
+            importance_threshold: 0,
+            route_to_orchestrator: true,
+          };
+          const controlsDisabled = !isLoaded || hasLoadError;
+          return (
+            <div key={provider} className="px-4 py-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-content capitalize">{provider}</p>
+                <div className="flex items-center gap-2">
+                  <label
+                    htmlFor={`notification-enabled-${provider}`}
+                    className="text-xs text-content-secondary">
+                    {t('common.enabled')}
+                  </label>
+                  <SettingsCheckbox
+                    id={`notification-enabled-${provider}`}
+                    checked={s.enabled}
+                    disabled={controlsDisabled}
+                    onCheckedChange={next => {
+                      void updateSetting(provider, { enabled: next });
+                    }}
+                  />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-content-secondary">
+                {t('notifications.routing.threshold')}
+                <input
+                  className="flex-1"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={s.importance_threshold}
+                  disabled={controlsDisabled}
+                  onChange={e => {
+                    void updateSetting(provider, { importance_threshold: Number(e.target.value) });
+                  }}
+                />
+                <span>{s.importance_threshold.toFixed(2)}</span>
+              </label>
+              <label
+                htmlFor={`notification-orchestrator-${provider}`}
+                className="text-xs text-content-secondary flex items-center gap-2">
+                {t('notifications.routing.routeToOrchestrator')}
+                <SettingsCheckbox
+                  id={`notification-orchestrator-${provider}`}
+                  checked={s.route_to_orchestrator}
+                  disabled={controlsDisabled}
+                  onCheckedChange={next => {
+                    void updateSetting(provider, { route_to_orchestrator: next });
+                  }}
+                />
+              </label>
+              {hasLoadError ? (
+                <p className="text-xs text-red-600 dark:text-red-300">
+                  {t('notifications.routing.loadSettingsError')}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
+      </SettingsSection>
+    </>
   );
+
+  // Embedded inside the tabbed Notifications page: the parent owns the header,
+  // so render just the padded body.
+  if (embedded) return <div className="p-4 space-y-5">{body}</div>;
+
+  return <SettingsPanel>{body}</SettingsPanel>;
 };
 
 export default NotificationRoutingPanel;

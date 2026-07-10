@@ -56,14 +56,16 @@ impl Tool for McpRegistrySearchTool {
         "mcp_registry_search"
     }
     fn description(&self) -> &str {
-        "Search the MCP server registry catalog by `query`, paginated by `page` \
-         / `page_size`. Use to discover installable MCP servers."
+        "Search the MCP server registry catalog by `query`, optionally filtered by \
+         `transport` (\"stdio\" | \"hosted\" | \"all\"), paginated by `page` / \
+         `page_size`. Use to discover installable MCP servers."
     }
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
                 "query": { "type": "string" },
+                "transport": { "type": "string", "enum": ["stdio", "hosted", "all"] },
                 "page": { "type": "integer", "minimum": 1 },
                 "page_size": { "type": "integer", "minimum": 1 }
             }
@@ -79,8 +81,12 @@ impl Tool for McpRegistrySearchTool {
             .get("page_size")
             .and_then(Value::as_u64)
             .map(|v| v as u32);
+        let transport = args
+            .get("transport")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         emit!(
-            ops::mcp_clients_registry_search(&self.config, query, page, page_size).await,
+            ops::mcp_clients_registry_search(&self.config, query, transport, page, page_size).await,
             "mcp_registry_search"
         )
     }
@@ -180,6 +186,39 @@ impl Tool for McpRegistryStatusTool {
         emit!(
             ops::mcp_clients_status(&self.config).await,
             "mcp_registry_status"
+        )
+    }
+    fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
+        true
+    }
+}
+
+/// List the tools advertised by a connected MCP server (discovery).
+pub struct McpRegistryListToolsTool;
+#[async_trait]
+impl Tool for McpRegistryListToolsTool {
+    fn name(&self) -> &str {
+        "mcp_registry_list_tools"
+    }
+    fn description(&self) -> &str {
+        "List the tools (name, description, input schema) exposed by a \
+         connected MCP server, given its `server_id`. Use this to discover \
+         what a connected server can do before calling `mcp_registry_tool_call`. \
+         The server must already be connected (see `mcp_registry_status` / \
+         `mcp_registry_connect`)."
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": { "server_id": { "type": "string" } },
+            "required": ["server_id"]
+        })
+    }
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let sid = req_str(&args, "server_id")?;
+        emit!(
+            ops::mcp_clients_list_tools(sid).await,
+            "mcp_registry_list_tools"
         )
     }
     fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
@@ -442,6 +481,12 @@ mod tests {
             McpRegistryToolCallTool.permission_level(),
             PermissionLevel::Execute
         );
+        // Discovery tool: read-only, names match.
+        assert_eq!(McpRegistryListToolsTool.name(), "mcp_registry_list_tools");
+        assert_eq!(
+            McpRegistryListToolsTool.permission_level(),
+            PermissionLevel::ReadOnly
+        );
         assert_eq!(
             McpRegistryInstallTool::new(cfg()).permission_level(),
             PermissionLevel::Write
@@ -456,5 +501,28 @@ mod tests {
             .await
             .expect_err("missing qualified_name");
         assert!(err.to_string().contains("qualified_name"));
+    }
+
+    #[tokio::test]
+    async fn list_tools_requires_server_id() {
+        let err = McpRegistryListToolsTool
+            .execute(json!({}))
+            .await
+            .expect_err("missing server_id");
+        assert!(err.to_string().contains("server_id"));
+    }
+
+    #[tokio::test]
+    async fn list_tools_errors_for_unconnected_server() {
+        // A server_id that is not in the live connection map surfaces a
+        // "connect first" hint rather than an empty success.
+        let err = McpRegistryListToolsTool
+            .execute(json!({ "server_id": "definitely-not-connected-uuid" }))
+            .await
+            .expect_err("unconnected server must error");
+        assert!(
+            err.to_string().contains("not connected"),
+            "expected connect-first hint, got: {err}"
+        );
     }
 }

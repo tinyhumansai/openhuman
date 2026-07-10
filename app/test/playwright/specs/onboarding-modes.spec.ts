@@ -61,7 +61,7 @@ async function expectOnboardingCompleted(): Promise<void> {
 async function ensureHomeOrForceComplete(page: Page): Promise<void> {
   const reachedHome = await expect
     .poll(async () => page.evaluate(() => window.location.hash), { timeout: 20_000 })
-    .toMatch(/^#\/home/)
+    .toMatch(/^#\/(home|chat)/)
     .then(
       () => true,
       () => false

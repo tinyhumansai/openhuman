@@ -29,6 +29,7 @@ import {
   SOURCE_KIND_LABEL_KEYS,
   type SourceKind,
 } from '../../services/memorySourcesService';
+import Button from '../ui/Button';
 
 const log = debug('intelligence:add-memory-source-dialog');
 
@@ -197,45 +198,37 @@ export function AddMemorySourceDialog({ open, onClose, onAdded }: AddMemorySourc
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-xl border border-stone-200 bg-white p-6 shadow-xl dark:border-neutral-700 dark:bg-neutral-900">
-        <h2 className="text-lg font-semibold text-stone-900 dark:text-neutral-100">
-          {t('memorySources.addSource')}
-        </h2>
+      <div className="w-full max-w-lg rounded-xl border border-line bg-surface p-6 shadow-xl">
+        <h2 className="text-lg font-semibold text-content">{t('memorySources.addSource')}</h2>
 
         {!kind ? (
           <>
-            <p className="mt-2 text-sm text-stone-500 dark:text-neutral-400">
-              {t('memorySources.pickKind')}
-            </p>
+            <p className="mt-2 text-sm text-content-muted">{t('memorySources.pickKind')}</p>
             <div className="mt-4 grid grid-cols-2 gap-3">
               {ALL_KINDS.map(k => (
                 <button
                   key={k}
                   type="button"
                   onClick={() => setKind(k)}
-                  className="flex items-center gap-3 rounded-lg border border-stone-200 p-3
+                  className="flex items-center gap-3 rounded-lg border border-line p-3
                              text-left transition-colors hover:border-primary-400 hover:bg-primary-50
-                             dark:border-neutral-700 dark:hover:border-primary-500 dark:hover:bg-primary-500/10">
+                             dark:border-line-strong dark:hover:border-primary-500 dark:hover:bg-primary-500/10">
                   <span className="text-xl">{SOURCE_KIND_ICONS[k]}</span>
-                  <span className="text-sm font-medium text-stone-800 dark:text-neutral-200">
+                  <span className="text-sm font-medium text-content">
                     {t(SOURCE_KIND_LABEL_KEYS[k])}
                   </span>
                 </button>
               ))}
             </div>
             <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                onClick={handleClose}
-                className="rounded-md px-4 py-2 text-sm text-stone-600 hover:text-stone-900
-                           dark:text-neutral-400 dark:hover:text-neutral-100">
+              <Button variant="tertiary" size="md" onClick={handleClose}>
                 {t('common.cancel')}
-              </button>
+              </Button>
             </div>
           </>
         ) : (
           <>
-            <p className="mt-1 text-sm text-stone-500 dark:text-neutral-400">
+            <p className="mt-1 text-sm text-content-muted">
               {SOURCE_KIND_ICONS[kind]} {t(SOURCE_KIND_LABEL_KEYS[kind])}
             </p>
 
@@ -279,32 +272,26 @@ export function AddMemorySourceDialog({ open, onClose, onAdded }: AddMemorySourc
             )}
 
             <div className="mt-5 flex items-center justify-between">
-              <button
-                type="button"
+              <Button
+                variant="tertiary"
+                size="sm"
                 onClick={() => {
                   setKind(null);
                   setError(null);
-                }}
-                className="text-sm text-stone-500 hover:text-stone-800 dark:text-neutral-400 dark:hover:text-neutral-200">
+                }}>
                 ← {t('memorySources.backToKinds')}
-              </button>
+              </Button>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleClose}
-                  className="rounded-md px-4 py-2 text-sm text-stone-600 hover:text-stone-900
-                             dark:text-neutral-400 dark:hover:text-neutral-100">
+                <Button variant="tertiary" size="md" onClick={handleClose}>
                   {t('common.cancel')}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="primary"
+                  size="md"
                   onClick={handleSubmit}
-                  disabled={!isValid || submitting}
-                  className="rounded-md bg-primary-500 px-4 py-2 text-sm font-semibold text-white
-                             shadow-sm transition-colors hover:bg-primary-600
-                             disabled:cursor-not-allowed disabled:opacity-50">
+                  disabled={!isValid || submitting}>
                   {submitting ? t('memorySources.adding') : t('memorySources.add')}
-                </button>
+                </Button>
               </div>
             </div>
           </>
@@ -354,24 +341,24 @@ function FolderField({ label, value, onChange }: FolderFieldProps) {
   const { t } = useT();
   return (
     <label className="block">
-      <span className="text-xs font-medium text-stone-600 dark:text-neutral-400">{label}</span>
+      <span className="text-xs font-medium text-content-secondary">{label}</span>
       <div className="mt-1 flex gap-2">
         <input
           type="text"
           value={value}
           onChange={e => onChange(e.target.value)}
           placeholder={t('memorySources.folderPathPlaceholder')}
-          className="block w-full rounded-md border border-stone-300 bg-white px-3 py-2
-                     text-sm text-stone-900 placeholder-stone-400
+          className="block w-full rounded-md border border-line-strong bg-surface px-3 py-2
+                     text-sm text-content placeholder-content-faint
                      focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400
-                     dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100
-                     dark:placeholder-neutral-500 dark:focus:border-primary-500"
+                     dark:border-neutral-600 dark:bg-surface-muted dark:text-content
+                     dark:placeholder-content-faint dark:focus:border-primary-500"
         />
         <label
-          className="shrink-0 cursor-pointer rounded-md border border-stone-300 bg-white px-3 py-2
-                     text-xs font-medium text-stone-700 transition-colors
+          className="shrink-0 cursor-pointer rounded-md border border-line-strong bg-surface px-3 py-2
+                     text-xs font-medium text-content-secondary transition-colors
                      hover:border-primary-400 hover:text-primary-600
-                     dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-300
+                     dark:border-neutral-600 dark:bg-surface-muted dark:text-content-secondary
                      dark:hover:border-primary-500 dark:hover:text-primary-400">
           {t('memorySources.browse')}
           <input
@@ -408,17 +395,17 @@ function FolderField({ label, value, onChange }: FolderFieldProps) {
 function Field({ label, value, onChange, placeholder, type = 'text' }: FieldProps) {
   return (
     <label className="block">
-      <span className="text-xs font-medium text-stone-600 dark:text-neutral-400">{label}</span>
+      <span className="text-xs font-medium text-content-secondary">{label}</span>
       <input
         type={type}
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        className="mt-1 block w-full rounded-md border border-stone-300 bg-white px-3 py-2
-                   text-sm text-stone-900 placeholder-stone-400
+        className="mt-1 block w-full rounded-md border border-line-strong bg-surface px-3 py-2
+                   text-sm text-content placeholder-content-faint
                    focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400
-                   dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100
-                   dark:placeholder-neutral-500 dark:focus:border-primary-500"
+                   dark:border-neutral-600 dark:bg-surface-muted dark:text-content
+                   dark:placeholder-content-faint dark:focus:border-primary-500"
       />
     </label>
   );
@@ -664,11 +651,7 @@ function ComposioPicker({
   }, [open]);
 
   if (loadingConnections) {
-    return (
-      <p className="text-xs text-stone-500 dark:text-neutral-400">
-        {t('memorySources.loadingConnections')}
-      </p>
-    );
+    return <p className="text-xs text-content-muted">{t('memorySources.loadingConnections')}</p>;
   }
 
   if (connections.length === 0) {
@@ -766,7 +749,7 @@ function ComposioPicker({
 
   return (
     <div className="block" ref={containerRef}>
-      <span className="text-xs font-medium text-stone-600 dark:text-neutral-400">
+      <span className="text-xs font-medium text-content-secondary">
         {t('memorySources.pickConnection')}
       </span>
       <div className="relative mt-1">
@@ -779,15 +762,15 @@ function ComposioPicker({
           aria-controls={open ? LISTBOX_ID : undefined}
           onClick={() => (open ? close(false) : openListbox())}
           onKeyDown={onButtonKeyDown}
-          className="flex w-full items-center justify-between rounded-md border border-stone-300
-                     bg-white px-3 py-2 text-left text-sm text-stone-900
+          className="flex w-full items-center justify-between rounded-md border border-line-strong
+                     bg-surface px-3 py-2 text-left text-sm text-content
                      focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400
-                     dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100
+                     dark:border-neutral-600 dark:bg-surface-muted dark:text-content
                      dark:focus:border-primary-500">
-          <span className={selected ? '' : 'text-stone-400 dark:text-neutral-500'}>
+          <span className={selected ? '' : 'text-content-faint'}>
             {selected ? selected.label : t('memorySources.selectConnection')}
           </span>
-          <span aria-hidden className="ml-2 text-stone-400 dark:text-neutral-500">
+          <span aria-hidden className="ml-2 text-content-faint">
             ▾
           </span>
         </button>
@@ -803,8 +786,8 @@ function ComposioPicker({
             onKeyDown={onListKeyDown}
             data-testid="composio-connection-listbox"
             className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md border
-                       border-stone-200 bg-white py-1 shadow-lg focus:outline-none
-                       dark:border-neutral-700 dark:bg-neutral-800">
+                       border-line bg-surface py-1 shadow-lg focus:outline-none
+                       dark:border-line-strong dark:bg-surface-muted">
             {entries.map((entry, index) => {
               const isSelected = entry.conn.id === connectionId;
               const isActive = index === activeIndex;
@@ -823,8 +806,8 @@ function ComposioPicker({
                   className={[
                     'flex items-center justify-between gap-2 px-3 py-2 text-sm',
                     entry.supported
-                      ? 'cursor-pointer text-stone-800 dark:text-neutral-200'
-                      : 'cursor-not-allowed text-stone-400 dark:text-neutral-500',
+                      ? 'cursor-pointer text-content'
+                      : 'cursor-not-allowed text-content-faint',
                     isActive && entry.supported ? 'bg-primary-50 dark:bg-primary-500/10' : '',
                   ].join(' ')}>
                   <span className="flex items-center gap-2 truncate">
@@ -838,9 +821,9 @@ function ComposioPicker({
                   {!entry.supported && (
                     <span
                       data-testid={`composio-option-coming-soon-${entry.conn.id}`}
-                      className="shrink-0 rounded-full bg-stone-100 px-2 py-0.5 text-[10px]
-                                 font-medium uppercase tracking-wide text-stone-500
-                                 dark:bg-neutral-700 dark:text-neutral-400">
+                      className="shrink-0 rounded-full bg-surface-subtle px-2 py-0.5 text-[10px]
+                                 font-medium uppercase tracking-wide text-content-muted
+                                 dark:bg-neutral-700 dark:text-content-muted">
                       {t('memorySources.comingSoon')}
                     </span>
                   )}

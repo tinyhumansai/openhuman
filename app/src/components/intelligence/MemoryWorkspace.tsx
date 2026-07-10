@@ -140,15 +140,15 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
           {t('workspace.graphLoadFailed')}: {error}
         </div>
       ) : !graph ? (
-        <div className="flex h-[640px] items-center justify-center rounded-lg border border-stone-100 dark:border-neutral-800 bg-stone-50/40 text-sm text-stone-500 dark:text-neutral-400">
+        <div className="flex h-[640px] items-center justify-center rounded-lg border border-line-subtle bg-surface-muted/40 text-sm text-content-muted">
           {t('workspace.loadingGraph')}
         </div>
       ) : (
         <MemoryGraph nodes={graph.nodes} edges={graph.edges} mode={mode} />
       )}
 
-      <div className="rounded-lg border border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
-        <h3 className="mb-2 text-sm font-medium text-stone-700 dark:text-neutral-200">
+      <div className="rounded-lg border border-line-subtle bg-surface p-4">
+        <h3 className="mb-2 text-sm font-medium text-content-secondary">
           {t('sync.auditTitle', 'Sync History')}
         </h3>
         <SyncAuditPanel />

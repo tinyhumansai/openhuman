@@ -49,6 +49,10 @@ export VITE_BACKEND_URL="$MOCK_API_URL"
 # unless the caller already pinned one explicitly.
 export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
 
+# The tinyagents harness is the agent engine on every build now (issue #4249);
+# the suite exercises it by default. Set OPENHUMAN_AGENT_GRAPH_{TINYAGENTS,CHANNEL,
+# SUBAGENT}=0 to force the (being-removed) legacy engine during the transition.
+
 echo "Running Rust tests with BACKEND_URL=$BACKEND_URL and RUST_MIN_STACK=$RUST_MIN_STACK"
 cd "$REPO_ROOT"
 # Only source rustup's env if it actually exists. With `set -e`, sourcing a

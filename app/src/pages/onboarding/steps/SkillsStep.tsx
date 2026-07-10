@@ -64,7 +64,7 @@ function statusColor(state: ReturnType<typeof deriveComposioState>): string {
     case 'error':
       return 'text-coral-600 dark:text-coral-300';
     default:
-      return 'text-stone-400 dark:text-neutral-500';
+      return 'text-content-faint';
   }
 }
 
@@ -100,12 +100,10 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
   };
 
   return (
-    <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-8 shadow-soft animate-fade-up">
+    <div className="rounded-2xl border border-line bg-surface p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-4">
-        <h1 className="text-xl font-bold mb-2 text-stone-900 dark:text-neutral-100">
-          {t('skills.connect')}
-        </h1>
-        <p className="text-stone-600 dark:text-neutral-300 text-sm">{t('skills.available')}</p>
+        <h1 className="text-xl font-bold mb-2 text-content">{t('skills.connect')}</h1>
+        <p className="text-content-secondary text-sm">{t('skills.available')}</p>
       </div>
 
       <div className="mb-4 space-y-2">
@@ -124,14 +122,14 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
             type="button"
             onClick={() => setActiveToolkit(gmailMeta)}
             data-testid="onboarding-skills-gmail-button"
-            className="w-full flex items-center gap-3 rounded-xl border border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 transition-colors hover:bg-stone-50 dark:hover:bg-neutral-800/60 text-left">
+            className="w-full flex items-center gap-3 rounded-xl border border-line-subtle bg-surface p-3 transition-colors hover:bg-surface-hover text-left">
             <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center text-lg">
               {gmailMeta.icon}
             </div>
 
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="truncate text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                <span className="truncate text-sm font-semibold text-content">
                   {gmailMeta.name}
                 </span>
                 {statusLabel(gmailState, t) && (
@@ -145,7 +143,7 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
                   </>
                 )}
               </div>
-              <p className="mt-0.5 line-clamp-1 text-xs leading-relaxed text-stone-500 dark:text-neutral-400">
+              <p className="mt-0.5 line-clamp-1 text-xs leading-relaxed text-content-muted">
                 {gmailMeta.description}
               </p>
             </div>
@@ -169,8 +167,8 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
           </button>
         )}
 
-        <div className="rounded-xl border border-stone-100 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2.5 text-center">
-          <p className="text-xs text-stone-400 dark:text-neutral-500">{t('skills.available')}</p>
+        <div className="rounded-xl border border-line-subtle bg-surface-muted px-3 py-2.5 text-center">
+          <p className="text-xs text-content-faint">{t('skills.available')}</p>
         </div>
       </div>
 

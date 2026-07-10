@@ -9,13 +9,13 @@ vi.mock('../../hooks/useChannelDefinitions', () => ({
   useChannelDefinitions: () => ({ definitions: [], loading: false, error: null }),
 }));
 
-vi.mock('../../services/api/workflowsApi', async () => {
-  const actual = await vi.importActual<typeof import('../../services/api/workflowsApi')>(
-    '../../services/api/workflowsApi'
+vi.mock('../../services/api/skillsApi', async () => {
+  const actual = await vi.importActual<typeof import('../../services/api/skillsApi')>(
+    '../../services/api/skillsApi'
   );
   return {
     ...actual,
-    workflowsApi: { ...actual.workflowsApi, listWorkflows: vi.fn().mockResolvedValue([]) },
+    skillsApi: { ...actual.skillsApi, listWorkflows: vi.fn().mockResolvedValue([]) },
   };
 });
 
@@ -57,10 +57,10 @@ describe('Skills page — MCP Servers tab (MCP + Meeting bots)', () => {
 
     // The Tools tab shows filter chips (All / Installed / Registry) and a search input
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: 'All' })).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /Installed/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Registry' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /Installed/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Registry' })).toBeInTheDocument();
   });
 
   it('shows the table header columns on the MCP Servers tab', async () => {
@@ -84,9 +84,9 @@ describe('Skills page — MCP Servers tab (MCP + Meeting bots)', () => {
     fireEvent.click(screen.getByTestId('two-pane-nav-mcp'));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Installed/i })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /Installed/i })).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole('button', { name: /Installed/i }));
+    fireEvent.click(screen.getByRole('tab', { name: /Installed/i }));
 
     await waitFor(() => {
       expect(screen.getByText('No MCP servers installed yet.')).toBeInTheDocument();
@@ -98,7 +98,7 @@ describe('Skills page — MCP Servers tab (MCP + Meeting bots)', () => {
 
     expect(screen.getByTestId('two-pane-nav-mcp')).toHaveAttribute('aria-current', 'page');
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: 'All' })).toBeInTheDocument();
     });
   });
 });

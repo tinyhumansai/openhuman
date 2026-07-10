@@ -2,10 +2,12 @@
 //!
 //! Most `effective_*` functions enforce the MVP model allowlist: if a resolved
 //! model ID is not in the allowlist the function silently falls back to the
-//! default MVP model and logs a warning. `effective_chat_model_id` intentionally
-//! bypasses that allowlist for LM Studio so user-managed model IDs are passed
-//! through unchanged; the generic `effective_*` helpers still enforce the MVP
-//! tier restriction for OpenHuman-managed Ollama assets.
+//! default MVP model and logs a warning. `effective_chat_model_id` and
+//! `effective_embedding_model_id` intentionally bypass that allowlist for LM
+//! Studio so user-managed model IDs (e.g. an LM-Studio-served
+//! `text-embedding-bge-m3`) are passed through unchanged; the generic
+//! `effective_*` helpers still enforce the MVP tier restriction for
+//! OpenHuman-managed Ollama assets.
 
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::local::provider::{provider_from_config, LocalAiProvider};
@@ -141,6 +143,32 @@ pub(crate) fn effective_vision_model_id(config: &Config) -> String {
 
 pub(crate) fn effective_embedding_model_id(config: &Config) -> String {
     let raw = config.local_ai.embedding_model_id.trim();
+
+    // LM Studio serves embeddings under user-managed names (e.g.
+    // `text-embedding-bge-m3`) that are deliberately outside the
+    // OpenHuman-managed Ollama MVP allowlist. Mirror `effective_chat_model_id`
+    // and pass a configured id through unchanged so the user can target the
+    // exact served model instead of having it rewritten back to `bge-m3`
+    // (#3920). The allowlist remains in force for the managed Ollama path
+    // below, where the ids are OpenHuman-pulled assets.
+    if provider_from_config(config) == LocalAiProvider::LmStudio {
+        if raw.is_empty() {
+            // No configured id — fall back to the canonical default so the
+            // memory tree still has an embedder to request, rather than
+            // sending an empty model name to the LM Studio server.
+            tracing::debug!(
+                provider = LocalAiProvider::LmStudio.as_str(),
+                "[local_ai] effective_embedding_model_id: no LM Studio embedding model configured, using default"
+            );
+            return DEFAULT_OLLAMA_EMBED_MODEL.to_string();
+        }
+        tracing::debug!(
+            provider = LocalAiProvider::LmStudio.as_str(),
+            "[local_ai] effective_embedding_model_id: using provider-managed embedding id"
+        );
+        return raw.to_string();
+    }
+
     if raw.is_empty() {
         return enforce_mvp_embedding_allowlist(DEFAULT_OLLAMA_EMBED_MODEL);
     }
@@ -300,6 +328,58 @@ mod tests {
         assert_eq!(effective_embedding_model_id(&config), "bge-m3");
 
         config.local_ai.embedding_model_id = "totally-made-up-model:v0".to_string();
+        assert_eq!(effective_embedding_model_id(&config), "bge-m3");
+    }
+
+    #[test]
+    fn lm_studio_embedding_model_passes_through_served_name() {
+        // The native local-runtime fix for #3920: LM Studio serves embeddings
+        // under user-managed names that are not in the MVP allowlist. A
+        // configured id must reach the runtime unchanged rather than being
+        // rewritten back to bge-m3 (which the LM Studio server would not have
+        // under that exact name).
+        let mut config = test_config();
+        config.local_ai.provider = "lm_studio".to_string();
+        config.local_ai.embedding_model_id = "text-embedding-bge-m3".to_string();
+        assert_eq!(
+            effective_embedding_model_id(&config),
+            "text-embedding-bge-m3"
+        );
+    }
+
+    #[test]
+    fn lm_studio_embedding_model_passes_through_arbitrary_id() {
+        // Contrast with `embedding_model_rejects_non_allowlisted_and_redirects_to_default`:
+        // the SAME non-allowlisted id is rewritten to bge-m3 on the managed
+        // Ollama path but passes through unchanged on the LM Studio path.
+        let mut config = test_config();
+        config.local_ai.provider = "lm_studio".to_string();
+        config.local_ai.embedding_model_id = "nomic-embed-text:latest".to_string();
+        assert_eq!(
+            effective_embedding_model_id(&config),
+            "nomic-embed-text:latest"
+        );
+    }
+
+    #[test]
+    fn lm_studio_embedding_model_empty_falls_back_to_default() {
+        // With no configured embedding id, fall back to the canonical default
+        // so the memory tree still has an embedder to request.
+        let mut config = test_config();
+        config.local_ai.provider = "lm_studio".to_string();
+        config.local_ai.embedding_model_id = String::new();
+        assert_eq!(effective_embedding_model_id(&config), "bge-m3");
+
+        config.local_ai.embedding_model_id = "   ".to_string();
+        assert_eq!(effective_embedding_model_id(&config), "bge-m3");
+    }
+
+    #[test]
+    fn ollama_embedding_path_still_enforces_allowlist_after_lm_studio_bypass() {
+        // Guard: the LM Studio bypass must not weaken the managed Ollama path.
+        // Default provider (Ollama) still rewrites a non-allowlisted id.
+        let mut config = test_config();
+        config.local_ai.embedding_model_id = "text-embedding-bge-m3".to_string();
         assert_eq!(effective_embedding_model_id(&config), "bge-m3");
     }
 

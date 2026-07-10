@@ -10,14 +10,16 @@
  * via the shared `NotificationBody` component.
  */
 import { configureStore } from '@reduxjs/toolkit';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 import notificationsReducer, {
+  clearAll,
   type NotificationCategory,
   type NotificationItem,
+  notificationReceived,
 } from '../../store/notificationSlice';
 import Notifications from '../Notifications';
 
@@ -137,5 +139,98 @@ describe('Notifications page row wrapper', () => {
     fireEvent.keyDown(pill, { key: ' ' });
     expect(navigate).not.toHaveBeenCalled();
     expect(store.getState().notifications.items[0].read).toBe(false);
+  });
+});
+
+describe('Notifications page category filter', () => {
+  const mixed = () => [
+    makeItem('m-1', 'msg one', { category: 'messages' }),
+    makeItem('m-2', 'msg two', { category: 'messages' }),
+    makeItem('a-1', 'agent one', { category: 'agents' }),
+    makeItem('s-1', 'system one', { category: 'system' }),
+  ];
+
+  it('renders an All chip plus one chip per category present in the feed', () => {
+    renderPage(mixed());
+
+    expect(screen.getByTestId('notif-filter-chip-all')).toBeInTheDocument();
+    expect(screen.getByTestId('notif-filter-chip-messages')).toBeInTheDocument();
+    expect(screen.getByTestId('notif-filter-chip-agents')).toBeInTheDocument();
+    expect(screen.getByTestId('notif-filter-chip-system')).toBeInTheDocument();
+    // No dead chips for categories absent from the feed.
+    expect(screen.queryByTestId('notif-filter-chip-skills')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('notif-filter-chip-meetings')).not.toBeInTheDocument();
+  });
+
+  it('shows all items under the default All filter', () => {
+    renderPage(mixed());
+    expect(screen.getAllByTestId('notification-item')).toHaveLength(4);
+    expect(screen.getByTestId('notif-filter-chip-all')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('filters the list to the selected category and marks the chip active', () => {
+    renderPage(mixed());
+
+    fireEvent.click(screen.getByTestId('notif-filter-chip-messages'));
+
+    expect(screen.getAllByTestId('notification-item')).toHaveLength(2);
+    expect(screen.getByTestId('notif-filter-chip-messages')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    expect(screen.getByTestId('notif-filter-chip-all')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('restores the full list when All is reselected', () => {
+    renderPage(mixed());
+
+    fireEvent.click(screen.getByTestId('notif-filter-chip-agents'));
+    expect(screen.getAllByTestId('notification-item')).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId('notif-filter-chip-all'));
+    expect(screen.getAllByTestId('notification-item')).toHaveLength(4);
+  });
+
+  it('does not render the filter row when there are no notifications', () => {
+    renderPage([]);
+    expect(screen.queryByTestId('notification-category-filter')).not.toBeInTheDocument();
+  });
+
+  it('shows alerts.empty (not filterEmpty) when the feed is entirely empty', () => {
+    renderPage([]);
+    // t() mock returns the key; verify the generic empty key, not the category-filtered one.
+    // Two elements carry 'alerts.empty' (header subtext + empty-state body) — both correct.
+    expect(screen.getAllByText('alerts.empty').length).toBeGreaterThan(0);
+    expect(screen.queryByText('notifications.filterEmpty')).not.toBeInTheDocument();
+  });
+
+  it('falls back to All and forgets the selection when the active category drains, even if it reappears', () => {
+    const { store } = renderPage([makeItem('m-1', 'msg one', { category: 'messages' })]);
+
+    // Select the only category present.
+    fireEvent.click(screen.getByTestId('notif-filter-chip-messages'));
+    expect(screen.getByTestId('notif-filter-chip-messages')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+
+    // Drain the feed — the selected category disappears, so the view falls back
+    // to All (the filter row goes away once nothing is present).
+    act(() => {
+      store.dispatch(clearAll());
+    });
+    expect(screen.queryByTestId('notification-category-filter')).not.toBeInTheDocument();
+
+    // The same category reappears. The stale 'messages' selection must NOT
+    // resurrect — the view stays on All and shows every item.
+    act(() => {
+      store.dispatch(notificationReceived(makeItem('m-2', 'msg two', { category: 'messages' })));
+    });
+    expect(screen.getByTestId('notif-filter-chip-all')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('notif-filter-chip-messages')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    );
+    expect(screen.getAllByTestId('notification-item')).toHaveLength(1);
   });
 });

@@ -51,6 +51,7 @@ export type WorkloadId =
   | 'reasoning'
   | 'agentic'
   | 'coding'
+  | 'vision'
   | 'memory'
   | 'heartbeat'
   | 'learning'
@@ -64,6 +65,14 @@ export const BACKGROUND_WORKLOADS: WorkloadId[] = [
   'subconscious',
 ];
 export const ALL_WORKLOADS: WorkloadId[] = [...CHAT_WORKLOADS, ...BACKGROUND_WORKLOADS];
+
+// Workloads that own a `<id>_provider` config field and must round-trip through
+// settings serialization. Includes the tier-specific `vision` workload, which
+// is deliberately NOT part of `CHAT_WORKLOADS`/`ALL_WORKLOADS`: it defaults to
+// the managed `vision-v1` tier and is a delegate (like agentic BYOK), so it does
+// not participate in the billing-suppression / "routed away from OpenHuman"
+// checks in `useUsageState`.
+export const ROUTABLE_WORKLOADS: WorkloadId[] = [...ALL_WORKLOADS, 'vision'];
 export const OPENAI_CODEX_OAUTH_MISSING_AUTH_URL = 'OPENAI_CODEX_OAUTH_MISSING_AUTH_URL';
 export const OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL = 'OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL';
 
@@ -139,6 +148,21 @@ export interface AISettings {
    * image attachments for custom/BYOK models.
    */
   modelRegistry: ModelRegistryEntry[];
+  /**
+   * #3767: authoritative, core-side per-tier decision (mirrors the Rust factory's
+   * real routing resolution). For each chat-mode tier (`chat` = Quick mode,
+   * `reasoning` = Reasoning mode), true when that tier runs on a non-managed
+   * provider the user funds themselves (a usable BYO key, local runtime, or
+   * claude-code). `useUsageState` checks the tier matching the selected mode so
+   * the "buy credits" prompt is hidden exactly when the core says that mode does
+   * not bill managed credits. Each entry is `false` when the core snapshot
+   * predates this field (conservative — keep gating).
+   *
+   * Optional: `loadAISettings` always populates it, but AIPanel reconstructs a
+   * draft `AISettings` for `saveAISettings` (which ignores this read-only field)
+   * and test fixtures may omit it — consumers treat a missing entry as `false`.
+   */
+  creditsBypass?: { chat: boolean; reasoning: boolean };
 }
 
 /** Re-export so callers (e.g. the AI panel) can reference the entry type. */
@@ -172,7 +196,15 @@ export function upsertModelRegistryVision(
   const existing = base.find(e => e.provider === provider && e.id === id);
   return [
     ...without,
-    { id, provider, cost_per_1m_output: existing?.cost_per_1m_output ?? 0, vision: true },
+    {
+      id,
+      provider,
+      cost_per_1m_input: existing?.cost_per_1m_input ?? 0,
+      cost_per_1m_cached_input: existing?.cost_per_1m_cached_input ?? 0,
+      cost_per_1m_output: existing?.cost_per_1m_output ?? 0,
+      context_window: existing?.context_window ?? 0,
+      vision: true,
+    },
   ];
 }
 
@@ -280,6 +312,7 @@ export async function loadAISettings(): Promise<AISettings> {
     reasoning: parseProviderString(config.reasoning_provider),
     agentic: parseProviderString(config.agentic_provider),
     coding: parseProviderString(config.coding_provider),
+    vision: parseProviderString(config.vision_provider),
     memory: parseProviderString(config.memory_provider),
     heartbeat: parseProviderString(config.heartbeat_provider),
     learning: parseProviderString(config.learning_provider),
@@ -309,7 +342,15 @@ export async function loadAISettings(): Promise<AISettings> {
   // Per-model registry (vision flags). Defensive default for older snapshots.
   const modelRegistry: ModelRegistryEntry[] = config.model_registry ?? [];
 
-  return { cloudProviders, routing, modelRegistry };
+  // #3767: authoritative per-tier bypass flags from the core. Each entry
+  // defaults to false for older snapshots that don't carry it (conservative —
+  // keep the credits gate on).
+  const creditsBypass = {
+    chat: config.credits_bypass?.chat === true,
+    reasoning: config.credits_bypass?.reasoning === true,
+  };
+
+  return { cloudProviders, routing, modelRegistry, creditsBypass };
 }
 // ─── Write path: diff + save ───────────────────────────────────────────────
 
@@ -347,7 +388,7 @@ export async function saveAISettings(prev: AISettings, next: AISettings): Promis
       }));
   }
 
-  for (const w of ALL_WORKLOADS) {
+  for (const w of ROUTABLE_WORKLOADS) {
     const a = serializeProviderRef(prev.routing[w]);
     const b = serializeProviderRef(next.routing[w]);
     if (a !== b) {
@@ -358,10 +399,24 @@ export async function saveAISettings(prev: AISettings, next: AISettings): Promis
   // Per-model registry (vision flags): any change → send the full list.
   if (!modelRegistriesEqual(prev.modelRegistry, next.modelRegistry)) {
     patch.model_registry = next.modelRegistry.map(
-      ({ id, provider, cost_per_1m_output, vision }) => ({
+      ({
         id,
         provider,
+        cost_per_1m_input,
+        cost_per_1m_cached_input,
         cost_per_1m_output,
+        context_window,
+        vision,
+      }) => ({
+        id,
+        provider,
+        // Preserve catalog-prefilled prices + context window through the
+        // round-trip; omitting them would let the Rust serde defaults zero
+        // them out.
+        cost_per_1m_input: cost_per_1m_input ?? 0,
+        cost_per_1m_cached_input: cost_per_1m_cached_input ?? 0,
+        cost_per_1m_output,
+        context_window: context_window ?? 0,
         vision,
       })
     );
@@ -382,7 +437,14 @@ function modelRegistriesEqual(a: ModelRegistryEntry[], b: ModelRegistryEntry[]):
   const bByKey = new Map(b.map(e => [key(e), e]));
   return a.every(e => {
     const m = bByKey.get(key(e));
-    return !!m && m.vision === e.vision && m.cost_per_1m_output === e.cost_per_1m_output;
+    return (
+      !!m &&
+      m.vision === e.vision &&
+      m.cost_per_1m_output === e.cost_per_1m_output &&
+      (m.cost_per_1m_input ?? 0) === (e.cost_per_1m_input ?? 0) &&
+      (m.cost_per_1m_cached_input ?? 0) === (e.cost_per_1m_cached_input ?? 0) &&
+      (m.context_window ?? 0) === (e.context_window ?? 0)
+    );
   });
 }
 
@@ -473,6 +535,32 @@ export async function listProviderModels(providerId: string): Promise<ModelInfo[
     params: { provider_id: providerId },
   });
   return res?.result?.models ?? [];
+}
+
+/**
+ * A BYO provider auth failure (invalid / revoked key, 401 / 403) recorded by
+ * the core this process. Mirrors the Rust `ProviderAuthError`. Backs the
+ * inline provider-error notice in the AI panel so a key that breaks at runtime
+ * — often in a silent background loop like memory summarization — is surfaced
+ * next to the key editor, not only in the notification center.
+ */
+export interface ProviderAuthError {
+  provider: string;
+  status: number;
+  message: string;
+  timestamp_ms: number;
+}
+
+/** Fetch BYO provider auth failures recorded this process, keyed by slug. */
+export async function loadProviderAuthErrors(): Promise<ProviderAuthError[]> {
+  if (!isTauri()) {
+    return [];
+  }
+  const res = await callCoreRpc<{ result: { errors: ProviderAuthError[] } }>({
+    method: 'openhuman.inference_provider_auth_errors',
+    params: {},
+  });
+  return res?.result?.errors ?? [];
 }
 
 export async function testProviderModel(

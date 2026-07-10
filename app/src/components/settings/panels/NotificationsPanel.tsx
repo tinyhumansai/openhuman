@@ -4,9 +4,8 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { getBypassPrefs, setGlobalDnd } from '../../../services/webviewAccountService';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { type NotificationCategory, setPreference } from '../../../store/notificationSlice';
-import SettingsHeader from '../components/SettingsHeader';
 import { SettingsRow, SettingsSection, SettingsSwitch } from '../controls';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import SettingsPanel from '../layout/SettingsPanel';
 
 interface NotificationsPanelProps {
   /** When embedded inside the tabbed Notifications page, the parent owns the
@@ -50,7 +49,6 @@ const CATEGORIES: { id: NotificationCategory; title: string; description: string
 
 const NotificationsPanel = ({ embedded = false }: NotificationsPanelProps = {}) => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const preferences = useAppSelector(s => s.notifications.preferences);
   const dispatch = useAppDispatch();
   const [dnd, setDnd] = useState(false);
@@ -83,72 +81,67 @@ const NotificationsPanel = ({ embedded = false }: NotificationsPanelProps = {}) 
     }
   };
 
-  return (
-    <div>
-      {!embedded && (
-        <SettingsHeader
-          title={t('settings.notifications')}
-          showBackButton={true}
-          onBack={navigateBack}
-          breadcrumbs={breadcrumbs}
-        />
-      )}
-
-      <div className="p-4 space-y-4">
-        {/* Do Not Disturb */}
-        <SettingsSection title={t('settings.notifications.doNotDisturb')}>
-          <SettingsRow
-            htmlFor="switch-dnd"
-            label={t('settings.notifications.suppressAll')}
-            description={t('settings.notifications.suppressAllDesc')}
-            control={
-              dndLoading ? (
-                <div className="w-[38px] h-[22px] rounded-full bg-neutral-200 dark:bg-neutral-800 animate-pulse" />
-              ) : (
-                <SettingsSwitch
-                  id="switch-dnd"
-                  checked={dnd}
-                  onCheckedChange={() => {
-                    void handleDndToggle();
-                  }}
-                  disabled={dndSaving}
-                  aria-label={t('settings.notifications.toggleDnd')}
-                />
-              )
-            }
-          />
-        </SettingsSection>
-
-        {/* Categories */}
-        <SettingsSection title={t('settings.notifications.categories')}>
-          {CATEGORIES.map(cat => {
-            const enabled = preferences[cat.id];
-            const switchId = `switch-notif-${cat.id}`;
-            return (
-              <SettingsRow
-                key={cat.id}
-                htmlFor={switchId}
-                label={cat.title}
-                description={cat.description}
-                control={
-                  <SettingsSwitch
-                    id={switchId}
-                    checked={enabled}
-                    onCheckedChange={() => handleToggle(cat.id)}
-                    aria-label={`Toggle ${cat.title} notifications`}
-                  />
-                }
+  const body = (
+    <>
+      {/* Do Not Disturb */}
+      <SettingsSection title={t('settings.notifications.doNotDisturb')}>
+        <SettingsRow
+          htmlFor="switch-dnd"
+          label={t('settings.notifications.suppressAll')}
+          description={t('settings.notifications.suppressAllDesc')}
+          control={
+            dndLoading ? (
+              <div className="w-[38px] h-[22px] rounded-full bg-surface-strong animate-pulse" />
+            ) : (
+              <SettingsSwitch
+                id="switch-dnd"
+                checked={dnd}
+                onCheckedChange={() => {
+                  void handleDndToggle();
+                }}
+                disabled={dndSaving}
+                aria-label={t('settings.notifications.toggleDnd')}
               />
-            );
-          })}
-        </SettingsSection>
+            )
+          }
+        />
+      </SettingsSection>
 
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed px-1">
-          {t('settings.notifications.categoryFooter')}
-        </p>
-      </div>
-    </div>
+      {/* Categories */}
+      <SettingsSection title={t('settings.notifications.categories')}>
+        {CATEGORIES.map(cat => {
+          const enabled = preferences[cat.id];
+          const switchId = `switch-notif-${cat.id}`;
+          return (
+            <SettingsRow
+              key={cat.id}
+              htmlFor={switchId}
+              label={cat.title}
+              description={cat.description}
+              control={
+                <SettingsSwitch
+                  id={switchId}
+                  checked={enabled}
+                  onCheckedChange={() => handleToggle(cat.id)}
+                  aria-label={`Toggle ${cat.title} notifications`}
+                />
+              }
+            />
+          );
+        })}
+      </SettingsSection>
+
+      <p className="text-xs text-content-muted leading-relaxed px-1">
+        {t('settings.notifications.categoryFooter')}
+      </p>
+    </>
   );
+
+  // Embedded inside the tabbed Notifications page: the parent owns the header,
+  // so render just the padded body.
+  if (embedded) return <div className="p-4 space-y-4">{body}</div>;
+
+  return <SettingsPanel>{body}</SettingsPanel>;
 };
 
 export default NotificationsPanel;

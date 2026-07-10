@@ -12,6 +12,7 @@
 import { useNavigate } from 'react-router-dom';
 
 import WorkflowRunnerBody from '../components/skills/WorkflowRunnerBody';
+import Button from '../components/ui/Button';
 import { useT } from '../lib/i18n/I18nContext';
 
 export default function WorkflowsRun() {
@@ -28,8 +29,9 @@ export default function WorkflowsRun() {
               isn't polluted and `-1` lands on the originating page. Falls back
               to the Workflows tab on a cold deep-link with no history. */}
           <div className="flex items-center gap-3">
-            <button
-              type="button"
+            <Button
+              variant="tertiary"
+              size="xs"
               onClick={() =>
                 // Use the router history index, not `history.length`: length > 1
                 // is true even when the only prior entry is an external referrer,
@@ -40,16 +42,13 @@ export default function WorkflowsRun() {
                   ? navigate(-1)
                   : navigate('/intelligence?tab=workflows')
               }
-              aria-label={t('common.back')}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:bg-stone-100 dark:hover:bg-neutral-800 transition-colors">
+              aria-label={t('common.back')}>
               <span aria-hidden="true">←</span> {t('common.back')}
-            </button>
-            <h1 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
-              {t('skills.run.title')}
-            </h1>
+            </Button>
+            <h1 className="text-base font-semibold text-content">{t('skills.run.title')}</h1>
           </div>
 
-          <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft animate-fade-up">
+          <div className="rounded-2xl border border-line bg-surface p-6 shadow-soft animate-fade-up">
             <WorkflowRunnerBody />
           </div>
         </div>

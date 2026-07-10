@@ -18,7 +18,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schema_for("session_db_get_messages"),
         schema_for("session_db_get_tool_calls"),
         schema_for("session_db_get_children"),
-        schema_for("session_db_import_transcript"),
         schema_for("run_ledger_list"),
         schema_for("run_ledger_get"),
         schema_for("run_ledger_events"),
@@ -50,10 +49,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("session_db_get_children"),
             handler: handle_session_db_get_children,
-        },
-        RegisteredController {
-            schema: schema_for("session_db_import_transcript"),
-            handler: handle_session_db_import_transcript,
         },
         RegisteredController {
             schema: schema_for("run_ledger_list"),
@@ -151,16 +146,6 @@ fn schema_for(function: &str) -> ControllerSchema {
                 "children",
                 "Array of child SessionRecord objects.",
             )],
-        },
-        "session_db_import_transcript" => ControllerSchema {
-            namespace: "session_db",
-            function: "import_transcript",
-            description: "Import a JSONL transcript file into the session database.",
-            inputs: vec![required_str(
-                "path",
-                "Absolute path to the JSONL transcript file.",
-            )],
-            outputs: vec![json_output("session", "Imported SessionRecord.")],
         },
         "run_ledger_list" => ControllerSchema {
             namespace: "run_ledger",
@@ -402,39 +387,6 @@ fn handle_session_db_get_children(params: Map<String, Value>) -> ControllerFutur
     })
 }
 
-fn handle_session_db_import_transcript(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let cid = new_correlation_id();
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] import_transcript.entry");
-        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] import_transcript.config_failed err={err}");
-        })?;
-
-        let path = params
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required param: path".to_string())?;
-
-        let session =
-            super::ops::import_transcript(&config, std::path::Path::new(path)).map_err(|e| {
-                let s = e.to_string();
-                log::warn!(
-                    target: "session_db_rpc",
-                    "[session_db_rpc][{cid}] import_transcript.error path={path} err={s}"
-                );
-                s
-            })?;
-
-        let json = to_json(session);
-        log::debug!(
-            target: "session_db_rpc",
-            "[session_db_rpc][{cid}] import_transcript.exit ok={}",
-            json.is_ok()
-        );
-        json
-    })
-}
-
 fn handle_run_ledger_list(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
@@ -550,7 +502,7 @@ mod tests {
     #[test]
     fn all_controller_schemas_lists_registered_functions() {
         let schemas = all_controller_schemas();
-        assert_eq!(schemas.len(), 10);
+        assert_eq!(schemas.len(), 9);
         assert!(schemas
             .iter()
             .any(|schema| schema.namespace == "session_db"));

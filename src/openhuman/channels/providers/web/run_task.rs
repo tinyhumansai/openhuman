@@ -4,7 +4,7 @@ use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::profiles::AgentProfileStore;
 use crate::openhuman::threads::turn_state::TurnStateStore;
 
-use super::ops::{key_for, THREAD_SESSIONS};
+use super::ops::{key_for, BudgetCorrelation, THREAD_SESSIONS};
 use super::progress_bridge::spawn_progress_bridge;
 use super::session::{
     build_session_agent, build_session_fingerprint, normalize_model_override, pick_target_agent_id,
@@ -13,7 +13,8 @@ use super::session::{
 use super::types::SessionEntry;
 use super::types::{ChatRequestMetadata, WebChatTaskResult};
 use super::web_errors::{
-    inference_budget_exceeded_user_message, is_inference_budget_exceeded_error,
+    classify_inference_error, inference_budget_exceeded_user_message,
+    is_empty_provider_response_text, is_inference_budget_exceeded_error,
 };
 
 #[cfg(any(test, debug_assertions))]
@@ -198,17 +199,28 @@ pub(crate) async fn run_chat_task(
         }
     }
 
-    let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(64);
+    // Bounded to 256 (was 64): a heavy-event subagent (e.g. `workflow_builder`,
+    // 50+ progress events per run) can overflow a smaller buffer, and the
+    // sender side uses `try_send` — an overflow silently drops progress
+    // events (including the ones that create a subagent's timeline row),
+    // which can in turn hide UI state derived from those events. This is
+    // defense-in-depth; extraction of durable state (like a workflow
+    // proposal) must not depend on any single progress event surviving.
+    let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(256);
     agent.set_on_progress(Some(progress_tx));
     agent.set_run_queue(Some(run_queue));
     let turn_state_store = TurnStateStore::new(config.workspace_dir.clone());
+    // Stamp the resolved agent onto the bridge metadata so the trace exporter
+    // can attribute the run (`agent.id` attr / `agent.turn:<id>` trace name).
+    let mut bridge_metadata = metadata.clone();
+    bridge_metadata.agent_id = Some(target_agent_id.clone());
     spawn_progress_bridge(
         progress_rx,
         client_id.to_string(),
         thread_id.to_string(),
         request_id.to_string(),
         turn_state_store,
-        metadata.clone(),
+        bridge_metadata,
         config.clone(),
     );
 
@@ -231,27 +243,67 @@ pub(crate) async fn run_chat_task(
     .await
     {
         Ok(response) => {
+            // A successful turn proves the thread's balance is usable, so drop
+            // any stale budget-exhausted signal before it could mislabel a
+            // later genuine empty response. See #3386.
+            super::ops::clear_budget_signal(thread_id).await;
             let citations = agent.take_last_turn_citations();
+            let usage = agent.take_last_turn_usage_totals();
             Ok(WebChatTaskResult {
                 full_response: response,
                 citations,
+                usage,
             })
         }
         Err(err) => {
             let err_message = err.to_string();
-            if is_inference_budget_exceeded_error(&err_message) {
-                log::warn!(
-                    "[web-channel] inference budget exhausted for client={} thread={} request_id={} error_category=budget_exhausted",
-                    client_id,
-                    thread_id,
-                    request_id
-                );
-                Ok(WebChatTaskResult {
-                    full_response: inference_budget_exceeded_user_message().to_string(),
-                    citations: Vec::new(),
-                })
+            let is_budget = is_inference_budget_exceeded_error(&err_message);
+            let is_empty = is_empty_provider_response_text(&err_message.to_lowercase());
+            // Only consult the cross-turn signal for an empty response that is
+            // not already a budget error — avoids taking the lock on every turn.
+            let has_fresh_signal = if !is_budget && is_empty {
+                super::ops::has_fresh_budget_signal(thread_id, &current_fp.provider_binding).await
             } else {
-                Err(err_message)
+                false
+            };
+            match super::ops::classify_budget_correlation(is_budget, is_empty, has_fresh_signal) {
+                BudgetCorrelation::BudgetExhausted => {
+                    // Remember the exhaustion (scoped to this provider binding)
+                    // so a follow-up empty 200 on this thread+provider (managed
+                    // route closes the SSE clean under credit exhaustion, no
+                    // inline marker) reclassifies as budget. #3386.
+                    super::ops::record_budget_signal(thread_id, &current_fp.provider_binding).await;
+                    log::warn!(
+                        "[web-channel] inference budget exhausted for client={} thread={} request_id={} error_category=budget_exhausted",
+                        client_id,
+                        thread_id,
+                        request_id
+                    );
+                    Ok(WebChatTaskResult {
+                        full_response: inference_budget_exceeded_user_message().to_string(),
+                        citations: Vec::new(),
+                        usage: None,
+                    })
+                }
+                BudgetCorrelation::UpgradeEmptyToBudget => {
+                    // Empty provider response within the budget-signal window:
+                    // the turn most likely failed for the same out-of-credits
+                    // reason but arrived as a clean empty 200 with no budget
+                    // marker. Surface the actionable budget copy. #3386.
+                    log::warn!(
+                        "[web-channel] reclassifying empty provider response as budget-exhausted \
+                         from recent same-thread signal client={} thread={} request_id={} error_category=budget_exhausted_correlated",
+                        client_id,
+                        thread_id,
+                        request_id
+                    );
+                    Ok(WebChatTaskResult {
+                        full_response: inference_budget_exceeded_user_message().to_string(),
+                        citations: Vec::new(),
+                        usage: None,
+                    })
+                }
+                BudgetCorrelation::PassThrough => Err(err_message),
             }
         }
     };
@@ -301,15 +353,151 @@ pub(crate) async fn run_chat_task(
     // Only the primary (non-fork) turn writes its agent back to the shared
     // cache; a fork is fully isolated and lets its agent drop here.
     if !fork {
-        let mut sessions = THREAD_SESSIONS.lock().await;
-        sessions.insert(
-            map_key,
-            SessionEntry {
-                agent,
-                fingerprint: current_fp,
-            },
-        );
+        // De-poison guard. A `provider_request_rejected` outcome means the
+        // provider could not parse THIS turn's request — an orphaned
+        // `tool_calls` round-trip, an empty `tool_call_id`, or a reasoning
+        // echo it rejects. For the managed backend that rejection arrives as an
+        // in-stream `event: error` SSE frame carrying `errorCode:"BAD_REQUEST"`
+        // (the response already flushed HTTP 200), NOT an HTTP 400 — so we key
+        // off the classified type, not a status code. Re-caching this agent
+        // would replay the identical malformed history on every later turn,
+        // dead-ending the thread. Drop it instead (the entry was already
+        // removed from the map at the top of this fn): the next turn cold-boots
+        // and reseeds from the plain-text conversation log, which is
+        // structurally incapable of carrying tool malformation
+        // (`seed_resume_from_messages` rebuilds only system/user/assistant
+        // text). Transient failures (rate-limit / timeout / 5xx) keep the warm
+        // session so the user can retry this turn with context intact.
+        if turn_result_poisoned_session(&result) {
+            log::warn!(
+                "[web-channel] dropping session agent after provider_request_rejected — \
+                 next turn cold-boots from the conversation log (de-poison) \
+                 client={} thread={} request_id={}",
+                client_id,
+                thread_id,
+                request_id
+            );
+        } else {
+            let mut sessions = THREAD_SESSIONS.lock().await;
+            sessions.insert(
+                map_key,
+                SessionEntry {
+                    agent,
+                    fingerprint: current_fp,
+                },
+            );
+        }
     }
 
     result
+}
+
+/// Whether a completed turn's session agent must be **dropped** rather than
+/// cached back, because its in-memory history would replay a provider request
+/// rejection on every subsequent turn.
+///
+/// True only for a *retryable* `provider_request_rejected` — i.e. the
+/// poisoned-history case. The copy-split in `web_errors.rs` marks a tool-ordering
+/// rejection (orphaned / mismatched `tool_call_id` — for the managed backend an
+/// in-stream SSE `event: error` frame stamped `errorCode:"BAD_REQUEST"`)
+/// `retryable: true` because the de-poison makes "send it again" true, while a
+/// genuine model/parameter 400 stays `retryable: false`. Gating on `&& retryable`
+/// therefore evicts ONLY the poisoned session: a non-retryable param 400 keeps
+/// its warm session (no needless reseed), exactly like successes and transient
+/// failures (rate-limit, timeout, 5xx, session-expiry).
+fn turn_result_poisoned_session(result: &Result<WebChatTaskResult, String>) -> bool {
+    matches!(
+        result,
+        Err(err) if {
+            let classified = classify_inference_error(err);
+            classified.error_type == "provider_request_rejected" && classified.retryable
+        }
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ok() -> Result<WebChatTaskResult, String> {
+        Ok(WebChatTaskResult {
+            full_response: "hello".to_string(),
+            citations: Vec::new(),
+            usage: None,
+        })
+    }
+
+    #[test]
+    fn poisoned_on_managed_sse_bad_request_frame() {
+        // Managed backend 400: flushed HTTP 200, then an in-stream SSE error
+        // frame stamped errorCode:"BAD_REQUEST" — the exact shape the de-poison
+        // guard must catch (no HTTP 400 status anywhere in the string). Payload
+        // mirrors the real backend frame verified against tinyhumansai/backend
+        // upstream/develop `routes/inference.ts::writeInferenceSSE`
+        // ({error:{message,type:"stream_error",errorCode}}), wrapped by the
+        // client's `sse_error_frame_bail_message` as
+        // "OpenHuman streaming API error: <payload>". `validateToolMessageOrdering`
+        // throws BadRequestError (errorCode=BAD_REQUEST) for an orphaned tool_call_id.
+        let err: Result<WebChatTaskResult, String> = Err(
+            "OpenHuman streaming API error: {\"error\":{\"message\":\"Message has tool role, \
+             but there was no previous assistant message with a tool call!\",\
+             \"type\":\"stream_error\",\"errorCode\":\"BAD_REQUEST\"}}"
+                .to_string(),
+        );
+        assert!(turn_result_poisoned_session(&err));
+    }
+
+    #[test]
+    fn poisoned_on_byo_provider_tool_ordering_400() {
+        // BYO/direct provider tool-ordering rejection — classifies as a
+        // *retryable* provider_request_rejected (poisoned history), so it evicts.
+        let err: Result<WebChatTaskResult, String> = Err(
+            "OpenAI API error (400 Bad Request): {\"error\":{\"message\":\"Invalid parameter: \
+             messages with role 'tool' must be a response to a preceding message with \
+             'tool_calls'.\"}}"
+                .to_string(),
+        );
+        assert!(turn_result_poisoned_session(&err));
+    }
+
+    #[test]
+    fn genuine_param_400_keeps_warm_session() {
+        // A non-poisoning model/parameter 400 is a *non-retryable*
+        // provider_request_rejected — narrowing on `&& retryable` must keep its
+        // warm session (resending the same params won't help; no reseed needed).
+        let err: Result<WebChatTaskResult, String> = Err(
+            "custom_openai API error (400 Bad Request): {\"error\":{\"message\":\
+             \"Unsupported value: 'temperature' must be 1 for this model\"}}"
+                .to_string(),
+        );
+        assert!(
+            !turn_result_poisoned_session(&err),
+            "non-retryable param 400 is not poisoned history — keep warm session"
+        );
+    }
+
+    #[test]
+    fn transient_failures_keep_warm_session() {
+        for raw in [
+            // rate limit / 429 — history is fine, user should retry warm
+            "OpenAI API error (429 Too Many Requests): slow down",
+            // timeout
+            "request timed out while reading response",
+            // upstream 5xx
+            "OpenAI API error (503 Service Unavailable): no healthy upstream",
+            // session expiry — not a payload problem
+            "SESSION_EXPIRED: backend session not active — sign in to resume LLM work",
+        ] {
+            let err: Result<WebChatTaskResult, String> = Err(raw.to_string());
+            assert!(
+                !turn_result_poisoned_session(&err),
+                "transient/non-payload error must keep warm session: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn success_keeps_warm_session() {
+        assert!(!turn_result_poisoned_session(&ok()));
+    }
 }

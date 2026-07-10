@@ -223,6 +223,13 @@ pub(super) async fn llm_meeting_basic(
         "messages": messages,
     });
 
+    // `flatten_authed_error` maps the typed `BackendApiError::Unauthorized`
+    // (expected session-lapse 401) onto the `SESSION_EXPIRED` sentinel so the
+    // JSON-RPC layer classifies it as session expiry and skips Sentry, matching
+    // the #3384 team/billing pattern and the voice TTS fix (TAURI-RUST-8X1).
+    // This reply feeds the meet agent's spoken (TTS) response; the previous
+    // `e.to_string()` leaked every lapsed-session 401 to Sentry as a hard error.
+    // Every other error keeps its full `{e:#}` anyhow chain.
     let raw = client
         .authed_json(
             &token,
@@ -231,7 +238,7 @@ pub(super) async fn llm_meeting_basic(
             Some(body),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::api::flatten_authed_error)?;
 
     let text = extract_chat_completion_text(&raw)
         .ok_or_else(|| format!("unexpected chat completions response: {raw}"))?;

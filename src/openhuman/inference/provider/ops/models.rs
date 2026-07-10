@@ -16,6 +16,34 @@ pub struct ModelInfo {
     pub context_window: Option<u64>,
 }
 
+/// Resolve the API key used to probe a provider's `/models` endpoint.
+///
+/// Cloud providers store their key in auth-profiles.json (via `lookup_key_for_slug`),
+/// but the OMLX local-runtime chip persists its Bearer key in
+/// `config.local_ai.api_key`. When the slug-scoped lookup comes back empty for omlx,
+/// fall back to that local-runtime key so the reachability probe still sends
+/// `Authorization: Bearer` (otherwise the OMLX server returns 401).
+fn resolve_local_runtime_key(
+    slug: &str,
+    looked_up: String,
+    config: &crate::openhuman::config::Config,
+) -> String {
+    let looked_up = looked_up.trim().to_string();
+    if !looked_up.is_empty() {
+        return looked_up;
+    }
+    if slug == "omlx" {
+        return config
+            .local_ai
+            .api_key
+            .clone()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+    }
+    looked_up
+}
+
 pub async fn list_configured_models(
     provider_id: &str,
 ) -> Result<crate::rpc::RpcOutcome<serde_json::Value>, String> {
@@ -48,10 +76,10 @@ pub async fn list_configured_models_from_config(
         .or_else(|| synthesize_local_runtime_entry(&provider_id, config))
         .ok_or_else(|| format!("no cloud provider with id or slug '{}' found", provider_id))?;
 
-    let api_key =
+    let looked_up =
         crate::openhuman::inference::provider::factory::lookup_key_for_slug(&entry.slug, config)
             .unwrap_or_default();
-    let api_key = api_key.trim().to_string();
+    let api_key = resolve_local_runtime_key(&entry.slug, looked_up, config);
 
     let routing = resolve_openai_codex_routing(config, &entry.slug, &entry.endpoint, &api_key)
         .unwrap_or_else(|err| {
@@ -62,9 +90,9 @@ pub async fn list_configured_models_from_config(
         });
 
     let mut models_url = format!("{}/models", routing.endpoint);
-    if routing.using_oauth {
-        models_url =
-            append_query_param(&models_url, "client_version", openai_codex_client_version());
+    let codex_client_version = routing.using_oauth.then(openai_codex_client_version);
+    if let Some(client_version) = codex_client_version.as_deref() {
+        models_url = append_query_param(&models_url, "client_version", client_version);
     }
 
     log::debug!(
@@ -132,6 +160,21 @@ pub async fn list_configured_models_from_config(
         let body = response.text().await.unwrap_or_default();
         let sanitized = sanitize_api_error(&body);
         let truncated = crate::openhuman::util::truncate_with_ellipsis(&sanitized, 300);
+        // TAURI-RUST-8X3: a 404 from the `<base>/models` probe means the
+        // configured base URL does not host an OpenAI-compatible `/models`
+        // listing (wrong base, a model-only proxy, or a missing `/v1`
+        // suffix). Append an actionable hint so the model-dropdown probe
+        // surfaces *recovery guidance* inline instead of the bare Go-style
+        // `404 page not found`. The `provider returned 404` prefix is kept
+        // verbatim so the `is_provider_user_state_message` classifier anchor
+        // (which demotes this preventable user-state case out of Sentry)
+        // still matches — see `src/core/observability.rs`.
+        if status.as_u16() == 404 {
+            return Err(format!(
+                "provider returned 404: {} — the configured base URL does not expose a `/models` endpoint; check the provider's base URL (it usually ends in `/v1`)",
+                truncated
+            ));
+        }
         return Err(format!(
             "provider returned {}: {}",
             status.as_u16(),
@@ -213,12 +256,20 @@ pub async fn list_configured_models_from_config(
 /// 1. **Missing `data`/`models` field** — endpoint isn't `/models`-compatible
 ///    (user typo'd the base URL, pointed at a vector-DB host, etc.).
 /// 2. **`data`/`models` field present but wrong type** — provider returned
-///    `{"object":"error","data":{…}}`, `{"data":null}`, or similar
-///    non-array. The error names the actual JSON type so triage knows what
-///    the provider sent.
+///    `{"object":"error","data":{…}}` or similar non-array. The error names
+///    the actual JSON type so triage knows what the provider sent.
 /// 3. **Non-object top-level body** — provider returned a bare array,
 ///    string, etc. Caught explicitly so the parser doesn't silently
 ///    drop into the missing-data arm with a `<non-object>` keys list.
+///
+/// A **null** `data`/`models` field on a **success envelope** is NOT an
+/// error — Ollama's OpenAI-compatible `/v1/models` null-encodes the catalog
+/// (`{"object":"list","data":null}`) when no models are pulled, so it is
+/// treated as an empty model list (TAURI-RUST-874 / TAURI-RUST-875). The
+/// null-as-empty short-circuit is gated on `object` being absent or `"list"`:
+/// a null `data` on an error envelope (`{"object":"error","data":null}`)
+/// instead falls through to failure mode 2 so the provider error still
+/// surfaces in the UI and Sentry.
 ///
 /// Per-entry parsing ignores entries that don't have a usable string id/slug
 /// (lax on purpose — many OpenAI-compatible servers include malformed rows for
@@ -242,6 +293,32 @@ pub fn parse_models_response(body: &serde_json::Value) -> Result<Vec<ModelInfo>,
             keys
         )
     })?;
+
+    // A null `data`/`models` field is a valid empty catalog ONLY on a success
+    // envelope: Ollama's OpenAI-compatible `/v1/models` returns
+    // `{"object":"list","data":null}` (object="list", the success marker) when
+    // no models are pulled. Treat that as an empty model list so a healthy-but-
+    // empty local runtime doesn't manufacture a hard error (TAURI-RUST-874 /
+    // TAURI-RUST-875).
+    //
+    // An error body such as `{"object":"error","data":null}` ALSO null-encodes
+    // `data`; swallowing it as an empty catalog would hide provider/endpoint
+    // failures from the UI and Sentry. So gate on a success envelope: short-
+    // circuit only when `object` is absent or "list". Any other `object` value
+    // (e.g. "error") with null `data` falls through to the descriptive error
+    // below, which surfaces the `object` value for triage. Non-array kinds
+    // (object/string/number/bool) likewise fall through.
+    let is_success_envelope = obj
+        .get("object")
+        .and_then(|value| value.as_str())
+        .is_none_or(|object| object.eq_ignore_ascii_case("list"));
+
+    if data_value.is_null() && is_success_envelope {
+        log::info!(
+            "[providers][list_models] `{field_name}` is null on a success envelope — provider returned an empty catalog (no models)"
+        );
+        return Ok(Vec::new());
+    }
 
     let data = data_value.as_array().ok_or_else(|| {
         // Include the sibling `object` field if present — OpenAI-shaped
@@ -477,4 +554,40 @@ async fn validate_openrouter_api_key(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_local_runtime_key;
+    use crate::openhuman::config::Config;
+
+    #[test]
+    fn omlx_key_falls_back_to_local_ai_api_key() {
+        let mut config = Config::default();
+        config.local_ai.api_key = Some("  sk-omlx-list  ".into());
+        assert_eq!(
+            resolve_local_runtime_key("omlx", String::new(), &config),
+            "sk-omlx-list"
+        );
+    }
+
+    #[test]
+    fn looked_up_key_wins_over_local_ai() {
+        let mut config = Config::default();
+        config.local_ai.api_key = Some("sk-local".into());
+        assert_eq!(
+            resolve_local_runtime_key("omlx", "from-profiles".into(), &config),
+            "from-profiles"
+        );
+    }
+
+    #[test]
+    fn non_omlx_slug_does_not_fall_back() {
+        let mut config = Config::default();
+        config.local_ai.api_key = Some("sk-local".into());
+        assert_eq!(
+            resolve_local_runtime_key("ollama", String::new(), &config),
+            ""
+        );
+    }
 }

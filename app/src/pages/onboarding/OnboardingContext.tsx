@@ -26,7 +26,7 @@ export interface OnboardingContextValue {
   setDraft: (updater: (prev: OnboardingDraft) => OnboardingDraft) => void;
   /**
    * Persist `onboarding_completed=true`, notify the backend (best-effort), and
-   * navigate to `/home`. Called by the final step.
+   * navigate to `/chat`. Called by the final step.
    */
   completeAndExit: () => Promise<void>;
 }

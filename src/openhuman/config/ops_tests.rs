@@ -2,19 +2,22 @@ use super::*;
 use tempfile::tempdir;
 
 #[tokio::test]
-async fn reset_local_data_removes_current_dir_default_dir_and_marker() {
+async fn reset_local_data_removes_active_user_and_markers_only() {
     let temp = tempdir().unwrap();
     let default_openhuman_dir = temp.path().join("default-openhuman");
-    let current_openhuman_dir = temp.path().join("custom-openhuman");
-    let marker = active_workspace_marker_path(&default_openhuman_dir);
+    // Active user lives under the shared root's `users/` tree, mirroring the
+    // real layout (`~/.openhuman/users/<id>`).
+    let current_openhuman_dir = default_openhuman_dir.join("users").join("active-user");
+    let workspace_marker = active_workspace_marker_path(&default_openhuman_dir);
+    let user_marker = crate::openhuman::config::active_user_marker_path(&default_openhuman_dir);
 
-    tokio::fs::create_dir_all(default_openhuman_dir.join("workspace"))
-        .await
-        .unwrap();
     tokio::fs::create_dir_all(current_openhuman_dir.join("workspace"))
         .await
         .unwrap();
-    tokio::fs::write(&marker, "config_dir = '/tmp/custom-openhuman'\n")
+    tokio::fs::write(&workspace_marker, "config_dir = 'users/active-user'\n")
+        .await
+        .unwrap();
+    tokio::fs::write(&user_marker, "user_id = 'active-user'\n")
         .await
         .unwrap();
 
@@ -22,13 +25,66 @@ async fn reset_local_data_removes_current_dir_default_dir_and_marker() {
         .await
         .unwrap();
 
+    // Active user's slice and both shared markers are gone …
     assert!(!current_openhuman_dir.exists());
-    assert!(!default_openhuman_dir.exists());
+    assert!(!workspace_marker.exists());
+    assert!(!user_marker.exists());
+    // … but the shared root itself survives.
+    assert!(default_openhuman_dir.exists());
     assert!(outcome
         .value
         .get("removed_paths")
         .and_then(|value| value.as_array())
         .is_some_and(|paths| !paths.is_empty()));
+}
+
+#[tokio::test]
+async fn reset_local_data_preserves_sibling_users() {
+    let temp = tempdir().unwrap();
+    let default_openhuman_dir = temp.path().join("default-openhuman");
+    let current_openhuman_dir = default_openhuman_dir.join("users").join("active-user");
+    let sibling_user_dir = default_openhuman_dir.join("users").join("other-user");
+    let sibling_file = sibling_user_dir.join("config.toml");
+
+    tokio::fs::create_dir_all(current_openhuman_dir.join("workspace"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(&sibling_user_dir).await.unwrap();
+    tokio::fs::write(&sibling_file, "api_key = 'sibling'\n")
+        .await
+        .unwrap();
+
+    reset_local_data_for_paths(&current_openhuman_dir, &default_openhuman_dir)
+        .await
+        .unwrap();
+
+    // The active user is wiped; the sibling account is untouched — this is the
+    // regression this fix addresses.
+    assert!(!current_openhuman_dir.exists());
+    assert!(sibling_user_dir.exists());
+    assert!(sibling_file.exists());
+}
+
+#[tokio::test]
+async fn reset_local_data_tolerates_absent_paths() {
+    let temp = tempdir().unwrap();
+    let default_openhuman_dir = temp.path().join("default-openhuman");
+    let current_openhuman_dir = default_openhuman_dir.join("users").join("active-user");
+    tokio::fs::create_dir_all(&default_openhuman_dir)
+        .await
+        .unwrap();
+
+    // No current user dir, no markers — a fresh / already-cleared install.
+    let outcome = reset_local_data_for_paths(&current_openhuman_dir, &default_openhuman_dir)
+        .await
+        .unwrap();
+
+    assert!(default_openhuman_dir.exists());
+    assert!(outcome
+        .value
+        .get("removed_paths")
+        .and_then(|value| value.as_array())
+        .is_some_and(|paths| paths.is_empty()));
 }
 
 // ── env_flag_enabled ────────────────────────────────────────────
@@ -602,6 +658,7 @@ async fn apply_model_settings_replaces_model_registry_when_some_and_keeps_when_n
             provider: "openai".into(),
             cost_per_1m_output: 0.0,
             vision: true,
+            ..Default::default()
         }]),
         ..Default::default()
     };
@@ -651,6 +708,7 @@ async fn apply_model_settings_trims_model_registry_ids() {
             provider: "openai".into(),
             cost_per_1m_output: 0.0,
             vision: true,
+            ..Default::default()
         }]),
         ..Default::default()
     };
@@ -913,11 +971,53 @@ async fn apply_browser_settings_updates_enabled_flag() {
         &mut cfg,
         BrowserSettingsPatch {
             enabled: Some(true),
+            backend: None,
         },
     )
     .await
     .expect("apply");
     assert!(cfg.browser.enabled);
+}
+
+#[tokio::test]
+async fn apply_browser_settings_updates_backend() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.browser.backend = "agent_browser".into();
+
+    apply_browser_settings(
+        &mut cfg,
+        BrowserSettingsPatch {
+            enabled: None,
+            backend: Some("playwright".into()),
+        },
+    )
+    .await
+    .expect("apply");
+
+    assert_eq!(cfg.browser.backend, "playwright");
+}
+
+#[tokio::test]
+async fn apply_browser_settings_rejects_unknown_backend() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.browser.enabled = false;
+    cfg.browser.backend = "agent_browser".into();
+
+    let err = apply_browser_settings(
+        &mut cfg,
+        BrowserSettingsPatch {
+            enabled: Some(true),
+            backend: Some("netscape".into()),
+        },
+    )
+    .await
+    .expect_err("unknown backend should fail");
+
+    assert!(err.contains("Unsupported browser backend"));
+    assert!(!cfg.browser.enabled);
+    assert_eq!(cfg.browser.backend, "agent_browser");
 }
 
 #[tokio::test]
@@ -938,6 +1038,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
         usage_heartbeat: Some(true),
         usage_learning_reflection: Some(false),
         usage_subconscious: Some(true),
+        api_key: None,
     };
 
     let outcome = apply_local_ai_settings(&mut cfg, patch)
@@ -1011,6 +1112,66 @@ async fn apply_local_ai_settings_normalizes_ollama_unspecified_host_and_allows_n
 }
 
 #[tokio::test]
+async fn apply_local_ai_settings_persists_api_key() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.local_ai.api_key = None;
+
+    // Non-empty key is stored.
+    let patch = LocalAiSettingsPatch {
+        runtime_enabled: Some(true),
+        opt_in_confirmed: Some(true),
+        provider: Some("omlx".into()),
+        base_url: Some(Some("http://localhost:8080/v1".into())),
+        api_key: Some("sk-omlx-1".into()),
+        ..LocalAiSettingsPatch::default()
+    };
+    apply_local_ai_settings(&mut cfg, patch)
+        .await
+        .expect("apply omlx api key");
+    assert_eq!(cfg.local_ai.api_key.as_deref(), Some("sk-omlx-1"));
+
+    // Whitespace-only key clears to None.
+    let patch_clear = LocalAiSettingsPatch {
+        api_key: Some("   ".into()),
+        ..LocalAiSettingsPatch::default()
+    };
+    apply_local_ai_settings(&mut cfg, patch_clear)
+        .await
+        .expect("clear api key");
+    assert!(cfg.local_ai.api_key.is_none());
+}
+
+#[tokio::test]
+async fn apply_local_ai_settings_omlx_keeps_provider_and_v1_suffix() {
+    // Regression: omlx must NOT collapse to ollama (normalize_provider) and its
+    // `/v1` suffix must survive (no validate_ollama_url path-strip).
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    apply_local_ai_settings(
+        &mut cfg,
+        LocalAiSettingsPatch {
+            runtime_enabled: Some(true),
+            opt_in_confirmed: Some(true),
+            provider: Some("omlx".into()),
+            base_url: Some(Some("http://localhost:8000/v1".into())),
+            api_key: Some("sk-omlx-1".into()),
+            ..LocalAiSettingsPatch::default()
+        },
+    )
+    .await
+    .expect("apply omlx");
+
+    assert_eq!(cfg.local_ai.provider, "omlx");
+    assert_eq!(
+        cfg.local_ai.base_url.as_deref(),
+        Some("http://localhost:8000/v1")
+    );
+    assert_eq!(cfg.local_ai.api_key.as_deref(), Some("sk-omlx-1"));
+}
+
+#[tokio::test]
 async fn apply_analytics_settings_updates_enabled() {
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
@@ -1039,6 +1200,7 @@ async fn apply_meet_settings_updates_handoff_flag() {
         &mut cfg,
         MeetSettingsPatch {
             auto_orchestrator_handoff: Some(true),
+            ..Default::default()
         },
     )
     .await
@@ -1049,6 +1211,7 @@ async fn apply_meet_settings_updates_handoff_flag() {
         &mut cfg,
         MeetSettingsPatch {
             auto_orchestrator_handoff: Some(false),
+            ..Default::default()
         },
     )
     .await
@@ -1060,11 +1223,54 @@ async fn apply_meet_settings_updates_handoff_flag() {
         &mut cfg,
         MeetSettingsPatch {
             auto_orchestrator_handoff: None,
+            ..Default::default()
         },
     )
     .await
     .expect("apply noop");
     assert_eq!(prior, cfg.meet.auto_orchestrator_handoff);
+}
+
+#[tokio::test]
+async fn apply_meet_settings_updates_all_meeting_assistant_fields() {
+    use crate::openhuman::config::{AutoJoinPolicy, AutoSummarizePolicy};
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    // Defaults (issue #3511).
+    assert_eq!(cfg.meet.auto_join_policy, AutoJoinPolicy::AskEachTime);
+    assert_eq!(cfg.meet.auto_summarize_policy, AutoSummarizePolicy::Ask);
+    assert!(cfg.meet.listen_only_default);
+    assert!(!cfg.meet.ingest_backend_transcripts);
+
+    let _ = apply_meet_settings(
+        &mut cfg,
+        MeetSettingsPatch {
+            auto_join_policy: Some(AutoJoinPolicy::Always),
+            auto_summarize_policy: Some(AutoSummarizePolicy::Never),
+            listen_only_default: Some(false),
+            ingest_backend_transcripts: Some(true),
+            // Whitespace is trimmed on apply so the anchor match is clean.
+            reply_display_name: Some("  Alex Kim  ".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("apply all fields");
+    assert_eq!(cfg.meet.auto_join_policy, AutoJoinPolicy::Always);
+    assert_eq!(cfg.meet.auto_summarize_policy, AutoSummarizePolicy::Never);
+    assert!(!cfg.meet.listen_only_default);
+    assert!(cfg.meet.ingest_backend_transcripts);
+    assert_eq!(cfg.meet.reply_display_name, "Alex Kim");
+
+    // No-op patch must leave the prior values untouched.
+    let _ = apply_meet_settings(&mut cfg, MeetSettingsPatch::default())
+        .await
+        .expect("apply noop");
+    assert_eq!(cfg.meet.auto_join_policy, AutoJoinPolicy::Always);
+    assert_eq!(cfg.meet.auto_summarize_policy, AutoSummarizePolicy::Never);
+    assert!(!cfg.meet.listen_only_default);
+    assert!(cfg.meet.ingest_backend_transcripts);
+    assert_eq!(cfg.meet.reply_display_name, "Alex Kim");
 }
 
 #[tokio::test]
@@ -1324,6 +1530,7 @@ async fn apply_model_settings_trims_and_clears_optional_provider_fields() {
         reasoning_provider: Some(" provider-reasoning ".into()),
         agentic_provider: Some(" provider-agentic ".into()),
         coding_provider: Some(" provider-coding ".into()),
+        vision_provider: Some(" provider-vision ".into()),
         memory_provider: Some(" provider-memory ".into()),
         embeddings_provider: Some(" provider-embed ".into()),
         heartbeat_provider: Some(" provider-heartbeat ".into()),
@@ -1344,6 +1551,7 @@ async fn apply_model_settings_trims_and_clears_optional_provider_fields() {
         Some("provider-reasoning")
     );
     assert_eq!(cfg.subconscious_provider.as_deref(), Some("provider-sub"));
+    assert_eq!(cfg.vision_provider.as_deref(), Some("provider-vision"));
 
     let clear = ModelSettingsPatch {
         inference_url: Some("   ".into()),
@@ -1351,6 +1559,7 @@ async fn apply_model_settings_trims_and_clears_optional_provider_fields() {
         reasoning_provider: Some(" ".into()),
         agentic_provider: Some(" ".into()),
         coding_provider: Some(" ".into()),
+        vision_provider: Some(" ".into()),
         memory_provider: Some(" ".into()),
         embeddings_provider: Some(" ".into()),
         heartbeat_provider: Some(" ".into()),
@@ -1366,6 +1575,7 @@ async fn apply_model_settings_trims_and_clears_optional_provider_fields() {
     assert!(cfg.reasoning_provider.is_none());
     assert!(cfg.agentic_provider.is_none());
     assert!(cfg.coding_provider.is_none());
+    assert!(cfg.vision_provider.is_none());
     assert!(cfg.memory_provider.is_none());
     assert!(cfg.embeddings_provider.is_none());
     assert!(cfg.heartbeat_provider.is_none());

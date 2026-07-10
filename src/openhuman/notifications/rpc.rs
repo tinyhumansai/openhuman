@@ -371,6 +371,55 @@ pub async fn handle_mark_acted(params: Map<String, Value>) -> Result<Value, Stri
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// notification_core_list / notification_core_mark_read (#3805)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// List persisted core notifications (cron, webhook, sub-agent, triage, …).
+///
+/// Lets the frontend sync down notifications that fired while the app was
+/// closed / disconnected — these are otherwise lost because the live channel
+/// is broadcast-only. Optional params: `only_unread` (bool, default true),
+/// `limit` (u64, default 100).
+pub async fn handle_core_list(params: Map<String, Value>) -> Result<Value, String> {
+    let config = config_rpc::load_config_with_timeout().await?;
+
+    let only_unread = params
+        .get("only_unread")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(100);
+
+    let items = store::list_core_notifications(&config, only_unread, limit)
+        .map_err(|e| format!("[notification_intel] core_list failed: {e}"))?;
+    let unread = store::unread_core_notification_count(&config)
+        .map_err(|e| format!("[notification_intel] core unread_count failed: {e}"))?;
+
+    let outcome = RpcOutcome::new(json!({ "items": items, "unread_count": unread }), vec![]);
+    outcome.into_cli_compatible_json()
+}
+
+/// Mark a persisted core notification as read so it isn't re-surfaced on the
+/// next sync-down.
+pub async fn handle_core_mark_read(params: Map<String, Value>) -> Result<Value, String> {
+    let config = config_rpc::load_config_with_timeout().await?;
+    let id = params
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "[notification_intel] missing required param 'id'".to_string())?
+        .to_string();
+
+    let updated = store::mark_core_notification_read(&config, &id)
+        .map_err(|e| format!("[notification_intel] core_mark_read failed: {e}"))?;
+    tracing::debug!(id = %id, updated = updated, "[notification_intel] core notification marked read");
+    let outcome = RpcOutcome::new(json!({ "ok": updated }), vec![]);
+    outcome.into_cli_compatible_json()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // notification_stats
 // ─────────────────────────────────────────────────────────────────────────────
 

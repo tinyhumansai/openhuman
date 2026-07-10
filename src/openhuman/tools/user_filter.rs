@@ -316,7 +316,7 @@ fn all_filterable_tool_names() -> HashSet<&'static str> {
 fn family_for_rust_name(name: &str) -> Option<&'static ToolFamily> {
     TOOL_FAMILIES
         .iter()
-        .find(|fam| fam.rust_names.iter().any(|n| *n == name))
+        .find(|fam| fam.rust_names.contains(&name))
 }
 
 /// Expand persisted tool-preference entries into Rust tool `name()` values.
@@ -352,6 +352,30 @@ fn expand_enabled_tool_names(enabled_tool_names: &[String]) -> HashSet<String> {
         }
     }
     expanded
+}
+
+/// True when the persisted tool-preference snapshot opts into the mutating
+/// app-control actions — i.e. the user enabled "App UI Control" (`ax_interact`)
+/// or "App Automation" (`automate`) in Settings → Features → Tools.
+///
+/// Those tools' descriptions promise clicking buttons and typing into fields,
+/// but enabling the toggle alone only made the read-only `list` action
+/// available — the mutating `press` / `set_value` actions required a separate,
+/// UI-less `computer_control.ax_interact_mutations` flag or Full autonomy
+/// (#3762). The session builder uses this to treat enabling the tool as the
+/// user-facing opt-in for those mutations, equivalent to setting that flag. The
+/// actions stay approval-gated and bound by the sensitive-app denylist.
+///
+/// Reuses [`expand_enabled_tool_names`] so it is robust to both persisted
+/// formats (UI toggle ids or Rust tool names). An empty snapshot ("not yet
+/// configured" / all-enabled) is treated as no explicit opt-in, preserving the
+/// safe default.
+pub(crate) fn enables_app_ui_control_mutations(enabled_tool_names: &[String]) -> bool {
+    if enabled_tool_names.is_empty() {
+        return false;
+    }
+    let expanded = expand_enabled_tool_names(enabled_tool_names);
+    expanded.contains("ax_interact") || expanded.contains("automate")
 }
 
 /// Given the list of enabled tools from app state, retain only tools that are
@@ -442,7 +466,10 @@ pub(crate) fn filter_tools_by_user_preference(
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_enabled_tool_names, filter_tools_by_user_preference};
+    use super::{
+        enables_app_ui_control_mutations, expand_enabled_tool_names,
+        filter_tools_by_user_preference,
+    };
     use crate::openhuman::tools::traits::{Tool, ToolResult};
     use async_trait::async_trait;
 
@@ -601,5 +628,33 @@ mod tests {
         let mut t = tools(&["cron_add", "service_start"]);
         filter_tools_by_user_preference(&mut t, &["totally_unknown".to_string()]);
         assert_eq!(names(&t).len(), 2);
+    }
+
+    // #3762: enabling the App UI Control / App Automation tool is the opt-in
+    // for the mutating click/type actions.
+    #[test]
+    fn app_ui_control_opt_in_detects_ax_interact_and_automate() {
+        assert!(enables_app_ui_control_mutations(&[
+            "ax_interact".to_string()
+        ]));
+        assert!(enables_app_ui_control_mutations(&["automate".to_string()]));
+        // Present alongside other enabled tools.
+        assert!(enables_app_ui_control_mutations(&[
+            "cron_add".to_string(),
+            "automate".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn app_ui_control_opt_in_false_when_absent_or_empty() {
+        assert!(!enables_app_ui_control_mutations(&[]));
+        assert!(!enables_app_ui_control_mutations(&[
+            "cron_add".to_string(),
+            "service_start".to_string(),
+        ]));
+        // Unknown entries never opt in.
+        assert!(!enables_app_ui_control_mutations(&[
+            "totally_unknown".to_string()
+        ]));
     }
 }

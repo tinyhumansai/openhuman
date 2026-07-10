@@ -11,7 +11,7 @@ use crate::openhuman::agent::harness::definition::{
 };
 use crate::openhuman::agent::harness::session::types::Agent;
 use crate::openhuman::agent::host_runtime;
-use crate::openhuman::agent::memory_loader::DefaultMemoryLoader;
+use crate::openhuman::agent_memory::memory_loader::DefaultMemoryLoader;
 use crate::openhuman::config::Config;
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::inference::provider::{self, Provider};
@@ -270,6 +270,12 @@ impl Agent {
             "model_council_readonly",
         );
         agent.set_agent_definition_name(format!("model_council_{safe_name}"));
+        // Council jurors are non-interactive, single-shot read-only model calls
+        // built from the orchestrator definition. The first-turn super-context
+        // pass (default-on) is an interactive convenience for the user-facing
+        // chat orchestrator — running it per juror would add an unexpected
+        // `context_scout` LLM call to each jury seat. Suppress it here.
+        agent.context.set_super_context_enabled(false);
         if let Some(model) = model_override
             .map(|m| m.trim().to_string())
             .filter(|m| !m.is_empty())
@@ -315,8 +321,9 @@ impl Agent {
                 "[profiles] applying per-profile session gate"
             );
         }
-        let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
-            Arc::from(host_runtime::create_runtime(&config.runtime)?);
+        let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(
+            host_runtime::create_runtime(&config.runtime, config.shell.hide_window)?,
+        );
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
             &config.workspace_dir,
@@ -349,41 +356,67 @@ impl Agent {
         let profile_mcp_allowlist: Option<Vec<String>> =
             profile.and_then(|p| p.allowed_mcp_servers.clone());
 
-        let mut tools = tools::all_tools_with_runtime(
-            Arc::new(config.clone()),
-            &security,
-            runtime,
-            audit,
-            memory.clone(),
-            &config.browser,
-            &config.http_request,
-            &config.action_dir,
-            &config.agents,
-            config,
-            profile_skill_allowlist.as_ref(),
-            profile_mcp_allowlist.as_deref(),
-        );
-
-        // Filter tools by user preference stored in app state.
-        {
+        // Load the user's persisted tool preferences once. They drive two
+        // things below: granting the App UI Control / App Automation mutation
+        // opt-in (#3762) and filtering the tool set to the enabled snapshot.
+        let enabled_tools: Vec<String> = {
             use crate::openhuman::app_state::load_stored_app_state;
             match load_stored_app_state(config) {
-                Ok(stored) => {
-                    if let Some(ref tasks) = stored.onboarding_tasks {
-                        if !tasks.enabled_tools.is_empty() {
-                            crate::openhuman::tools::filter_tools_by_user_preference(
-                                &mut tools,
-                                &tasks.enabled_tools,
-                            );
-                        }
-                    }
-                }
+                Ok(stored) => stored
+                    .onboarding_tasks
+                    .map(|tasks| tasks.enabled_tools)
+                    .unwrap_or_default(),
                 Err(e) => {
                     log::warn!(
                         "[session-builder] failed to load app state for tool filtering: {e}"
                     );
+                    Vec::new()
                 }
             }
+        };
+
+        // Enabling the "App UI Control" (`ax_interact`) or "App Automation"
+        // (`automate`) tool in Settings → Features grants the mutating
+        // click/type actions its description promises — not just the read-only
+        // `list`. Previously those actions required the UI-less
+        // `computer_control.ax_interact_mutations` flag or Full autonomy, so the
+        // toggle silently did nothing on the default (Supervised) autonomy
+        // (#3762). The actions stay approval-gated and bound by the
+        // sensitive-app denylist; Full autonomy continues to grant this
+        // independently via `app_control_enabled`.
+        let adjusted_config: Config;
+        let tool_config: &Config = if !config.computer_control.ax_interact_mutations
+            && tools::enables_app_ui_control_mutations(&enabled_tools)
+        {
+            let mut c = config.clone();
+            c.computer_control.ax_interact_mutations = true;
+            log::debug!(
+                "[session-builder] action=grant_app_ui_control_mutations source=features_toggle"
+            );
+            adjusted_config = c;
+            &adjusted_config
+        } else {
+            config
+        };
+
+        let mut tools = tools::all_tools_with_runtime(
+            Arc::new(tool_config.clone()),
+            &security,
+            runtime,
+            audit,
+            memory.clone(),
+            &tool_config.browser,
+            &tool_config.http_request,
+            &tool_config.action_dir,
+            &tool_config.agents,
+            tool_config,
+            profile_skill_allowlist.as_ref(),
+            profile_mcp_allowlist.as_deref(),
+        );
+
+        // Filter tools by the user preference loaded above.
+        if !enabled_tools.is_empty() {
+            crate::openhuman::tools::filter_tools_by_user_preference(&mut tools, &enabled_tools);
         }
 
         if read_only_tools_only {
@@ -413,18 +446,11 @@ impl Agent {
         // baseline behaviour is identical to the legacy
         // `create_intelligent_routing_provider` path.
         //
-        // What we deliberately lose for now: the ReliableProvider retry
-        // wrapper, model_routes translation, and intelligent local/cloud
-        // task hinting that the legacy router added on top of the raw
-        // backend. Those are valuable but orthogonal — they can be layered
-        // back on top of the factory's output in a follow-up without
-        // re-introducing the routing bypass.
-        let _ = provider::ProviderRuntimeOptions {
-            auth_profile_override: None,
-            openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
-            secrets_encrypt: config.secrets.encrypt,
-            reasoning_enabled: config.runtime.reasoning_enabled,
-        };
+        // The ReliableProvider retry/backoff + model-fallback wrapper is
+        // re-layered on top of the factory's resolved backend below (issue
+        // #4249, 1c). `model_routes` translation and intelligent local/cloud
+        // task hinting now live in the unified routing layer (router.rs) rather
+        // than a per-session wrapper, so they are not re-wrapped here.
         // Explicit `hint:<role>` and known-tier model strings route to the
         // matching workload (so a subagent declaring `hint:reasoning` still
         // gets the user's `reasoning_provider`). Everything else — including
@@ -442,13 +468,14 @@ impl Agent {
         // chat to the `reasoning` workload regardless of their
         // `chat_provider` selection. Subagents still set their own role
         // through `ModelSpec::Hint(...)` in the subagent runner.
-        let provider_role = match config.default_model.as_deref().map(str::trim) {
-            Some("hint:agentic") => "agentic",
-            Some("hint:coding") => "coding",
-            Some("hint:summarization") => "summarization",
-            Some("hint:reasoning") => "reasoning",
-            _ => "chat",
-        };
+        let provider_role = provider_role_for(agent_id, config.default_model.as_deref());
+        // Retry/backoff is now owned by the crate `RetryPolicy` at the harness
+        // model call (issue #4249, Phase 3a) — see `tinyagents::run_policy_for`.
+        // The turn path therefore no longer wraps the resolved provider in
+        // `ReliableProvider`; wrapping it here plus the crate retry would
+        // double-retry every transient error. Cross-route fallback is likewise
+        // the crate registry `FallbackPolicy`, so `config.reliability.*` no longer
+        // layers on the turn path (it still governs the non-seam provider paths).
         let (provider, mut model_name): (Box<dyn Provider>, String) =
             crate::openhuman::inference::provider::create_chat_provider(provider_role, config)?;
         log::info!(
@@ -464,13 +491,29 @@ impl Agent {
         let target_is_lead = target_def
             .map(|def| !def.subagents.is_empty())
             .unwrap_or(true);
-        if let Some(pinned_model) = config.configured_agent_model(target_agent_id, target_is_lead) {
+        // The `subconscious` workload's model is governed by `subconscious_provider`
+        // + the managed-tier registry — NOT by an interactive agent model pin.
+        // The tick reuses the orchestrator definition (agent_id="orchestrator"),
+        // so without this guard a configured `[orchestrator].model` pin would
+        // clobber the resolved subconscious model and send an unrelated tier to
+        // the Subconscious provider (Codex P2).
+        if provider_role != "subconscious" {
+            if let Some(pinned_model) =
+                config.configured_agent_model(target_agent_id, target_is_lead)
+            {
+                log::debug!(
+                    "[session-builder] agent_id={} using config-level model pin model={}",
+                    target_agent_id,
+                    pinned_model
+                );
+                model_name = pinned_model.to_string();
+            }
+        } else {
             log::debug!(
-                "[session-builder] agent_id={} using config-level model pin model={}",
-                target_agent_id,
-                pinned_model
+                "[session-builder] agent_id={} provider_role=subconscious — skipping agent model \
+                 pin so the subconscious provider/registry model is preserved",
+                target_agent_id
             );
-            model_name = pinned_model.to_string();
         }
 
         // Resolve the user-configured vision flag for the (now-final) model while
@@ -646,18 +689,27 @@ impl Agent {
                 // For cloud reflection, wrap the provider in an Arc.
                 // For local, no provider needed.
                 let reflection_provider: Option<
-                    Arc<dyn crate::openhuman::inference::provider::Provider>,
+                    Arc<dyn tinyagents::harness::model::ChatModel<()>>,
                 > = if config.learning.reflection_source
                     == crate::openhuman::config::ReflectionSource::Cloud
                 {
-                    Some(Arc::from(provider::create_routed_provider(
+                    // Reflection always calls with the `hint:reasoning` route +
+                    // 0.3 temperature (formerly `simple_chat(prompt,
+                    // "hint:reasoning", 0.3)`), so bake both into the wrapped
+                    // model. The routed provider still resolves the hint per call.
+                    let routed = provider::create_routed_provider(
                         config.inference_url.as_deref(),
                         config.api_url.as_deref(),
                         config.api_key.as_deref(),
                         &config.reliability,
                         &config.model_routes,
                         &model_name,
-                    )?))
+                    )?;
+                    Some(provider::chat_model_from_provider(
+                        routed,
+                        "hint:reasoning".to_string(),
+                        0.3,
+                    ))
                 } else {
                     None
                 };
@@ -865,13 +917,41 @@ impl Agent {
         // contract (empty == no filter) stays intact: an empty set
         // means "no filter" for both legacy callers and the new
         // agent-scoped path.
-        let visible: std::collections::HashSet<String> = match filter_from_scope {
+        let mut visible: std::collections::HashSet<String> = match filter_from_scope {
             Some(set) => set,
             None => delegation_tools
                 .iter()
                 .map(|t| t.name().to_string())
                 .collect(),
         };
+        // Compaction applies to every agent's tool output, so the CCR recovery
+        // tool must be a *real* member of any non-empty allowlist — this is the
+        // single source of truth that the policy session, advertised specs, and
+        // the run-time visible-name gate all consume, so adding it here makes a
+        // `retrieve_tool_output("…")` footer actionable for Named-scope agents
+        // (e.g. the orchestrator's curated list). An empty set already means
+        // "no filter", so it needs nothing. Added BEFORE the disallow filter
+        // below so an agent that explicitly disallows it still has it removed.
+        super::ensure_recovery_tool_visible(&mut visible);
+
+        if let Some(def) = target_def {
+            if !def.disallowed_tools.is_empty() {
+                match &def.tools {
+                    ToolScope::Wildcard => {
+                        visible = tools
+                            .iter()
+                            .map(|t| t.name().to_string())
+                            .chain(delegation_tools.iter().map(|t| t.name().to_string()))
+                            .filter(|name| !definition_disallows_tool(&def.disallowed_tools, name))
+                            .collect();
+                    }
+                    ToolScope::Named(_) => {
+                        visible
+                            .retain(|name| !definition_disallows_tool(&def.disallowed_tools, name));
+                    }
+                }
+            }
+        }
 
         // Phase 4 (#566): add the MemoryAccessSection bias instruction only
         // when at least one retrieval tool is actually loaded AND survives
@@ -942,51 +1022,20 @@ impl Agent {
         // entry. The registry is self-contained — it doesn't hold a
         // reference back into the tools Vec.
         let pformat_registry = crate::openhuman::agent::pformat::build_registry(&tools);
+        let dispatcher_kind =
+            resolve_dispatcher_kind(&dispatcher_choice, supports_native, agent_id);
         let tool_dispatcher: Box<dyn crate::openhuman::agent::dispatcher::ToolDispatcher> =
-            match dispatcher_choice.as_str() {
-                "native" => Box::new(NativeToolDispatcher),
-                "xml" => Box::new(XmlToolDispatcher),
-                "pformat" => Box::new(PFormatToolDispatcher::new(pformat_registry.clone())),
-                _ if supports_native => Box::new(NativeToolDispatcher),
-                // Default for text-only providers: P-Format. Flip the
-                // `agent.tool_dispatcher` config to `"xml"` to revert.
-                _ => Box::new(PFormatToolDispatcher::new(pformat_registry.clone())),
-            };
-
-        // Provider-side grammar decoders (e.g. Fireworks) compile every
-        // tool JSON schema into a grammar and index its rules with a
-        // uint16_t — max 65 535 rules. Large Composio toolkits (Notion,
-        // Salesforce, Gmail) produce per-action schemas dense enough
-        // that even 16–25 of them blow past that ceiling, regardless of
-        // how aggressively the fuzzy filter in `tool_filter.rs` narrows
-        // the list. When that happens the provider rejects the request
-        // with a 400 before any generation starts, so integrations_agent can
-        // never actually invoke the toolkit.
-        //
-        // Workaround: if we're building integrations_agent and the selected
-        // dispatcher would ship `tools: [...]` in the API payload
-        // (`should_send_tool_specs() == true`, i.e. native mode), swap
-        // to XML mode. XmlToolDispatcher puts the tool catalogue inside
-        // the system prompt as prose instead — the provider never
-        // compiles a grammar for it, so the rule-count ceiling stops
-        // mattering. Downside: slightly looser tool-call formatting
-        // than native; the existing `parse_tool_calls` recovers from
-        // stray formatting and the loop retries on malformed output.
-        let tool_dispatcher: Box<dyn crate::openhuman::agent::dispatcher::ToolDispatcher> =
-            if agent_id == "integrations_agent" && tool_dispatcher.should_send_tool_specs() {
-                log::info!(
-                    "[agent::builder] integrations_agent: overriding native tool dispatcher with \
-                     XmlToolDispatcher (native mode hits provider grammar-rule limits on \
-                     large Composio toolkits)"
-                );
-                Box::new(XmlToolDispatcher)
-            } else {
-                tool_dispatcher
+            match dispatcher_kind {
+                DispatcherKind::Native => Box::new(NativeToolDispatcher),
+                DispatcherKind::Xml => Box::new(XmlToolDispatcher),
+                DispatcherKind::PFormat => {
+                    Box::new(PFormatToolDispatcher::new(pformat_registry.clone()))
+                }
             };
 
         log::debug!(
             "[agent] tool dispatcher selected: choice={dispatcher_choice} agent_id={agent_id} \
-             sends_tool_specs={} default_text_format=pformat pformat_registry_entries={}",
+             kind={dispatcher_kind:?} sends_tool_specs={} pformat_registry_entries={}",
             tool_dispatcher.should_send_tool_specs(),
             pformat_registry.len()
         );
@@ -1008,6 +1057,9 @@ impl Agent {
         let effective_trigger_memory_agent = target_def
             .map(|def| def.trigger_memory_agent)
             .unwrap_or_default();
+        let effective_tokenjuice_compression = target_def
+            .map(|def| def.effective_tokenjuice_compression())
+            .unwrap_or(crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Full);
 
         // Stamp the resolved agent definition id onto the Agent via the
         // builder. Without this call, `agent_definition_name` falls
@@ -1048,9 +1100,7 @@ impl Agent {
         // `None` and their tool results stay untouched (the summarizer
         // itself MUST be `None` to avoid recursive self-summarization).
         let payload_summarizer: Option<
-            std::sync::Arc<
-                dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer,
-            >,
+            std::sync::Arc<dyn crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer>,
         > = if agent_id == "orchestrator" && config.context.summarizer_payload_threshold_tokens > 0
         {
             match crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global() {
@@ -1063,7 +1113,7 @@ impl Agent {
                             config.context.summarizer_max_payload_tokens
                         );
                         Some(std::sync::Arc::new(
-                            crate::openhuman::agent::harness::payload_summarizer::SubagentPayloadSummarizer::new(
+                            crate::openhuman::tinyagents::payload_summarizer::SubagentPayloadSummarizer::new(
                                 summarizer_def.clone(),
                                 config.context.summarizer_payload_threshold_tokens,
                                 config.context.summarizer_max_payload_tokens,
@@ -1109,7 +1159,7 @@ impl Agent {
                     // of agent-conversation recall, suppress the prior-chat and
                     // cross-chat blocks. Defaults to on for None / unset.
                     .with_agent_conversations(
-                        profile.map_or(true, |p| p.include_agent_conversations),
+                        profile.is_none_or(|p| p.include_agent_conversations),
                     ),
             ))
             .prompt_builder(prompt_builder)
@@ -1120,7 +1170,7 @@ impl Agent {
             .temperature(effective_temperature)
             .workspace_dir(config.workspace_dir.clone())
             .action_dir(config.action_dir.clone())
-            .workflows(crate::openhuman::workflows::load_workflow_metadata(
+            .workflows(crate::openhuman::skills::load_workflow_metadata(
                 &config.workspace_dir,
             ))
             .auto_save(config.memory.auto_save)
@@ -1130,12 +1180,12 @@ impl Agent {
             .agent_definition_name(agent_id.to_string())
             .omit_profile(effective_omit_profile)
             .omit_memory_md(effective_omit_memory_md)
-            .trigger_memory_agent(effective_trigger_memory_agent);
+            .trigger_memory_agent(effective_trigger_memory_agent)
+            .tokenjuice_compression(effective_tokenjuice_compression);
         if let Some(ps) = payload_summarizer {
             builder = builder.payload_summarizer(ps);
         }
         builder = builder.archivist_hook(archivist_hook_arc);
-        builder = builder.unified_compaction_enabled(config.learning.unified_compaction_enabled);
         let mut agent = builder.build()?;
         let connected_integrations_initialized = prewarmed_integrations.is_some();
         agent.connected_integrations = prewarmed_integrations.unwrap_or_default();
@@ -1145,5 +1195,187 @@ impl Agent {
             crate::openhuman::composio::connected_set_hash(&agent.connected_integrations);
         agent.synthesized_tool_names = synthesized_tool_names;
         Ok(agent)
+    }
+}
+
+fn definition_disallows_tool(disallowed: &[String], name: &str) -> bool {
+    disallowed.iter().any(|entry| {
+        if let Some(prefix) = entry.strip_suffix('*') {
+            name.starts_with(prefix)
+        } else {
+            entry == name
+        }
+    })
+}
+
+/// Which tool-call dialect a session speaks to its provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DispatcherKind {
+    /// Provider-native structured function calling (JSON tool specs on the wire).
+    Native,
+    /// JSON-in-tag: `<tool_call>{"name":…,"arguments":{…}}</tool_call>` in text.
+    Xml,
+    /// Compact positional P-Format (`tool[a|b]`) — opt-in only.
+    PFormat,
+}
+
+/// Pick the tool-call dialect from the configured `agent.tool_dispatcher`
+/// choice, the provider's native-tool support, and the agent id.
+///
+/// `"auto"` (and any unrecognized value) resolves to native when the provider
+/// supports it, otherwise JSON-in-tag — **never** P-Format, which is opt-in
+/// (`"pformat"`) because its compact positional syntax mis-parses on some
+/// models.
+///
+/// `integrations_agent` is special-cased off native: provider-side grammar
+/// decoders (e.g. Fireworks) compile every JSON tool schema into a grammar
+/// indexed by a `uint16_t` (max 65 535 rules), and large Composio toolkits
+/// (Notion, Salesforce, Gmail) blow past that ceiling, so a native request is
+/// rejected with a 400 before any generation. Falling back to JSON-in-tag puts
+/// the catalogue in the prompt as prose, so no grammar is compiled.
+fn resolve_dispatcher_kind(
+    dispatcher_choice: &str,
+    supports_native: bool,
+    agent_id: &str,
+) -> DispatcherKind {
+    let base = match dispatcher_choice {
+        "native" => DispatcherKind::Native,
+        "xml" => DispatcherKind::Xml,
+        "pformat" => DispatcherKind::PFormat,
+        _ if supports_native => DispatcherKind::Native,
+        _ => DispatcherKind::Xml,
+    };
+    if agent_id == "integrations_agent" && base == DispatcherKind::Native {
+        DispatcherKind::Xml
+    } else {
+        base
+    }
+}
+
+/// Resolve the provider/workload role for a session build.
+///
+/// The `subconscious` workload has two entry points and both must route here:
+/// - the cloud tick builds via `Agent::from_config` (agent_id `"orchestrator"`)
+///   with `default_model = "hint:subconscious"`;
+/// - the event-driven long-lived session builds via
+///   `Agent::from_config_for_agent(_, "subconscious")` and does NOT set the hint.
+///
+/// Routing on `agent_id == "subconscious"` covers the second case (Codex P2:
+/// otherwise promoted background turns fall through to `chat_provider` and ignore
+/// Connections → API keys → LLM "Subconscious"). Other explicit `hint:<role>` markers route to
+/// their workload; everything else (incl. the legacy `default_model` tier the
+/// bootstrap pinned) falls through to `chat` so `chat_provider` drives the
+/// user-facing turn.
+pub(crate) fn provider_role_for(agent_id: &str, default_model: Option<&str>) -> &'static str {
+    if agent_id.trim() == "subconscious" {
+        return "subconscious";
+    }
+    match default_model.map(str::trim) {
+        Some("hint:agentic") => "agentic",
+        Some("hint:coding") => "coding",
+        Some("hint:summarization") => "summarization",
+        Some("hint:reasoning") => "reasoning",
+        Some("hint:subconscious") => "subconscious",
+        _ => "chat",
+    }
+}
+
+#[cfg(test)]
+mod provider_role_tests {
+    use super::provider_role_for;
+    use super::{resolve_dispatcher_kind, DispatcherKind};
+
+    #[test]
+    fn orchestrator_defaults_to_chat() {
+        assert_eq!(provider_role_for("orchestrator", Some("chat-v1")), "chat");
+        assert_eq!(provider_role_for("orchestrator", None), "chat");
+        // A legacy heavy default_model tier still falls through to chat.
+        assert_eq!(
+            provider_role_for("orchestrator", Some("reasoning-v1")),
+            "chat"
+        );
+    }
+
+    #[test]
+    fn explicit_hints_route_to_workload() {
+        assert_eq!(
+            provider_role_for("orchestrator", Some("hint:agentic")),
+            "agentic"
+        );
+        assert_eq!(
+            provider_role_for("orchestrator", Some("hint:reasoning")),
+            "reasoning"
+        );
+        // The cloud tick: orchestrator agent_id + the subconscious hint.
+        assert_eq!(
+            provider_role_for("orchestrator", Some("hint:subconscious")),
+            "subconscious"
+        );
+    }
+
+    #[test]
+    fn subconscious_agent_id_routes_to_subconscious_without_hint() {
+        // The event-driven long-lived session builds with agent_id="subconscious"
+        // and no hint — it must still resolve the subconscious workload (Codex P2).
+        assert_eq!(provider_role_for("subconscious", None), "subconscious");
+        assert_eq!(
+            provider_role_for("subconscious", Some("chat-v1")),
+            "subconscious"
+        );
+        assert_eq!(provider_role_for(" subconscious ", None), "subconscious");
+    }
+
+    #[test]
+    fn auto_prefers_native_when_supported_never_pformat() {
+        assert_eq!(
+            resolve_dispatcher_kind("auto", true, "chat"),
+            DispatcherKind::Native
+        );
+        // Text-only provider defaults to JSON-in-tag, NOT P-Format.
+        assert_eq!(
+            resolve_dispatcher_kind("auto", false, "chat"),
+            DispatcherKind::Xml
+        );
+        // An unrecognized value behaves like "auto".
+        assert_eq!(
+            resolve_dispatcher_kind("bogus", false, "chat"),
+            DispatcherKind::Xml
+        );
+    }
+
+    #[test]
+    fn explicit_choices_are_honoured_including_opt_in_pformat() {
+        assert_eq!(
+            resolve_dispatcher_kind("native", false, "chat"),
+            DispatcherKind::Native
+        );
+        assert_eq!(
+            resolve_dispatcher_kind("xml", true, "chat"),
+            DispatcherKind::Xml
+        );
+        // P-Format is only ever selected when explicitly requested.
+        assert_eq!(
+            resolve_dispatcher_kind("pformat", true, "chat"),
+            DispatcherKind::PFormat
+        );
+    }
+
+    #[test]
+    fn integrations_agent_falls_off_native_to_json_in_tag() {
+        // Native would ship JSON tool specs and blow the provider grammar-rule
+        // ceiling on large Composio toolkits → force JSON-in-tag.
+        assert_eq!(
+            resolve_dispatcher_kind("auto", true, "integrations_agent"),
+            DispatcherKind::Xml
+        );
+        assert_eq!(
+            resolve_dispatcher_kind("native", true, "integrations_agent"),
+            DispatcherKind::Xml
+        );
+        // An explicit non-native choice is left untouched for that agent.
+        assert_eq!(
+            resolve_dispatcher_kind("pformat", true, "integrations_agent"),
+            DispatcherKind::PFormat
+        );
     }
 }

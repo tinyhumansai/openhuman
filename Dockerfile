@@ -45,6 +45,11 @@ WORKDIR /build
 
 # Cache dependencies — copy only manifests first
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+# Vendored TinyAgents SDK (git submodule; [patch.crates-io] points here, so
+# the dep-cache build below already resolves it). CI must init the submodule
+# before docker build — see the "Init tinyagents submodule" steps in
+# release-production.yml / release-staging.yml.
+COPY vendor/ vendor/
 # Create a dummy src to build deps
 RUN mkdir -p src && \
     echo 'fn main() {}' > src/main.rs && \
@@ -113,6 +118,9 @@ ENV OPENHUMAN_WORKSPACE=/home/openhuman/.openhuman
 ENV OPENHUMAN_CORE_HOST=0.0.0.0
 ENV OPENHUMAN_CORE_PORT=7788
 ENV RUST_LOG=info
+# AgentBox marketplace mode — off by default for desktop builds. The
+# AgentBox console flips this on per deployment, along with GMI_MAAS_*.
+ENV OPENHUMAN_AGENTBOX_MODE=0
 
 EXPOSE 7788
 

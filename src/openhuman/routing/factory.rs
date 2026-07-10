@@ -186,45 +186,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn factory_constructs_without_panic_when_runtime_enabled() {
-        let mut cfg = LocalAiConfig::default();
-        cfg.runtime_enabled = true;
-        cfg.chat_model_id = "gemma3:4b-it-qat".to_string();
-        let _p = make_provider(&cfg);
-    }
-
-    #[test]
-    fn factory_llamacpp_provider_constructs_without_panic() {
-        // When provider is "llamacpp" the health probe URL must be
-        // `{base}/models` (OpenAI-compat), not `{base}/api/tags` (Ollama).
-        // We verify construction does not panic and the routing provider
-        // is usable.
-        let mut cfg = LocalAiConfig::default();
-        cfg.runtime_enabled = true;
-        cfg.provider = "llamacpp".to_string();
-        cfg.base_url = Some("http://127.0.0.1:8080/v1".to_string());
-        let _p = make_provider(&cfg);
-    }
-
-    #[test]
-    fn factory_custom_openai_provider_constructs_without_panic() {
-        let mut cfg = LocalAiConfig::default();
-        cfg.runtime_enabled = true;
-        cfg.provider = "custom_openai".to_string();
-        cfg.base_url = Some("http://127.0.0.1:1234/v1".to_string());
-        let _p = make_provider(&cfg);
-    }
-
-    #[test]
-    fn factory_lm_studio_provider_constructs_without_panic() {
-        let mut cfg = LocalAiConfig::default();
-        cfg.runtime_enabled = true;
-        cfg.provider = "lm-studio".to_string();
-        cfg.base_url = Some("http://127.0.0.1:1234/v1".to_string());
-        cfg.chat_model_id = "local-model".to_string();
-        let _p = make_provider(&cfg);
-    }
+    // NOTE: four `factory_*_constructs_without_panic` smoke tests were removed
+    // here (plan.md §2.1) — construction is pure struct init that cannot fail,
+    // and private fields blocked any real probe-URL/capability assertion, so
+    // they verified nothing. The behavioural branches that DO assert
+    // (local-disabled streaming, llama-server alias, env-override precedence)
+    // are retained below.
 
     #[test]
     fn factory_llama_server_alias_is_recognised() {

@@ -107,7 +107,7 @@ describe('Logout -> re-login onboarding overlay', function () {
 
     // ── Second login (re-login) ───────────────────────────────────────────────
     // Use the bypass deep-link path (key=auth) which skips the
-    // consumeLoginToken→/telegram/login-tokens/ exchange. After the complex
+    // consumeLoginToken→/auth/login-token/consume exchange. After the complex
     // logout→test_reset→reload cycle, the full consume flow can race against
     // waitForOAuthAuthReadiness timing — the bypass avoids that instability
     // while still exercising the core auth path (storeSession, session-token

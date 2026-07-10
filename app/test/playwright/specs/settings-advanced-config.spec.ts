@@ -59,7 +59,8 @@ test.describe('Settings - Advanced Config', () => {
   test('renders the developer options route and its advanced entries', async ({ page }) => {
     await gotoSettingsRoute(page, '/settings/developer-options');
 
-    await expect(page.getByRole('heading', { name: 'Developer & Diagnostics' })).toBeVisible();
+    // Panel title dropped in the PanelPage migration; the panel is confirmed by
+    // its diagnostics entries below.
     // Developer Options is debug-only now: user-facing sections (AI, Integrations…)
     // live on their section pages, so Developer Options surfaces diagnostics entries.
     // The two-pane sidebar may also surface these ids, so scope to the first match.
@@ -177,7 +178,9 @@ test.describe('Settings - Advanced Config', () => {
   test('persists agent chat draft state to localStorage', async ({ page }) => {
     await gotoSettingsRoute(page, '/settings/agent-chat');
 
-    await expect(page.getByText('Overrides')).toBeVisible();
+    // The panel's description copy also contains the word "overrides", so scope
+    // to the section heading to avoid a strict-mode match on both.
+    await expect(page.getByRole('heading', { name: 'Overrides' })).toBeVisible();
     await page.getByPlaceholder('gpt-4o').fill('gpt-4.1-mini');
     await page.getByPlaceholder('0.7').fill('0.2');
 
@@ -202,7 +205,9 @@ test.describe('Settings - Advanced Config', () => {
     await expect(page.getByText('Local Model Debug').first()).toBeVisible();
 
     await gotoSettingsRoute(page, '/settings/about');
-    await expect(page.getByText('Software updates')).toBeVisible();
+    // The About description copy also contains "software updates"; match the
+    // section label exactly to avoid a strict-mode violation.
+    await expect(page.getByText('Software updates', { exact: true })).toBeVisible();
 
     // /settings/llm now redirects to the Connections page (LLM moved there).
     await gotoSettingsRoute(page, '/settings/llm');

@@ -143,7 +143,7 @@ async function setupLayout(onboardingTasks: unknown = null) {
           <Route path="/onboarding" element={<OnboardingLayout />}>
             <Route index element={<TriggerComplete />} />
           </Route>
-          <Route path="/home" element={<div data-testid="home-page" />} />
+          <Route path="/chat" element={<div data-testid="chat-page" />} />
         </Routes>
       </MemoryRouter>
     </Provider>
@@ -221,9 +221,9 @@ describe('OnboardingLayout — Joyride walkthrough integration (#1123)', () => {
     expect(chatSend).not.toHaveBeenCalled();
   });
 
-  // Covers the catch branch in completeAndExit (OnboardingLayout.tsx:138):
-  // when setWalkthroughPending throws, navigation still proceeds to /home.
-  it('still navigates to /home when setWalkthroughPending throws', async () => {
+  // Covers the catch branch in completeAndExit:
+  // when setWalkthroughPending throws, navigation still proceeds to /chat.
+  it('still navigates to /chat when setWalkthroughPending throws', async () => {
     // Override default impl to throw for this one test invocation
     mockSetWalkthroughPending.mockImplementationOnce(() => {
       throw new Error('storage unavailable');
@@ -235,7 +235,7 @@ describe('OnboardingLayout — Joyride walkthrough integration (#1123)', () => {
     });
 
     // Navigation should still proceed even when the flag cannot be written.
-    expect(screen.getByTestId('home-page')).toBeInTheDocument();
+    expect(screen.getByTestId('chat-page')).toBeInTheDocument();
   });
 
   it('still completes onboarding when persisting onboarding tasks fails', async () => {
@@ -250,7 +250,7 @@ describe('OnboardingLayout — Joyride walkthrough integration (#1123)', () => {
     });
 
     expect(mockSetOnboardingCompletedFlag).toHaveBeenCalledWith(true);
-    expect(screen.getByTestId('home-page')).toBeInTheDocument();
+    expect(screen.getByTestId('chat-page')).toBeInTheDocument();
 
     warnSpy.mockRestore();
   });

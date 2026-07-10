@@ -9,6 +9,7 @@
 import { useMemo, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import Button from '../../ui/Button';
 import {
   buildManifest,
   type McpInventoryManifest,
@@ -30,7 +31,7 @@ const McpInventoryExportTab = ({ servers }: McpInventoryExportTabProps) => {
 
   if (servers.length === 0) {
     return (
-      <p className="text-sm text-stone-500 dark:text-neutral-400 py-6 text-center">
+      <p className="text-sm text-content-muted py-6 text-center">
         {t('mcp.inventory.export.empty')}
       </p>
     );
@@ -67,36 +68,36 @@ const McpInventoryExportTab = ({ servers }: McpInventoryExportTabProps) => {
     <div className="space-y-3">
       <div
         role="note"
-        className="rounded-lg border border-sage-200 dark:border-sage-500/30 bg-sage-50 dark:bg-sage-500/10 px-3 py-2 text-xs text-stone-700 dark:text-neutral-200">
+        className="rounded-lg border border-sage-200 dark:border-sage-500/30 bg-sage-50 dark:bg-sage-500/10 px-3 py-2 text-xs text-content-secondary">
         <p className="font-medium mb-1">{t('mcp.inventory.export.privacyTitle')}</p>
         <p>{t('mcp.inventory.export.privacyBody')}</p>
       </div>
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-stone-500 dark:text-neutral-400">
+        <p className="text-xs text-content-muted">
           {t('mcp.inventory.export.serverCount').replace('{count}', String(servers.length))}
         </p>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => void handleCopy()}
-            aria-label={t('mcp.inventory.export.copyAria')}
-            className="rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800">
+            aria-label={t('mcp.inventory.export.copyAria')}>
             {copyStatus === 'copied'
               ? t('mcp.inventory.export.copied')
               : t('mcp.inventory.export.copy')}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
             onClick={handleDownload}
-            aria-label={t('mcp.inventory.export.downloadAria')}
-            className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600">
+            aria-label={t('mcp.inventory.export.downloadAria')}>
             {t('mcp.inventory.export.download')}
-          </button>
+          </Button>
         </div>
       </div>
       <pre
         data-testid="mcp-inventory-export-pre"
-        className="max-h-80 overflow-auto rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-950 p-3 text-[11px] font-mono text-stone-800 dark:text-neutral-100 whitespace-pre-wrap break-words">
+        className="max-h-80 overflow-auto rounded-lg border border-line bg-surface-muted p-3 text-[11px] font-mono text-content whitespace-pre-wrap break-words">
         {serialized}
       </pre>
     </div>

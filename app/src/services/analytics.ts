@@ -32,6 +32,7 @@ import {
   SENTRY_DSN,
   SENTRY_RELEASE,
   SENTRY_SMOKE_TEST,
+  SUPPORT_URL,
   TAURI_CARGO_VERSION,
 } from '../utils/config';
 import { CoreRpcError } from './coreRpcClient';
@@ -147,6 +148,14 @@ export function initSentry(): void {
     tracesSampleRate: 0,
     defaultIntegrations: false,
     integrations: [
+      // #3963: `defaultIntegrations: false` (above) drops the integration that
+      // consumes the top-level `ignoreErrors` option (below), so the intended
+      // noise filter has been dead config since it was added. Re-include it
+      // explicitly so `ignoreErrors` runs again. It executes as an event
+      // processor *before* `beforeSend`, so the consent/privacy logic there is
+      // unaffected — this only restores the pre-`beforeSend` drop of the four
+      // benign `ResizeObserver loop` / network-noise patterns.
+      Sentry.inboundFiltersIntegration(),
       Sentry.functionToStringIntegration(),
       Sentry.linkedErrorsIntegration(),
       Sentry.dedupeIntegration(),
@@ -208,6 +217,17 @@ export function initSentry(): void {
 
       // Tag with surface so events filter cleanly inside `openhuman-react`.
       event.tags = { ...(event.tags ?? {}), surface: 'react' };
+
+      // Seed a support deep link keyed on this event's own id so the crash
+      // report links back to the support channel (#3980). Set as a TAG, not
+      // an `extra` — the privacy scrub above deletes `event.extra`, but the
+      // event id is known here and tags survive. The URL carries only the
+      // event's own id + a static base (no PII). Mirrors the id the user
+      // sees + copies on `ErrorFallbackScreen`.
+      if (event.event_id) {
+        const sep = SUPPORT_URL.includes('?') ? '&' : '?';
+        event.tags.support_url = `${SUPPORT_URL}${sep}ref=${event.event_id}`;
+      }
 
       // Strip PII; keep a stable account id only.
       const userId = getCoreStateSnapshot().snapshot.currentUser?._id;

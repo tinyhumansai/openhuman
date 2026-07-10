@@ -21,17 +21,33 @@ export default function AttachmentPreview({
       {attachments.map(attachment => (
         <div
           key={attachment.id}
-          className="relative flex items-center gap-2 rounded-lg border border-stone-200 dark:border-neutral-700 bg-stone-50 dark:bg-neutral-800 px-2 py-1.5 text-xs text-stone-700 dark:text-neutral-300 max-w-[180px]">
+          className="relative flex items-center gap-2 rounded-lg border border-line bg-surface-muted px-2 py-1.5 text-xs text-content-secondary max-w-[180px]">
           {attachment.kind === 'image' ? (
             <img
               src={attachment.previewUri ?? attachment.dataUri}
               alt={attachment.file.name}
               className="w-8 h-8 rounded object-cover flex-shrink-0"
             />
+          ) : attachment.kind === 'video' ? (
+            <div className="relative w-8 h-8 flex-shrink-0">
+              <img
+                src={attachment.previewUri ?? attachment.dataUri}
+                alt={attachment.file.name}
+                className="w-8 h-8 rounded object-cover"
+              />
+              <span className="absolute inset-0 flex items-center justify-center">
+                <svg
+                  className="w-3.5 h-3.5 text-white drop-shadow"
+                  fill="currentColor"
+                  viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </span>
+            </div>
           ) : (
             <div
               aria-hidden
-              className="w-8 h-8 rounded border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 flex items-center justify-center flex-shrink-0 text-stone-500 dark:text-neutral-400">
+              className="w-8 h-8 rounded border border-line bg-surface flex items-center justify-center flex-shrink-0 text-content-muted">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -50,7 +66,7 @@ export default function AttachmentPreview({
           )}
           <div className="flex flex-col min-w-0">
             <span className="truncate font-medium leading-tight">{attachment.file.name}</span>
-            <span className="text-stone-400 dark:text-neutral-500 leading-tight">
+            <span className="text-content-faint leading-tight">
               {formatFileSize(attachment.payloadSizeBytes)}
             </span>
           </div>

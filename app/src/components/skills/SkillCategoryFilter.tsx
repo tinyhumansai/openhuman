@@ -1,4 +1,4 @@
-import PillTabBar from '../PillTabBar';
+import ChipTabs from '../layout/ChipTabs';
 import type { SkillCategory } from './skillCategories';
 import {
   skillCategoryChipClassName,
@@ -14,24 +14,36 @@ interface SkillCategoryFilterProps {
 
 const SkillCategoryFilter = ({ categories, selected, onChange }: SkillCategoryFilterProps) => {
   return (
-    <PillTabBar
-      items={categories.map(category => ({ label: category, value: category }))}
-      selected={selected}
+    <ChipTabs<SkillCategory>
+      items={categories.map(category => {
+        const active = category === selected;
+        return {
+          id: category,
+          label: (
+            <span className="flex items-center gap-1.5">
+              <span
+                className={`inline-flex h-4 w-4 items-center justify-center rounded-full ${
+                  active
+                    ? skillCategoryChipClassName(category)
+                    : 'bg-surface-subtle text-content-muted'
+                }`}>
+                <SkillCategoryIcon
+                  category={category}
+                  className={
+                    active
+                      ? skillCategoryIconClassName(category)
+                      : 'text-content-muted'
+                  }
+                />
+              </span>
+              {category}
+            </span>
+          ),
+        };
+      })}
+      value={selected}
       onChange={onChange}
-      renderItem={(item, active) => (
-        <span className="flex items-center gap-1.5">
-          <span
-            className={`inline-flex h-4 w-4 items-center justify-center rounded-full ${
-              active ? skillCategoryChipClassName(item.value) : 'bg-stone-100 dark:bg-neutral-800 text-stone-500 dark:text-neutral-400'
-            }`}>
-            <SkillCategoryIcon
-              category={item.value}
-              className={active ? skillCategoryIconClassName(item.value) : 'text-stone-500 dark:text-neutral-400'}
-            />
-          </span>
-          {item.label}
-        </span>
-      )}
+      className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide"
     />
   );
 };

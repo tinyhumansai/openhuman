@@ -11,11 +11,23 @@ use crate::openhuman::web3::{execute_tool_schema, ops, to_tool_result};
 pub struct Web3DappCallTool;
 pub struct Web3DappExecuteTool;
 
+impl Default for Web3DappCallTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Web3DappCallTool {
     pub fn new() -> Self {
         Self
     }
 }
+impl Default for Web3DappExecuteTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Web3DappExecuteTool {
     pub fn new() -> Self {
         Self

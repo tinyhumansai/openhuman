@@ -78,6 +78,7 @@ pub fn add_agent_job(
         delivery,
         delete_after_run,
         None,
+        true,
     )
 }
 
@@ -95,6 +96,7 @@ pub fn add_agent_job_with_definition(
     delivery: Option<DeliveryConfig>,
     delete_after_run: bool,
     agent_id: Option<String>,
+    enabled: bool,
 ) -> Result<CronJob> {
     let now = Utc::now();
     validate_schedule(&schedule, now)?;
@@ -105,11 +107,15 @@ pub fn add_agent_job_with_definition(
     let delivery = delivery.unwrap_or_default();
 
     with_connection(config, |conn| {
+        // `enabled` is bound (?13) rather than hard-coded so callers can insert a
+        // job in its final disabled state in one statement — important for opt-in
+        // jobs (e.g. the autopilot) where a create-then-disable sequence could
+        // leave the row enabled if the process died between the two writes.
         conn.execute(
             "INSERT INTO cron_jobs (
                 id, expression, command, schedule, job_type, prompt, name, session_target, model,
                 enabled, delivery, delete_after_run, created_at, next_run, agent_id
-             ) VALUES (?1, ?2, '', ?3, 'agent', ?4, ?5, ?6, ?7, 1, ?8, ?9, ?10, ?11, ?12)",
+             ) VALUES (?1, ?2, '', ?3, 'agent', ?4, ?5, ?6, ?7, ?13, ?8, ?9, ?10, ?11, ?12)",
             params![
                 id,
                 expression,
@@ -123,6 +129,7 @@ pub fn add_agent_job_with_definition(
                 now.to_rfc3339(),
                 next_run.to_rfc3339(),
                 agent_id,
+                if enabled { 1 } else { 0 },
             ],
         )
         .context("Failed to insert cron agent job")?;
@@ -130,6 +137,97 @@ pub fn add_agent_job_with_definition(
     })?;
 
     get_job(config, &id)
+}
+
+/// Registers the cron job that fires a `flows::Flow`'s `schedule` trigger
+/// (issue B2). The flow's id is stored in `command` — a flow-schedule job has
+/// no shell command / agent prompt of its own, it only needs to name which
+/// flow to tick (see `JobType::Flow`'s doc). On fire the scheduler publishes
+/// `DomainEvent::FlowScheduleTick { flow_id: command }` instead of running
+/// anything; `flows::bus::FlowTriggerSubscriber` does the actual dispatch.
+///
+/// Race-safe / idempotent: `bind_schedule_trigger` does check-then-act
+/// (`find_flow_schedule_job` then this function), so two concurrent binds for
+/// the same flow can both observe "no job yet". The `idx_cron_jobs_flow_command`
+/// partial unique index (flow jobs only) turns the loser's `INSERT` into a
+/// no-op via `ON CONFLICT ... DO NOTHING`, and that loser then looks up and
+/// returns the winner's row instead of erroring — callers always get back
+/// exactly one cron job for `flow_id`, never a duplicate and never a
+/// constraint-violation error.
+pub fn add_flow_schedule_job(
+    config: &Config,
+    flow_id: &str,
+    schedule: Schedule,
+) -> Result<CronJob> {
+    let now = Utc::now();
+    validate_schedule(&schedule, now)?;
+    let next_run = next_run_for_schedule(&schedule, now)?;
+    let id = Uuid::new_v4().to_string();
+    let expression = schedule_cron_expression(&schedule).unwrap_or_default();
+    let schedule_json = serde_json::to_string(&schedule)?;
+    let name = format!("flow:{flow_id}");
+
+    let inserted_rows = with_connection(config, |conn| {
+        let rows = conn
+            .execute(
+                "INSERT INTO cron_jobs (
+                    id, expression, command, schedule, job_type, prompt, name, session_target, model,
+                    enabled, delivery, delete_after_run, created_at, next_run
+                 ) VALUES (?1, ?2, ?3, ?4, 'flow', NULL, ?5, 'isolated', NULL, 1, ?6, 0, ?7, ?8)
+                 ON CONFLICT (command) WHERE job_type = 'flow' DO NOTHING",
+                params![
+                    id,
+                    expression,
+                    flow_id,
+                    schedule_json,
+                    name,
+                    serde_json::to_string(&DeliveryConfig::default())?,
+                    now.to_rfc3339(),
+                    next_run.to_rfc3339(),
+                ],
+            )
+            .context("Failed to insert cron flow-schedule job")?;
+        Ok(rows)
+    })?;
+
+    if inserted_rows > 0 {
+        get_job(config, &id)
+    } else {
+        // Lost the race — another caller already holds the flow-schedule job
+        // for this flow_id/command. Return its row rather than erroring so
+        // `add_flow_schedule_job` is safe to call twice concurrently.
+        tracing::debug!(
+            target: "cron",
+            %flow_id,
+            "[cron] add_flow_schedule_job: insert conflicted with an existing flow job — returning the existing binding"
+        );
+        find_flow_schedule_job(config, flow_id)?.with_context(|| {
+            format!(
+                "add_flow_schedule_job: insert for flow '{flow_id}' conflicted but no existing \
+                 flow-schedule job was found"
+            )
+        })
+    }
+}
+
+/// Finds the cron job (if any) registered for a flow's `schedule` trigger —
+/// used by `flows::ops::flows_set_enabled` to make enable/disable idempotent
+/// (re-use the existing binding rather than creating a duplicate) and to tear
+/// it down on disable.
+pub fn find_flow_schedule_job(config: &Config, flow_id: &str) -> Result<Option<CronJob>> {
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, expression, command, schedule, job_type, prompt, name, session_target, model,
+                    enabled, delivery, delete_after_run, created_at, next_run, last_run, last_status, last_output,
+                    agent_id
+             FROM cron_jobs WHERE job_type = 'flow' AND command = ?1 LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![flow_id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(map_cron_job_row(row)?)),
+            None => Ok(None),
+        }
+    })
 }
 
 pub fn list_jobs(config: &Config) -> Result<Vec<CronJob>> {
@@ -297,6 +395,7 @@ pub fn due_jobs(config: &Config, now: DateTime<Utc>) -> Result<Vec<CronJob>> {
 
 pub fn update_job(config: &Config, job_id: &str, patch: CronJobPatch) -> Result<CronJob> {
     let mut job = get_job(config, job_id)?;
+    let was_enabled = job.enabled;
     let mut schedule_changed = false;
 
     if let Some(schedule) = patch.schedule {
@@ -335,6 +434,24 @@ pub fn update_job(config: &Config, job_id: &str, patch: CronJobPatch) -> Result<
 
     if schedule_changed {
         job.next_run = next_run_for_schedule(&job.schedule, Utc::now())?;
+    } else if job.enabled && !was_enabled {
+        // Disabled→enabled transition (e.g. opting into a seeded morning
+        // briefing). A job that sat disabled past its originally computed
+        // next_run would otherwise fire immediately on opt-in, because the
+        // scheduler selects `enabled = 1 AND next_run <= now`. Refresh a stale
+        // next_run so the first run lands on the next scheduled occurrence
+        // rather than firing the instant the user flips the switch.
+        let now = Utc::now();
+        if job.next_run <= now {
+            let refreshed = next_run_for_schedule(&job.schedule, now)?;
+            tracing::debug!(
+                job_id = %job.id,
+                stale_next_run = %job.next_run.to_rfc3339(),
+                next_run = %refreshed.to_rfc3339(),
+                "[cron::update_job] refreshed stale next_run on disabled→enabled transition"
+            );
+            job.next_run = refreshed;
+        }
     }
 
     with_connection(config, |conn| {
@@ -686,7 +803,18 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
         );
         CREATE INDEX IF NOT EXISTS idx_cron_runs_job_id ON cron_runs(job_id);
         CREATE INDEX IF NOT EXISTS idx_cron_runs_started_at ON cron_runs(started_at);
-        CREATE INDEX IF NOT EXISTS idx_cron_runs_job_started ON cron_runs(job_id, started_at);",
+        CREATE INDEX IF NOT EXISTS idx_cron_runs_job_started ON cron_runs(job_id, started_at);
+
+        -- Guards against duplicate flow-schedule cron bindings under a
+        -- concurrent `bind_schedule_trigger` (issue B2 CodeRabbit finding):
+        -- `flows::ops::bind_schedule_trigger` does check-then-act
+        -- (`find_flow_schedule_job` then `add_flow_schedule_job`), so two
+        -- racing binds for the same flow could otherwise each observe 'no
+        -- job' and insert a duplicate. Scoped to `job_type = 'flow'` via a
+        -- partial index so it can never constrain shell/agent jobs, which
+        -- may legitimately share a `command`.
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cron_jobs_flow_command
+            ON cron_jobs(command) WHERE job_type = 'flow';",
     )
     .context("Failed to initialize cron schema")?;
 

@@ -1,7 +1,7 @@
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
-import SettingsHeader from '../components/SettingsHeader';
-import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import { SettingsSection } from '../controls';
+import SettingsPanel from '../layout/SettingsPanel';
 import LogoutAndClearActions from '../LogoutAndClearActions';
 
 /**
@@ -12,7 +12,6 @@ import LogoutAndClearActions from '../LogoutAndClearActions';
  */
 const AccountPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { snapshot } = useCoreState();
 
   const user = snapshot.currentUser;
@@ -20,40 +19,27 @@ const AccountPanel = () => {
   const username = user?.username ? `@${user.username}` : null;
 
   return (
-    <div className="z-10 relative" data-testid="account-panel">
-      <SettingsHeader
-        title={t('pages.settings.accountSection.title')}
-        showBackButton
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
-      <div className="p-4 pt-2 space-y-5">
-        {(name || username) && (
-          <div className="flex items-center gap-3 rounded-2xl border border-stone-200 dark:border-neutral-800 px-4 py-3">
+    <SettingsPanel
+      testId="account-panel"
+      description={t('pages.settings.accountSection.description')}>
+      {(name || username) && (
+        <SettingsSection>
+          <div className="flex items-center gap-3 px-4 py-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-100 dark:bg-primary-500/15 text-sm font-semibold text-primary-700 dark:text-primary-300">
               {(name ?? username ?? '?').replace('@', '').slice(0, 1).toUpperCase()}
             </div>
             <div className="min-w-0">
-              {name && (
-                <div className="truncate text-sm font-medium text-stone-900 dark:text-neutral-100">
-                  {name}
-                </div>
-              )}
-              {username && (
-                <div className="truncate text-xs text-stone-500 dark:text-neutral-400">
-                  {username}
-                </div>
-              )}
+              {name && <div className="truncate text-sm font-medium text-content">{name}</div>}
+              {username && <div className="truncate text-xs text-content-muted">{username}</div>}
             </div>
           </div>
-        )}
+        </SettingsSection>
+      )}
 
-        <div className="rounded-2xl overflow-hidden border border-stone-200 dark:border-neutral-800">
-          <LogoutAndClearActions />
-        </div>
-      </div>
-    </div>
+      <SettingsSection>
+        <LogoutAndClearActions />
+      </SettingsSection>
+    </SettingsPanel>
   );
 };
 

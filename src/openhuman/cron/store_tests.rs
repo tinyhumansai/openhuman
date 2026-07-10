@@ -104,6 +104,102 @@ fn due_jobs_filters_by_timestamp_and_enabled() {
 }
 
 #[test]
+fn enabling_stale_disabled_job_refreshes_next_run() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Daily 7 AM job, then disable it (mimics a seeded opt-in morning briefing).
+    let job = add_job(&config, "0 7 * * *", "echo briefing").unwrap();
+    update_job(
+        &config,
+        &job.id,
+        CronJobPatch {
+            enabled: Some(false),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+
+    // Force a stale next_run in the past, as if the user onboarded before the
+    // job's first scheduled fire and only opted in later (hours or days after).
+    let stale = Utc::now() - ChronoDuration::hours(2);
+    with_connection(&config, |conn| {
+        conn.execute(
+            "UPDATE cron_jobs SET next_run = ?1 WHERE id = ?2",
+            params![stale.to_rfc3339(), job.id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    // Opt in: disabled -> enabled, with the schedule unchanged.
+    let enabled = update_job(
+        &config,
+        &job.id,
+        CronJobPatch {
+            enabled: Some(true),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+
+    assert!(enabled.enabled);
+    assert!(
+        enabled.next_run > Utc::now(),
+        "enabling a job with a stale next_run must refresh it to the future, got {}",
+        enabled.next_run
+    );
+    assert!(
+        due_jobs(&config, Utc::now()).unwrap().is_empty(),
+        "freshly opted-in job must not fire immediately on enable"
+    );
+}
+
+#[test]
+fn enabling_job_with_future_next_run_preserves_it() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let job = add_job(&config, "0 7 * * *", "echo briefing").unwrap();
+    update_job(
+        &config,
+        &job.id,
+        CronJobPatch {
+            enabled: Some(false),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+
+    // A future next_run is still valid and must be left untouched on enable.
+    let future = Utc::now() + ChronoDuration::hours(3);
+    with_connection(&config, |conn| {
+        conn.execute(
+            "UPDATE cron_jobs SET next_run = ?1 WHERE id = ?2",
+            params![future.to_rfc3339(), job.id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    let enabled = update_job(
+        &config,
+        &job.id,
+        CronJobPatch {
+            enabled: Some(true),
+            ..CronJobPatch::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        enabled.next_run.to_rfc3339(),
+        future.to_rfc3339(),
+        "enabling a job whose next_run is in the future must not reschedule it"
+    );
+}
+
+#[test]
 fn due_jobs_respects_scheduler_max_tasks_limit() {
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
@@ -376,6 +472,53 @@ fn dedup_named_jobs_keeps_earliest_when_history_tied() {
     // job_a was created first — it should win the tie.
     assert_eq!(remaining[0].id, job_a.id, "earliest job should be kept");
     assert!(get_job(&config, &job_b.id).is_err());
+}
+
+// ── add_flow_schedule_job race-safety (CodeRabbit finding A) ────────
+
+#[test]
+fn add_flow_schedule_job_twice_yields_a_single_row() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let schedule = Schedule::Cron {
+        expr: "0 9 * * *".into(),
+        tz: None,
+        active_hours: None,
+    };
+
+    let first = add_flow_schedule_job(&config, "flow-1", schedule.clone()).unwrap();
+    let second = add_flow_schedule_job(&config, "flow-1", schedule).unwrap();
+
+    // Calling it twice for the same flow must not create a duplicate — the
+    // second call returns the same row the first one created.
+    assert_eq!(first.id, second.id);
+
+    let flow_jobs: Vec<_> = list_jobs(&config)
+        .unwrap()
+        .into_iter()
+        .filter(|j| j.job_type == JobType::Flow && j.command == "flow-1")
+        .collect();
+    assert_eq!(
+        flow_jobs.len(),
+        1,
+        "exactly one job_type='flow' row should exist for flow-1"
+    );
+}
+
+#[test]
+fn add_flow_schedule_job_unique_index_does_not_affect_shell_jobs() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Two shell jobs sharing the same command must both persist — the new
+    // partial unique index is scoped to job_type = 'flow' and must not
+    // constrain shell/agent jobs, which may legitimately share a command.
+    let shell_a = add_job(&config, "*/5 * * * *", "echo shared").unwrap();
+    let shell_b = add_job(&config, "*/10 * * * *", "echo shared").unwrap();
+
+    assert!(get_job(&config, &shell_a.id).is_ok());
+    assert!(get_job(&config, &shell_b.id).is_ok());
+    assert_eq!(list_jobs(&config).unwrap().len(), 2);
 }
 
 #[test]

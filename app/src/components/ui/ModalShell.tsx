@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useT } from '../../lib/i18n/I18nContext';
+import Button from './Button';
 import { CloseIcon } from './icons';
 
 interface ModalShellProps {
@@ -51,9 +52,9 @@ export function ModalShell({
         aria-modal="true"
         aria-labelledby={labelledBy ?? titleId}
         tabIndex={-1}
-        className={`w-full ${maxWidthClassName} mx-4 rounded-2xl bg-white dark:bg-neutral-900 shadow-xl overflow-hidden animate-fade-up focus:outline-none`}
+        className={`w-full ${maxWidthClassName} mx-4 rounded-2xl bg-surface shadow-xl overflow-hidden animate-fade-up focus:outline-none`}
         onClick={event => event.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-stone-100 dark:border-neutral-800 px-5 py-4">
+        <div className="flex items-center justify-between border-b border-line-subtle px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
             {icon ? (
               <div className="w-9 h-9 rounded-xl bg-primary-50 flex items-center justify-center text-primary-600 flex-shrink-0">
@@ -61,23 +62,20 @@ export function ModalShell({
               </div>
             ) : null}
             <div className="min-w-0">
-              <h2
-                id={titleId}
-                className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+              <h2 id={titleId} className="text-sm font-semibold text-content">
                 {title}
               </h2>
-              {subtitle ? (
-                <p className="text-xs text-stone-500 dark:text-neutral-400">{subtitle}</p>
-              ) : null}
+              {subtitle ? <p className="text-xs text-content-muted">{subtitle}</p> : null}
             </div>
           </div>
-          <button
-            type="button"
+          <Button
+            iconOnly
+            variant="tertiary"
+            size="sm"
             aria-label={t('common.close')}
-            onClick={onClose}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 transition-colors">
+            onClick={onClose}>
             <CloseIcon className="w-4 h-4" />
-          </button>
+          </Button>
         </div>
         <div className={contentClassName}>{children}</div>
       </div>

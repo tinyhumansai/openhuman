@@ -8,12 +8,13 @@
 
 use crate::openhuman::file_state;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_EDITS: usize = 50;
@@ -75,6 +76,25 @@ impl Tool for ApplyPatchTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, context).await
+    }
+}
+
+impl ApplyPatchTool {
+    async fn execute_in_context(
+        &self,
+        args: serde_json::Value,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let edits = args
             .get("edits")
             .and_then(|v| v.as_array())
@@ -105,6 +125,8 @@ impl Tool for ApplyPatchTool {
             ));
         }
 
+        let path_policy = super::security_for_tool_context(&self.security, context, "apply_patch");
+
         // Parse + group edits by file.
         let mut parsed: Vec<ParsedEdit> = Vec::with_capacity(edits.len());
         for (i, raw) in edits.iter().enumerate() {
@@ -130,7 +152,7 @@ impl Tool for ApplyPatchTool {
                     "edit[{i}]: `old_string` must not be empty"
                 )));
             }
-            if !self.security.is_path_string_allowed(path) {
+            if !path_policy.is_path_string_allowed(path) {
                 return Ok(ToolResult::error(format!(
                     "edit[{i}]: path not allowed: {path}"
                 )));
@@ -160,7 +182,7 @@ impl Tool for ApplyPatchTool {
         };
         let mut _path_guards = Vec::new();
         for p in &unique_paths {
-            let full = self.security.action_dir.join(p);
+            let full = path_policy.action_dir.join(p);
             if let Ok(resolved) = tokio::fs::canonicalize(&full).await {
                 if let Some(guard) = file_state::acquire_path_lock(&resolved).await {
                     _path_guards.push(guard);
@@ -171,7 +193,7 @@ impl Tool for ApplyPatchTool {
         // File-state guard: reject edits based on stale or partial reads.
         if let Some(agent_id) = file_state::current_file_state_agent_id() {
             for p in &unique_paths {
-                let full = self.security.action_dir.join(p);
+                let full = path_policy.action_dir.join(p);
                 if let Ok(resolved) = tokio::fs::canonicalize(&full).await {
                     if let Some(msg) = file_state::check_stale_read(&agent_id, &resolved) {
                         tracing::debug!(
@@ -198,7 +220,7 @@ impl Tool for ApplyPatchTool {
         let mut buffers: HashMap<String, FileBuffer> = HashMap::new();
         for edit in &parsed {
             if !buffers.contains_key(&edit.path) {
-                let full = self.security.action_dir.join(&edit.path);
+                let full = path_policy.action_dir.join(&edit.path);
 
                 // Symlink check must happen on the *unresolved* path —
                 // canonicalize resolves symlinks, so a check after that
@@ -213,10 +235,10 @@ impl Tool for ApplyPatchTool {
                 }
 
                 // Security check: validate path string, resolve symlinks, confirm workspace containment.
-                let resolved = match self.security.validate_path(&edit.path).await {
+                let resolved = match path_policy.validate_path(&edit.path).await {
                     Ok(p) => p,
                     Err(msg) => {
-                        return Ok(ToolResult::error(format!("edit[{}]: {msg}", edit.index)))
+                        return Ok(ToolResult::error(format!("edit[{}]: {msg}", edit.index)));
                     }
                 };
                 if let Ok(meta) = tokio::fs::metadata(&resolved).await {
@@ -234,7 +256,7 @@ impl Tool for ApplyPatchTool {
                         return Ok(ToolResult::error(format!(
                             "edit[{}]: failed to read {}: {e}",
                             edit.index, edit.path
-                        )))
+                        )));
                     }
                 };
                 buffers.insert(

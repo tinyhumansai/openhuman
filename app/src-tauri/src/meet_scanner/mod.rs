@@ -78,7 +78,7 @@ pub fn spawn<R: Runtime>(
     // Use tokio::spawn (not tauri::async_runtime::spawn) so we get a
     // JoinHandle whose abort_handle() we can return to the caller.
     let handle = tokio::spawn(async move {
-        match run(&request_id, &meet_url, &display_name).await {
+        match run(&app, &request_id, &meet_url, &display_name).await {
             Ok(()) => {
                 log::info!("[meet-scanner] join sequence completed request_id={request_id}");
                 // Diagnostic build: keep the window VISIBLE post-join so
@@ -91,7 +91,6 @@ pub fn spawn<R: Runtime>(
                 // pipeline works with the window visible we'll restore
                 // hide() via a different mechanism (e.g. drag off-screen
                 // via Tauri set_position rather than orderOut:).
-                let _ = app;
                 let _ = request_id;
             }
             Err(err) => {
@@ -102,8 +101,13 @@ pub fn spawn<R: Runtime>(
     handle.abort_handle()
 }
 
-async fn run(request_id: &str, meet_url: &str, display_name: &str) -> Result<(), String> {
-    let (mut cdp, session) = wait_for_meet_target(meet_url).await?;
+async fn run<R: Runtime>(
+    app: &AppHandle<R>,
+    request_id: &str,
+    meet_url: &str,
+    display_name: &str,
+) -> Result<(), String> {
+    let (mut cdp, session) = wait_for_meet_target(app, request_id, meet_url).await?;
     log::info!("[meet-scanner] attached to meet target request_id={request_id} session={session}");
 
     // `Runtime.enable` is required before `Runtime.evaluate` returns
@@ -504,11 +508,23 @@ async fn click_by_aria_label(
 /// shows up, then attach a CDP session to it. Filtering by the full
 /// per-call URL prefix (rather than just the host) keeps two concurrent
 /// Meet calls from cross-controlling each other when both are open.
-async fn wait_for_meet_target(meet_url: &str) -> Result<(CdpConn, String), String> {
+async fn wait_for_meet_target<R: Runtime>(
+    app: &AppHandle<R>,
+    request_id: &str,
+    meet_url: &str,
+) -> Result<(CdpConn, String), String> {
+    let label = crate::meet_call::window_label_for(request_id);
     let deadline = tokio::time::Instant::now() + TARGET_DISCOVERY_BUDGET;
     let mut last_err = String::new();
     while tokio::time::Instant::now() < deadline {
-        match cdp::connect_and_attach_matching(|t| t.url.starts_with(meet_url)).await {
+        let meet_url_owned = meet_url.to_string();
+        let pred =
+            move |t: &crate::cdp::target::CdpTarget| -> bool { t.url.starts_with(&meet_url_owned) };
+        match cdp::target::connect_and_attach_matching_in_process_by_label::<R, _>(
+            app, &label, pred,
+        )
+        .await
+        {
             Ok(pair) => return Ok(pair),
             Err(err) => {
                 last_err = err;

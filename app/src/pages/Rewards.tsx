@@ -1,12 +1,13 @@
 import createDebug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import EmptyStateCard from '../components/EmptyStateCard';
-import PillTabBar from '../components/PillTabBar';
+import ChipTabs from '../components/layout/ChipTabs';
 import RewardsCommunityTab from '../components/rewards/RewardsCommunityTab';
 import RewardsRedeemTab from '../components/rewards/RewardsRedeemTab';
 import RewardsReferralsTab from '../components/rewards/RewardsReferralsTab';
+import { settingsNavState } from '../components/settings/modal/settingsOverlay';
 import { useT } from '../lib/i18n/I18nContext';
 import { useCoreState } from '../providers/CoreStateProvider';
 import { rewardsApi } from '../services/api/rewardsApi';
@@ -30,6 +31,7 @@ function errorMessage(err: unknown): string {
 const Rewards = () => {
   const { t } = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const { snapshot: coreSnapshot } = useCoreState();
   const isLocalSession = isLocalSessionToken(coreSnapshot.sessionToken);
   const [selectedTab, setSelectedTab] = useState<RewardsTab>('rewards');
@@ -37,31 +39,45 @@ const Rewards = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadRewards = useCallback(async (signal?: { cancelled: boolean }) => {
-    log('fetching snapshot');
-    setIsLoading(true);
-    setError(null);
-    try {
-      const result = await rewardsApi.getMyRewards();
-      if (signal?.cancelled) return;
-      setRewardsSnapshot(result);
-      log(
-        'snapshot applied unlockedCount=%d totalCount=%d',
-        result.summary.unlockedCount,
-        result.summary.totalCount
-      );
-    } catch (err) {
-      const message = errorMessage(err);
-      log('snapshot load failed error=%s', message);
-      if (signal?.cancelled) return;
-      setRewardsSnapshot(null);
-      setError(message);
-    } finally {
-      if (!signal?.cancelled) {
-        setIsLoading(false);
+  const loadRewards = useCallback(
+    async (signal?: { cancelled: boolean }, opts?: { silent?: boolean }) => {
+      const silent = opts?.silent === true;
+      log('fetching snapshot silent=%s', silent);
+      // A silent refresh (e.g. reconciling after a claim) keeps the current view
+      // and never flips into the loading/error state — a failed background refetch
+      // must not blank a page whose data is still valid.
+      if (!silent) {
+        setIsLoading(true);
+        setError(null);
       }
-    }
-  }, []);
+      try {
+        const result = await rewardsApi.getMyRewards();
+        if (signal?.cancelled) return;
+        setRewardsSnapshot(result);
+        log(
+          'snapshot applied unlockedCount=%d totalCount=%d',
+          result.summary.unlockedCount,
+          result.summary.totalCount
+        );
+      } catch (err) {
+        const message = errorMessage(err);
+        log('snapshot load failed silent=%s error=%s', silent, message);
+        if (signal?.cancelled || silent) return;
+        setRewardsSnapshot(null);
+        setError(message);
+      } finally {
+        if (!signal?.cancelled && !silent) {
+          setIsLoading(false);
+        }
+      }
+    },
+    []
+  );
+
+  const handleSilentRefresh = useCallback(
+    () => loadRewards(undefined, { silent: true }),
+    [loadRewards]
+  );
 
   useEffect(() => {
     if (isLocalSession) {
@@ -71,6 +87,22 @@ const Rewards = () => {
     void loadRewards(signal);
     return () => {
       signal.cancelled = true;
+    };
+  }, [isLocalSession, loadRewards]);
+
+  // After a Discord (or any) OAuth connect completes, the deep-link listener dispatches
+  // `oauth:success` — refresh the snapshot so the Discord connection / username updates live.
+  useEffect(() => {
+    if (isLocalSession) {
+      return;
+    }
+    const handleOAuthSuccess = () => {
+      log('oauth success event received; refreshing rewards snapshot');
+      void loadRewards();
+    };
+    window.addEventListener('oauth:success', handleOAuthSuccess);
+    return () => {
+      window.removeEventListener('oauth:success', handleOAuthSuccess);
     };
   }, [isLocalSession, loadRewards]);
 
@@ -108,7 +140,7 @@ const Rewards = () => {
             title={t('rewards.title')}
             description={t('rewards.localUnavailable')}
             actionLabel={t('rewards.localUnavailableCta')}
-            onAction={() => navigate('/settings/account')}
+            onAction={() => navigate('/settings/account', settingsNavState(location))}
           />
         </div>
       </div>
@@ -118,15 +150,15 @@ const Rewards = () => {
   return (
     <div className="min-h-full px-4 pt-6 pb-10">
       <div className="mx-auto max-w-2xl space-y-4">
-        <PillTabBar
+        <ChipTabs<RewardsTab>
           items={[
-            { label: t('rewards.referrals'), value: 'referrals' },
-            { label: t('rewards.title'), value: 'rewards' },
-            { label: t('rewards.coupons'), value: 'redeem' },
+            { id: 'referrals', label: t('rewards.referrals') },
+            { id: 'rewards', label: t('rewards.title') },
+            { id: 'redeem', label: t('rewards.coupons') },
           ]}
-          selected={selectedTab}
+          value={selectedTab}
           onChange={handleTabChange}
-          activeClassName="border-primary-600 bg-primary-600 text-white"
+          className="flex flex-wrap gap-2 pb-1"
         />
 
         {selectedTab === 'referrals' ? (
@@ -138,6 +170,7 @@ const Rewards = () => {
             error={error}
             isLoading={isLoading}
             onRetry={handleRetry}
+            onSilentRefresh={handleSilentRefresh}
             snapshot={rewardsSnapshot}
           />
         )}

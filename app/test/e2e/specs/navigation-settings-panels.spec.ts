@@ -56,9 +56,10 @@ const PANELS: PanelCheck[] = [
     markers: ['Memory', 'Data', 'Storage', 'Export', 'Import', 'Settings'],
   },
   {
-    // N2.4 — intelligence / AI settings (top-level route, not nested under /settings)
-    hash: '/intelligence',
-    markers: ['Intelligence', 'AI', 'Model', 'Skills', 'Settings'],
+    // N2.4 — intelligence dashboard moved into Brain (the legacy /intelligence
+    // and /settings/intelligence routes redirect here).
+    hash: '/brain?tab=intelligence',
+    markers: ['Intelligence', 'Memory', 'Subconscious', 'Graph', 'Settings'],
   },
   {
     // N2.5 — developer options
@@ -191,7 +192,9 @@ describe('Navigation — settings sub-panels', () => {
     expect(homeText).toBeTruthy();
 
     const hash = await browser.execute(() => window.location.hash);
-    expect(hash).toMatch(/^#\/home/);
+    // Home merged into the unified chat surface: navigateToHome() lands on
+    // #/chat (/home redirects there). Accept either.
+    expect(hash).toMatch(/^#\/(chat|home)/);
     console.log(`${LOG_PREFIX} N2.9: passed — home content: "${homeText}"`);
   });
 });

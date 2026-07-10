@@ -26,6 +26,7 @@ const NAMESPACE: &str = "memory_tree";
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("query_source"),
+        schemas("cover_window"),
         schemas("search_entities"),
         schemas("drill_down"),
         schemas("fetch_leaves"),
@@ -39,6 +40,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("query_source"),
             handler: handle_query_source,
+        },
+        RegisteredController {
+            schema: schemas("cover_window"),
+            handler: handle_cover_window,
         },
         RegisteredController {
             schema: schemas("search_entities"),
@@ -128,6 +133,53 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "limit",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
                     comment: "Max hits (default 10).",
+                    required: false,
+                },
+            ],
+            outputs: query_response_outputs(),
+        },
+        "cover_window" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "cover_window",
+            description: "Return the MINIMUM set of nodes covering all memory in a time \
+                 window `[since_ms, until_ms]` (epoch-millis). Emits the coarsest summary \
+                 whose whole subtree falls inside the window, and raw leaf chunks for \
+                 anything not covered by such a summary (boundary content and not-yet-\
+                 summarised chunks). Optional `source_id` / `source_kind` scope the result. \
+                 Hits are grouped by source and ordered ascending by start time. Use this \
+                 for time-bounded recaps (e.g. a last-24h morning brief) instead of \
+                 `query_source`, which returns all-time summaries.",
+            inputs: vec![
+                FieldSchema {
+                    name: "since_ms",
+                    ty: TypeSchema::I64,
+                    comment: "Inclusive window start, epoch-milliseconds.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "until_ms",
+                    ty: TypeSchema::I64,
+                    comment: "Inclusive window end, epoch-milliseconds.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "source_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Exact source id (e.g. `slack:#eng`, `gmail:abc`).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "source_kind",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Enum {
+                        variants: vec!["chat", "email", "document"],
+                    })),
+                    comment: "Source kind filter when no exact id is known.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "limit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Max hits (default 200).",
                     required: false,
                 },
             ],
@@ -274,6 +326,14 @@ fn handle_query_source(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_cover_window(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<retrieval_rpc::CoverWindowRequest>(Value::Object(params))?;
+        to_json(retrieval_rpc::cover_window_rpc(&config, req).await?)
+    })
+}
+
 fn handle_search_entities(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -318,6 +378,7 @@ mod tests {
             functions,
             vec![
                 "query_source",
+                "cover_window",
                 "search_entities",
                 "drill_down",
                 "fetch_leaves",
@@ -328,7 +389,7 @@ mod tests {
     #[test]
     fn registered_controllers_use_memory_tree_namespace() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 4);
+        assert_eq!(controllers.len(), 5);
         assert!(controllers.iter().all(|c| c.schema.namespace == NAMESPACE));
     }
 

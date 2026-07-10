@@ -67,7 +67,11 @@ pub(super) struct ParallelEntry {
 #[derive(Debug, Clone)]
 pub(super) struct WebChatTaskResult {
     pub(super) full_response: String,
-    pub(super) citations: Vec<crate::openhuman::agent::memory_loader::MemoryCitation>,
+    pub(super) citations: Vec<crate::openhuman::agent_memory::memory_loader::MemoryCitation>,
+    /// Holistic token/cost/context totals for the turn (parent + sub-agents),
+    /// forwarded to the frontend on `chat_done`. `None` for synthetic results
+    /// (e.g. budget-exhausted placeholders) that never ran a real turn.
+    pub(super) usage: Option<crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage>,
 }
 
 /// Per-request metadata carried alongside a chat send. Currently used by the
@@ -78,6 +82,29 @@ pub struct ChatRequestMetadata {
     pub speak_reply: Option<bool>,
     pub source: Option<String>,
     pub session_id: Option<u64>,
+    /// Resolved agent definition id driving this turn (e.g. `"orchestrator"`,
+    /// a task executor's agent). Stamped by the run entrypoint once the agent
+    /// is resolved — used purely for trace attribution (Langfuse `agent.id` /
+    /// `agent.turn:<id>` trace name), never for routing.
+    pub agent_id: Option<String>,
+}
+
+impl ChatRequestMetadata {
+    /// Constructor for messages submitted via the AgentBox `/run` HTTP surface
+    /// (`OPENHUMAN_AGENTBOX_MODE=1`). These are background invocations driven
+    /// programmatically by a remote marketplace caller — no live UI is
+    /// attached to surface TTS or PTT signals — so `speak_reply` and
+    /// `session_id` stay `None` and the `source` tag identifies the origin
+    /// for analytics / log filtering downstream (mirrors the `"ptt"` /
+    /// `"dictation"` / `"type"` convention used by the desktop UI).
+    pub fn agentbox() -> Self {
+        Self {
+            speak_reply: None,
+            source: Some("agentbox".to_string()),
+            session_id: None,
+            agent_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -40,10 +40,8 @@ export default function Webhooks({ embedded = false }: WebhooksProps) {
         )}
         <div className="h-full flex items-center justify-center p-4 pt-6">
           <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-neutral-300 dark:border-neutral-700 border-t-primary-500" />
-            <span className="text-sm text-neutral-500 dark:text-neutral-400">
-              {t('common.loading')}
-            </span>
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-line-strong border-t-primary-500" />
+            <span className="text-sm text-content-muted">{t('common.loading')}</span>
           </div>
         </div>
       </div>
@@ -55,9 +53,7 @@ export default function Webhooks({ embedded = false }: WebhooksProps) {
       {/* Bespoke connection status badge — keep intentional visual */}
       <span
         className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full ${
-          coreConnected
-            ? 'bg-sage-100 text-sage-700'
-            : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400'
+          coreConnected ? 'bg-sage-100 text-sage-700' : 'bg-surface-subtle text-content-muted'
         }`}>
         <span
           className={`w-1.5 h-1.5 rounded-full ${
@@ -92,18 +88,18 @@ export default function Webhooks({ embedded = false }: WebhooksProps) {
         <SettingsSection title={t('skills.search')} description={t('misc.rehydrating')}>
           <div className="px-4 py-3 space-y-2">
             <div>
-              <div className="text-xs uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+              <div className="text-xs uppercase tracking-wide text-content-faint">
                 {t('webhooks.archiveDirectory')}
               </div>
-              <div className="font-mono text-xs break-all text-neutral-800 dark:text-neutral-100">
+              <div className="font-mono text-xs break-all text-content">
                 {archiveDir ?? t('common.loading')}
               </div>
             </div>
             <div>
-              <div className="text-xs uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+              <div className="text-xs uppercase tracking-wide text-content-faint">
                 {t('webhooks.todayFile')}
               </div>
-              <div className="font-mono text-xs break-all text-neutral-800 dark:text-neutral-100">
+              <div className="font-mono text-xs break-all text-content">
                 {currentDayFile ?? t('common.loading')}
               </div>
             </div>

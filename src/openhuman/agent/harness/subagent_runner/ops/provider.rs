@@ -77,9 +77,11 @@ pub(crate) fn resolve_subagent_provider(
                 match crate::openhuman::inference::provider::create_chat_provider(workload, cfg) {
                     Ok((p, m)) => {
                         log::info!(
-                        "[subagent_runner] role={} agent_id={} resolved via workload factory model={}",
-                        workload, agent_id, m
-                    );
+                            "[subagent_runner] role={} agent_id={} resolved via workload factory model={}",
+                            workload,
+                            agent_id,
+                            m
+                        );
                         (std::sync::Arc::from(p), m)
                     }
                     Err(e) => {
@@ -153,9 +155,16 @@ pub(crate) fn user_is_signed_in_to_composio(config: &crate::openhuman::config::C
 /// `composio.mode` toggle is honoured per execute — see
 /// [`crate::openhuman::composio::ComposioActionTool`] and issue #1710.
 pub(crate) struct LazyToolkitResolver {
-    pub(crate) config: std::sync::Arc<crate::openhuman::config::Config>,
-    pub(crate) actions: Vec<crate::openhuman::context::prompt::ConnectedIntegrationTool>,
+    pub(super) config: std::sync::Arc<crate::openhuman::config::Config>,
+    pub(super) actions: Vec<crate::openhuman::context::prompt::ConnectedIntegrationTool>,
 }
+
+/// Minimum normalized-slug length before the prefix/superstring tier in
+/// [`LazyToolkitResolver::find_action`] engages (#3152). Below this, a stray
+/// short slug (`notion`, `gmail`) would prefix-match too many actions; the
+/// uniqueness check would reject it anyway, but the length gate makes the
+/// intent explicit and skips needless scans.
+const TIER4_MIN_SLUG_LEN: usize = 8;
 
 impl LazyToolkitResolver {
     pub(super) fn resolve(&self, name: &str) -> Option<Box<dyn crate::openhuman::tools::Tool>> {
@@ -222,6 +231,38 @@ impl LazyToolkitResolver {
                     norm = %norm,
                     "[subagent_runner] ambiguous normalized-slug match — multiple actions resolve to the same slug; not resolving"
                 );
+                return None;
+            }
+
+            // Tier 4: unique prefix/superstring match (#3152). Models
+            // routinely emit a TRUNCATED action slug — `NOTION_SEARCH_NOTION`
+            // for the catalogued `NOTION_SEARCH_NOTION_PAGE` — or, less often,
+            // a suffixed one. Accept only when exactly one action's normalized
+            // slug extends the request (or vice-versa). Gated on a non-trivial
+            // request length so a short or hallucinated slug can't fan out
+            // across many actions, and strictly unique so a near-miss WRITE
+            // can never silently dispatch to the wrong action (data-integrity:
+            // a mis-resolved create/update would touch the wrong resource).
+            if norm.len() >= TIER4_MIN_SLUG_LEN {
+                let mut prefix_matches = self.actions.iter().filter(|a| {
+                    let cand = normalize_slug(&a.name);
+                    !cand.is_empty() && (cand.starts_with(&norm) || norm.starts_with(&cand))
+                });
+                if let Some(action) = prefix_matches.next() {
+                    if prefix_matches.next().is_none() {
+                        tracing::info!(
+                            requested = %name,
+                            matched = %action.name,
+                            "[subagent_runner] resolved tool by unique prefix/superstring match"
+                        );
+                        return Some(action);
+                    }
+                    tracing::warn!(
+                        requested = %name,
+                        norm = %norm,
+                        "[subagent_runner] ambiguous prefix/superstring match — multiple actions share the slug prefix; not resolving"
+                    );
+                }
             }
         }
         None
@@ -238,7 +279,7 @@ impl LazyToolkitResolver {
 /// drift (`GOOGLESLIDES_BATCH_UPDATE` vs `googleslides_batch_update`) so
 /// near-miss tool slugs still resolve, while genuinely different slugs
 /// (e.g. a hallucinated `GMAIL_GET_LAST_3_MESSAGES`) stay distinct.
-pub(crate) fn normalize_slug(s: &str) -> String {
+pub(super) fn normalize_slug(s: &str) -> String {
     s.chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .map(|c| c.to_ascii_lowercase())

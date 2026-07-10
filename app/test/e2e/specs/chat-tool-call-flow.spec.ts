@@ -12,6 +12,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -108,7 +109,7 @@ describe('Chat tool-call lifecycle', () => {
   it('T1.1 — tool timeline entry (ToolTimelineBlock) renders during execution', async () => {
     console.log(`${LOG_PREFIX} T1.1: navigating to /chat and opening new thread`);
     await navigateViaHash('/chat');
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations panel did not mount',
     });
@@ -135,6 +136,7 @@ describe('Chat tool-call lifecycle', () => {
 
     // Poll for a tool timeline entry while the LLM processes the tool_calls turn.
     let sawToolTimeline = false;
+    let sawFinalAnswer = false;
     const deadline = Date.now() + 45_000;
     while (Date.now() < deadline) {
       const snap = await snapshotRuntime(threadId);
@@ -148,6 +150,7 @@ describe('Chat tool-call lifecycle', () => {
       // Also check if the final answer arrived (tool timeline may have already cleared
       // if the whole turn was faster than our polling interval).
       if (await textExists(CANARY_FINAL)) {
+        sawFinalAnswer = true;
         console.log(`${LOG_PREFIX} T1.1: final answer arrived before first timeline poll`);
         break;
       }
@@ -156,7 +159,7 @@ describe('Chat tool-call lifecycle', () => {
 
     // The timeline entry is the primary signal, but if the full turn completed
     // before our first poll we still accept the final-answer path.
-    const finalArrived = await textExists(CANARY_FINAL);
+    const finalArrived = sawFinalAnswer || (await textExists(CANARY_FINAL));
     expect(sawToolTimeline || finalArrived).toBe(true);
     console.log(
       `${LOG_PREFIX} T1.1: passed (sawTimeline=${sawToolTimeline}, finalArrived=${finalArrived})`

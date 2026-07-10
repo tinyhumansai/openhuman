@@ -211,6 +211,15 @@ pub async fn synthesize_reply(
         opts.voice_id.as_deref().unwrap_or("default")
     );
 
+    // `flatten_authed_error` maps the typed `BackendApiError::Unauthorized`
+    // (expected session-lapse 401 from `authed_json`) onto the `SESSION_EXPIRED`
+    // sentinel so the JSON-RPC layer (`core/jsonrpc.rs::is_session_expired_error`)
+    // classifies it as session expiry and skips Sentry, matching the #3384
+    // team/billing pattern. The previous `e.to_string()` produced the raw
+    // "backend rejected session token on POST /openai/v1/audio/speech" Display
+    // string, which matched none of the session-expiry classifiers and leaked
+    // every lapsed-session TTS 401 to Sentry (TAURI-RUST-8X1). Every other error
+    // keeps its full `{e:#}` anyhow chain so genuine TTS failures still report.
     let raw = client
         .authed_json(
             &token,
@@ -219,7 +228,7 @@ pub async fn synthesize_reply(
             Some(Value::Object(body)),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::api::flatten_authed_error)?;
 
     let result = normalize_response(&raw);
     debug!(
@@ -285,11 +294,28 @@ fn parse_cue(v: &Value) -> Option<VisemeFrame> {
     if viseme.is_empty() {
         return None;
     }
-    let start = read_u64(v, &["start_ms", "time_ms", "t"]).unwrap_or(0);
-    let end = read_u64(v, &["end_ms"])
+    // Accept millisecond keys, or seconds keys (`startSeconds`/`endSeconds`, the
+    // shape the cloud backend actually ships) converted to ms. Without the
+    // seconds keys every frame collapsed to start=0/end=80 — the mascot mouth
+    // then froze on the first viseme because the whole track had no real timing.
+    let start = read_ms(
+        v,
+        &["start_ms", "time_ms", "t"],
+        &["startSeconds", "start_seconds", "startSec"],
+    )
+    .unwrap_or(0);
+    let end = read_ms(v, &["end_ms"], &["endSeconds", "end_seconds", "endSec"])
         .or_else(|| {
-            let t = read_u64(v, &["time_ms", "t"])?;
-            let d = read_u64(v, &["duration_ms", "d"])?;
+            let t = read_ms(
+                v,
+                &["time_ms", "t"],
+                &["startSeconds", "start_seconds", "startSec"],
+            )?;
+            let d = read_ms(
+                v,
+                &["duration_ms", "d"],
+                &["durationSeconds", "duration_seconds", "durationSec"],
+            )?;
             Some(t + d)
         })
         .unwrap_or(start + 80);
@@ -305,8 +331,8 @@ fn parse_cue(v: &Value) -> Option<VisemeFrame> {
 
 fn parse_alignment(v: &Value) -> Option<AlignmentFrame> {
     let ch = v.get("char").and_then(Value::as_str)?.to_string();
-    let start = read_u64(v, &["start_ms"])?;
-    let end = read_u64(v, &["end_ms"])?;
+    let start = read_ms(v, &["start_ms"], &["startSeconds", "start_seconds"])?;
+    let end = read_ms(v, &["end_ms"], &["endSeconds", "end_seconds"])?;
     if end <= start {
         return None;
     }
@@ -326,6 +352,27 @@ fn read_u64(v: &Value, keys: &[&str]) -> Option<u64> {
             if f.is_finite() && f >= 0.0 {
                 return Some(f as u64);
             }
+        }
+    }
+    None
+}
+
+/// Read a time value in milliseconds. Tries `ms_keys` first (integer or float
+/// ms), then `sec_keys` interpreted as seconds and converted to ms. This lets
+/// the parser tolerate both the `*_ms` contract and the backend's
+/// `*Seconds` shape without the caller caring which arrived.
+fn read_ms(v: &Value, ms_keys: &[&str], sec_keys: &[&str]) -> Option<u64> {
+    if let Some(ms) = read_u64(v, ms_keys) {
+        return Some(ms);
+    }
+    for k in sec_keys {
+        if let Some(f) = v.get(*k).and_then(Value::as_f64) {
+            if f.is_finite() && f >= 0.0 {
+                return Some((f * 1000.0).round() as u64);
+            }
+        }
+        if let Some(n) = v.get(*k).and_then(Value::as_u64) {
+            return Some(n.saturating_mul(1000));
         }
     }
     None
@@ -375,6 +422,75 @@ mod tests {
     }
 
     #[test]
+    fn normalize_accepts_seconds_keys() {
+        // The cloud backend ships per-frame timing as seconds (`startSeconds`/
+        // `endSeconds`); the parser must convert to ms rather than dropping it
+        // (which collapsed every frame to start=0/end=80 and froze the mouth).
+        let raw = json!({
+            "audio_base64": "AAA=",
+            "visemes": [
+                { "viseme": "sil", "startSeconds": 0.0, "endSeconds": 0.12 },
+                { "viseme": "aa", "startSeconds": 0.12, "endSeconds": 0.45 },
+                // A gap before the next cue (0.45 → 0.90) is a real pause: the
+                // mouth rests there. Preserved because we keep the true ends.
+                { "viseme": "PP", "startSeconds": 0.9, "endSeconds": 1.05 },
+            ],
+            "alignment": [
+                { "char": "h", "startSeconds": 0.0, "endSeconds": 0.05 },
+            ],
+        });
+        let r = normalize_response(&raw);
+        assert_eq!(r.visemes.len(), 3);
+        assert_eq!(
+            r.visemes[0],
+            VisemeFrame {
+                viseme: "sil".into(),
+                start_ms: 0,
+                end_ms: 120
+            }
+        );
+        assert_eq!(
+            r.visemes[1],
+            VisemeFrame {
+                viseme: "aa".into(),
+                start_ms: 120,
+                end_ms: 450
+            }
+        );
+        assert_eq!(
+            r.visemes[2],
+            VisemeFrame {
+                viseme: "PP".into(),
+                start_ms: 900,
+                end_ms: 1050
+            }
+        );
+        let alignment = r.alignment.expect("alignment present");
+        assert_eq!(alignment.len(), 1);
+        assert_eq!(alignment[0].start_ms, 0);
+        assert_eq!(alignment[0].end_ms, 50);
+    }
+
+    #[test]
+    fn normalize_accepts_short_seconds_duration_aliases() {
+        let raw = json!({
+            "audio_base64": "AAA=",
+            "visemes": [
+                { "viseme": "aa", "startSec": 1.2, "durationSec": 0.15 },
+            ],
+        });
+        let r = normalize_response(&raw);
+        assert_eq!(
+            r.visemes,
+            vec![VisemeFrame {
+                viseme: "aa".into(),
+                start_ms: 1200,
+                end_ms: 1350
+            }]
+        );
+    }
+
+    #[test]
     fn normalize_drops_malformed_cues() {
         let raw = json!({
             "audio_base64": "CCC=",
@@ -397,5 +513,65 @@ mod tests {
         });
         let r = normalize_response(&raw);
         assert_eq!(r.alignment.as_deref().unwrap()[0].char, "h");
+    }
+
+    #[test]
+    fn tts_unauthorized_flattens_to_session_expiry_not_hard_error() {
+        // TAURI-RUST-8X1: a lapsed-session 401 on the TTS endpoint
+        // (`POST /openai/v1/audio/speech`) used to be flattened with
+        // `e.to_string()`, producing the raw "backend rejected session token …"
+        // Display string that matched none of the session-expiry classifiers and
+        // leaked to Sentry as a hard error. `synthesize_reply` now flattens the
+        // typed `BackendApiError::Unauthorized` via `crate::api::flatten_authed_error`
+        // (the #3384 team/billing pattern), so it carries the SESSION_EXPIRED
+        // sentinel and is recognised + demoted by the JSON-RPC dispatcher.
+        //
+        // This test couples the exact TTS endpoint's typed 401 to the live
+        // classifier: build the typed error → flatten → classify. If either the
+        // sentinel mapping or the classifier drifts, this fails instead of
+        // silently re-leaking the TTS 401.
+        let flat = crate::api::flatten_authed_error(anyhow::Error::new(
+            crate::api::BackendApiError::Unauthorized {
+                method: "POST".to_string(),
+                path: "/openai/v1/audio/speech".to_string(),
+            },
+        ));
+
+        assert!(
+            flat.contains("SESSION_EXPIRED"),
+            "flattened TTS 401 must carry the sentinel, got: {flat}"
+        );
+        assert!(
+            flat.contains("/openai/v1/audio/speech"),
+            "path preserved for logs: {flat}"
+        );
+        assert!(
+            crate::core::observability::is_session_expired_message(&flat),
+            "flattened TTS Unauthorized must classify as session expiry (demoted, \
+             not a hard error): {flat}"
+        );
+    }
+
+    #[test]
+    fn tts_non_auth_error_is_not_demoted_to_session_expiry() {
+        // A genuine TTS failure (timeout, 5xx, …) must keep its full anyhow chain
+        // and NOT be demoted — real backend/TTS breakage must still reach Sentry.
+        let flat = crate::api::flatten_authed_error(
+            anyhow::anyhow!("connect timeout")
+                .context("backend request POST /openai/v1/audio/speech"),
+        );
+
+        assert!(
+            !flat.contains("SESSION_EXPIRED"),
+            "non-auth TTS error must not be demoted: {flat}"
+        );
+        assert!(
+            flat.contains("connect timeout"),
+            "underlying cause preserved: {flat}"
+        );
+        assert!(
+            !crate::core::observability::is_session_expired_message(&flat),
+            "non-auth TTS error must NOT classify as session expiry: {flat}"
+        );
     }
 }

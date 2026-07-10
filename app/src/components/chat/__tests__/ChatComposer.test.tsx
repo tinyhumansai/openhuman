@@ -133,10 +133,160 @@ describe('ChatComposer', () => {
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the stop button (not send) while sending with an empty composer', () => {
+    renderComposer({ isSending: true, inputValue: '', onStopGeneration: vi.fn() });
+    expect(screen.getByTestId('stop-generation-button')).toBeInTheDocument();
+    expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument();
+  });
+
+  it('stop button stays enabled while sending', () => {
+    renderComposer({ isSending: true, inputValue: '', onStopGeneration: vi.fn() });
+    expect(screen.getByTestId('stop-generation-button')).not.toBeDisabled();
+  });
+
+  it('calls onStopGeneration when the stop button is clicked', () => {
+    const onStopGeneration = vi.fn();
+    renderComposer({ isSending: true, inputValue: '', onStopGeneration });
+    fireEvent.click(screen.getByTestId('stop-generation-button'));
+    expect(onStopGeneration).toHaveBeenCalledTimes(1);
+  });
+
+  it('reverts to the send button while sending once a follow-up is typed', () => {
+    // Parallel/follow-up send: a typed follow-up should be queuable, so the
+    // Send arrow returns instead of the Stop button.
+    renderComposer({
+      isSending: true,
+      allowParallelSend: true,
+      inputValue: 'a follow-up',
+      onStopGeneration: vi.fn(),
+    });
+    expect(screen.queryByTestId('stop-generation-button')).not.toBeInTheDocument();
+    expect(screen.getByTestId('send-message-button')).toBeInTheDocument();
+  });
+
+  it('falls back to the disabled send button while sending when no onStopGeneration', () => {
+    renderComposer({ isSending: true, inputValue: '' });
+    expect(screen.queryByTestId('stop-generation-button')).not.toBeInTheDocument();
+    expect(screen.getByTestId('send-message-button')).toBeDisabled();
+  });
+
   it('calls onSwitchToMicCloud when voice mode button is clicked', () => {
     const onSwitchToMicCloud = vi.fn();
     renderComposer({ onSwitchToMicCloud });
     fireEvent.click(screen.getByRole('button', { name: 'composer.voiceMode' }));
     expect(onSwitchToMicCloud).toHaveBeenCalledTimes(1);
+  });
+
+  describe('drag-and-drop', () => {
+    function makeVideoFile() {
+      return new File([new Uint8Array(8)], 'clip.mp4', { type: 'video/mp4' });
+    }
+
+    it('shows the drop overlay while a file drag is over the composer', () => {
+      renderComposer();
+      const textarea = screen.getByRole('textbox');
+      const box = textarea.closest('div.rounded-2xl') as HTMLElement;
+      fireEvent.dragOver(box, { dataTransfer: { types: ['Files'] } });
+      expect(screen.getByText('chat.attachment.dropToAttach')).toBeInTheDocument();
+    });
+
+    it('routes dropped files through onAttachFiles', () => {
+      const onAttachFiles = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAttachFiles });
+      const textarea = screen.getByRole('textbox');
+      const box = textarea.closest('div.rounded-2xl') as HTMLElement;
+      const file = makeVideoFile();
+      fireEvent.drop(box, { dataTransfer: { files: [file], types: ['Files'] } });
+      expect(onAttachFiles).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not handle drops when attachments are disabled', () => {
+      const onAttachFiles = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAttachFiles, attachmentsEnabled: false });
+      const textarea = screen.getByRole('textbox');
+      const box = textarea.closest('div.rounded-2xl') as HTMLElement;
+      fireEvent.drop(box, { dataTransfer: { files: [makeVideoFile()], types: ['Files'] } });
+      expect(onAttachFiles).not.toHaveBeenCalled();
+    });
+
+    it('prevents browser file-navigation on drop even when disabled', () => {
+      // fireEvent returns false when the event default was prevented.
+      renderComposer({ attachmentsEnabled: false });
+      const textarea = screen.getByRole('textbox');
+      const box = textarea.closest('div.rounded-2xl') as HTMLElement;
+      const notPrevented = fireEvent.drop(box, {
+        dataTransfer: { files: [makeVideoFile()], types: ['Files'] },
+      });
+      expect(notPrevented).toBe(false);
+    });
+  });
+
+  describe('clipboard paste', () => {
+    it('attaches image files pasted from the clipboard', () => {
+      const onAttachFiles = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAttachFiles });
+      const file = new File([new Uint8Array(4)], 'pasted.png', { type: 'image/png' });
+      fireEvent.paste(screen.getByRole('textbox'), {
+        clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] },
+      });
+      expect(onAttachFiles).toHaveBeenCalledTimes(1);
+      expect(onAttachFiles).toHaveBeenCalledWith([file]);
+    });
+
+    it('ignores plain-text paste (no media items)', () => {
+      const onAttachFiles = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAttachFiles });
+      fireEvent.paste(screen.getByRole('textbox'), {
+        clipboardData: { items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }] },
+      });
+      expect(onAttachFiles).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('follow-up / parallel mode (allowParallelSend during a streaming turn)', () => {
+    it('keeps the textarea editable even while an in-flight turn is sending', () => {
+      renderComposer({
+        allowParallelSend: true,
+        composerInteractionBlocked: true,
+        isSending: true,
+        inputValue: 'a follow-up',
+      });
+      expect(screen.getByRole('textbox')).not.toBeDisabled();
+    });
+
+    it('enables the send button so a follow-up can be queued mid-stream', () => {
+      renderComposer({
+        allowParallelSend: true,
+        composerInteractionBlocked: true,
+        isSending: true,
+        inputValue: 'a follow-up',
+      });
+      expect(screen.getByTestId('send-message-button')).not.toBeDisabled();
+    });
+
+    it('shows the send arrow (not the in-flight spinner) while queueing', () => {
+      const { container } = renderComposer({
+        allowParallelSend: true,
+        composerInteractionBlocked: true,
+        isSending: true,
+        inputValue: 'a follow-up',
+      });
+      expect(container.querySelector('.animate-spin')).toBeNull();
+    });
+
+    it('still disables the send button with no typed content mid-stream', () => {
+      renderComposer({
+        allowParallelSend: true,
+        composerInteractionBlocked: true,
+        isSending: true,
+        inputValue: '',
+      });
+      expect(screen.getByTestId('send-message-button')).toBeDisabled();
+    });
+
+    it('surfaces the follow-up hint as the placeholder', () => {
+      renderComposer({ allowParallelSend: true, composerInteractionBlocked: true });
+      expect(screen.getByRole('textbox')).toHaveAttribute('placeholder', 'chat.followupHint');
+    });
   });
 });

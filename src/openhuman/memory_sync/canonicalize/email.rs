@@ -87,7 +87,7 @@ pub fn canonicalise(
         if let Some(unsub) = &msg.list_unsubscribe {
             md.push_str(&format!("List-Unsubscribe: {}\n", unsub));
         }
-        md.push_str("\n");
+        md.push('\n');
         let cleaned = email_clean::clean_body(msg.body.trim());
         if cleaned.is_empty() {
             md.push('\n');

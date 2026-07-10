@@ -2,6 +2,10 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap');
 
+/* Canonical theme tokens (colour + font-role CSS variables). Must precede the
+   Tailwind layers so the var-backed utility colours resolve. */
+@import './styles/tokens.css';
+
 /* Tailwind CSS imports */
 @tailwind base;
 @tailwind components;
@@ -11,16 +15,8 @@
 @layer base {
   /* Set default font and improve text rendering */
   html {
-    font-family:
-      'Inter',
-      -apple-system,
-      BlinkMacSystemFont,
-      'SF Pro Display',
-      'SF Pro Text',
-      system-ui,
-      'Segoe UI',
-      Roboto,
-      sans-serif;
+    /* Body font role — themeable via styles/tokens.css (--font-body) */
+    font-family: var(--font-body);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -31,7 +27,9 @@
     @apply font-sans;
     line-height: 1.6;
 
-    background: var(--color-background);
+    /* Themes may supply a decorative `--app-gradient`; fall back to the flat
+       canvas colour when they don't. */
+    background: var(--app-gradient, var(--color-background));
     color: var(--color-text-primary);
     position: absolute;
     top: 0;
@@ -113,8 +111,9 @@
   h4,
   h5,
   h6 {
-    @apply font-sans font-semibold;
-    @apply text-stone-900;
+    /* Heading font role + semantic text colour (themeable). */
+    @apply font-heading font-semibold;
+    @apply text-content;
     line-height: 1.2;
   }
 
@@ -164,7 +163,7 @@
   /* Button variants for consistent interaction design */
   .btn-primary {
     @apply bg-primary-500 hover:bg-primary-600 active:bg-primary-700;
-    @apply text-white font-medium;
+    @apply text-content-inverted font-medium;
     @apply px-4 py-2 rounded-lg;
     @apply transition-all duration-200 ease-in-out;
     @apply shadow-soft hover:shadow-medium;
@@ -173,16 +172,16 @@
   }
 
   .btn-secondary {
-    @apply bg-stone-900 hover:bg-stone-800 active:bg-stone-700;
-    @apply text-white font-medium;
-    @apply px-4 py-2 rounded-lg border border-stone-300;
+    @apply bg-surface hover:bg-surface-hover active:bg-surface-strong;
+    @apply text-content font-medium;
+    @apply px-4 py-2 rounded-lg border border-line-strong;
     @apply transition-all duration-200 ease-in-out;
     @apply focus:outline-none;
   }
 
   .btn-success {
     @apply bg-sage-500 hover:bg-sage-600 active:bg-sage-700;
-    @apply text-white font-medium;
+    @apply text-content-inverted font-medium;
     @apply px-4 py-2 rounded-lg;
     @apply transition-all duration-200 ease-in-out;
     @apply shadow-soft hover:shadow-medium;
@@ -191,7 +190,7 @@
 
   .btn-danger {
     @apply bg-coral-500 hover:bg-coral-600 active:bg-coral-700;
-    @apply text-white font-medium;
+    @apply text-content-inverted font-medium;
     @apply px-4 py-2 rounded-lg;
     @apply transition-all duration-200 ease-in-out;
     @apply shadow-soft hover:shadow-medium;
@@ -200,8 +199,8 @@
 
   /* Card components for content organization */
   .card {
-    @apply bg-white rounded-xl shadow-soft border border-stone-200;
-    @apply p-6 text-stone-900;
+    @apply bg-surface rounded-xl shadow-soft border border-line;
+    @apply p-6 text-content;
     @apply transition-shadow duration-200;
   }
 
@@ -211,24 +210,22 @@
 
   .app-dotted-canvas {
     background-color: transparent;
-    background-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.3) 1px, transparent 1px);
-    background-size: 18px 18px;
-    background-position: 0 0;
-  }
-
-  :root.dark .app-dotted-canvas {
+    /* Dots follow the theme's content colour at low alpha (dark dots on light
+       themes, light dots on dark themes, accent-tinted on custom themes). */
     background-image: radial-gradient(
       circle at center,
-      rgba(255, 255, 255, 0.08) 1px,
+      rgb(var(--content) / 0.1) 1px,
       transparent 1px
     );
+    background-size: 18px 18px;
+    background-position: 0 0;
   }
 
   /* Input components with consistent styling */
   .input-primary {
     @apply w-full px-4 py-3 rounded-lg;
-    @apply border border-stone-200 focus:border-primary-500;
-    @apply bg-white text-stone-900 placeholder-stone-400;
+    @apply border border-line focus:border-primary-500;
+    @apply bg-surface text-content placeholder-content-faint;
     @apply transition-colors duration-200;
     @apply focus:outline-none;
   }
@@ -241,7 +238,7 @@
 
   .status-offline {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-    @apply bg-stone-100 text-stone-600;
+    @apply bg-surface-subtle text-content-secondary;
   }
 
   .status-warning {
@@ -252,12 +249,12 @@
   /* Navigation styles */
   .nav-item {
     @apply flex items-center px-4 py-2 text-sm font-medium rounded-lg;
-    @apply text-stone-600 hover:text-stone-900 hover:bg-stone-100;
+    @apply text-content-secondary hover:text-content hover:bg-surface-hover;
     @apply transition-colors duration-150;
   }
 
   .nav-item-active {
-    @apply nav-item bg-stone-100 text-stone-900;
+    @apply nav-item bg-surface-subtle text-content;
   }
 
   /* Message/chat specific styles */
@@ -271,12 +268,12 @@
   }
 
   .message-received {
-    @apply message-bubble bg-stone-200/80 text-stone-900;
+    @apply message-bubble bg-surface-strong text-content;
   }
 
   /* Loading states */
   .loading-pulse {
-    @apply animate-pulse bg-stone-100 rounded;
+    @apply animate-pulse bg-surface-subtle rounded;
   }
 
   /* Crypto price styling */
@@ -293,61 +290,19 @@
   }
 
   /* ============================================
-     Dark-mode overrides for @apply'd component classes
+     Dark-mode overrides for @apply'd component classes.
+     Most classes are now token-driven (semantic surface/content/line) and flip
+     automatically, so only the tinted status badges — which keep a light accent
+     tint in light mode — still need an explicit dark override.
      ============================================ */
-  :root.dark .card,
-  :root.dark .card-hover {
-    background-color: theme('colors.neutral.900');
-    border-color: theme('colors.neutral.800');
-    color: theme('colors.neutral.100');
-  }
-
-  :root.dark .input-primary {
-    background-color: theme('colors.neutral.900');
-    border-color: theme('colors.neutral.700');
-    color: theme('colors.neutral.100');
-  }
-
-  :root.dark .input-primary::placeholder {
-    color: theme('colors.neutral.500');
-  }
-
   :root.dark .status-online {
     background-color: rgba(52, 199, 89, 0.15);
     color: theme('colors.sage.300');
   }
 
-  :root.dark .status-offline {
-    background-color: theme('colors.neutral.800');
-    color: theme('colors.neutral.300');
-  }
-
   :root.dark .status-warning {
     background-color: rgba(232, 167, 40, 0.15);
     color: theme('colors.amber.300');
-  }
-
-  :root.dark .nav-item {
-    color: theme('colors.neutral.400');
-  }
-
-  :root.dark .nav-item:hover {
-    color: theme('colors.neutral.100');
-    background-color: theme('colors.neutral.800');
-  }
-
-  :root.dark .nav-item-active {
-    background-color: theme('colors.neutral.800');
-    color: theme('colors.neutral.100');
-  }
-
-  :root.dark .message-received {
-    background-color: theme('colors.neutral.800');
-    color: theme('colors.neutral.100');
-  }
-
-  :root.dark .loading-pulse {
-    background-color: theme('colors.neutral.800');
   }
 }
 
@@ -393,14 +348,14 @@
   /* Glass effect for light theme */
   .glass {
     backdrop-filter: blur(12px);
-    background: rgba(255, 255, 255, 0.8);
-    border: 1px solid rgba(0, 0, 0, 0.06);
+    /* Themeable: surface tint + line border follow the active theme. */
+    background: rgb(var(--surface) / 0.8);
+    border: 1px solid rgb(var(--line) / 0.6);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   }
 
   :root.dark .glass {
-    background: rgba(23, 23, 23, 0.7);
-    border-color: rgba(255, 255, 255, 0.08);
+    /* Only the shadow needs a darker variant; colours come from the tokens. */
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   }
 
@@ -517,27 +472,31 @@
   color-scheme: light;
 }
 
-/* Command palette + help overlay — scoped tokens. */
+/*
+ * Command palette + help overlay tokens — now thin aliases over the canonical
+ * theme tokens in styles/tokens.css, so the palette themes along with the rest
+ * of the app. Only the shadow (not a colour token) stays literal.
+ */
 :root {
-  --cmd-accent: #2f6ef4;
-  --cmd-surface: #ffffff;
-  --cmd-surface-elevated: #f5f5f5;
-  --cmd-foreground: #171717;
-  --cmd-foreground-muted: #737373;
-  --cmd-border: #e5e5e5;
+  --cmd-accent: rgb(var(--primary-500));
+  --cmd-surface: rgb(var(--surface));
+  --cmd-surface-elevated: rgb(var(--surface-subtle));
+  --cmd-foreground: rgb(var(--content));
+  --cmd-foreground-muted: rgb(var(--content-muted));
+  --cmd-border: rgb(var(--line));
   --cmd-ring: var(--cmd-accent);
-  --cmd-overlay: rgba(0, 0, 0, 0.5);
+  --cmd-overlay: rgb(var(--surface-overlay) / 0.5);
   --cmd-shadow-palette: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
 }
 
 :root.dark {
-  --cmd-accent: #60a5fa;
-  --cmd-surface: #171717;
-  --cmd-surface-elevated: #262626;
-  --cmd-foreground: #fafafa;
-  --cmd-foreground-muted: #a3a3a3;
-  --cmd-border: #404040;
-  --cmd-overlay: rgba(0, 0, 0, 0.7);
+  --cmd-accent: rgb(var(--primary-400));
+  --cmd-surface: rgb(var(--surface));
+  --cmd-surface-elevated: rgb(var(--surface-muted));
+  --cmd-foreground: rgb(var(--content));
+  --cmd-foreground-muted: rgb(var(--content-muted));
+  --cmd-border: rgb(var(--line-strong));
+  --cmd-overlay: rgb(var(--surface-overlay) / 0.7);
   --cmd-shadow-palette: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.25);
 }
 

@@ -1,7 +1,7 @@
 import createDebug from 'debug';
 
 import type { ApiError, ApiResponse } from '../../types/api';
-import type { RewardsAchievement, RewardsSnapshot } from '../../types/rewards';
+import type { RewardClaimResult, RewardsAchievement, RewardsSnapshot } from '../../types/rewards';
 import { apiClient } from '../apiClient';
 
 const REWARDS_SNAPSHOT_TIMEOUT_MS = 15_000;
@@ -81,6 +81,7 @@ export function normalizeRewardsApiError(error: unknown): RewardsApiError {
 function normalizeAchievement(value: unknown): RewardsAchievement {
   const raw = asRecord(value) ?? {};
   const creditAmountUsd = asFiniteNumberOrNull(raw.creditAmountUsd);
+  const rewardTokens = asFiniteNumberOrNull(raw.rewardTokens);
 
   return {
     id: typeof raw.id === 'string' ? raw.id : '',
@@ -100,6 +101,26 @@ function normalizeAchievement(value: unknown): RewardsAchievement {
         ? raw.discordRoleStatus
         : 'unavailable',
     creditAmountUsd: creditAmountUsd == null ? null : asNumber(creditAmountUsd),
+    rewardTokens: rewardTokens == null ? null : asNumber(rewardTokens),
+    rewardRecurring: raw.rewardRecurring === true,
+    claimable: raw.claimable === true,
+    claimed: raw.claimed === true,
+    claimedAt: asStringOrNull(raw.claimedAt),
+    claimPeriod: asStringOrNull(raw.claimPeriod),
+  };
+}
+
+function normalizeClaimResult(payload: unknown): RewardClaimResult {
+  const raw = asRecord(payload) ?? {};
+  return {
+    reward: typeof raw.reward === 'string' ? raw.reward : '',
+    recurring: raw.recurring === true,
+    period: asStringOrNull(raw.period),
+    tokens: asNumber(raw.tokens),
+    amountUsd: asNumber(raw.amountUsd),
+    alreadyClaimed: raw.alreadyClaimed === true,
+    claimedAt: asStringOrNull(raw.claimedAt),
+    newPromoBalanceUsd: asNumber(raw.newPromoBalanceUsd),
   };
 }
 
@@ -116,6 +137,7 @@ export function normalizeRewardsSnapshot(payload: unknown): RewardsSnapshot {
     discord: {
       linked: rawDiscord.linked === true,
       discordId: asStringOrNull(rawDiscord.discordId),
+      username: asStringOrNull(rawDiscord.username),
       inviteUrl: asStringOrNull(rawDiscord.inviteUrl),
       membershipStatus:
         rawDiscord.membershipStatus === 'member' ||
@@ -129,6 +151,7 @@ export function normalizeRewardsSnapshot(payload: unknown): RewardsSnapshot {
       unlockedCount: asNumber(rawSummary.unlockedCount),
       totalCount: asNumber(rawSummary.totalCount),
       assignedDiscordRoleCount: asNumber(rawSummary.assignedDiscordRoleCount),
+      claimableCount: asNumber(rawSummary.claimableCount),
       plan:
         rawSummary.plan === 'BASIC' || rawSummary.plan === 'PRO' || rawSummary.plan === 'FREE'
           ? rawSummary.plan
@@ -189,5 +212,65 @@ export const rewardsApi = {
         : 0
     );
     return normalizeRewardsSnapshot(response.data);
+  },
+
+  async claimReward(rewardType: string): Promise<RewardClaimResult> {
+    let response: ApiResponse<unknown>;
+    try {
+      response = await apiClient.post<ApiResponse<unknown>>(
+        '/rewards/claim',
+        { rewardType },
+        { timeout: REWARDS_SNAPSHOT_TIMEOUT_MS }
+      );
+    } catch (transportError) {
+      const normalized = normalizeRewardsApiError(transportError);
+      log('claim transport failed reward=%s error=%s', rewardType, normalized.error);
+      throw normalized;
+    }
+
+    if (!response.success) {
+      // Preserve the backend's exact message (e.g. "not unlocked yet", "no active
+      // paid subscription") so the UI can surface the real, actionable signal.
+      const appError: RewardsApiError = {
+        success: false,
+        error: response.error ?? response.message ?? 'Unable to claim reward',
+      };
+      log('claim backend error reward=%s error=%s', rewardType, appError.error);
+      throw appError;
+    }
+
+    const result = normalizeClaimResult(response.data);
+    log(
+      'claimed reward=%s tokens=%d amountUsd=%d alreadyClaimed=%s',
+      result.reward,
+      result.tokens,
+      result.amountUsd,
+      result.alreadyClaimed
+    );
+    return result;
+  },
+
+  async disconnectDiscord(): Promise<void> {
+    let response: ApiResponse<unknown>;
+    try {
+      response = await apiClient.delete<ApiResponse<unknown>>('/rewards/discord', {
+        timeout: REWARDS_SNAPSHOT_TIMEOUT_MS,
+      });
+    } catch (transportError) {
+      const normalized = normalizeRewardsApiError(transportError);
+      log('disconnect transport failed error=%s', normalized.error);
+      throw normalized;
+    }
+
+    if (!response.success) {
+      const appError: RewardsApiError = {
+        success: false,
+        error: response.error ?? response.message ?? 'Unable to disconnect Discord',
+      };
+      log('disconnect backend error error=%s', appError.error);
+      throw appError;
+    }
+
+    log('discord disconnected');
   },
 };

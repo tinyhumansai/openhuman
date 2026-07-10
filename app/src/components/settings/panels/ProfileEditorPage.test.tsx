@@ -66,9 +66,9 @@ describe('ProfileEditorPage', () => {
 
   it('create mode: name drives the slug and Create dispatches an upsert', async () => {
     renderAt('/settings/profiles/new');
-    expect(screen.getByText('New profile')).toBeInTheDocument();
 
     const name = screen.getByLabelText('Name');
+    expect(name).toBeInTheDocument();
     fireEvent.change(name, { target: { value: 'My Research' } });
     const id = screen.getByLabelText('ID') as HTMLInputElement;
     expect(id.value).toBe('my-research'); // auto-slugged
@@ -79,7 +79,7 @@ describe('ProfileEditorPage', () => {
     expect(sent.id).toBe('my-research');
     expect(sent.name).toBe('My Research');
     expect(sent.includeAgentConversations).toBe(true);
-    expect(mockNavigate).toHaveBeenCalledWith('/settings/profiles');
+    expect(mockNavigate).toHaveBeenCalledWith('/settings/profiles', expect.anything());
   });
 
   it('disables Create until a non-empty resolved id exists', () => {
@@ -125,6 +125,11 @@ describe('ProfileEditorPage', () => {
     fireEvent.change(chipInput, { target: { value: 'deep-research' } });
     fireEvent.keyDown(chipInput, { key: 'Enter' });
     expect(screen.getByText('deep-research')).toBeInTheDocument();
+
+    // Switching back to All clears the restriction (exercises the All button's
+    // onChange(null) handler).
+    fireEvent.click(screen.getAllByText('All')[0]);
+    expect(screen.queryByPlaceholderText('Type an id, press Enter')).not.toBeInTheDocument();
   });
 
   it('toggles the recall-agent-conversations switch into the saved payload', async () => {

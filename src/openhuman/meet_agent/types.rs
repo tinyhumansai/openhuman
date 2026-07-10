@@ -45,6 +45,19 @@ pub struct StartSessionRequest {
     /// updated to forward the URL still parse the payload.
     #[serde(default)]
     pub meet_url: String,
+    /// ElevenLabs voice id for the PRIMARY mascot (speaker slot 0). When
+    /// two mascots are enabled the session alternates the speaking voice
+    /// once per assistant reply (see [`super::session::MeetAgentSession::advance_speaker`]).
+    /// `None`/empty preserves the previous single-default-voice behavior
+    /// (the reply-speech backend picks its own default voice). Defaulted
+    /// so older shells / smoke tests still parse the payload.
+    #[serde(default)]
+    pub primary_voice_id: Option<String>,
+    /// ElevenLabs voice id for the SECONDARY mascot (speaker slot 1).
+    /// Absent when the user has only one mascot enabled — in that case no
+    /// alternation happens and slot 0 speaks every turn.
+    #[serde(default)]
+    pub secondary_voice_id: Option<String>,
 }
 
 fn default_sample_rate() -> u32 {
@@ -158,6 +171,27 @@ pub struct ListCallsResponse {
     /// Number of rows in `calls`. Convenient for the UI when
     /// rendering a header like "Recent calls (12)".
     pub count: usize,
+}
+
+/// Inputs to `openhuman.meet_agent_get_call_detail`.
+///
+/// Loads the transcript + generated summary for a single completed call so the
+/// recent-calls panel can expand a row without bloating the list payload.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetCallDetailRequest {
+    /// request_id of the call. Matches the `request_id` field of the
+    /// `MeetCallRecord` rows returned by `list_calls`.
+    pub request_id: String,
+}
+
+/// Outputs from `openhuman.meet_agent_get_call_detail`.
+#[derive(Debug, Clone, Serialize)]
+pub struct GetCallDetailResponse {
+    pub ok: bool,
+    /// The persisted detail, or `null` when none exists for this call (older
+    /// calls recorded before the feature, or a best-effort detail write that
+    /// failed). The UI degrades to "no transcript yet" in that case.
+    pub detail: Option<super::store::MeetCallDetail>,
 }
 
 /// Inputs to `openhuman.meet_agent_stop_session`.

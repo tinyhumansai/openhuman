@@ -1,9 +1,10 @@
 //! JSON-RPC / CLI controller surface for credentials and app session auth.
 
-use serde_json::json;
+use serde_json::{json, Value};
+use std::time::Duration;
 
 use crate::api::config::effective_backend_api_url;
-use crate::api::jwt::get_session_token;
+use crate::api::jwt::{decode_jwt_exp, get_session_token};
 use crate::api::rest::{user_id_from_profile_payload, BackendOAuthClient};
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::session_support::{
@@ -19,6 +20,9 @@ use crate::openhuman::config::{
     write_active_user_id,
 };
 use crate::openhuman::memory_conversations as conversations;
+
+const AUTH_ME_STORE_RETRY_DELAY: Duration = Duration::from_millis(150);
+const AUTH_ME_STORE_TRANSIENT_STATUSES: &[u16] = &[408, 429, 500, 502, 503, 504, 520];
 
 /// Start all login-gated background services (local AI, voice, screen
 /// intelligence, autocomplete).  Called both from the initial boot path
@@ -50,6 +54,12 @@ pub async fn start_login_gated_services(config: &Config) {
 
     // 5. Autocomplete (text suggestions + Swift overlay helper)
     crate::openhuman::autocomplete::start_if_enabled(config).await;
+
+    // 6. Orchestration hosted-client: read-sync loop + world-diff uploader +
+    //    one-shot history migration. Idempotent (aborts a prior session's loops
+    //    first); no-op when orchestration is disabled. Runs here so both startup
+    //    (already logged in) and a fresh login start the hosted-client tail.
+    crate::openhuman::orchestration::start_hosted_client_services(config).await;
 
     log::info!("[services] all login-gated services started");
 }
@@ -97,6 +107,9 @@ pub async fn stop_login_gated_services(config: &Config) {
     //    logged out). Symmetric with start_login_gated_services step 3b.
     crate::openhuman::voice::always_on::stop();
 
+    // 7. Orchestration hosted-client loops (read-sync + world-diff uploader).
+    crate::openhuman::orchestration::stop_hosted_client_services();
+
     log::info!("[services] all login-gated services stopped");
 }
 
@@ -132,6 +145,28 @@ pub async fn store_session(
     user_id: Option<String>,
     user: Option<serde_json::Value>,
 ) -> Result<RpcOutcome<super::responses::AuthProfileSummary>, String> {
+    store_session_inner(config, token, user_id, user, false).await
+}
+
+/// Store a session from a callback flow that already exchanged a backend
+/// login token. Generic callers should use `store_session`, which requires
+/// immediate `/auth/me` proof before persisting remote JWTs.
+pub async fn store_session_with_deferred_validation(
+    config: &Config,
+    token: &str,
+    user_id: Option<String>,
+    user: Option<serde_json::Value>,
+) -> Result<RpcOutcome<super::responses::AuthProfileSummary>, String> {
+    store_session_inner(config, token, user_id, user, true).await
+}
+
+async fn store_session_inner(
+    config: &Config,
+    token: &str,
+    user_id: Option<String>,
+    user: Option<serde_json::Value>,
+    allow_pending_backend_validation: bool,
+) -> Result<RpcOutcome<super::responses::AuthProfileSummary>, String> {
     let trimmed_token = token.trim();
     if trimmed_token.is_empty() {
         return Err("token is required".to_string());
@@ -140,6 +175,7 @@ pub async fn store_session(
     let api_url = effective_backend_api_url(&config.api_url);
     let local_session = is_local_session_token(trimmed_token);
     let local_user_id = local_session.then(local_session_user_id);
+    let mut session_validation_logs = Vec::new();
     let settings = if local_session {
         sanitize_stored_session_user(user.clone())
             .map(|value| {
@@ -151,10 +187,70 @@ pub async fn store_session(
             .ok_or_else(|| "local session requires a user payload".to_string())?
     } else {
         let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
-        client
-            .fetch_current_user(trimmed_token)
-            .await
-            .map_err(|e| format!("Session validation failed (GET /auth/me): {e:#}"))?
+        match fetch_current_user_for_session_store(&client, trimmed_token).await {
+            Ok(fetched_user) => {
+                session_validation_logs.push(format!(
+                    "session JWT verified via GET /auth/me on {}",
+                    api_url.trim_end_matches('/')
+                ));
+                fetched_user
+            }
+            Err(reason) => {
+                // This is the store-time validation gate: if it fails the profile
+                // is NEVER persisted, so the user bounces straight back to the
+                // signin page after a "successful" OAuth. Timeouts/gateway 5xx are
+                // otherwise dropped by the Sentry transient classifier, so log an
+                // explicit, grep-friendly WARN to the app log regardless.
+                if !auth_me_store_failure_is_transient(&reason) {
+                    tracing::warn!(
+                        domain = "credentials",
+                        operation = "store_session",
+                        "[credentials][auth-store] GET /auth/me validation FAILED on {} — session NOT persisted; user will bounce to signin: {reason}",
+                        api_url.trim_end_matches('/')
+                    );
+                    return Err(format!(
+                        "Session validation failed (GET /auth/me): {reason}"
+                    ));
+                }
+
+                if !allow_pending_backend_validation {
+                    tracing::warn!(
+                        domain = "credentials",
+                        operation = "store_session",
+                        "[credentials][auth-store] GET /auth/me transient validation failed on {} — session NOT persisted; backend proof required before storing remote JWT: {reason}",
+                        api_url.trim_end_matches('/')
+                    );
+                    return Err(format!(
+                        "Session validation failed (GET /auth/me): {reason}"
+                    ));
+                }
+
+                let Some(exp) = jwt_exp_live_at(trimmed_token, chrono::Utc::now()) else {
+                    tracing::warn!(
+                        domain = "credentials",
+                        operation = "store_session",
+                        "[credentials][auth-store] GET /auth/me transient validation failed on {} but JWT has no live local exp — session NOT persisted: {reason}",
+                        api_url.trim_end_matches('/')
+                    );
+                    return Err(format!(
+                        "Session validation failed (GET /auth/me): {reason}"
+                    ));
+                };
+
+                tracing::warn!(
+                    domain = "credentials",
+                    operation = "store_session",
+                    exp = %exp,
+                    "[credentials][auth-store] GET /auth/me transient validation failed on {} — persisting caller-authorized pending session for backend revalidation: {reason}",
+                    api_url.trim_end_matches('/')
+                );
+                session_validation_logs.push(format!(
+                    "session JWT accepted with deferred GET /auth/me validation on {} after transient failure",
+                    api_url.trim_end_matches('/')
+                ));
+                fallback_session_user_for_deferred_validation()
+            }
+        }
     };
 
     let mut metadata = std::collections::HashMap::new();
@@ -170,7 +266,12 @@ pub async fn store_session(
     } {
         metadata.insert("user_id".to_string(), uid);
     }
-    let user_for_store = if local_session {
+    let pending_backend_validation = settings
+        .as_object()
+        .and_then(|map| map.get("pendingBackendValidation"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let user_for_store = if local_session || pending_backend_validation {
         settings.clone()
     } else {
         sanitize_stored_session_user(user).unwrap_or(settings)
@@ -183,7 +284,7 @@ pub async fn store_session(
     // `exp`; `decode_jwt_exp` returns None for them and the key is simply omitted
     // (presence-only check + the `flatten_authed_error` 401 net still apply).
     if !local_session {
-        match crate::api::jwt::decode_jwt_exp(trimmed_token) {
+        match decode_jwt_exp(trimmed_token) {
             Some(exp) => {
                 metadata.insert(
                     crate::openhuman::credentials::session_support::SESSION_EXPIRES_AT_META
@@ -206,16 +307,32 @@ pub async fn store_session(
 
     // Determine user_id so we can scope the openhuman directory to this user.
     let resolved_user_id = metadata.get("user_id").cloned();
+    if pending_backend_validation && resolved_user_id.is_none() {
+        if let Ok(root_dir) = default_root_openhuman_dir() {
+            if let Some(active_user_id) = read_active_user_id(&root_dir) {
+                let active_user_dir = user_openhuman_dir(&root_dir, &active_user_id);
+                if config.config_path.parent() == Some(active_user_dir.as_path()) {
+                    tracing::warn!(
+                        domain = "credentials",
+                        operation = "store_session",
+                        active_user_id = %active_user_id,
+                        "[credentials][auth-store] unresolved pending session would replace active user's app-session; session NOT persisted"
+                    );
+                    return Err(
+                        "Session validation failed (GET /auth/me): backend user id required before replacing the active session"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
 
     // If we know the user_id, activate the user-scoped directory BEFORE storing
     // the auth profile so that credentials land in the correct place.
     let mut logs = if local_session {
         vec!["local session accepted without backend validation".to_string()]
     } else {
-        vec![format!(
-            "session JWT verified via GET /auth/me on {}",
-            api_url.trim_end_matches('/')
-        )]
+        session_validation_logs
     };
 
     if let Some(ref uid) = resolved_user_id {
@@ -325,6 +442,19 @@ pub async fn store_session(
             logs.push(format!("memory client bind warning: {e}"));
         }
     }
+    // Rebind the people store to the per-user workspace too — the boot seed may
+    // have bound it to the pre-login workspace, and it must follow the active
+    // user like the memory client does (#4378).
+    match crate::openhuman::people::store::init_from_workspace(&effective_config.workspace_dir) {
+        Ok(_) => logs.push(format!(
+            "people store bound to workspace {}",
+            effective_config.workspace_dir.display()
+        )),
+        Err(e) => {
+            tracing::warn!(error = %e, "[credentials] failed to bind people store after login");
+            logs.push(format!("people store bind warning: {e}"));
+        }
+    }
     crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
         effective_config.workspace_dir.clone(),
     );
@@ -335,7 +465,7 @@ pub async fn store_session(
     // heartbeat loop. Idempotent — no-op on subsequent logins of the same
     // process. Bootstrap failures are non-fatal: the session itself is
     // already stored above, so we only warn.
-    if let Err(e) = crate::openhuman::subconscious::global::bootstrap_after_login().await {
+    if let Err(e) = crate::openhuman::subconscious::registry::bootstrap_after_login().await {
         tracing::warn!(error = %e, "[subconscious] post-login bootstrap failed");
         logs.push(format!("subconscious bootstrap warning: {e}"));
     } else {
@@ -352,6 +482,13 @@ pub async fn store_session(
     // in place. Workers that were sleeping in the paused poll loop will
     // pick this up at their next iteration and resume LLM-bound work.
     crate::openhuman::scheduler_gate::set_signed_out(false);
+    tracing::debug!(
+        domain = "credentials",
+        operation = "store_session",
+        "[credentials][auth-store] scheduler gate cleared; ensuring re-embed backfill after login"
+    );
+    crate::openhuman::memory_queue::ensure_reembed_backfill(&effective_config);
+    logs.push("memory re-embed backfill checked after login".to_string());
 
     // Bind the Sentry scope to this user so background events that fire
     // before the frontend's `app_state_snapshot` warms the user cache still
@@ -363,6 +500,64 @@ pub async fn store_session(
     }
 
     Ok(RpcOutcome::new(summarize_auth_profile(&profile), logs))
+}
+
+async fn fetch_current_user_for_session_store(
+    client: &BackendOAuthClient,
+    token: &str,
+) -> Result<Value, String> {
+    match client.fetch_current_user(token).await {
+        Ok(user) => Ok(user),
+        Err(first) => {
+            let first_reason = format!("{first:#}");
+            if !auth_me_store_failure_is_transient(&first_reason) {
+                return Err(first_reason);
+            }
+
+            tokio::time::sleep(AUTH_ME_STORE_RETRY_DELAY).await;
+            tracing::debug!(
+                domain = "credentials",
+                operation = "fetch_current_user_for_session_store",
+                reason = %first_reason,
+                "[credentials][auth-store] retrying GET /auth/me after transient failure"
+            );
+            client
+                .fetch_current_user(token)
+                .await
+                .map_err(|second| format!("{second:#}"))
+        }
+    }
+}
+
+fn auth_me_store_failure_is_transient(reason: &str) -> bool {
+    if let Some(status) = auth_me_failure_status(reason) {
+        return AUTH_ME_STORE_TRANSIENT_STATUSES.contains(&status);
+    }
+
+    crate::core::observability::contains_transient_transport_phrase(reason)
+}
+
+fn auth_me_failure_status(reason: &str) -> Option<u16> {
+    let lower = reason.to_ascii_lowercase();
+    (100..600).find(|status| {
+        let status = status.to_string();
+        lower.contains(&format!("({status}"))
+            || lower.contains(&format!("http {status}"))
+            || lower.contains(&format!("status {status}"))
+            || lower.contains(&format!("status code {status}"))
+    })
+}
+
+fn jwt_exp_live_at(
+    token: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    let exp = decode_jwt_exp(token)?;
+    (exp > now).then_some(exp)
+}
+
+fn fallback_session_user_for_deferred_validation() -> Value {
+    json!({ "pendingBackendValidation": true })
 }
 
 fn sanitize_stored_session_user(user: Option<serde_json::Value>) -> Option<serde_json::Value> {
@@ -418,7 +613,7 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
     // cached engine would keep pointing at the previous user's workspace_dir
     // and the heartbeat task would leak, ticking against the wrong DB when a
     // different user signs in to the same sidecar process.
-    crate::openhuman::subconscious::global::reset_engine_for_user_switch().await;
+    crate::openhuman::subconscious::registry::reset_engine_for_user_switch().await;
 
     // Drop the Sentry scope user so events surfaced during/after teardown
     // (and before the next login) are no longer attributed to the
@@ -455,7 +650,13 @@ pub async fn auth_get_me(config: &Config) -> Result<RpcOutcome<serde_json::Value
     let user = client
         .fetch_current_user(&token)
         .await
-        .map_err(|e| e.to_string())?;
+        // `{e:#}` walks the full anyhow context chain so the underlying
+        // reqwest transport error (timeout / connection reset / TLS / DNS)
+        // reaches `core::observability::is_transient_message_failure`. Bare
+        // `e.to_string()` only renders the top context layer
+        // ("GET /auth/me") and collapsed every transient transport failure
+        // into Sentry TAURI-RUST-10.
+        .map_err(|e| format!("{e:#}"))?;
 
     Ok(RpcOutcome::single_log(user, "current user fetched"))
 }
@@ -474,13 +675,14 @@ pub async fn consume_login_token(
     let jwt_token = client
         .consume_login_token(token)
         .await
-        .map_err(|e| e.to_string())?;
+        // See `auth_get_me` above for why we walk the full anyhow chain.
+        .map_err(|e| format!("{e:#}"))?;
 
     Ok(RpcOutcome::new(
         serde_json::json!({ "jwtToken": jwt_token }),
         vec![
             format!(
-                "login token consumed via POST /telegram/login-tokens/:token/consume on {}",
+                "login token consumed via POST /auth/login-token/consume on {}",
                 api_url.trim_end_matches('/')
             ),
             "session JWT received".to_string(),
@@ -507,7 +709,8 @@ pub async fn auth_create_channel_link_token(
     let payload = client
         .create_channel_link_token(&channel, &token)
         .await
-        .map_err(|e| e.to_string())?;
+        // See `auth_get_me` above for why we walk the full anyhow chain.
+        .map_err(|e| format!("{e:#}"))?;
 
     Ok(RpcOutcome::single_log(
         payload,
@@ -552,10 +755,24 @@ pub async fn store_provider_credentials(
             set_active.unwrap_or(true),
         )
         .map_err(|e| e.to_string())?;
+    // A freshly-stored key supersedes any prior auth rejection for this
+    // provider — clear the recorded BYO auth error so the AI-settings notice
+    // disappears and the notification latch re-arms (a future rejection will
+    // notify again). Credentials are keyed `provider:<slug>`; the auth-error
+    // registry is keyed by the bare provider slug used by the chat factory.
+    clear_provider_auth_error(&provider);
     Ok(RpcOutcome::single_log(
         summarize_auth_profile(&stored),
         "provider credentials stored",
     ))
+}
+
+/// Clear any recorded BYO provider auth error for a credentials `provider`
+/// key. Strips the `provider:` namespace prefix so the lookup matches the
+/// bare slug (`openrouter`) the inference classifier records under.
+fn clear_provider_auth_error(provider: &str) {
+    let slug = provider.strip_prefix("provider:").unwrap_or(provider);
+    crate::openhuman::inference::provider::auth_error_registry::clear(slug);
 }
 
 pub async fn remove_provider_credentials(
@@ -568,6 +785,9 @@ pub async fn remove_provider_credentials(
     let removed = auth
         .remove_profile(provider, profile_name)
         .map_err(|e| e.to_string())?;
+    // Removing the key clears any recorded BYO auth error for this provider —
+    // there is no longer a key to be "rejected", so the stale notice must go.
+    clear_provider_auth_error(provider);
     Ok(RpcOutcome::single_log(
         json!({
             "removed": removed,

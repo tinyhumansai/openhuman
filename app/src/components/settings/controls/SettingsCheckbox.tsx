@@ -26,8 +26,8 @@ function SettingsCheckbox({
   }, [indeterminate]);
 
   const classes =
-    'h-4 w-4 rounded-sm cursor-pointer border border-neutral-300 dark:border-neutral-600 ' +
-    'bg-white dark:bg-neutral-800 accent-primary-500 ' +
+    'h-4 w-4 rounded-sm cursor-pointer border border-line-strong dark:border-neutral-600 ' +
+    'bg-surface accent-primary-500 ' +
     'transition-colors duration-150 ' +
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 ' +
     'focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900 ' +

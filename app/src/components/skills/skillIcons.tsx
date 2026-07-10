@@ -2,8 +2,6 @@ import type { ReactNode } from 'react';
 import type { IconType } from 'react-icons';
 import { FaDiscord, FaGlobe, FaTelegramPlane } from 'react-icons/fa';
 import { IoChatbubble } from 'react-icons/io5';
-
-import YuanbaoIcon from '../channels/YuanbaoIcon';
 import {
   LuBlocks,
   LuBot,
@@ -17,6 +15,7 @@ import {
   LuWrench,
 } from 'react-icons/lu';
 
+import YuanbaoIcon from '../channels/YuanbaoIcon';
 import type { SkillCategory } from './skillCategories';
 
 function iconClasses(...parts: Array<string | undefined>): string {
@@ -55,42 +54,42 @@ export function getChannelIcons(
 ): Record<string, ReactNode> {
   return {
     telegram: (
-    <SkillIconBadge
-      icon={FaTelegramPlane}
-      label={t('skills.channelIcon.telegram')}
-      bgClassName="bg-[#E7F4FB]"
-      iconClassName="text-[#249CD8]"
-    />
-  ),
+      <SkillIconBadge
+        icon={FaTelegramPlane}
+        label={t('skills.channelIcon.telegram')}
+        bgClassName="bg-[#E7F4FB]"
+        iconClassName="text-[#249CD8]"
+      />
+    ),
     discord: (
-    <SkillIconBadge
-      icon={FaDiscord}
-      label={t('skills.channelIcon.discord')}
-      bgClassName="bg-[#EEF2FF]"
-      iconClassName="text-[#5865F2]"
-    />
-  ),
+      <SkillIconBadge
+        icon={FaDiscord}
+        label={t('skills.channelIcon.discord')}
+        bgClassName="bg-[#EEF2FF]"
+        iconClassName="text-[#5865F2]"
+      />
+    ),
     web: (
-    <SkillIconBadge
-      icon={FaGlobe}
-      label={t('skills.channelIcon.web')}
-      bgClassName="bg-stone-100 dark:bg-neutral-800"
-      iconClassName="text-stone-600 dark:text-neutral-300"
-    />
-  ),
+      <SkillIconBadge
+        icon={FaGlobe}
+        label={t('skills.channelIcon.web')}
+        bgClassName="bg-surface-subtle"
+        iconClassName="text-content-secondary"
+      />
+    ),
     imessage: (
-    <SkillIconBadge
-      icon={IoChatbubble}
-      label={t('skills.channelIcon.imessage')}
-      bgClassName="bg-[#E8F8EE]"
-      iconClassName="text-[#34C759]"
-    />
-  ),
+      <SkillIconBadge
+        icon={IoChatbubble}
+        label={t('skills.channelIcon.imessage')}
+        bgClassName="bg-[#E8F8EE]"
+        iconClassName="text-[#34C759]"
+      />
+    ),
     yuanbao: (
       <span
         role="img"
         aria-label={t('skills.channelIcon.yuanbao')}
-        className="flex h-8 w-8 items-center justify-center rounded-xl shadow-sm ring-1 ring-black/5 bg-white">
+        className="flex h-8 w-8 items-center justify-center rounded-xl shadow-sm ring-1 ring-black/5 bg-surface">
         <YuanbaoIcon className="h-[18px] w-[18px]" />
       </span>
     ),
@@ -103,9 +102,9 @@ const CATEGORY_META: Record<
 > = {
   All: {
     icon: LuBlocks,
-    chipClassName: 'bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300',
-    iconClassName: 'text-stone-500 dark:text-neutral-400',
-    headingClassName: 'text-stone-500 dark:text-neutral-400',
+    chipClassName: 'bg-surface-subtle text-content-secondary',
+    iconClassName: 'text-content-muted',
+    headingClassName: 'text-content-muted',
   },
   'Built-in': {
     icon: LuSparkles,
@@ -151,9 +150,9 @@ const CATEGORY_META: Record<
   },
   Other: {
     icon: LuBlocks,
-    chipClassName: 'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200',
-    iconClassName: 'text-stone-500 dark:text-neutral-400',
-    headingClassName: 'text-stone-500 dark:text-neutral-400',
+    chipClassName: 'bg-surface-subtle text-content-secondary',
+    iconClassName: 'text-content-muted',
+    headingClassName: 'text-content-muted',
   },
 };
 

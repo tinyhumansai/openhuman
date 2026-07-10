@@ -41,12 +41,20 @@ describe('resolveIntegrationRoute', () => {
     expect(resolveIntegrationRoute(n)).toBe('/chat?account=abc');
   });
 
-  it.each(['gmail', 'slack', 'whatsapp', 'wechat', 'telegram', 'discord', 'linkedin'])(
-    'routes %s provider to /chat',
-    provider => {
-      expect(resolveIntegrationRoute(makeIntegration({ provider }))).toBe('/chat');
-    }
-  );
+  it.each([
+    'gmail',
+    'slack',
+    'whatsapp',
+    'wechat',
+    'telegram',
+    'discord',
+    'linkedin',
+    'outlook',
+    'instagram',
+    'twitter',
+  ])('routes %s provider to /chat', provider => {
+    expect(resolveIntegrationRoute(makeIntegration({ provider }))).toBe('/chat');
+  });
 
   it('falls back to /notifications for unknown providers', () => {
     expect(resolveIntegrationRoute(makeIntegration({ provider: 'unknown-app' }))).toBe(
@@ -57,6 +65,22 @@ describe('resolveIntegrationRoute', () => {
   it('prefers deep_link over provider default', () => {
     const n = makeIntegration({ provider: 'slack', deep_link: '/skills' });
     expect(resolveIntegrationRoute(n)).toBe('/skills');
+  });
+
+  it.each([
+    'javascript:alert(1)',
+    '//evil.example.com',
+    'https://evil.example.com/x',
+    'http://evil.example.com',
+    'data:text/html,x',
+    'mailto:x@y.z',
+    'relative/no/leading/slash',
+    '\\evil',
+  ])('ignores unsafe deep_link %s and uses the provider default', deep_link => {
+    // `deep_link` derives from untrusted inbound provider content, so a value
+    // that is not a relative in-app path must be dropped, not navigated to.
+    const n = makeIntegration({ provider: 'slack', deep_link });
+    expect(resolveIntegrationRoute(n)).toBe('/chat');
   });
 });
 
@@ -101,5 +125,17 @@ describe('resolveSystemRoute', () => {
   it('prefers deepLink over category default', () => {
     const item = makeSystem({ category: 'messages', deepLink: '/notifications' });
     expect(resolveSystemRoute(item)).toBe('/notifications');
+  });
+
+  it.each([
+    'javascript:alert(1)',
+    '//evil.example.com',
+    'https://evil.example.com/x',
+    'data:text/html,x',
+    'relative/no/leading/slash',
+    '\\evil',
+  ])('ignores unsafe deepLink %s and uses the category default', deepLink => {
+    const item = makeSystem({ category: 'messages', deepLink });
+    expect(resolveSystemRoute(item)).toBe('/chat');
   });
 });

@@ -3,6 +3,7 @@
 mod agent;
 mod loader;
 mod model;
+mod privacy;
 mod sandbox;
 mod ui;
 
@@ -47,6 +48,10 @@ pub use model::{
     MemorySettingsPatch, ModelSettingsPatch, RuntimeSettingsPatch,
 };
 
+pub use privacy::{
+    apply_privacy_settings, get_privacy_mode, load_and_apply_privacy_settings, PrivacySettingsPatch,
+};
+
 pub use sandbox::{
     apply_sandbox_settings, get_sandbox_settings, load_and_apply_sandbox_settings,
     SandboxSettingsPatch,
@@ -55,11 +60,11 @@ pub use sandbox::{
 pub use ui::{
     apply_analytics_settings, apply_browser_settings, apply_meet_settings,
     apply_screen_intelligence_settings, apply_search_settings, get_dictation_settings,
-    get_onboarding_completed, get_search_settings, get_voice_server_settings,
-    load_and_apply_analytics_settings, load_and_apply_browser_settings,
+    get_onboarding_completed, get_search_settings, get_super_context_enabled,
+    get_voice_server_settings, load_and_apply_analytics_settings, load_and_apply_browser_settings,
     load_and_apply_dictation_settings, load_and_apply_meet_settings,
     load_and_apply_screen_intelligence_settings, load_and_apply_search_settings,
-    load_and_apply_voice_server_settings, set_onboarding_completed,
+    load_and_apply_voice_server_settings, set_onboarding_completed, set_super_context_enabled,
     workspace_onboarding_flag_exists, workspace_onboarding_flag_resolve,
     workspace_onboarding_flag_set, AnalyticsSettingsPatch, BrowserSettingsPatch,
     DictationSettingsPatch, MeetSettingsPatch, ScreenIntelligenceSettingsPatch,

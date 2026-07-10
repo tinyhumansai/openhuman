@@ -11,10 +11,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::openhuman::config::{Config, DEFAULT_CLOUD_LLM_MODEL};
+use crate::openhuman::config::Config;
 use crate::openhuman::inference::provider::{
-    create_chat_provider, provider_for_role, ChatMessage, ChatRequest, Provider, UsageInfo,
+    create_chat_model_with_model_id, provider_for_role, UsageInfo,
 };
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::{ChatModel, ModelRequest};
 
 /// One pair of prompt messages handed to the memory LLM backend.
 #[derive(Debug, Clone)]
@@ -23,6 +25,12 @@ pub struct ChatPrompt {
     pub user: String,
     pub temperature: f64,
     pub kind: &'static str,
+    /// Optional output-token cap forwarded to the provider as `max_tokens`.
+    /// `None` leaves generation open-ended. Memory callers with a bounded
+    /// response (entity extraction) set a small value so credit-metered
+    /// providers don't reserve the model's full output window in their
+    /// balance pre-flight (TAURI-RUST-C62).
+    pub max_tokens: Option<u32>,
 }
 
 /// Pluggable LLM surface used by the memory layer.
@@ -56,17 +64,17 @@ pub trait ChatProvider: Send + Sync {
 }
 
 struct InferenceChatProvider {
-    inner: Box<dyn Provider>,
-    model: String,
+    inner: Arc<dyn ChatModel<()>>,
+    model_id: String,
     display: String,
 }
 
 impl InferenceChatProvider {
-    fn new(inner: Box<dyn Provider>, model: String) -> Self {
-        let display = format!("inference:{model}");
+    fn new(inner: Arc<dyn ChatModel<()>>, model_id: String) -> Self {
+        let display = format!("inference:{model_id}");
         Self {
             inner,
-            model,
+            model_id,
             display,
         }
     }
@@ -87,40 +95,42 @@ impl InferenceChatProvider {
             "[memory::chat] provider={} kind={} model={} sys_chars={} user_chars={}",
             self.display,
             prompt.kind,
-            self.model,
+            self.model_id,
             prompt.system.len(),
             prompt.user.len()
         );
 
-        let messages = vec![
-            ChatMessage::system(prompt.system.clone()),
-            ChatMessage::user(prompt.user.clone()),
-        ];
+        // One system + one user turn — the crate model interface's native shape.
+        // Temperature and the output cap ride the request (the shared model is
+        // reused across memory prompts of differing temperature/budget), and the
+        // adapter honors both per-request values.
+        let mut request = ModelRequest::new(vec![
+            Message::system(prompt.system.clone()),
+            Message::user(prompt.user.clone()),
+        ])
+        .with_temperature(prompt.temperature);
+        if let Some(cap) = prompt.max_tokens {
+            request = request.with_max_tokens(cap);
+        }
 
-        let request = ChatRequest {
-            messages: &messages,
-            tools: None,
-            stream: None,
-        };
-
-        let response = self
-            .inner
-            .chat(request, &self.model, prompt.temperature)
-            .await?;
+        let response = self.inner.invoke(&(), request).await?;
 
         // Fail fast on a missing body rather than masking it as an empty
         // string: an empty summary would still be ingested (and, post-#3110,
         // counted against the run's real charge) as if it were valid output.
         // The caller's fallback path (`fallback_summary`) is the correct
         // recovery for a silent provider, and it only runs on `Err`.
-        let Some(text) = response.text else {
+        let text = response.text();
+        if text.is_empty() {
             anyhow::bail!(
                 "inference provider '{}' returned no text for {} summarise request",
                 self.display,
                 prompt.kind
             );
-        };
-        let usage = response.usage;
+        }
+        // Recover the full host usage (real token counts + backend-charged USD +
+        // context window) the adapter round-tripped through the response (G1).
+        let usage = crate::openhuman::tinyagents::model::usage_info_from_response(&response);
 
         log::debug!(
             "[memory::chat] provider={} kind={} response_chars={} usage_present={} input_tokens={} output_tokens={} charged_usd={}",
@@ -159,20 +169,6 @@ impl ChatProvider for InferenceChatProvider {
     }
 }
 
-fn routed_memory_config(config: &Config) -> Config {
-    let mut routed = config.clone();
-    if !config.workload_uses_local("memory") {
-        routed.default_model = Some(
-            config
-                .memory_tree
-                .cloud_llm_model
-                .clone()
-                .unwrap_or_else(|| DEFAULT_CLOUD_LLM_MODEL.to_string()),
-        );
-    }
-    routed
-}
-
 #[cfg(test)]
 fn test_override_runtime() -> Option<(Arc<dyn ChatProvider>, String)> {
     test_override::current().map(|provider| (provider, "test:override".to_string()))
@@ -189,19 +185,26 @@ pub fn build_chat_runtime(config: &Config) -> Result<(Arc<dyn ChatProvider>, Str
         return Ok(runtime);
     }
 
-    let routed = routed_memory_config(config);
-    let resolved_provider = provider_for_role("summarization", &routed);
-    let (provider, model) = create_chat_provider("summarization", &routed)?;
+    // The managed summarization tier is fixed at `summarization-v1`, resolved
+    // inside `make_openhuman_backend` for the `summarization` role — so no
+    // per-caller `default_model` pre-routing is needed here. BYOK/local routes
+    // carry their own model in the provider string.
+    let resolved_provider = provider_for_role("summarization", config);
+    // Temperature is applied per-prompt via `ModelRequest::with_temperature`
+    // (each memory `ChatPrompt` carries its own), so the construction temperature
+    // is just a default the per-call value overrides.
+    let (model, model_id) =
+        create_chat_model_with_model_id("summarization", config, config.default_temperature)?;
 
     log::debug!(
         "[memory::chat] built provider route={} model={}",
         resolved_provider,
-        model
+        model_id
     );
 
     Ok((
-        Arc::new(InferenceChatProvider::new(provider, model.clone())),
-        model,
+        Arc::new(InferenceChatProvider::new(model, model_id.clone())),
+        model_id,
     ))
 }
 
@@ -263,6 +266,7 @@ pub mod test_override {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::config::schema::DEFAULT_CLOUD_LLM_MODEL;
 
     #[test]
     fn build_provider_returns_inference_wrapper_when_default() {
@@ -275,23 +279,26 @@ mod tests {
     fn build_chat_runtime_defaults_to_openhuman_resolved_model() {
         let cfg = Config::default();
         let (_provider, model) = build_chat_runtime(&cfg).unwrap();
-        assert_eq!(model, DEFAULT_CLOUD_LLM_MODEL);
-        // build_chat_runtime resolves the "summarization" workload role,
-        // which routes to the dedicated DEFAULT_CLOUD_LLM_MODEL
-        // (`summarization-v1`, PR #2690) rather than the generic
-        // `reasoning-v1` fallback.
+        // The managed "summarization" tier is fixed at `summarization-v1`
+        // inside `make_openhuman_backend`. DEFAULT_CLOUD_LLM_MODEL is that same
+        // constant — asserted here only as the expected value, not because
+        // `cloud_llm_model` is consumed (it isn't; see the test below).
         assert_eq!(model, DEFAULT_CLOUD_LLM_MODEL);
     }
 
     #[test]
-    fn build_chat_runtime_still_builds_when_cloud_memory_model_is_overridden() {
+    fn build_chat_runtime_ignores_cloud_llm_model_on_managed() {
+        // The managed summarization tier is locked to `summarization-v1`;
+        // `memory_tree.cloud_llm_model` is inert and must not change it (neither a
+        // known tier nor a custom string leaks through).
         let mut cfg = Config::default();
+        cfg.memory_tree.cloud_llm_model = Some("chat-v1".into());
+        let (_provider, model) = build_chat_runtime(&cfg).unwrap();
+        assert_eq!(model, DEFAULT_CLOUD_LLM_MODEL);
+
         cfg.memory_tree.cloud_llm_model = Some("custom-summary-model".into());
         let (_provider, model) = build_chat_runtime(&cfg).unwrap();
-        // Setting memory_tree.cloud_llm_model overrides the cloud-memory
-        // model path; the routing falls back to the platform default
-        // (`reasoning-v1`) rather than the `summarization-v1` tier.
-        assert_eq!(model, "reasoning-v1");
+        assert_eq!(model, DEFAULT_CLOUD_LLM_MODEL);
     }
 
     #[test]
@@ -318,6 +325,7 @@ mod tests {
             user: "u".into(),
             temperature: 0.0,
             kind: "test",
+            max_tokens: None,
         };
         assert_eq!(p.chat_for_json(&prompt).await.unwrap(), "hello");
         assert_eq!(p.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -335,6 +343,7 @@ mod tests {
             user: "u".into(),
             temperature: 0.0,
             kind: "test",
+            max_tokens: None,
         };
         let (text, usage) = p.chat_for_text_with_usage(&prompt).await.unwrap();
         assert_eq!(text, "summary text");

@@ -14,8 +14,31 @@ import { callCoreRpc } from '../coreRpcClient';
 // is NOT installed the core returns a bare `[]`. `unwrapRows` normalizes both.
 // ---------------------------------------------------------------------------
 
-/** User's decision on a pending approval (mirrors Rust `ApprovalDecision`). */
-export type ApprovalDecision = 'approve_once' | 'approve_always_for_tool' | 'deny';
+/**
+ * User's decision on a pending approval (mirrors Rust `ApprovalDecision`).
+ * `approve_always_for_flow` (flow-approval surface, see {@link ApprovalSourceContext})
+ * additionally allowlists the gate for every future run of the same flow, the
+ * flow-scoped analogue of `approve_always_for_tool`'s session-scoped allowlist.
+ */
+export type ApprovalDecision =
+  | 'approve_once'
+  | 'approve_always_for_tool'
+  | 'approve_always_for_flow'
+  | 'deny';
+
+/**
+ * Origin hint attached to a pending approval that was raised from inside a
+ * `tinyflows` run rather than an interactive chat turn. Lets the flow-run
+ * inspector (and any other flow-aware surface) filter the shared
+ * `approval_list_pending` queue down to just the gates for one run without a
+ * dedicated endpoint. Absent for chat-originated approvals.
+ */
+export interface ApprovalSourceContext {
+  kind: 'flow';
+  flow_id: string;
+  run_id: string;
+  node_id?: string;
+}
 
 /** A pending approval awaiting a decision (mirrors Rust `PendingApproval`). */
 export interface PendingApproval {
@@ -30,6 +53,8 @@ export interface PendingApproval {
   created_at: string;
   /** RFC3339 timestamp, or null when the request does not expire. */
   expires_at: string | null;
+  /** Present when this gate was raised from a flow run — see {@link ApprovalSourceContext}. */
+  source_context?: ApprovalSourceContext;
 }
 
 /** A decided approval audit row (mirrors Rust `ApprovalAuditEntry`). */
@@ -82,6 +107,22 @@ export const fetchRecentApprovalDecisions = async (
 export const fetchPendingApprovals = async (): Promise<PendingApproval[]> => {
   const raw = await callCoreRpc<unknown>({ method: 'openhuman.approval_list_pending' });
   return unwrapRows<PendingApproval>(raw);
+};
+
+/**
+ * Record a decision on a pending approval. Shared by every approval surface
+ * (chat `ApprovalRequestCard`, the flow-run inspector, the flow chat banner,
+ * and the notification-center gate card) — they all park on the same
+ * `ApprovalGate` and resolve through this one RPC.
+ */
+export const decideApproval = async (
+  requestId: string,
+  decision: ApprovalDecision
+): Promise<void> => {
+  await callCoreRpc({
+    method: 'openhuman.approval_decide',
+    params: { request_id: requestId, decision },
+  });
 };
 
 /**

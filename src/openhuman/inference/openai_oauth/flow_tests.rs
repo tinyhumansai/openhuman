@@ -603,6 +603,41 @@ fn lookup_openai_bearer_token_uses_oauth_when_api_key_missing() {
 }
 
 #[test]
+fn credits_gate_bypassed_with_oauth_only_credentials() {
+    // #3767 regression: the per-tier credits-gate bypass chains through
+    // route_has_usable_credentials → lookup_key_for_slug, which falls back to
+    // the OpenAI OAuth token for the `openai` slug. Pin that OAuth-only
+    // credentials (no new-style provider key) bypass the gate when the chat tier
+    // is routed to a concrete OpenAI model.
+    use crate::openhuman::inference::provider::factory::role_bypasses_managed_credits;
+
+    let tmp = tempdir().unwrap();
+    let mut config = test_config(&tmp);
+    config.chat_provider = Some("openai:gpt-4o".into());
+
+    // No credential yet → gate stays on.
+    assert!(!role_bypasses_managed_credits("chat", &config));
+
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    let oauth_profile = AuthProfile::new_oauth(
+        OPENAI_PROVIDER_KEY,
+        OPENAI_OAUTH_PROFILE_NAME,
+        TokenSet {
+            access_token: "oauth-access".into(),
+            refresh_token: Some("refresh".into()),
+            id_token: None,
+            expires_at: Some(Utc::now() + Duration::hours(1)),
+            token_type: Some("Bearer".into()),
+            scope: None,
+        },
+    );
+    store.upsert_profile(oauth_profile, true).unwrap();
+
+    // OAuth-only credential now backs the route → gate bypassed.
+    assert!(role_bypasses_managed_credits("chat", &config));
+}
+
+#[test]
 fn lookup_key_for_slug_uses_legacy_openai_api_key_when_new_style_is_empty() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);

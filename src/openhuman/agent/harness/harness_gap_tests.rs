@@ -3,7 +3,9 @@
 //! These tests cover paths that were missing from the existing `*_tests.rs`
 //! co-located files as identified by a coverage gap analysis:
 //!
-//! 1. Full user→LLM→tool→result→final turn cycle with `run_tool_call_loop`.
+//! 1. Full user→LLM→tool→result→final turn cycle — now covered by the
+//!    tinyagents route's tests (`src/openhuman/tinyagents/tests.rs`), which
+//!    exercise `run_turn_via_tinyagents_shared` end to end.
 //! 2. `MaxIterationsExceeded` downcasts to the typed `AgentError` variant.
 //! 3. `visible_tool_names` whitelist: tools outside the set are treated as unknown.
 //! 4. `ContextGuard` surfaces `ContextExhausted` and aborts the loop.
@@ -22,8 +24,6 @@
 //!   only the tag body (JSON) is used.
 
 use crate::openhuman::agent::error::AgentError;
-use crate::openhuman::agent::harness::tool_loop::run_tool_call_loop;
-use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
 use crate::openhuman::inference::provider::traits::ProviderCapabilities;
 use crate::openhuman::inference::provider::Provider;
 use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, UsageInfo};
@@ -31,7 +31,6 @@ use crate::openhuman::tool_timeout::parse_tool_timeout_secs;
 use crate::openhuman::tools::{Tool, ToolResult};
 use async_trait::async_trait;
 use parking_lot::Mutex;
-use std::collections::HashSet;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared test doubles
@@ -117,335 +116,11 @@ fn multimodal_file_cfg() -> crate::openhuman::config::MultimodalFileConfig {
 //           result injected → LLM produces final text.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[tokio::test]
-async fn full_turn_cycle_user_llm_tool_result_final() {
-    // Round 1: LLM requests the "echo" tool.
-    // Round 2: LLM produces a final reply after seeing the tool result.
-    let provider = ScriptedProvider {
-        responses: Mutex::new(vec![
-            Ok(ChatResponse {
-                text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
-                tool_calls: vec![],
-                usage: None,
-                reasoning_content: None,
-            }),
-            Ok(ChatResponse {
-                text: Some("The tool said: echo-out".into()),
-                tool_calls: vec![],
-                usage: None,
-                reasoning_content: None,
-            }),
-        ]),
-    };
-    let mut history = vec![ChatMessage::user("please echo something")];
-    let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
-
-    let result = run_tool_call_loop(
-        &provider,
-        &mut history,
-        &tools,
-        "test-provider",
-        "model",
-        0.0,
-        true,
-        "channel",
-        &multimodal_cfg(),
-        &multimodal_file_cfg(),
-        2,
-        None,
-        None,
-        &[],
-        None,
-        None,
-        &crate::openhuman::tools::policy::DefaultToolPolicy,
-    )
-    .await
-    .expect("full turn cycle should succeed");
-
-    assert_eq!(result, "The tool said: echo-out");
-
-    // History should contain: user | assistant (tool call) | user (tool results) | assistant (final)
-    let roles: Vec<&str> = history.iter().map(|m| m.role.as_str()).collect();
-    assert_eq!(
-        roles,
-        vec!["user", "assistant", "user", "assistant"],
-        "history should have exactly 4 messages after one tool round-trip"
-    );
-
-    // The tool results message must contain the echo output.
-    let tool_results = &history[2];
-    assert_eq!(tool_results.role, "user");
-    assert!(
-        tool_results.content.contains("echo-out"),
-        "tool result must be echoed into history, got: {}",
-        tool_results.content
-    );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Item 1 — MaxIterationsExceeded downcasts to typed AgentError.
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn max_iterations_exceeded_downcasts_to_typed_agent_error() {
-    // Provider keeps requesting the same tool forever — the loop
-    // exhausts max_iterations=1 after one tool round-trip.
-    let provider = ScriptedProvider {
-        responses: Mutex::new(vec![Ok(ChatResponse {
-            text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
-            tool_calls: vec![],
-            usage: None,
-            reasoning_content: None,
-        })]),
-    };
-    let mut history = vec![ChatMessage::user("loop me")];
-    let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
-
-    let err = run_tool_call_loop(
-        &provider,
-        &mut history,
-        &tools,
-        "test-provider",
-        "model",
-        0.0,
-        true,
-        "channel",
-        &multimodal_cfg(),
-        &multimodal_file_cfg(),
-        1,
-        None,
-        None,
-        &[],
-        None,
-        None,
-        &crate::openhuman::tools::policy::DefaultToolPolicy,
-    )
-    .await
-    .expect_err("loop must fail when iterations exhausted");
-
-    // The anyhow error must downcast to the typed variant so callers
-    // (channels dispatch, web_channel run_chat_task, Sentry filter)
-    // can distinguish this deterministic outcome from transient failures.
-    let agent_err = err
-        .downcast_ref::<AgentError>()
-        .expect("error should downcast to AgentError");
-    assert!(
-        matches!(agent_err, AgentError::MaxIterationsExceeded { max: 1 }),
-        "expected MaxIterationsExceeded(1), got: {agent_err}"
-    );
-
-    // The string representation must contain the canonical prefix used
-    // by the Sentry-emit suppression checks in channels dispatch.
-    assert!(
-        crate::openhuman::agent::error::is_max_iterations_error(&err.to_string()),
-        "is_max_iterations_error must match the error text: {}",
-        err
-    );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Item 4 — visible_tool_names whitelist: tool outside the set → treated
-//           as unknown; tool inside the set → executes normally.
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn visible_tool_names_rejects_tool_outside_whitelist() {
-    // Registry contains both "echo" and "ping".
-    // The whitelist only allows "ping".
-    // LLM calls "echo" (outside the whitelist) → should be treated as unknown.
-    // LLM then produces a final text after seeing the unknown-tool error.
-    let provider = ScriptedProvider {
-        responses: Mutex::new(vec![
-            Ok(ChatResponse {
-                text: Some(
-                    // Model calls the filtered-out tool.
-                    "<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into(),
-                ),
-                tool_calls: vec![],
-                usage: None,
-                reasoning_content: None,
-            }),
-            Ok(ChatResponse {
-                text: Some("corrected response".into()),
-                tool_calls: vec![],
-                usage: None,
-                reasoning_content: None,
-            }),
-        ]),
-    };
-    let mut history = vec![ChatMessage::user("echo something")];
-    let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool), Box::new(PingTool)];
-
-    // Whitelist: only "ping" is visible.
-    let whitelist: HashSet<String> = ["ping".to_string()].into();
-
-    let result = run_tool_call_loop(
-        &provider,
-        &mut history,
-        &tools,
-        "test-provider",
-        "model",
-        0.0,
-        true,
-        "channel",
-        &multimodal_cfg(),
-        &multimodal_file_cfg(),
-        2,
-        None,
-        Some(&whitelist),
-        &[],
-        None,
-        None,
-        &crate::openhuman::tools::policy::DefaultToolPolicy,
-    )
-    .await
-    .expect("loop should recover after whitelisted-out tool call");
-
-    assert_eq!(result, "corrected response");
-
-    // The tool results injected back to the LLM must report "echo" as unknown —
-    // it was filtered out by the whitelist.
-    let tool_results = history
-        .iter()
-        .find(|m| m.role == "user" && m.content.contains("[Tool results]"))
-        .expect("tool results must be appended after tool call");
-    assert!(
-        tool_results.content.contains("Unknown tool: echo"),
-        "whitelisted-out tool must be reported as unknown, got: {}",
-        tool_results.content
-    );
-}
-
-#[tokio::test]
-async fn visible_tool_names_allows_tool_inside_whitelist() {
-    // Whitelist includes "echo" — the call should execute normally.
-    let provider = ScriptedProvider {
-        responses: Mutex::new(vec![
-            Ok(ChatResponse {
-                text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
-                tool_calls: vec![],
-                usage: None,
-                reasoning_content: None,
-            }),
-            Ok(ChatResponse {
-                text: Some("heard echo-out".into()),
-                tool_calls: vec![],
-                usage: None,
-                reasoning_content: None,
-            }),
-        ]),
-    };
-    let mut history = vec![ChatMessage::user("echo something")];
-    let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
-    let whitelist: HashSet<String> = ["echo".to_string()].into();
-
-    let result = run_tool_call_loop(
-        &provider,
-        &mut history,
-        &tools,
-        "test-provider",
-        "model",
-        0.0,
-        true,
-        "channel",
-        &multimodal_cfg(),
-        &multimodal_file_cfg(),
-        2,
-        None,
-        Some(&whitelist),
-        &[],
-        None,
-        None,
-        &crate::openhuman::tools::policy::DefaultToolPolicy,
-    )
-    .await
-    .expect("whitelisted tool should execute");
-
-    assert_eq!(result, "heard echo-out");
-
-    // Tool result must contain the actual tool output, not the unknown-tool message.
-    let tool_results = history
-        .iter()
-        .find(|m| m.role == "user" && m.content.contains("[Tool results]"))
-        .expect("tool results must be appended");
-    assert!(
-        tool_results.content.contains("echo-out"),
-        "tool should have executed and returned its output, got: {}",
-        tool_results.content
-    );
-    assert!(
-        !tool_results.content.contains("Unknown tool"),
-        "allowed tool must not be reported as unknown, got: {}",
-        tool_results.content
-    );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Item 5 — ContextGuard: ContextExhausted is surfaced cleanly.
-//           (Unit test on the guard directly; the loop integration path is
-//           exercised implicitly via context_guard.check() inside the loop.)
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn context_guard_exhausted_after_circuit_breaker_and_95pct_utilization() {
-    // Simulate the scenario where compaction has failed 3 times (circuit
-    // breaker tripped) and context is at 96 % — the guard must surface
-    // ContextExhausted, not CompactionNeeded, so the loop can bail cleanly.
-    let mut guard = ContextGuard::with_context_window(100_000);
-    guard.update_usage(&UsageInfo {
-        input_tokens: 91_000,
-        output_tokens: 5_100, // 96.1 % total
-        context_window: 100_000,
-        ..Default::default()
-    });
-
-    // Trip the circuit breaker.
-    guard.record_compaction_failure();
-    guard.record_compaction_failure();
-    guard.record_compaction_failure();
-    assert!(guard.is_compaction_disabled(), "breaker should be tripped");
-
-    let result = guard.check();
-    assert!(
-        matches!(result, ContextCheckResult::ContextExhausted { .. }),
-        "guard must return ContextExhausted when breaker is tripped and >95%, got: {result:?}"
-    );
-
-    // The utilization percentage embedded in the result must be ≥ 95.
-    if let ContextCheckResult::ContextExhausted {
-        utilization_pct, ..
-    } = result
-    {
-        assert!(
-            utilization_pct >= 95,
-            "utilization_pct in exhausted result should be ≥ 95, got {utilization_pct}"
-        );
-    }
-}
-
-#[test]
-fn context_guard_update_usage_raises_window_from_response() {
-    // UsageInfo that carries a non-zero `context_window` must update the
-    // guard's known window — a guard with window=0 is a no-op, so this
-    // path matters for the first provider response that reports its window.
-    let mut guard = ContextGuard::new(); // window = 0 initially
-    assert_eq!(guard.check(), ContextCheckResult::Ok, "unknown window → Ok");
-
-    guard.update_usage(&UsageInfo {
-        input_tokens: 95_000,
-        output_tokens: 2_000,
-        context_window: 100_000,
-        ..Default::default()
-    });
-    // Now at 97 % with no compaction failures — CompactionNeeded (below hard limit if
-    // circuit breaker is not tripped, but above COMPACTION_TRIGGER_THRESHOLD=90%).
-    // With compaction NOT disabled, the guard returns CompactionNeeded, not Exhausted.
-    assert_eq!(
-        guard.check(),
-        ContextCheckResult::CompactionNeeded,
-        "97% with no circuit breaker should return CompactionNeeded"
-    );
-}
+// NOTE: The `ContextGuard`/`ContextCheckResult` tests that used to live here
+// (context_guard_exhausted_after_circuit_breaker_and_95pct_utilization,
+// context_guard_update_usage_raises_window_from_response) were removed during the
+// tinyagents migration: the context reducer shell (`context/guard.rs`) was
+// deleted (commit d55ea9a5d) and the tested API no longer exists.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Item 3 — parse_tool_calls: <invoke> tag variant (JSON body, not attributes).
@@ -473,6 +148,114 @@ fn parse_tool_calls_invoke_tag_with_json_body() {
         text.contains("trailing"),
         "text after tag should be preserved"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Item 3b — parse_tool_calls: Claude-native <invoke name="…"> attribute form
+//           with nested <parameter name="…"> children (issue #3493).
+//           Claude-family models ignore the injected <tool_call>{json} template
+//           and emit their trained syntax; the parser must recover it instead of
+//           leaking the raw markup as assistant text.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn parse_tool_calls_invoke_attribute_form_single_param() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    let input =
+        "Sure.\n<invoke name=\"echo\">\n<parameter name=\"value\">hi</parameter>\n</invoke>\ndone";
+    let (text, calls) = parse_tool_calls(input);
+
+    assert_eq!(
+        calls.len(),
+        1,
+        "attribute-form <invoke> should parse one call"
+    );
+    assert_eq!(calls[0].name, "echo");
+    assert_eq!(calls[0].arguments, serde_json::json!({"value": "hi"}));
+    // Surrounding prose preserved; raw <invoke> markup must not leak.
+    assert!(text.contains("Sure."), "text before tag preserved");
+    assert!(text.contains("done"), "text after tag preserved");
+    assert!(
+        !text.contains("<invoke"),
+        "raw <invoke> markup must not surface in assistant text"
+    );
+    assert!(
+        !text.contains("<parameter"),
+        "raw <parameter> markup must not surface in assistant text"
+    );
+}
+
+#[test]
+fn parse_tool_calls_invoke_attribute_form_multiple_params_scalar_policy() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    // Multiple <parameter> children. Scalar policy: a value that parses as JSON
+    // (number, bool) becomes that JSON type; anything else stays a string. A
+    // parameter with an empty name is skipped (it cannot key an argument).
+    let input = concat!(
+        "<invoke name=\"search\">\n",
+        "<parameter name=\"query\">rust parsers</parameter>\n",
+        "<parameter name=\"limit\">5</parameter>\n",
+        "<parameter name=\"fuzzy\">true</parameter>\n",
+        "<parameter name=\"\">ignored</parameter>\n",
+        "</invoke>"
+    );
+    let (_text, calls) = parse_tool_calls(input);
+
+    assert_eq!(calls.len(), 1, "should parse one call");
+    assert_eq!(calls[0].name, "search");
+    assert_eq!(
+        calls[0].arguments,
+        serde_json::json!({"query": "rust parsers", "limit": 5, "fuzzy": true})
+    );
+}
+
+#[test]
+fn parse_tool_calls_invoke_attribute_form_missing_close_tag_is_text() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    // No closing </invoke>: nothing to dispatch. The block is left as text
+    // rather than silently dropped.
+    let input = "before\n<invoke name=\"echo\">\n<parameter name=\"v\">hi</parameter>";
+    let (text, calls) = parse_tool_calls(input);
+
+    assert_eq!(calls.len(), 0, "unterminated <invoke> yields no calls");
+    assert!(text.contains("before"), "preceding text preserved");
+    assert!(
+        text.contains("<invoke"),
+        "unterminated block left as text, not dropped"
+    );
+}
+
+#[test]
+fn parse_tool_calls_invoke_attribute_form_missing_name_is_text() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    // Attribute form without a `name` attribute cannot name a tool → no call.
+    let input = "<invoke foo=\"bar\">\n<parameter name=\"v\">hi</parameter>\n</invoke>";
+    let (_text, calls) = parse_tool_calls(input);
+
+    assert_eq!(calls.len(), 0, "missing name attribute yields no calls");
+}
+
+#[test]
+fn parse_tool_calls_mixed_tool_call_json_and_invoke_attribute() {
+    use crate::openhuman::agent::harness::parse::parse_tool_calls;
+
+    // A canonical <tool_call>{json} block and a Claude-native attribute-form
+    // <invoke> block in the same response are both recovered, earliest first.
+    let input = concat!(
+        "<tool_call>{\"name\":\"first\",\"arguments\":{\"a\":1}}</tool_call>\n",
+        "<invoke name=\"second\">\n<parameter name=\"b\">two</parameter>\n</invoke>"
+    );
+    let (_text, calls) = parse_tool_calls(input);
+
+    assert_eq!(calls.len(), 2, "both tag forms parsed");
+    assert_eq!(calls[0].name, "first");
+    assert_eq!(calls[0].arguments, serde_json::json!({"a": 1}));
+    assert_eq!(calls[1].name, "second");
+    assert_eq!(calls[1].arguments, serde_json::json!({"b": "two"}));
 }
 
 #[test]
@@ -511,64 +294,35 @@ fn tool_timeout_parse_default_and_boundaries() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Item 8 — DateTimeSection: ISO 8601 timestamp + IANA timezone token.
-//           Extended coverage beyond the existing mod_tests.rs test.
+// Item 8 — Current-time grounding (#3602). The volatile timestamp now rides the
+//           per-turn user message via `current_datetime_line` (so a long-lived
+//           session's frozen prompt prefix can't go stale); `DateTimeSection`
+//           carries only the static grounding *rule*. Pin both halves.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn datetime_section_output_matches_iso8601_date_and_utc_offset_pattern() {
-    use crate::openhuman::agent::prompts::{DateTimeSection, PromptContext, PromptSection};
-    use std::collections::HashSet;
-    use std::path::Path;
-    use std::sync::LazyLock;
+fn current_datetime_line_matches_iso8601_date_and_utc_offset_pattern() {
+    // The per-turn stamp is the one carrying the concrete clock — assert its
+    // ISO-8601 date, UTC offset, and IANA zone (or `UTC` fallback).
+    let payload = crate::openhuman::agent::prompts::current_datetime_line();
 
-    static EMPTY_FILTER: LazyLock<HashSet<String>> = LazyLock::new(HashSet::new);
-    static EMPTY_TOOLS: &[crate::openhuman::agent::prompts::PromptTool<'static>] = &[];
-    static EMPTY_INTEGRATIONS: &[crate::openhuman::context::prompt::ConnectedIntegration] = &[];
-
-    let ctx = PromptContext {
-        workspace_dir: Path::new("/tmp"),
-        model_name: "test-model",
-        agent_id: "",
-        tools: EMPTY_TOOLS,
-        workflows: &[],
-        dispatcher_instructions: "",
-        learned: crate::openhuman::agent::prompts::LearnedContextData::default(),
-        visible_tool_names: &EMPTY_FILTER,
-        tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
-        connected_integrations: EMPTY_INTEGRATIONS,
-        connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
-        user_identity: None,
-        personality_soul_md: None,
-        personality_memory_md: None,
-        personality_roster: vec![],
-    };
-
-    let rendered = DateTimeSection.build(&ctx).unwrap();
-    let payload = rendered
-        .strip_prefix("## Current Date & Time\n\n")
-        .expect("DateTimeSection must start with the heading");
-
-    // Must contain a date token matching YYYY-MM-DD.
-    let has_date = payload.chars().filter(|c| c.is_ascii_digit()).count() >= 8;
-    assert!(
-        has_date,
-        "payload must contain enough digits for a date: {payload}"
-    );
-
-    // Must include a UTC offset in the form UTC+HH:MM or UTC-HH:MM or UTC+00:00.
+    // Parse the concrete `YYYY-MM-DD HH:MM:SS` prefix rather than counting
+    // loose digits, so a malformed layout can't slip through.
+    let rest = payload
+        .strip_prefix("Current Date & Time: ")
+        .expect("stamp must start with the canonical prefix");
+    let dt = rest
+        .get(0..19)
+        .expect("stamp must include YYYY-MM-DD HH:MM:SS");
+    chrono::NaiveDateTime::parse_from_str(dt, "%Y-%m-%d %H:%M:%S")
+        .expect("timestamp must match YYYY-MM-DD HH:MM:SS");
     assert!(
         payload.contains("UTC"),
-        "payload must contain UTC offset marker: {payload}"
+        "stamp must contain UTC offset marker: {payload}"
     );
-
-    // The IANA timezone string is either a slashed zone or the literal "UTC" fallback.
     let has_iana = payload.contains('/') || payload.contains(" UTC ");
     assert!(
         has_iana,
-        "payload must contain an IANA zone (slashed) or UTC fallback: {payload}"
+        "stamp must contain an IANA zone (slashed) or UTC fallback: {payload}"
     );
 }

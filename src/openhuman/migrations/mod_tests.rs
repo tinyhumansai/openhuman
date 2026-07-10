@@ -46,7 +46,11 @@ fn tainted_prompt() -> String {
 fn meta() -> TranscriptMeta {
     TranscriptMeta {
         agent_name: "main".into(),
+        agent_id: None,
+        agent_type: None,
         dispatcher: "native".into(),
+        provider: None,
+        model: None,
         created: "2026-05-01T00:00:00Z".into(),
         updated: "2026-05-01T00:00:00Z".into(),
         turn_count: 1,
@@ -55,6 +59,7 @@ fn meta() -> TranscriptMeta {
         cached_input_tokens: 0,
         charged_amount_usd: 0.0,
         thread_id: None,
+        task_id: None,
     }
 }
 
@@ -113,8 +118,8 @@ async fn run_pending_runs_phase_out_when_version_zero() {
 
     let on_disk = std::fs::read_to_string(&config.config_path).unwrap();
     assert!(
-        on_disk.contains("schema_version = 6"),
-        "saved config.toml must record schema_version=6, got:\n{on_disk}"
+        on_disk.contains("schema_version = 8"),
+        "saved config.toml must record schema_version=8, got:\n{on_disk}"
     );
 }
 
@@ -129,7 +134,34 @@ async fn run_pending_bumps_version_on_fresh_install() {
 
     assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
     let on_disk = std::fs::read_to_string(&config.config_path).unwrap();
-    assert!(on_disk.contains("schema_version = 6"));
+    assert!(on_disk.contains("schema_version = 8"));
+}
+
+#[tokio::test]
+async fn run_pending_migrates_fastembed_to_managed_without_local_ollama() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+
+    let mut config = config_in(&tmp);
+    config.schema_version = 6;
+    config.memory.embedding_provider = "fastembed".to_string();
+    config.memory.embedding_model = "BGESmallENV15".to_string();
+    config.memory.embedding_dimensions = 384;
+    // Point the local-Ollama probe at a guaranteed-dead address so the rewrite
+    // target is deterministic (managed) regardless of whether the host happens
+    // to run Ollama on the default port.
+    config.local_ai.base_url = Some("http://127.0.0.1:1".to_string());
+
+    run_pending(&mut config).await;
+
+    assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(
+        config.memory.embedding_provider, "managed",
+        "no reachable local Ollama ⇒ managed cloud target"
+    );
+    assert_eq!(config.memory.embedding_dimensions, 1024);
+    let on_disk = std::fs::read_to_string(&config.config_path).unwrap();
+    assert!(on_disk.contains("schema_version = 8"));
 }
 
 #[tokio::test]
@@ -151,6 +183,33 @@ async fn run_pending_rolls_back_schema_version_when_save_fails() {
     assert_eq!(
         config.schema_version, 0,
         "save failed → in-memory schema_version must be rolled back to 0"
+    );
+}
+
+#[tokio::test]
+async fn run_pending_v7_to_v8_rolls_back_default_model_when_save_fails() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+
+    let mut config = config_in(&tmp);
+    config.schema_version = 7;
+    config.default_model = Some("reasoning-v1".to_string());
+    // Force save() to fail after normalize_default_model_tier mutates
+    // default_model, so the 7->8 rollback path runs.
+    let blocker = tmp.path().join("blocker");
+    fs::write(&blocker, "not a directory").unwrap();
+    config.config_path = blocker.join("nested").join("config.toml");
+
+    run_pending(&mut config).await;
+
+    assert_eq!(
+        config.schema_version, 7,
+        "save failed → schema_version must roll back to 7"
+    );
+    assert_eq!(
+        config.default_model.as_deref(),
+        Some("reasoning-v1"),
+        "save failed → default_model must roll back to its pre-migration value"
     );
 }
 
@@ -253,8 +312,8 @@ async fn run_pending_expands_autonomy_defaults_from_v3() {
     // On-disk config must reflect the new schema_version.
     let on_disk = fs::read_to_string(&config.config_path).unwrap();
     assert!(
-        on_disk.contains("schema_version = 6"),
-        "saved config.toml must record schema_version=6, got:\n{on_disk}"
+        on_disk.contains("schema_version = 8"),
+        "saved config.toml must record schema_version=8, got:\n{on_disk}"
     );
 }
 
@@ -286,8 +345,8 @@ async fn run_pending_v4_to_v5_removes_write_tools_from_auto_approve() {
 
     let on_disk = fs::read_to_string(&config.config_path).unwrap();
     assert!(
-        on_disk.contains("schema_version = 6"),
-        "saved config.toml must record schema_version=6, got:\n{on_disk}"
+        on_disk.contains("schema_version = 8"),
+        "saved config.toml must record schema_version=8, got:\n{on_disk}"
     );
 }
 
@@ -322,8 +381,8 @@ async fn run_pending_v5_to_v6_repairs_http_request_limits() {
     // The version bump must be persisted to disk too.
     let on_disk = fs::read_to_string(&config.config_path).unwrap();
     assert!(
-        on_disk.contains("schema_version = 6"),
-        "saved config.toml must record schema_version=6, got:\n{on_disk}"
+        on_disk.contains("schema_version = 8"),
+        "saved config.toml must record schema_version=8, got:\n{on_disk}"
     );
 }
 
@@ -357,8 +416,8 @@ async fn run_pending_v5_to_v6_reconciles_orphaned_providers() {
 
     let on_disk = fs::read_to_string(&config.config_path).unwrap();
     assert!(
-        on_disk.contains("schema_version = 6"),
-        "saved config.toml must record schema_version=6, got:\n{on_disk}"
+        on_disk.contains("schema_version = 8"),
+        "saved config.toml must record schema_version=8, got:\n{on_disk}"
     );
 }
 

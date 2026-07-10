@@ -32,8 +32,12 @@ export interface ToolkitRequiredField {
   labelKey: TranslationKey;
   /** Optional i18n key for the hint paragraph rendered below the input. */
   hintKey?: TranslationKey;
-  /** Optional placeholder text shown when the input is empty. */
-  placeholder?: string;
+  /**
+   * Optional i18n key for the placeholder shown when the input is empty.
+   * Keyed (not raw text) so the placeholder stays inside the i18n pipeline
+   * like `labelKey` / `hintKey` — all UI text goes through `useT()`.
+   */
+  placeholderKey?: TranslationKey;
   /**
    * Optional fixed suffix rendered inside the input (e.g. `.atlassian.net`).
    * Purely cosmetic — never included in the submitted value.
@@ -73,7 +77,7 @@ export const TOOLKIT_REQUIRED_FIELDS: Readonly<Record<string, readonly ToolkitRe
         key: 'waba_id',
         labelKey: 'composio.connect.wabaIdLabel',
         hintKey: 'composio.connect.wabaIdHint',
-        placeholder: 'e.g. 123456789012345',
+        placeholderKey: 'composio.connect.wabaIdPlaceholder',
       },
     ],
     jira: [
@@ -81,7 +85,7 @@ export const TOOLKIT_REQUIRED_FIELDS: Readonly<Record<string, readonly ToolkitRe
         key: 'subdomain',
         labelKey: 'composio.connect.atlassianSubdomainLabel',
         hintKey: 'composio.connect.atlassianSubdomainHint',
-        placeholder: 'your-subdomain',
+        placeholderKey: 'composio.connect.atlassianSubdomainPlaceholder',
         suffix: '.atlassian.net',
         validate: validateSubdomainLabel,
       },
@@ -91,7 +95,7 @@ export const TOOLKIT_REQUIRED_FIELDS: Readonly<Record<string, readonly ToolkitRe
         key: 'org_name',
         labelKey: 'composio.connect.dynamicsOrgNameLabel',
         hintKey: 'composio.connect.dynamicsOrgNameHint',
-        placeholder: 'myorg',
+        placeholderKey: 'composio.connect.dynamicsOrgNamePlaceholder',
         suffix: '.crm.dynamics.com',
         validate: validateSubdomainLabel,
       },

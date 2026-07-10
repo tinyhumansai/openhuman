@@ -106,14 +106,21 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     let mut controllers = Vec::new();
     // Application information and capabilities
     controllers.extend(crate::openhuman::about_app::all_about_app_registered_controllers());
+    // AgentBox marketplace adapter status
+    controllers.extend(crate::openhuman::agentbox::all_agentbox_registered_controllers());
     // Core application shell state
     controllers.extend(crate::openhuman::app_state::all_app_state_registered_controllers());
     // Audio generation + podcast-style email delivery
     controllers.extend(crate::openhuman::audio_toolkit::all_audio_toolkit_registered_controllers());
     // Composio integration controllers
     controllers.extend(crate::openhuman::composio::all_composio_registered_controllers());
+    // Recall.ai Calendar V1 (backend-proxied) controllers
+    controllers
+        .extend(crate::openhuman::recall_calendar::all_recall_calendar_registered_controllers());
     // Scheduled job management
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
+    // Saved automation workflows (tinyflows graphs): create/get/list/update/delete/run
+    controllers.extend(crate::openhuman::flows::all_flows_registered_controllers());
     // Proactive task ingestion from external tools (github/notion/linear/clickup)
     controllers.extend(crate::openhuman::task_sources::all_task_sources_registered_controllers());
     controllers.extend(crate::openhuman::dashboard::all_dashboard_registered_controllers());
@@ -124,6 +131,10 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
     // Agent definition and prompt inspection
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
+    // Read-only agent run replay + status over the durable journal/status seams
+    // (agent_run_events / agent_run_status / agent_runs_active).
+    controllers
+        .extend(crate::openhuman::tinyagents::replay::all_agent_replay_registered_controllers());
     // Persistent agent profiles (flavours): name, soul, memory sources, skills, MCP, connectors.
     controllers.extend(crate::openhuman::profiles::all_profiles_registered_controllers());
     // User-facing agent registry: defaults, enablement, custom agents, tool policy.
@@ -134,6 +145,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
         .extend(crate::openhuman::agent_experience::all_agent_experience_registered_controllers());
     // System and process health monitoring
     controllers.extend(crate::openhuman::health::all_health_registered_controllers());
+    // One-time first-run initialization (Python/spaCy/Node provisioning)
+    controllers.extend(crate::openhuman::harness_init::all_harness_init_registered_controllers());
     // Diagnostic tools
     controllers.extend(crate::openhuman::doctor::all_doctor_registered_controllers());
     // Secret storage and encryption
@@ -145,6 +158,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::security::all_security_registered_controllers());
     // Interactive approval workflow (#1339 — gate external-effect tool calls)
     controllers.extend(crate::openhuman::approval::all_approval_registered_controllers());
+    // Interactive plan-review gate — parks a live turn on a thread-scoped plan
+    controllers.extend(crate::openhuman::plan_review::all_plan_review_registered_controllers());
     // Agent-generated artifact storage, retrieval, and lifecycle management
     controllers.extend(crate::openhuman::artifacts::all_artifacts_registered_controllers());
     // Background heartbeat loop controls
@@ -199,7 +214,7 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Managed Node.js runtime bridge (tool listing + dispatch)
     controllers.extend(crate::openhuman::javascript::all_javascript_registered_controllers());
     // Discovered SKILL.md skills and their bundled resources
-    controllers.extend(crate::openhuman::workflows::all_workflows_registered_controllers());
+    controllers.extend(crate::openhuman::skills::all_skills_registered_controllers());
     // Skill runtime: run/cancel/log skill executions and resolve Node/Python toolchains
     controllers.extend(crate::openhuman::skill_runtime::all_skill_runtime_registered_controllers());
     // Skill registry: browse, search, install from remote registries
@@ -213,6 +228,10 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::tool_registry::all_tool_registry_registered_controllers());
     // Document and knowledge graph storage
     controllers.extend(crate::openhuman::memory::all_memory_registered_controllers());
+    // Long-term goals list (editable list + turn-based enrichment agent)
+    controllers.extend(crate::openhuman::memory_goals::all_memory_goals_registered_controllers());
+    // Thread-level goal (Codex-style per-thread completion contract)
+    controllers.extend(crate::openhuman::thread_goals::all_thread_goals_registered_controllers());
     // Memory tree ingestion layer (#707 — canonicalised chunks with provenance)
     controllers.extend(crate::openhuman::memory_tree::all_memory_tree_registered_controllers());
     // Memory tree retrieval layer (#710 — LLM-callable read tools over the tree)
@@ -237,6 +256,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::referral::all_referral_registered_controllers());
     // Billing and subscription management
     controllers.extend(crate::openhuman::billing::all_billing_registered_controllers());
+    // Announcements surfaced on harness init
+    controllers.extend(crate::openhuman::announcements::all_announcements_registered_controllers());
     // Team and role management
     controllers.extend(crate::openhuman::team::all_team_registered_controllers());
     // E2E test support — `openhuman.test_reset` wipes sidecar state in-place.
@@ -259,6 +280,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::voice::all_voice_registered_controllers());
     // Background awareness and autonomous tasks
     controllers.extend(crate::openhuman::subconscious::all_subconscious_registered_controllers());
+    controllers.extend(
+        crate::openhuman::subconscious_triggers::all_subconscious_triggers_registered_controllers(),
+    );
     // Webhook tunnel management
     controllers.extend(crate::openhuman::webhooks::all_webhooks_registered_controllers());
     // Core binary update management
@@ -269,6 +293,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::learning::all_learning_registered_controllers());
     // Conversation thread and message management
     controllers.extend(crate::openhuman::threads::all_threads_registered_controllers());
+    // TokenJuice content-router debug controllers (detect / compress / cache_stats / retrieve)
+    controllers.extend(crate::openhuman::tokenjuice::all_tokenjuice_registered_controllers());
     // Per-thread todo list (agent task board CRUD over RPC)
     controllers.extend(crate::openhuman::todos::all_todos_registered_controllers());
     // Embedded webview native notifications
@@ -295,6 +321,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::devices::all_devices_registered_controllers());
     // Durable agent session database — queryable index over transcripts, lineage, tool calls
     controllers.extend(crate::openhuman::session_db::all_session_db_registered_controllers());
+    // One-time legacy session import into TinyAgents stores
+    controllers
+        .extend(crate::openhuman::session_import::all_session_import_registered_controllers());
     // Background agent command center — read-only grouped view over the run ledger
     controllers
         .extend(crate::openhuman::agent_orchestration::all_command_center_registered_controllers());
@@ -304,6 +333,13 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Durable agent-team coordination — teams, members, dependency-aware task claiming, messaging
     controllers
         .extend(crate::openhuman::agent_orchestration::all_agent_team_registered_controllers());
+    // Git-worktree isolation manager — list / status / diff / remove worker worktrees (#3376)
+    controllers
+        .extend(crate::openhuman::agent_orchestration::all_worktree_registered_controllers());
+    // User-driven cancel of detached background sub-agents (#3711)
+    controllers.extend(
+        crate::openhuman::agent_orchestration::all_subagent_control_registered_controllers(),
+    );
     controllers
 }
 
@@ -319,6 +355,16 @@ fn build_internal_only_controllers() -> Vec<RegisteredController> {
     // MCP write audit list: internal-only so the desktop UI/CLI can inspect
     // local write history without exposing cross-client history as an MCP tool.
     controllers.extend(crate::openhuman::mcp_audit::all_mcp_audit_internal_controllers());
+    // tiny.place A2A social-network integration: renderer-callable via core_rpc_relay
+    // but NOT advertised to agents in tool listings or schema discovery.
+    controllers.extend(crate::openhuman::tinyplace::all_tinyplace_registered_controllers());
+    // User-consented tiny.place pairing for wrapped agent sessions: UI-callable
+    // via core_rpc_relay, but excluded from agent tool listings/schema discovery.
+    controllers.extend(crate::openhuman::agent_orchestration::all_pairing_registered_controllers());
+    // Orchestration read surface (stage 7): the TinyPlaceOrchestrationTab reads
+    // sessions/messages, sends Master steering DMs, marks read, and polls status.
+    // Renderer-only — not advertised to agents.
+    controllers.extend(crate::openhuman::orchestration::all_registered_controllers());
     controllers
 }
 
@@ -329,24 +375,31 @@ fn build_internal_only_controllers() -> Vec<RegisteredController> {
 fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     let mut schemas = Vec::new();
     schemas.extend(crate::openhuman::about_app::all_about_app_controller_schemas());
+    schemas.extend(crate::openhuman::agentbox::all_agentbox_controller_schemas());
     schemas.extend(crate::openhuman::app_state::all_app_state_controller_schemas());
     schemas.extend(crate::openhuman::audio_toolkit::all_audio_toolkit_controller_schemas());
     schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
+    schemas.extend(crate::openhuman::recall_calendar::all_recall_calendar_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
+    schemas.extend(crate::openhuman::flows::all_flows_controller_schemas());
     schemas.extend(crate::openhuman::task_sources::all_task_sources_controller_schemas());
     schemas.extend(crate::openhuman::dashboard::all_dashboard_controller_schemas());
     schemas.extend(crate::openhuman::mcp_registry::all_mcp_registry_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
+    // Read-only agent run replay + status controllers (workstream 05.x).
+    schemas.extend(crate::openhuman::tinyagents::replay::all_agent_replay_controller_schemas());
     schemas.extend(crate::openhuman::profiles::all_profiles_controller_schemas());
     schemas.extend(crate::openhuman::agent_registry::all_agent_registry_controller_schemas());
     schemas.extend(crate::openhuman::agent_experience::all_agent_experience_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
+    schemas.extend(crate::openhuman::harness_init::all_harness_init_controller_schemas());
     schemas.extend(crate::openhuman::doctor::all_doctor_controller_schemas());
     schemas.extend(crate::openhuman::encryption::all_encryption_controller_schemas());
     schemas.extend(crate::openhuman::keyring_consent::all_keyring_consent_controller_schemas());
     schemas.extend(crate::openhuman::security::all_security_controller_schemas());
     schemas.extend(crate::openhuman::approval::all_approval_controller_schemas());
+    schemas.extend(crate::openhuman::plan_review::all_plan_review_controller_schemas());
     schemas.extend(crate::openhuman::artifacts::all_artifacts_controller_schemas());
     schemas.extend(crate::openhuman::heartbeat::all_heartbeat_controller_schemas());
     schemas.extend(crate::openhuman::http_host::all_http_host_controller_schemas());
@@ -374,13 +427,15 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::sandbox::all_sandbox_controller_schemas());
     schemas.extend(crate::openhuman::socket::all_socket_controller_schemas());
     schemas.extend(crate::openhuman::javascript::all_javascript_controller_schemas());
-    schemas.extend(crate::openhuman::workflows::all_workflows_controller_schemas());
+    schemas.extend(crate::openhuman::skills::all_skills_controller_schemas());
     schemas.extend(crate::openhuman::skill_runtime::all_skill_runtime_controller_schemas());
     schemas.extend(crate::openhuman::skill_registry::all_skill_registry_controller_schemas());
     schemas.extend(crate::openhuman::workspace::all_workspace_controller_schemas());
     schemas.extend(crate::openhuman::tools::all_tools_controller_schemas());
     schemas.extend(crate::openhuman::tool_registry::all_tool_registry_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_memory_controller_schemas());
+    schemas.extend(crate::openhuman::memory_goals::all_memory_goals_controller_schemas());
+    schemas.extend(crate::openhuman::thread_goals::all_thread_goals_controller_schemas());
     schemas.extend(crate::openhuman::memory_tree::all_memory_tree_controller_schemas());
     schemas.extend(crate::openhuman::memory_tree::all_retrieval_controller_schemas());
     schemas.extend(
@@ -394,6 +449,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::redirect_links::all_redirect_links_controller_schemas());
     schemas.extend(crate::openhuman::referral::all_referral_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
+    schemas.extend(crate::openhuman::announcements::all_announcements_controller_schemas());
     schemas.extend(crate::openhuman::team::all_team_controller_schemas());
     #[cfg(feature = "e2e-test-support")]
     schemas.extend(crate::openhuman::test_support::all_test_support_controller_schemas());
@@ -403,12 +459,17 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::text_input::all_text_input_controller_schemas());
     schemas.extend(crate::openhuman::voice::all_voice_controller_schemas());
     schemas.extend(crate::openhuman::subconscious::all_subconscious_controller_schemas());
+    schemas.extend(
+        crate::openhuman::subconscious_triggers::all_subconscious_triggers_controller_schemas(),
+    );
     schemas.extend(crate::openhuman::webhooks::all_webhooks_controller_schemas());
     schemas.extend(crate::openhuman::update::all_update_controller_schemas());
     schemas.extend(crate::openhuman::memory_tree::all_tree_summarizer_controller_schemas());
     schemas.extend(crate::openhuman::learning::all_learning_controller_schemas());
     // Conversation thread and message management
     schemas.extend(crate::openhuman::threads::all_threads_controller_schemas());
+    // TokenJuice content-router debug controllers
+    schemas.extend(crate::openhuman::tokenjuice::all_tokenjuice_controller_schemas());
     // Per-thread todo list (agent task board CRUD over RPC)
     schemas.extend(crate::openhuman::todos::all_todos_controller_schemas());
     // Embedded webview native notifications
@@ -431,12 +492,19 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::devices::all_devices_controller_schemas());
     // Durable agent session database
     schemas.extend(crate::openhuman::session_db::all_session_db_controller_schemas());
+    // One-time legacy session import into TinyAgents stores
+    schemas.extend(crate::openhuman::session_import::all_session_import_controller_schemas());
     // Background agent command center
     schemas.extend(crate::openhuman::agent_orchestration::all_command_center_controller_schemas());
     // Durable dynamic workflow runs
     schemas.extend(crate::openhuman::agent_orchestration::all_workflow_run_controller_schemas());
     // Durable agent-team coordination
     schemas.extend(crate::openhuman::agent_orchestration::all_agent_team_controller_schemas());
+    // Git-worktree isolation manager (#3376)
+    schemas.extend(crate::openhuman::agent_orchestration::all_worktree_controller_schemas());
+    // User-driven cancel of detached background sub-agents (#3711)
+    schemas
+        .extend(crate::openhuman::agent_orchestration::all_subagent_control_controller_schemas());
     schemas
 }
 
@@ -462,6 +530,7 @@ pub fn rpc_method_name(schema: &ControllerSchema) -> String {
 pub fn namespace_description(namespace: &str) -> Option<&'static str> {
     match namespace {
         "about_app" => Some("Catalog the app's user-facing capabilities and where to find them."),
+        "agentbox" => Some("AgentBox marketplace adapter status — mode flag and GMI MaaS provider wiring."),
         "ai" => Some("Agent-generated artifact storage, retrieval, and lifecycle management."),
         "app_state" => Some("Expose core-owned app shell state for frontend polling."),
         "auth" => Some("Manage app session and provider credentials."),
@@ -476,6 +545,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
             "Connectivity diagnostics for the local sidecar, listening port, and backend Socket.IO state.",
         ),
         "cron" => Some("Manage scheduled jobs and run history."),
+        "flows" => Some("Create, store, and run automation workflows."),
         "dashboard" => Some(
             "Operator-facing dashboard aggregations: per-model health comparison rows.",
         ),
@@ -496,11 +566,20 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "screen_intelligence" => Some("Screen capture, permissions, and accessibility automation."),
         "security" => Some("Security policy and autonomy guardrail metadata."),
         "service" => Some("Desktop service lifecycle management."),
+        "session_import" => {
+            Some("One-time import of legacy session transcripts into TinyAgents stores.")
+        }
         "skill_registry" => Some("Browse, search, install, and uninstall skills from remote registries (OpenHuman, Hermes, OpenClaw)."),
         "skill_runtime" => Some("Run installed skills, inspect run logs, and resolve Node/Python skill runtimes."),
-        "workflows" => Some("Discovered workflows (WORKFLOW.md/SKILL.md bundles) and their resources."),
+        "skills" => Some("Discovered SKILL.md skills (discovery, parse, install, run) and their resources."),
         "socket" => Some("Backend Socket.IO bridge controls."),
         "memory" => Some("Document storage, vector search, key-value store, and knowledge graph."),
+        "memory_goals" => Some(
+            "The agent's long-term goals list for working with the user — editable items plus turn-based enrichment.",
+        ),
+        "thread_goals" => Some(
+            "The thread-level goal — a Codex-style per-thread completion contract with lifecycle, token budget, and idle continuation.",
+        ),
         "memory_tree" => Some(
             "Canonical chunk ingestion, provenance capture, and chunk retrieval for source-grounded memory.",
         ),
@@ -529,7 +608,16 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "agent_team" => Some(
             "Durable agent-team coordination: teams, members, dependency-aware task claiming, and teammate messaging.",
         ),
+        "orchestration_pairing" => Some(
+            "User-consented tiny.place contact pairing for wrapped agent sessions.",
+        ),
+        "orchestration" => Some(
+            "Subconscious-orchestration read surface: chat windows (master/subconscious/per-session), message history, Master steering DMs, read state, and steering status.",
+        ),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
+        "announcements" => {
+            Some("Latest active product announcement surfaced on harness init, via the backend.")
+        }
         "team" => Some("Team member management, invites, and role changes via the backend."),
         "tool_registry" => Some(
             "Read-only discovery for MCP stdio tools and controller-backed tools, including routes, schemas, version, allowed agents, and health.",
@@ -546,6 +634,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "voice" => Some("Speech-to-text and text-to-speech using local models."),
         "subconscious" => Some("Periodic local-model background awareness loop."),
+        "subconscious_triggers" => {
+            Some("Event-driven trigger pipeline feeding the background orchestrator.")
+        }
         "text_input" => Some("Read, insert, and preview text in the OS-focused input field."),
         "webhooks" => {
             Some("Webhook tunnel registrations and captured request/response debug logs.")
@@ -571,7 +662,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "meet" => Some(
             "Validate Google Meet call-join requests and mint a request_id; the desktop \
-             shell opens the embedded CEF webview that joins the call as an anonymous guest.",
+             shell opens the embedded CEF webview that joins the call as an anonymous guest. \
+             Also provides meet_list_upcoming to fetch upcoming calendar meetings with \
+             conferencing links from connected Google Calendar accounts.",
         ),
         "meet_agent" => Some(
             "Live agent loop for an open Google Meet call: shell streams inbound PCM, \
@@ -588,6 +681,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "companion" => Some(
             "Desktop companion — Clicky-style hotkey-driven interaction loop with STT, LLM, TTS, and visual pointing.",
+        ),
+        "tinyplace" => Some(
+            "tiny.place A2A social-network integration: directory, explorer, and search over the agent network.",
         ),
         _ => None,
     }
@@ -648,7 +744,111 @@ pub fn validate_params(
         }
     }
 
+    // Type-check each present param against its declared `TypeSchema`, so every
+    // controller gets uniform validation before dispatch rather than relying on
+    // each handler's `serde_json::from_value`. Absent (optional) params are
+    // already handled by the required-presence check above.
+    for input in &schema.inputs {
+        if let Some(value) = params.get(input.name) {
+            check_type(value, &input.ty).map_err(|expected| {
+                format!(
+                    "invalid type for param '{}' in {}.{}: expected {}, got {}",
+                    input.name,
+                    schema.namespace,
+                    schema.function,
+                    expected,
+                    json_type_name(value),
+                )
+            })?;
+        }
+    }
+
     Ok(())
+}
+
+/// A short, human-readable name for the JSON kind of `value`, used in
+/// `validate_params` type-mismatch errors.
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+/// Validate a JSON `value` against a declared [`TypeSchema`].
+///
+/// Returns `Ok(())` on a match, or `Err(expected)` where `expected` is a short
+/// description of the type that was required. Unknown/opaque shapes
+/// (`Json`, `Bytes`, `Ref`) accept any value — they are validated by the
+/// handler's typed deserialization.
+fn check_type(value: &Value, ty: &crate::core::TypeSchema) -> Result<(), &'static str> {
+    use crate::core::TypeSchema;
+
+    // JSON-RPC semantics (preserved from the prior presence-only check):
+    // an explicit `null` satisfies validation for any declared type. Required
+    // fields are checked for *presence*, not value; stronger contracts are
+    // enforced by the handler's typed deserialization.
+    if value.is_null() {
+        return Ok(());
+    }
+
+    match ty {
+        // Opaque / handler-validated shapes accept any JSON value.
+        //
+        // Structured types (`Object`/`Map`/`Ref`) are deliberately lenient: a
+        // struct field may have a custom `Deserialize` impl that accepts more
+        // than one JSON shape (e.g. `agent_registry.update`'s `subagents`
+        // accepts both `{ "allowlist": [...] }` and a legacy bare array), and
+        // the declared schema can only describe one of them. Strictly checking
+        // the JSON kind here would reject inputs the handler's `serde_json`
+        // deserialization accepts. We therefore keep pre-dispatch validation to
+        // scalar leaf types (where a type confusion would otherwise reach an
+        // `as_str()/as_u64()`-style accessor) and defer object/map shape
+        // validation to the handler.
+        TypeSchema::Json
+        | TypeSchema::Bytes
+        | TypeSchema::Ref(_)
+        | TypeSchema::Object { .. }
+        | TypeSchema::Map(_) => Ok(()),
+
+        TypeSchema::Bool => value.is_boolean().then_some(()).ok_or("bool"),
+        TypeSchema::String => value.is_string().then_some(()).ok_or("string"),
+        TypeSchema::I64 => value.is_i64().then_some(()).ok_or("integer"),
+        TypeSchema::U64 => value.is_u64().then_some(()).ok_or("unsigned integer"),
+        TypeSchema::F64 => {
+            // Accept any JSON number (ints are valid floats).
+            value.is_number().then_some(()).ok_or("number")
+        }
+
+        // `Option<T>` accepts null or a value matching the inner type.
+        TypeSchema::Option(inner) => {
+            if value.is_null() {
+                Ok(())
+            } else {
+                check_type(value, inner)
+            }
+        }
+
+        TypeSchema::Array(inner) => match value.as_array() {
+            Some(items) => {
+                for item in items {
+                    check_type(item, inner)?;
+                }
+                Ok(())
+            }
+            None => Err("array"),
+        },
+
+        TypeSchema::Enum { variants } => match value.as_str() {
+            Some(s) if variants.contains(&s) => Ok(()),
+            Some(_) => Err("one of the allowed enum variants"),
+            None => Err("string"),
+        },
+    }
 }
 
 /// Attempts to invoke a registered RPC method by name.
@@ -817,6 +1017,29 @@ pub fn all_http_method_schemas() -> Vec<HttpMethodSchemaDefinition> {
             }),
     );
     methods
+}
+
+/// Shared test helper: assert a domain's controller-schema list and
+/// registered-controller list stay in lockstep, and that a known function is
+/// present. Replaces the brittle `assert_eq!(schemas().len(), N)` magic-number
+/// pattern repeated across ~15 domains (plan.md §3/§6) — a legitimate new
+/// controller no longer breaks the count, but a schema/handler desync or a
+/// dropped op still fails.
+#[cfg(test)]
+pub(crate) fn assert_schema_controller_parity(
+    schemas: &[ControllerSchema],
+    controllers: &[RegisteredController],
+    known_function: &str,
+) {
+    assert_eq!(
+        schemas.len(),
+        controllers.len(),
+        "schema/controller registration lists must stay in lockstep",
+    );
+    assert!(
+        schemas.iter().any(|s| s.function == known_function),
+        "expected a `{known_function}` controller schema to be registered",
+    );
 }
 
 #[cfg(test)]

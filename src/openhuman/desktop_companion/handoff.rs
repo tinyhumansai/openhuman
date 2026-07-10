@@ -81,7 +81,7 @@ pub(crate) fn check_handoff_with_items(
         let matched = if keyword.contains(' ') {
             lower.contains(keyword)
         } else {
-            tokens.iter().any(|t| *t == keyword)
+            tokens.contains(&keyword)
         };
         if !matched {
             continue;

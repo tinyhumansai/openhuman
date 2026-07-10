@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
+import { I18nProvider } from '../../../../lib/i18n/I18nContext';
 import {
   clearCloudProviderKey,
   completeOpenAiCodexOAuth,
@@ -9,6 +10,7 @@ import {
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
+  loadProviderAuthErrors,
   OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
   OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
   saveAISettings,
@@ -28,7 +30,11 @@ import {
   openhumanHeartbeatSettingsSet,
   openhumanHeartbeatTickNow,
 } from '../../../../utils/tauriCommands/heartbeat';
-import AIPanel, { BackgroundLoopControls } from '../AIPanel';
+import AIPanel, {
+  BackgroundLoopControls,
+  buildRoutingDiffSummary,
+  type RoutingMap,
+} from '../AIPanel';
 
 vi.mock('../../../../services/api/aiSettingsApi', () => ({
   ALL_WORKLOADS: [
@@ -45,6 +51,7 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
   loadAISettings: vi.fn(),
   saveAISettings: vi.fn(),
   loadLocalProviderSnapshot: vi.fn(),
+  loadProviderAuthErrors: vi.fn().mockResolvedValue([]),
   testProviderModel: vi.fn(),
   modelRegistryVision: vi.fn(() => false),
   upsertModelRegistryVision: vi.fn((registry: unknown[]) => registry),
@@ -120,6 +127,7 @@ const baseSettings = {
     reasoning: { kind: 'openhuman' as const },
     agentic: { kind: 'openhuman' as const },
     coding: { kind: 'openhuman' as const },
+    vision: { kind: 'openhuman' as const },
     memory: { kind: 'openhuman' as const },
     embeddings: { kind: 'openhuman' as const },
     heartbeat: { kind: 'openhuman' as const },
@@ -142,7 +150,9 @@ const baseHeartbeatSettings = {
   meeting_lookahead_minutes: 60,
   max_calendar_connections_per_tick: 2,
   reminder_lookahead_minutes: 30,
-  subconscious_mode: 'off' as 'off' | 'simple' | 'aggressive',
+  subconscious_mode: 'off' as 'off' | 'simple' | 'aggressive' | 'event_driven',
+  triggers_enabled: false,
+  max_promotions_per_hour: 30,
 };
 
 const baseUsage = {
@@ -213,6 +223,7 @@ describe('AIPanel', () => {
     vi.clearAllMocks();
     vi.mocked(loadAISettings).mockResolvedValue(baseSettings);
     vi.mocked(loadLocalProviderSnapshot).mockResolvedValue(baseLocalSnapshot);
+    vi.mocked(loadProviderAuthErrors).mockResolvedValue([]);
     vi.mocked(setCloudProviderKey).mockResolvedValue(undefined);
     vi.mocked(clearCloudProviderKey).mockResolvedValue(undefined);
     vi.mocked(importOpenAiCodexCliAuth).mockResolvedValue(undefined);
@@ -263,6 +274,26 @@ describe('AIPanel', () => {
     expect(screen.getAllByText(/^Routing$/).length).toBeGreaterThan(0);
   });
 
+  it('surfaces a provider-error notice when a BYO key was rejected at runtime', async () => {
+    vi.mocked(loadProviderAuthErrors).mockResolvedValue([
+      {
+        provider: 'openrouter',
+        status: 401,
+        message:
+          'openrouter rejected the API key (HTTP 401). Update your openrouter API key in Connections → API keys → LLM to restore it.',
+        timestamp_ms: 1000,
+      },
+    ]);
+    renderWithProviders(<AIPanel />);
+    expect(await screen.findByText(/rejected the API key/i)).toBeInTheDocument();
+  });
+
+  it('renders no provider-error notice when there are no rejected keys', async () => {
+    renderWithProviders(<AIPanel />);
+    await waitFor(() => expect(screen.getAllByText(/^LLM Providers$/).length).toBeGreaterThan(0));
+    expect(screen.queryByText(/rejected the API key/i)).not.toBeInTheDocument();
+  });
+
   it('renders the OpenHuman primary card after load', async () => {
     renderWithProviders(<AIPanel />);
     // The OpenHuman label now appears in multiple places (provider card,
@@ -271,11 +302,14 @@ describe('AIPanel', () => {
     await waitFor(() => expect(screen.getAllByText(/OpenHuman/i).length).toBeGreaterThan(0));
   });
 
-  it('renders the always-on Managed chip', async () => {
+  it('renders Managed as an always-on badge, not a switchable toggle (#3760)', async () => {
     renderWithProviders(<AIPanel />);
-    const managedSwitch = await screen.findByRole('switch', { name: /Disconnect Managed/i });
-    expect(managedSwitch).toBeDisabled();
-    expect(managedSwitch).toHaveAttribute('aria-checked', 'true');
+    // The Managed chip must show an "Always on" indicator...
+    expect(await screen.findByText(/Always on/i)).toBeInTheDocument();
+    // ...and must NOT render a toggle switch users would try (and fail) to flip.
+    expect(screen.queryByRole('switch', { name: /Managed/i })).toBeNull();
+    // A hint points users wanting a local model at the Routing card below.
+    expect(screen.getByText(/choose a routing mode below/i)).toBeInTheDocument();
   });
 
   it('renders Managed, Use Your Own Models, and Advanced routing controls', async () => {
@@ -299,6 +333,7 @@ describe('AIPanel', () => {
       'Reasoning',
       'Agentic',
       'Coding',
+      'Vision',
       'Memory summarization',
       'Heartbeat',
       /Learning/,
@@ -377,6 +412,7 @@ describe('AIPanel', () => {
         },
         agentic: { kind: 'openhuman' as const },
         coding: { kind: 'openhuman' as const },
+        vision: { kind: 'openhuman' as const },
         memory: { kind: 'openhuman' as const },
         embeddings: { kind: 'openhuman' as const },
         heartbeat: { kind: 'openhuman' as const },
@@ -430,6 +466,123 @@ describe('AIPanel', () => {
     expect(
       within(dialog).queryByRole('button', { name: /Sign in with ChatGPT \/ Codex/i })
     ).not.toBeInTheDocument();
+  });
+
+  it('shows a localized Kimi platform link and opens the supported .ai platform', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+    const link = within(dialog).getByRole('link', { name: /^Get API key$/i });
+
+    expect(link).toHaveAttribute('href', 'https://platform.kimi.ai?aff=openhuman');
+
+    fireEvent.click(link);
+
+    expect(openUrl).toHaveBeenCalledWith('https://platform.kimi.ai?aff=openhuman');
+  });
+
+  it('logs Kimi platform link open failures without changing the dialog', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    vi.mocked(openUrl).mockRejectedValueOnce('blocked');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      renderWithProviders(
+        <I18nProvider>
+          <AIPanel />
+        </I18nProvider>
+      );
+
+      fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+      const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+      fireEvent.click(within(dialog).getByRole('link', { name: /^Get API key$/i }));
+
+      await waitFor(() => {
+        expect(warnSpy).toHaveBeenCalledWith('[ai-settings] provider platform link open failed', {
+          slug: 'moonshot',
+          error: 'blocked',
+        });
+      });
+      expect(dialog).toBeInTheDocument();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('localizes the Kimi platform link text for Chinese', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>,
+      { preloadedState: { locale: { current: 'zh-CN' } } }
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+
+    expect(within(dialog).getByRole('link', { name: '获取 API Key' })).toBeInTheDocument();
+  });
+
+  it('reserves logical inline space for long translated Kimi link labels', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>,
+      { preloadedState: { locale: { current: 'fr' } } }
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+    const heading = within(dialog).getByRole('heading', {
+      name: /Connecter un fournisseur Kimi \(Moonshot\)/i,
+    });
+
+    expect(heading.parentElement).toHaveStyle({ paddingInlineEnd: '9rem' });
+  });
+
+  it('positions the Kimi link at the logical inline end for RTL locales', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>,
+      { preloadedState: { locale: { current: 'ar' } } }
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Kimi \(Moonshot\)/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Kimi \(Moonshot\)/i });
+    const link = within(dialog).getByRole('link', { name: 'احصل على مفتاح API' });
+
+    expect(document.documentElement).toHaveAttribute('dir', 'rtl');
+    expect(link).toHaveStyle({ insetInlineEnd: '1.5rem' });
+    expect(link).not.toHaveClass('right-6');
+  });
+
+  it('does not show the Kimi platform link for other providers', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(
+      <I18nProvider>
+        <AIPanel />
+      </I18nProvider>
+    );
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Connect OpenAI/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect OpenAI/i });
+
+    expect(within(dialog).queryByRole('link', { name: /^Get API key$/i })).not.toBeInTheDocument();
   });
 
   it('renders Phase 1 built-in provider chips including SumoPod', async () => {
@@ -602,6 +755,7 @@ describe('AIPanel', () => {
         reasoning: { kind: 'cloud' as const, providerSlug: 'openai', model: 'gpt-4o' },
         agentic: { kind: 'cloud' as const, providerSlug: 'openai', model: 'gpt-4o-mini' },
         coding: { kind: 'openhuman' as const },
+        vision: { kind: 'openhuman' as const },
         memory: { kind: 'openhuman' as const },
         embeddings: { kind: 'openhuman' as const },
         heartbeat: { kind: 'openhuman' as const },
@@ -658,6 +812,7 @@ describe('AIPanel', () => {
         reasoning: { kind: 'local' as const, model: 'llama3' },
         agentic: { kind: 'openhuman' as const },
         coding: { kind: 'openhuman' as const },
+        vision: { kind: 'openhuman' as const },
         memory: { kind: 'openhuman' as const },
         embeddings: { kind: 'openhuman' as const },
         heartbeat: { kind: 'openhuman' as const },
@@ -1414,5 +1569,43 @@ describe('AIPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Planner tick now' }));
     await waitFor(() => expect(screen.getByText('tick failed')).toBeInTheDocument());
+  });
+});
+
+describe('buildRoutingDiffSummary', () => {
+  const allDefault = (): RoutingMap => ({
+    chat: { kind: 'default' },
+    reasoning: { kind: 'default' },
+    agentic: { kind: 'default' },
+    coding: { kind: 'default' },
+    vision: { kind: 'default' },
+    memory: { kind: 'default' },
+    heartbeat: { kind: 'default' },
+    learning: { kind: 'default' },
+    subconscious: { kind: 'default' },
+  });
+
+  it('emits one "<label> → <target>" entry per changed workload and skips unchanged ones', () => {
+    // Identity `t` so we can assert the workload's i18n label key is used.
+    const t = (key: string) => key;
+    const saved = allDefault();
+    saved.coding = { kind: 'cloud', providerSlug: 'x', model: 'y' };
+    const draft = allDefault();
+    draft.chat = { kind: 'cloud', providerSlug: 'openai', model: 'gpt-4o', temperature: 0.3 };
+    draft.reasoning = { kind: 'openhuman' };
+    draft.agentic = { kind: 'local', model: 'llama3' };
+    // coding: saved=cloud, draft=default → changed; describe(default) === 'cloud'.
+
+    expect(buildRoutingDiffSummary(saved, draft, t)).toEqual([
+      'settings.ai.routing.workload.chat.label → openai:gpt-4o@0.30',
+      'settings.ai.routing.workload.reasoning.label → openhuman',
+      'settings.ai.routing.workload.agentic.label → local:llama3',
+      'settings.ai.routing.workload.coding.label → cloud',
+    ]);
+  });
+
+  it('returns an empty list when draft matches saved', () => {
+    const routing = allDefault();
+    expect(buildRoutingDiffSummary(routing, { ...routing }, k => k)).toEqual([]);
   });
 });

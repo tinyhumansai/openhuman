@@ -6,6 +6,8 @@ import { store } from '../../store';
 import { addMessageLocal, createNewThread, setSelectedThread } from '../../store/threadSlice';
 import type { ThreadMessage } from '../../types/thread';
 
+type Translator = (key: string, fallback?: string) => string;
+
 /**
  * Polls via setTimeout until `[data-walkthrough="<selector>"]` appears in the
  * DOM, then resolves. Rejects after `timeout` ms (default 3000).
@@ -43,7 +45,7 @@ export function waitForTarget(selector: string, timeout = 3000): Promise<void> {
 }
 
 /**
- * Factory that produces the 10-step walkthrough sequence.
+ * Factory that produces the post-onboarding walkthrough sequence.
  *
  * Steps that navigate to a different page receive a `before` async hook that
  * calls `navigate(path)` and then waits for the target element to appear in
@@ -52,23 +54,25 @@ export function waitForTarget(selector: string, timeout = 3000): Promise<void> {
  * All targets follow the `[data-walkthrough="<name>"]` convention — add the
  * attribute to the corresponding DOM element in the page/component.
  */
-export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
+export function createWalkthroughSteps(
+  navigate: NavigateFunction,
+  t: Translator = (_key, fallback) => fallback ?? _key
+): Step[] {
   return [
-    // ── Step 1 — /home ────────────────────────────────────────────────────
+    // ── Step 1 — /chat empty state ────────────────────────────────────────
     {
       target: '[data-walkthrough="home-card"]',
-      title: 'Your command center',
-      content:
-        "This is your home base — a quick snapshot of what's happening and what needs your attention.",
+      title: t('walkthrough.steps.startChat.title'),
+      content: t('walkthrough.steps.startChat.content'),
       placement: 'bottom',
       skipBeacon: true,
     },
 
-    // ── Step 2 — /home ────────────────────────────────────────────────────
+    // ── Step 2 — /chat empty state ────────────────────────────────────────
     {
       target: '[data-walkthrough="home-cta"]',
-      title: 'Say hello',
-      content: 'Tap here to start a conversation with your AI assistant anytime.',
+      title: t('walkthrough.steps.sayHello.title'),
+      content: t('walkthrough.steps.sayHello.content'),
       placement: 'bottom',
       skipBeacon: true,
     },
@@ -76,9 +80,8 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
     // ── Step 3 — /chat ────────────────────────────────────────────────────
     {
       target: '[data-walkthrough="chat-agent-panel"]',
-      title: 'Meet your AI',
-      content:
-        'This is where conversations happen. Ask questions, get summaries, or brainstorm. Everything stays searchable.',
+      title: t('walkthrough.steps.meetAi.title'),
+      content: t('walkthrough.steps.meetAi.content'),
       placement: 'bottom',
       skipBeacon: true,
       before: async () => {
@@ -87,12 +90,11 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
       },
     },
 
-    // ── Step 4 — /connections (Apps tab) ─────────────────────────────────
+    // ── Step 4 — /connections (Apps tab) ──────────────────────────────────
     {
       target: '[data-walkthrough="skills-grid"]',
-      title: 'Connect your world',
-      content:
-        'Gmail, Slack, WhatsApp, and more — each connection gives your assistant superpowers.',
+      title: t('walkthrough.steps.connectWorld.title'),
+      content: t('walkthrough.steps.connectWorld.content'),
       placement: 'top',
       skipBeacon: true,
       before: async () => {
@@ -104,9 +106,8 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
     // ── Step 5 — /connections (Messaging tab) ────────────────────────────
     {
       target: '[data-walkthrough="skills-channels"]',
-      title: 'Chat where you already are',
-      content:
-        'WhatsApp, Telegram, Slack, Discord — connect your messaging apps so your assistant can reach you anywhere.',
+      title: t('walkthrough.steps.messagingApps.title'),
+      content: t('walkthrough.steps.messagingApps.content'),
       placement: 'bottom',
       skipBeacon: true,
       before: async () => {
@@ -114,26 +115,11 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
       },
     },
 
-    // ── Step 6 — /activity (Activity) ────────────────────────────────────
-    {
-      target: '[data-walkthrough="intelligence-header"]',
-      title: 'Your activity hub',
-      content:
-        'This is where your assistant learns and remembers. It gets smarter the more you use it.',
-      placement: 'bottom',
-      skipBeacon: true,
-      before: async () => {
-        navigate('/activity');
-        await waitForTarget('intelligence-header');
-      },
-    },
-
     // ── Step 6 — /settings ────────────────────────────────────────────────
     {
       target: '[data-walkthrough="settings-menu"]',
-      title: 'Make it yours',
-      content:
-        'Preferences, privacy, notifications — everything is here. You can restart this tour anytime from this page.',
+      title: t('walkthrough.steps.settings.title'),
+      content: t('walkthrough.steps.settings.content'),
       placement: 'top',
       skipBeacon: true,
       before: async () => {
@@ -142,34 +128,69 @@ export function createWalkthroughSteps(navigate: NavigateFunction): Step[] {
       },
     },
 
-    // ── Step 7 — /home ────────────────────────────────────────────────────
+    // ── Step 7 — primary nav: Chat ────────────────────────────────────────
     {
       target: '[data-walkthrough="tab-chat"]',
-      title: 'Quick access',
-      content: 'These tabs are your shortcuts — always one tap away.',
+      title: t('walkthrough.steps.chatTab.title'),
+      content: t('walkthrough.steps.chatTab.content'),
       placement: 'top',
       skipBeacon: true,
       before: async () => {
-        navigate('/home');
+        navigate('/chat');
         await waitForTarget('tab-chat');
       },
     },
 
-    // ── Step 8 — /home (already there) ───────────────────────────────────
+    // ── Step 8 — primary nav: Human ───────────────────────────────────────
     {
-      target: '[data-walkthrough="tab-activity"]',
-      title: 'Stay in the loop',
-      content: 'Alerts and automations live here — briefings, notifications, background activity.',
+      target: '[data-walkthrough="tab-human"]',
+      title: t('walkthrough.steps.humanTab.title'),
+      content: t('walkthrough.steps.humanTab.content'),
       placement: 'top',
       skipBeacon: true,
     },
 
-    // ── Step 9 — /chat (pre-seeded welcome message) ───────────────────────
+    // ── Step 9 — primary nav: Brain ───────────────────────────────────────
+    {
+      target: '[data-walkthrough="tab-brain"]',
+      title: t('walkthrough.steps.brainTab.title'),
+      content: t('walkthrough.steps.brainTab.content'),
+      placement: 'top',
+      skipBeacon: true,
+    },
+
+    // ── Step 10 — primary nav: Agent World ────────────────────────────────
+    {
+      target: '[data-walkthrough="tab-agent-world"]',
+      title: t('walkthrough.steps.agentWorldTab.title'),
+      content: t('walkthrough.steps.agentWorldTab.content'),
+      placement: 'top',
+      skipBeacon: true,
+    },
+
+    // ── Step 11 — primary nav: Connections ────────────────────────────────
+    {
+      target: '[data-walkthrough="tab-connections"]',
+      title: t('walkthrough.steps.connectionsTab.title'),
+      content: t('walkthrough.steps.connectionsTab.content'),
+      placement: 'top',
+      skipBeacon: true,
+    },
+
+    // ── Step 12 — primary nav: Feedback ───────────────────────────────────
+    {
+      target: '[data-walkthrough="tab-feedback"]',
+      title: t('walkthrough.steps.feedbackTab.title'),
+      content: t('walkthrough.steps.feedbackTab.content'),
+      placement: 'top',
+      skipBeacon: true,
+    },
+
+    // ── Step 13 — /chat (pre-seeded welcome message) ──────────────────────
     {
       target: '[data-walkthrough="chat-agent-panel"]',
-      title: "You're all set!",
-      content:
-        'Your assistant left you a welcome note — this is your space to chat, ask questions, or brainstorm. Have fun!',
+      title: t('walkthrough.steps.allSet.title'),
+      content: t('walkthrough.steps.allSet.content'),
       placement: 'bottom',
       skipBeacon: true,
       before: async () => {

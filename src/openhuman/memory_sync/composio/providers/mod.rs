@@ -34,6 +34,7 @@
 
 mod descriptions;
 pub(crate) mod helpers;
+pub(crate) mod orchestrator;
 mod scope_lookup;
 pub mod tool_scope;
 mod traits;

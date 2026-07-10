@@ -24,7 +24,10 @@ async function openWebhooksDebugPanel(): Promise<void> {
 }
 
 describe('Webhooks ingress surface (stub-level)', () => {
-  before(async () => {
+  before(async function () {
+    // resetApp bring-up (waitForApp + onboarding walk + home confirm) can run
+    // ~25-30s and race the default 30s Mocha hook budget; raise it.
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
@@ -37,9 +40,13 @@ describe('Webhooks ingress surface (stub-level)', () => {
 
   it('reaches the app shell after onboarding', async () => {
     // Home.tsx: t('home.askAssistant') is the stable home page CTA button text.
+    // After the /home → /chat redirect (AppRoutes.tsx), the chat new-window hero
+    // renders t('home.statusOk') instead of the old CTA button.
     const atHome =
       (await textExists('Ask your assistant anything')) ||
-      (await textExists('Your device is connected'));
+      (await textExists('Your device is connected')) ||
+      (await textExists('Your assistant is ready when you are')) ||
+      (await textExists('Type something below to get started'));
     expect(atHome).toBe(true);
   });
 
@@ -100,7 +107,9 @@ describe('Webhooks ingress surface (stub-level)', () => {
     stepLog('Navigated to webhooks debug route', { currentHash });
     expect(String(currentHash)).toContain('/settings/webhooks-debug');
 
-    await waitForText('Webhooks Debug', 12_000);
+    // Panel heading is the route-registry title "Webhooks" now (the old
+    // "Webhooks Debug" webhooks.debugTitle is no longer rendered).
+    await waitForText('Webhooks', 12_000);
     await waitForText('Registered Webhooks', 12_000);
     await waitForText('Captured Requests', 12_000);
 

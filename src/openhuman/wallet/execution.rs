@@ -354,7 +354,7 @@ pub(crate) fn validate_calldata(data: &str) -> Result<String, String> {
         return Err("calldata must be 0x-prefixed hex".to_string());
     }
     let body = &trimmed[2..];
-    if body.len() % 2 != 0 {
+    if !body.len().is_multiple_of(2) {
         return Err("calldata hex must be byte-aligned".to_string());
     }
     if !body.chars().all(|c| c.is_ascii_hexdigit()) {

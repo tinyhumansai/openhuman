@@ -11,7 +11,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult, ToolScope};
+use crate::openhuman::tools::traits::{
+    humanize_tool_name, PermissionLevel, Tool, ToolCategory, ToolResult, ToolScope,
+};
 
 #[derive(Debug, Clone)]
 pub struct GeneratedToolDefinition {
@@ -19,6 +21,12 @@ pub struct GeneratedToolDefinition {
     pub name: String,
     /// Human-readable tool description.
     pub description: String,
+    /// Curated human verb-phrase for the chat processing timeline (e.g.
+    /// "Reading messages", "Sending email"). When set, this is shown
+    /// verbatim instead of a Title-Cased derivation of [`Self::name`], so a
+    /// dynamic Composio/MCP action never surfaces as raw `snake_case`. The
+    /// catalog/registry that builds these definitions populates it.
+    pub display_label: Option<String>,
     /// JSON schema for tool arguments.
     pub parameters_schema: Value,
     /// Permission required to execute this tool.
@@ -52,6 +60,7 @@ impl GeneratedToolDefinition {
         Self {
             name: name.into(),
             description: description.into(),
+            display_label: None,
             parameters_schema,
             permission_level: PermissionLevel::ReadOnly,
             category: ToolCategory::Workflow,
@@ -218,6 +227,18 @@ impl Tool for GeneratedTool {
             .map(GeneratedToolRisk::is_external_effect)
             .unwrap_or(false)
     }
+
+    fn display_label(&self, _args: &Value) -> Option<String> {
+        Some(
+            self.definition
+                .display_label
+                .clone()
+                .unwrap_or_else(|| humanize_tool_name(&self.definition.name)),
+        )
+    }
+
+    // `display_detail` uses the trait default (`context_detail_from_args`),
+    // which already pulls the recipient/query/path from the dynamic args.
 }
 
 /// Convert generated definitions into boxed tool trait objects.
@@ -288,6 +309,7 @@ pub fn admit_generated_tool_definitions(
 fn normalize_definition(definition: &mut GeneratedToolDefinition) {
     definition.name = definition.name.trim().to_string();
     definition.description = definition.description.trim().to_string();
+    definition.display_label = trim_option(definition.display_label.take());
     definition.adapter_id = definition.adapter_id.trim().to_string();
     definition.provider_id = normalize_optional_provider_id(definition.provider_id.take());
     definition.capability_id = trim_option(definition.capability_id.take());

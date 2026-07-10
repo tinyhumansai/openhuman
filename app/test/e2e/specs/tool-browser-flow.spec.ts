@@ -64,7 +64,10 @@ interface ListDefinitionsResult {
 }
 
 describe('System tools — Browser (open URL + automation registry)', () => {
-  before(async () => {
+  before(async function () {
+    // resetApp bring-up can run ~25-30s and race the default 30s Mocha hook
+    // budget; raise it.
+    this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);

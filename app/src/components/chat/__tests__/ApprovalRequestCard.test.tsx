@@ -45,6 +45,28 @@ describe('ApprovalRequestCard', () => {
     expect(screen.getByText('shell')).toBeInTheDocument();
   });
 
+  it('uses an opaque warning surface so thread text does not show through', () => {
+    renderCard();
+    const card = screen.getByRole('alertdialog', { name: 'Approval needed' });
+    const command = screen.getByText('pip show yfinance');
+
+    // The real, behavioural invariant: neither the card nor the command chip
+    // may use a fractional-opacity background utility (e.g.
+    // `dark:bg-amber-950/40`), which would let the underlying thread text bleed
+    // through the approval surface. Assert the *absence of any opacity suffix*
+    // rather than a computed colour — jsdom does not apply Tailwind, so
+    // getComputedStyle can't observe the background here (plan.md §3).
+    const OPACITY_SUFFIX = /\bdark:bg-[^\s/]+\/\d+/;
+    expect(card.className).not.toMatch(OPACITY_SUFFIX);
+    expect(command.className).not.toMatch(OPACITY_SUFFIX);
+
+    // Deliberate, labeled visual-regression lock on the opaque surface tokens —
+    // update these only on an intentional restyle of the approval card.
+    expect(card).toHaveClass('bg-amber-50');
+    expect(card).toHaveClass('dark:bg-amber-950');
+    expect(command).toHaveClass('dark:bg-surface-canvas');
+  });
+
   it('does not nudge the user to reply yes/no (buttons are the input path)', () => {
     renderCard();
     expect(screen.queryByText(/reply.*yes/i)).not.toBeInTheDocument();

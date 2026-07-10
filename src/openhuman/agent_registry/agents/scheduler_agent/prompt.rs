@@ -65,6 +65,8 @@ mod tests {
         let body = build(&ctx).unwrap();
         assert!(body.contains("Scheduler Agent"));
         assert!(body.contains("explicit user confirmation"));
+        assert!(body.contains("typed JSON object"));
+        assert!(body.contains("\"kind\": \"at\""));
         assert!(body.contains("Evidence used"));
     }
 }

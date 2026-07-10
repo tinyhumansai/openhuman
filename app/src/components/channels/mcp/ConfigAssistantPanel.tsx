@@ -5,10 +5,12 @@
  * that passes them up to the caller (e.g. to pre-fill the install dialog).
  */
 import debug from 'debug';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { BubbleMarkdown } from '../../../features/conversations/components/AgentMessageBubble';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
+import Button from '../../ui/Button';
 
 const log = debug('mcp-clients:config-assist');
 
@@ -18,17 +20,35 @@ interface Message {
   suggested_env?: Record<string, string>;
 }
 
+// Per-server chat cache (keyed by qualified_name). Lets the help chat survive
+// closing+reopening the modal (you keep your place) while you stay on the MCP's
+// detail page. `clearConfigChat` is called when the detail page unmounts (back
+// to the list), so re-entering a server starts fresh.
+const chatCache = new Map<string, Message[]>();
+
+/** Drop the cached help chat for a server (called on detail-page unmount). */
+export function clearConfigChat(qualifiedName: string): void {
+  chatCache.delete(qualifiedName);
+}
+
 interface ConfigAssistantPanelProps {
   qualifiedName: string;
   onApplySuggestedEnv?: (env: Record<string, string>) => void;
+  /** A fixed, server-specific prompt offered as a one-click action in the empty
+   * state. It is NOT auto-sent: firing the LLM research call on open made the
+   * help panel block for seconds before showing anything (#4272). The user taps
+   * the suggestion when they actually want guidance. */
+  autoPrompt?: string;
 }
 
 const ConfigAssistantPanel = ({
   qualifiedName,
   onApplySuggestedEnv,
+  autoPrompt,
 }: ConfigAssistantPanelProps) => {
   const { t } = useT();
-  const [messages, setMessages] = useState<Message[]>([]);
+  // Restore any in-progress chat for this server (survives modal reopen).
+  const [messages, setMessages] = useState<Message[]>(() => chatCache.get(qualifiedName) ?? []);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,47 +58,60 @@ const ConfigAssistantPanel = ({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  const handleSend = useCallback(async () => {
+  const send = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || sending) return;
+
+      const userMessage: Message = { role: 'user', content: trimmed };
+      const updatedHistory = [...messages, userMessage];
+      setMessages(updatedHistory);
+      setSending(true);
+      setError(null);
+      log('sending message: %s', trimmed);
+
+      try {
+        const result = await mcpClientsApi.configAssist({
+          qualified_name: qualifiedName,
+          user_message: trimmed,
+          history: updatedHistory.map(m => ({ role: m.role, content: m.content })),
+        });
+        log(
+          'received reply length=%d suggested_env=%s',
+          result.reply.length,
+          result.suggested_env ? 'yes' : 'no'
+        );
+
+        const assistantMessage: Message = {
+          role: 'assistant',
+          content: result.reply,
+          suggested_env: result.suggested_env,
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+        setTimeout(scrollToBottom, 50);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : t('mcp.configAssistant.failedResponse');
+        log('config_assist error: %s', msg);
+        setError(msg);
+        setMessages(messages);
+      } finally {
+        setSending(false);
+      }
+    },
+    [messages, qualifiedName, sending, scrollToBottom, t]
+  );
+
+  const handleSend = useCallback(() => {
     const text = input.trim();
-    if (!text || sending) return;
-
-    const userMessage: Message = { role: 'user', content: text };
-    const updatedHistory = [...messages, userMessage];
-    setMessages(updatedHistory);
+    if (!text) return;
     setInput('');
-    setSending(true);
-    setError(null);
-    log('sending message: %s', text);
+    void send(text);
+  }, [input, send]);
 
-    try {
-      const result = await mcpClientsApi.configAssist({
-        qualified_name: qualifiedName,
-        user_message: text,
-        history: updatedHistory.map(m => ({ role: m.role, content: m.content })),
-      });
-      log(
-        'received reply length=%d suggested_env=%s',
-        result.reply.length,
-        result.suggested_env ? 'yes' : 'no'
-      );
-
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: result.reply,
-        suggested_env: result.suggested_env,
-      };
-      setMessages(prev => [...prev, assistantMessage]);
-      setTimeout(scrollToBottom, 50);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : t('mcp.configAssistant.failedResponse');
-      log('config_assist error: %s', msg);
-      setError(msg);
-      setMessages(messages);
-      setInput(text);
-    } finally {
-      setSending(false);
-    }
-  }, [input, messages, qualifiedName, sending, scrollToBottom, t]);
+  // Persist the chat per-server so reopening the modal restores it.
+  useEffect(() => {
+    chatCache.set(qualifiedName, messages);
+  }, [qualifiedName, messages]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -92,16 +125,21 @@ const ConfigAssistantPanel = ({
 
   return (
     <div className="flex flex-col h-full space-y-2">
-      <h4 className="text-xs font-semibold text-stone-700 dark:text-neutral-300">
-        {t('mcp.configAssistant.title')}
-      </h4>
-
       {/* Message list */}
-      <div className="flex-1 overflow-y-auto space-y-2 min-h-0 max-h-64 rounded-lg border border-stone-100 dark:border-neutral-800 p-2">
+      <div className="flex-1 overflow-y-auto space-y-2 min-h-0 rounded-lg border border-line-subtle p-2">
         {messages.length === 0 && (
-          <p className="text-xs text-stone-400 dark:text-neutral-500 py-2 text-center">
-            {t('mcp.configAssistant.empty')}
-          </p>
+          <div className="py-2 text-center space-y-2">
+            <p className="text-xs text-content-faint">{t('mcp.configAssistant.empty')}</p>
+            {autoPrompt && (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={sending}
+                onClick={() => void send(autoPrompt)}>
+                {t('mcp.configAssistant.autoPromptCta')}
+              </Button>
+            )}
+          </div>
         )}
         {messages.map((msg, idx) => (
           <div
@@ -110,10 +148,14 @@ const ConfigAssistantPanel = ({
             <div
               className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                 msg.role === 'user'
-                  ? 'bg-primary-500 text-white'
-                  : 'bg-stone-100 dark:bg-neutral-800 text-stone-800 dark:text-neutral-100'
+                  ? 'bg-primary-500 text-content-inverted'
+                  : 'bg-surface-subtle text-content'
               }`}>
-              <p className="whitespace-pre-wrap">{msg.content}</p>
+              {msg.role === 'assistant' ? (
+                <BubbleMarkdown content={msg.content} tone="agent" />
+              ) : (
+                <p className="whitespace-pre-wrap">{msg.content}</p>
+              )}
               {msg.suggested_env && Object.keys(msg.suggested_env).length > 0 && (
                 <div className="mt-2 pt-2 border-t border-white/20 space-y-1">
                   <p className="text-[11px] font-medium opacity-80">
@@ -131,7 +173,7 @@ const ConfigAssistantPanel = ({
                     <button
                       type="button"
                       onClick={() => onApplySuggestedEnv(msg.suggested_env!)}
-                      className="mt-1 rounded px-2 py-1 text-[11px] font-medium bg-white/20 hover:bg-white/30 transition-colors">
+                      className="mt-1 rounded px-2 py-1 text-[11px] font-medium bg-surface/20 hover:bg-white/30 transition-colors">
                       {t('mcp.configAssistant.applySuggested')}
                     </button>
                   )}
@@ -147,7 +189,7 @@ const ConfigAssistantPanel = ({
         ))}
         {sending && (
           <div className="flex justify-start">
-            <div className="rounded-lg px-3 py-2 text-sm bg-stone-100 dark:bg-neutral-800 text-stone-400 dark:text-neutral-500">
+            <div className="rounded-lg px-3 py-2 text-sm bg-surface-subtle text-content-faint">
               {t('mcp.configAssistant.thinking')}
             </div>
           </div>
@@ -171,15 +213,16 @@ const ConfigAssistantPanel = ({
           onKeyDown={handleKeyDown}
           disabled={sending}
           placeholder={t('mcp.configAssistant.inputPlaceholder')}
-          className="flex-1 rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm text-stone-800 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50 resize-none"
+          className="flex-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-content placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50 resize-none"
         />
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="md"
           disabled={sending || !input.trim()}
           onClick={() => void handleSend()}
-          className="self-end rounded-lg bg-primary-500 px-3 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50 transition-colors shrink-0">
+          className="self-end shrink-0">
           {t('mcp.configAssistant.send')}
-        </button>
+        </Button>
       </div>
     </div>
   );

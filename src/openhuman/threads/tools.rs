@@ -281,6 +281,137 @@ impl Tool for ThreadMessageListTool {
     }
 }
 
+/// Search past conversations (all threads) for messages matching a query.
+pub struct ThreadTranscriptSearchTool;
+
+impl ThreadTranscriptSearchTool {
+    /// Default and ceiling for the number of matches returned. Kept small so a
+    /// context-gathering caller's prompt only grows by a bounded amount.
+    const DEFAULT_LIMIT: usize = 8;
+    const MAX_LIMIT: usize = 25;
+    /// Per-hit snippet cap (chars) — enough to recognise the message without
+    /// dumping whole turns into the caller's context.
+    const SNIPPET_CHARS: usize = 220;
+
+    fn snippet(content: &str) -> String {
+        let collapsed: String = content.split_whitespace().collect::<Vec<_>>().join(" ");
+        if collapsed.chars().count() <= Self::SNIPPET_CHARS {
+            return collapsed;
+        }
+        let cut = collapsed
+            .char_indices()
+            .nth(Self::SNIPPET_CHARS)
+            .map(|(i, _)| i)
+            .unwrap_or(collapsed.len());
+        format!("{}…", &collapsed[..cut])
+    }
+}
+
+#[async_trait]
+impl Tool for ThreadTranscriptSearchTool {
+    fn name(&self) -> &str {
+        "transcript_search"
+    }
+
+    fn description(&self) -> &str {
+        "Search your PAST conversations across all threads for messages matching \
+         a query (keyword/substring, recency-ranked). Returns the most relevant \
+         recent matches — each with its thread id, sender, timestamp, and a \
+         snippet. Use to recall what the user said, asked, or decided in earlier \
+         chats before answering."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Keywords or phrase to match against past messages. Be specific — short common words are ignored."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max matches to return (default 8, max 25).",
+                    "minimum": 1,
+                    "maximum": 25
+                },
+                "exclude_thread_id": {
+                    "type": "string",
+                    "description": "Thread id to omit from results. Defaults to the active thread when omitted, so the message the user just sent does not crowd out the prior chats you are trying to recall. Pass a specific id to override, or an empty string to search every thread."
+                }
+            }
+        })
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::ReadOnly
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let query = read_required_str(&args, "query")?;
+        let limit = args
+            .get("limit")
+            .and_then(serde_json::Value::as_u64)
+            .map(|n| (n as usize).clamp(1, Self::MAX_LIMIT))
+            .unwrap_or(Self::DEFAULT_LIMIT);
+        // Resolve the effective thread to exclude:
+        //   - arg omitted     → default to the ACTIVE thread, so the message the
+        //                        user just sent (persisted before inference starts)
+        //                        doesn't become the top "past conversation" hit and
+        //                        crowd out the real prior chats we're recalling.
+        //   - arg = "" (empty) → explicit opt-out: search every thread.
+        //   - arg = "<id>"     → exclude that specific thread.
+        let exclude_owned: Option<String> = match args
+            .get("exclude_thread_id")
+            .and_then(serde_json::Value::as_str)
+        {
+            None => crate::openhuman::inference::provider::thread_context::current_thread_id(),
+            Some(s) if s.trim().is_empty() => None,
+            Some(s) => Some(s.trim().to_string()),
+        };
+        let exclude = exclude_owned.as_deref();
+        log::debug!(
+            "[tool][threads] transcript_search invoked query_chars={} limit={} exclude={:?}",
+            query.chars().count(),
+            limit,
+            exclude
+        );
+
+        let hits = ops::transcript_search(&query, limit, exclude)
+            .await
+            .map_err(|e| anyhow::anyhow!("transcript_search: {e}"))?;
+
+        if hits.is_empty() {
+            return Ok(ToolResult::success(format!(
+                "No past messages matched `{query}`."
+            )));
+        }
+
+        let mut out = format!(
+            "{} past message(s) matched `{query}` (newest first):\n",
+            hits.len()
+        );
+        for hit in &hits {
+            let _ = std::fmt::Write::write_fmt(
+                &mut out,
+                format_args!(
+                    "- [thread {} · {} · {}] {}\n",
+                    hit.thread_id,
+                    hit.role,
+                    hit.created_at,
+                    Self::snippet(&hit.content)
+                ),
+            );
+        }
+        Ok(ToolResult::success(out))
+    }
+
+    fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
+        true
+    }
+}
+
 /// Append a message to a thread.
 pub struct ThreadMessageAppendTool;
 
@@ -705,6 +836,31 @@ mod tests {
             PermissionLevel::Write
         );
         assert_eq!(ThreadListTool.scope(), ToolScope::All);
+        assert_eq!(ThreadTranscriptSearchTool.name(), "transcript_search");
+        assert_eq!(
+            ThreadTranscriptSearchTool.permission_level(),
+            PermissionLevel::ReadOnly
+        );
+        assert!(ThreadTranscriptSearchTool.is_concurrency_safe(&json!({})));
+    }
+
+    #[test]
+    fn transcript_search_requires_query() {
+        let schema = ThreadTranscriptSearchTool.parameters_schema();
+        let required = schema["required"].as_array().expect("required array");
+        assert!(required.iter().any(|v| v == "query"));
+    }
+
+    #[test]
+    fn transcript_search_snippet_collapses_and_truncates() {
+        // Short content is returned with whitespace collapsed, untruncated.
+        let short = ThreadTranscriptSearchTool::snippet("hello   there\n\nworld");
+        assert_eq!(short, "hello there world");
+        // Long content is cut to the cap with an ellipsis.
+        let long_src = "x ".repeat(400);
+        let long = ThreadTranscriptSearchTool::snippet(&long_src);
+        assert!(long.ends_with('…'));
+        assert!(long.chars().count() <= ThreadTranscriptSearchTool::SNIPPET_CHARS + 1);
     }
 
     #[test]

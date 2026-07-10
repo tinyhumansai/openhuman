@@ -327,3 +327,84 @@ async fn create_artifact_publishes_artifact_pending_event() {
     assert!(thread_id.is_none(), "thread_id leaked, got {thread_id:?}");
     assert!(client_id.is_none(), "client_id leaked, got {client_id:?}");
 }
+
+// ── args sidecar + regenerate id reuse (#3162) ────────────────────────────
+
+#[tokio::test]
+async fn save_and_read_args_roundtrip() {
+    let tmp = TempDir::new().unwrap();
+    let args = serde_json::json!({
+        "title": "Q3 Deck",
+        "slides": [{ "heading": "Intro", "bullets": ["a", "b"] }],
+    });
+    save_artifact_args(tmp.path(), "deck-1", &args)
+        .await
+        .unwrap();
+    let got = read_artifact_args(tmp.path(), "deck-1").await.unwrap();
+    assert_eq!(got, args);
+}
+
+#[tokio::test]
+async fn read_args_errors_when_absent() {
+    let tmp = TempDir::new().unwrap();
+    // No args.json written → not regenerable, surfaces an Err rather than
+    // a silent empty value.
+    let err = read_artifact_args(tmp.path(), "missing").await.unwrap_err();
+    assert!(err.contains("not regenerable"), "unexpected error: {err}");
+}
+
+#[tokio::test]
+async fn create_artifact_mints_fresh_id_without_scope() {
+    let tmp = TempDir::new().unwrap();
+    let (meta, _path) = create_artifact(tmp.path(), ArtifactKind::Presentation, "Q3 Deck", "pptx")
+        .await
+        .unwrap();
+    // A normal (non-regenerate) create mints a UUID, never an empty id.
+    assert!(!meta.id.is_empty());
+    assert_eq!(meta.status, ArtifactStatus::Pending);
+}
+
+#[tokio::test]
+async fn create_artifact_reuses_id_inside_regenerate_scope() {
+    let tmp = TempDir::new().unwrap();
+    let workspace = tmp.path().to_path_buf();
+    let (meta, _path) = REGENERATE_TARGET_ID
+        .scope("reused-id".to_string(), async move {
+            create_artifact(&workspace, ArtifactKind::Presentation, "Q3 Deck", "pptx").await
+        })
+        .await
+        .unwrap();
+    // The scoped target id is reused verbatim so the card swaps in place.
+    assert_eq!(meta.id, "reused-id");
+    // And the meta is actually persisted under that id.
+    let got = get_artifact(tmp.path(), "reused-id").await.unwrap();
+    assert_eq!(got.id, "reused-id");
+}
+
+#[tokio::test]
+async fn regenerate_preserves_original_created_at() {
+    let tmp = TempDir::new().unwrap();
+    let workspace = tmp.path().to_path_buf();
+
+    // First create stamps `created_at = now`.
+    let (first, _) = create_artifact(tmp.path(), ArtifactKind::Presentation, "Deck", "pptx")
+        .await
+        .unwrap();
+    let original_created = first.created_at;
+
+    // Regenerate reuses the id; created_at must NOT be bumped, otherwise the
+    // artifact jumps to the top of the created_at-sorted list (#3162).
+    let id = first.id.clone();
+    let ws = workspace.clone();
+    let (second, _) = REGENERATE_TARGET_ID
+        .scope(id.clone(), async move {
+            create_artifact(&ws, ArtifactKind::Presentation, "Deck", "pptx").await
+        })
+        .await
+        .unwrap();
+    assert_eq!(second.id, id);
+    assert_eq!(
+        second.created_at, original_created,
+        "regenerate must preserve created_at, not bump it"
+    );
+}

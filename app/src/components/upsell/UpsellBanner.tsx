@@ -24,14 +24,14 @@ const VARIANT_STYLES = {
     icon: 'text-amber-400',
     title: 'text-amber-700 dark:text-amber-300',
     text: 'text-amber-600 dark:text-amber-300',
-    cta: 'bg-amber-500 hover:bg-amber-400 text-white',
+    cta: 'bg-amber-500 hover:bg-amber-400 text-content-inverted',
   },
   upgrade: {
     container: 'bg-amber-50 dark:bg-amber-500/15 border-amber-200 dark:border-amber-800',
     icon: 'text-amber-400',
     title: 'text-amber-700 dark:text-amber-300',
     text: 'text-amber-600 dark:text-amber-300',
-    cta: 'bg-amber-500 hover:bg-amber-400 text-white',
+    cta: 'bg-amber-500 hover:bg-amber-400 text-content-inverted',
   },
 };
 
@@ -80,7 +80,7 @@ export default function UpsellBanner({
         {dismissible && onDismiss && (
           <button
             onClick={onDismiss}
-            className="p-1 rounded text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors"
+            className="p-1 rounded text-content-faint hover:text-content-secondary transition-colors"
             aria-label={t('common.dismiss')}>
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path

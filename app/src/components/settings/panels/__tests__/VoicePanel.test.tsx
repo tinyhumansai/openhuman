@@ -1,5 +1,5 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   installPiper,
@@ -91,6 +91,22 @@ const makeVoiceSettings = (overrides: Partial<VoiceSettings> = {}): VoiceSetting
   ttsProvider: { kind: 'cloud' },
   ...overrides,
 });
+
+async function advanceTimersAndFlush(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 type RuntimeHarness = {
   settings: VoiceServerSettings;
@@ -188,6 +204,10 @@ describe('VoicePanel', () => {
       });
       return { ...runtime.piperStatus };
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // ─── Voice Routing Section ──────────────────────────────────────────────
@@ -509,48 +529,7 @@ describe('VoicePanel', () => {
     await waitFor(() => expect(screen.getByText('core offline')).toBeInTheDocument());
   });
 
-  // ─── Always-on listening toggle ↔ notch indicator ───────────────────────
-
-  it('shows the notch when always-on listening is enabled and hides it when disabled', async () => {
-    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
-
-    const toggle = await screen.findByTestId('voice-always-on-toggle');
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
-
-    // Turn always-on ON → persists the flag and shows the notch HUD.
-    fireEvent.click(toggle);
-    await waitFor(() =>
-      expect(vi.mocked(openhumanUpdateVoiceServerSettings)).toHaveBeenCalledWith({
-        always_on_enabled: true,
-      })
-    );
-    await waitFor(() => expect(vi.mocked(syncNotchVisibility)).toHaveBeenCalledWith(true));
-
-    // Turn always-on OFF → hides the notch HUD.
-    fireEvent.click(toggle);
-    await waitFor(() =>
-      expect(vi.mocked(openhumanUpdateVoiceServerSettings)).toHaveBeenCalledWith({
-        always_on_enabled: false,
-      })
-    );
-    await waitFor(() => expect(vi.mocked(syncNotchVisibility)).toHaveBeenCalledWith(false));
-  });
-
-  it('does not touch the notch and reverts the toggle when the update RPC fails', async () => {
-    vi.mocked(openhumanUpdateVoiceServerSettings).mockRejectedValueOnce(new Error('rpc down'));
-
-    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
-
-    const toggle = await screen.findByTestId('voice-always-on-toggle');
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
-
-    fireEvent.click(toggle);
-
-    // The optimistic flip is reverted back to off after the RPC rejects, and
-    // the notch is never shown because the persist failed.
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
-    expect(vi.mocked(syncNotchVisibility)).not.toHaveBeenCalled();
-  });
+  // Always-on listening toggle moved to DesktopAgentPanel (see its test).
 
   // ─── STT / TTS Test buttons ────────────────────────────────────────────────
 
@@ -640,6 +619,77 @@ describe('VoicePanel', () => {
     );
   });
 
+  // ─── Test buttons gate on local-model install completion ────────────────────
+
+  it('disables Test STT while the selected Whisper model is not installed', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'local', engine: 'whisper', model: 'medium' },
+    });
+    runtime.whisperStatus = makeInstallStatus('whisper', { state: 'missing' });
+    // A missing model with no runtime availability is the genuine
+    // "not installed" case the Test button must gate on; `whisperReady`
+    // also clears once `stt_available` reports a usable engine.
+    runtime.voiceStatus.stt_available = false;
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const sttSelect = (await screen.findByTestId('stt-provider-select')) as HTMLSelectElement;
+    await waitFor(() => expect(sttSelect.value).toBe('whisper'));
+
+    expect(await screen.findByTestId('test-stt-button')).toBeDisabled();
+  });
+
+  it('enables Test STT once the selected Whisper model is installed', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'local', engine: 'whisper', model: 'medium' },
+    });
+    runtime.whisperStatus = makeInstallStatus('whisper', { state: 'installed', progress: 100 });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const sttSelect = (await screen.findByTestId('stt-provider-select')) as HTMLSelectElement;
+    await waitFor(() => expect(sttSelect.value).toBe('whisper'));
+
+    const testSttBtn = await screen.findByTestId('test-stt-button');
+    await waitFor(() => expect(testSttBtn).toBeEnabled());
+
+    fireEvent.click(testSttBtn);
+    await waitFor(() =>
+      expect(vi.mocked(testVoiceProvider)).toHaveBeenCalledWith('stt', 'whisper')
+    );
+  });
+
+  it('disables Test TTS while the selected Piper voice is not installed', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      ttsProvider: { kind: 'local', engine: 'piper', model: '' },
+    });
+    runtime.piperStatus = makeInstallStatus('piper', { state: 'missing' });
+    // Mirror the STT gate: no installed voice and no runtime availability is
+    // the real "not installed" case; `piperReady` also keys off `tts_available`.
+    runtime.voiceStatus.tts_available = false;
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const ttsSelect = (await screen.findByTestId('tts-provider-select')) as HTMLSelectElement;
+    await waitFor(() => expect(ttsSelect.value).toBe('piper'));
+
+    expect(await screen.findByTestId('test-tts-button')).toBeDisabled();
+  });
+
+  it('enables Test TTS once the selected Piper voice is installed', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      ttsProvider: { kind: 'local', engine: 'piper', model: '' },
+    });
+    runtime.piperStatus = makeInstallStatus('piper', { state: 'installed', progress: 100 });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const ttsSelect = (await screen.findByTestId('tts-provider-select')) as HTMLSelectElement;
+    await waitFor(() => expect(ttsSelect.value).toBe('piper'));
+
+    await waitFor(() => expect(screen.getByTestId('test-tts-button')).toBeEnabled());
+  });
+
   // ─── Whisper model picker in routing section ────────────────────────────────
 
   it('changing the Whisper model select immediately calls persistProviders', async () => {
@@ -715,9 +765,88 @@ describe('VoicePanel', () => {
     await waitFor(() => expect(vi.mocked(installPiper)).toHaveBeenCalled());
   });
 
+  it('polls Whisper install status while the local install is running', async () => {
+    vi.mocked(installWhisper).mockImplementationOnce(async () => {
+      runtime.whisperStatus = makeInstallStatus('whisper', {
+        state: 'installing',
+        progress: 0,
+        stage: 'downloading',
+      });
+      return { ...runtime.whisperStatus };
+    });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const whisperChip = await screen.findByTestId('voice-provider-chip-whisper');
+    fireEvent.click(whisperChip);
+    await screen.findByTestId('voice-provider-key-modal');
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('button', { name: /install locally/i }));
+    await advanceTimersAndFlush(0);
+
+    expect(screen.getByRole('button', { name: /Installing 0%/i })).toBeDisabled();
+
+    runtime.whisperStatus = makeInstallStatus('whisper', {
+      state: 'installing',
+      progress: 42,
+      stage: 'downloading',
+    });
+    await advanceTimersAndFlush(2_000);
+
+    expect(screen.getByRole('button', { name: /Installing 42%/i })).toBeDisabled();
+
+    runtime.whisperStatus = makeInstallStatus('whisper', {
+      state: 'installed',
+      progress: 100,
+      stage: 'install complete',
+    });
+    await advanceTimersAndFlush(2_000);
+
+    expect(screen.getByRole('button', { name: /Reinstall locally/i })).toBeInTheDocument();
+    expect(screen.getByText(/^Installed$/i)).toBeInTheDocument();
+  });
+
+  it('does not start overlapping Whisper install status polls', async () => {
+    vi.useFakeTimers();
+    runtime.whisperStatus = makeInstallStatus('whisper', {
+      state: 'installing',
+      progress: 0,
+      stage: 'downloading',
+    });
+    const pendingPoll = deferred<VoiceInstallStatus>();
+    let whisperStatusCalls = 0;
+    vi.mocked(whisperInstallStatus).mockImplementation(() => {
+      whisperStatusCalls += 1;
+      if (whisperStatusCalls === 1) return Promise.resolve({ ...runtime.whisperStatus });
+      return pendingPoll.promise;
+    });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+    await advanceTimersAndFlush(0);
+
+    expect(whisperStatusCalls).toBe(2);
+
+    await advanceTimersAndFlush(2_000);
+    expect(whisperStatusCalls).toBe(2);
+
+    pendingPoll.resolve(
+      makeInstallStatus('whisper', { state: 'installing', progress: 42, stage: 'downloading' })
+    );
+    await advanceTimersAndFlush(0);
+    await advanceTimersAndFlush(2_000);
+
+    expect(whisperStatusCalls).toBe(3);
+  });
+
   // ─── Modal: Enable button for local providers ──────────────────────────────
 
-  it('clicking Enable inside the Whisper modal calls persistProviders and closes modal', async () => {
+  it('keeps Enable disabled in the Whisper modal until the model is installed', async () => {
+    runtime.voiceStatus.stt_available = false;
+    runtime.voiceStatus.stt_model_path = null;
+    runtime.voiceStatus.whisper_binary = null;
+
     renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
 
     await screen.findByTestId('voice-providers-section');
@@ -727,15 +856,18 @@ describe('VoicePanel', () => {
     await screen.findByTestId('voice-provider-key-modal');
 
     const enableBtn = screen.getByRole('button', { name: /^Enable$/i });
+    expect(enableBtn).toBeDisabled();
     fireEvent.click(enableBtn);
 
-    // Modal closes
-    await waitFor(() =>
-      expect(screen.queryByTestId('voice-provider-key-modal')).not.toBeInTheDocument()
-    );
+    expect(screen.getByTestId('voice-provider-key-modal')).toBeInTheDocument();
+    expect(vi.mocked(openhumanVoiceSetProviders)).not.toHaveBeenCalled();
   });
 
-  it('clicking Enable inside the Piper modal calls persistProviders and closes modal', async () => {
+  it('keeps Enable disabled in the Piper modal until the voice is installed', async () => {
+    runtime.voiceStatus.tts_available = false;
+    runtime.voiceStatus.tts_voice_path = null;
+    runtime.voiceStatus.piper_binary = null;
+
     renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
 
     await screen.findByTestId('voice-providers-section');
@@ -745,6 +877,101 @@ describe('VoicePanel', () => {
     await screen.findByTestId('voice-provider-key-modal');
 
     const enableBtn = screen.getByRole('button', { name: /^Enable$/i });
+    expect(enableBtn).toBeDisabled();
+    fireEvent.click(enableBtn);
+
+    expect(screen.getByTestId('voice-provider-key-modal')).toBeInTheDocument();
+    expect(vi.mocked(openhumanVoiceSetProviders)).not.toHaveBeenCalled();
+  });
+
+  it('allows Enable in the Whisper modal when voice_status reports local STT ready', async () => {
+    runtime.whisperStatus = makeInstallStatus('whisper');
+    runtime.voiceStatus.stt_available = true;
+    runtime.voiceStatus.stt_model_path = '/legacy/models/ggml-tiny-q5_1.bin';
+    runtime.voiceStatus.whisper_binary = '/usr/local/bin/whisper-cli';
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const whisperChip = await screen.findByTestId('voice-provider-chip-whisper');
+    fireEvent.click(whisperChip);
+
+    await screen.findByTestId('voice-provider-key-modal');
+
+    const enableBtn = screen.getByRole('button', { name: /^Enable$/i });
+    expect(enableBtn).not.toBeDisabled();
+    fireEvent.click(enableBtn);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('voice-provider-key-modal')).not.toBeInTheDocument()
+    );
+  });
+
+  it('allows Enable in the Piper modal when voice_status reports local TTS ready', async () => {
+    runtime.piperStatus = makeInstallStatus('piper');
+    runtime.voiceStatus.tts_available = true;
+    runtime.voiceStatus.tts_voice_path = '/legacy/voices/en_US-lessac-medium.onnx';
+    runtime.voiceStatus.piper_binary = '/usr/local/bin/piper';
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const piperChip = await screen.findByTestId('voice-provider-chip-piper');
+    fireEvent.click(piperChip);
+
+    await screen.findByTestId('voice-provider-key-modal');
+
+    const enableBtn = screen.getByRole('button', { name: /^Enable$/i });
+    expect(enableBtn).not.toBeDisabled();
+    fireEvent.click(enableBtn);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('voice-provider-key-modal')).not.toBeInTheDocument()
+    );
+  });
+
+  it('clicking Enable inside the Whisper modal calls persistProviders and closes modal', async () => {
+    runtime.whisperStatus = makeInstallStatus('whisper', {
+      state: 'installed',
+      progress: 100,
+      stage: 'install complete',
+    });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const whisperChip = await screen.findByTestId('voice-provider-chip-whisper');
+    fireEvent.click(whisperChip);
+
+    await screen.findByTestId('voice-provider-key-modal');
+
+    const enableBtn = screen.getByRole('button', { name: /^Enable$/i });
+    expect(enableBtn).not.toBeDisabled();
+    fireEvent.click(enableBtn);
+
+    // Modal closes
+    await waitFor(() =>
+      expect(screen.queryByTestId('voice-provider-key-modal')).not.toBeInTheDocument()
+    );
+  });
+
+  it('clicking Enable inside the Piper modal calls persistProviders and closes modal', async () => {
+    runtime.piperStatus = makeInstallStatus('piper', {
+      state: 'installed',
+      progress: 100,
+      stage: 'install complete',
+    });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const piperChip = await screen.findByTestId('voice-provider-chip-piper');
+    fireEvent.click(piperChip);
+
+    await screen.findByTestId('voice-provider-key-modal');
+
+    const enableBtn = screen.getByRole('button', { name: /^Enable$/i });
+    expect(enableBtn).not.toBeDisabled();
     fireEvent.click(enableBtn);
 
     await waitFor(() =>

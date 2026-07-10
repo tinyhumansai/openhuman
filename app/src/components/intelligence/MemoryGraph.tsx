@@ -42,6 +42,7 @@ import { useAppSelector } from '../../store/hooks';
 import { resolveTheme, type ThemeMode } from '../../store/themeSlice';
 import { type GraphEdge, type GraphMode, type GraphNode } from '../../utils/tauriCommands';
 import { openWorkspacePath, previewWorkspaceText } from '../../utils/tauriCommands/workspacePaths';
+import Button from '../ui/Button';
 import {
   CONTACT_COLOR,
   LEAF_COLOR,
@@ -103,6 +104,16 @@ interface MemoryGraphProps {
   mode: GraphMode;
   /** Optional override for the empty-state message. */
   emptyHint?: string;
+  /** Optional label for the central hub node (WebGL path). Defaults to "Memory". */
+  rootLabel?: string;
+  /** Fill the parent's height (full-screen) instead of the fixed 640px card. */
+  fill?: boolean;
+  /** Initial auto-fit zoom. Lower = more zoomed out. Defaults to 0.17. */
+  fitScale?: number;
+  /** Fit the whole graph tightly to the viewport instead of a fixed zoom. */
+  fitToBounds?: boolean;
+  /** Draw an always-on text label under each node. */
+  showLabels?: boolean;
   /**
    * Fired exactly once when the graph's force layout first settles (SVG
    * worker `end`, the synchronous relax fallback, or the Pixi sim cooling).
@@ -194,7 +205,18 @@ function relaxLayout(nodes: SimNode[], edges: Array<[number, number]>, iteration
   }
 }
 
-export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGraphProps) {
+export function MemoryGraph({
+  nodes,
+  edges,
+  mode,
+  emptyHint,
+  rootLabel,
+  fill,
+  fitScale,
+  fitToBounds,
+  showLabels,
+  onReady,
+}: MemoryGraphProps) {
   const { t } = useT();
   const themeMode = useAppSelector(state => state.theme?.mode ?? 'system') as ThemeMode;
   const isDark = resolveTheme(themeMode) === 'dark';
@@ -402,6 +424,7 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
   // of re-rendering up to 10k elements through React every frame.
   const circleEls = useRef<(SVGCircleElement | null)[]>([]);
   const lineEls = useRef<(SVGLineElement | null)[]>([]);
+  const textEls = useRef<(SVGTextElement | null)[]>([]);
 
   // Progressive DOM mount for the SVG path: reveal nodes in per-frame batches
   // so a large graph never blocks building thousands of elements in one commit.
@@ -417,6 +440,7 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
     simIdRef.current = sim;
     circleEls.current = [];
     lineEls.current = [];
+    textEls.current = [];
     setSvgVisible(sim ? Math.min(sim.sim.length, FIRST_BATCH) : 0);
   }
 
@@ -436,6 +460,11 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
       if (el) {
         el.setAttribute('cx', String(ns[i].x));
         el.setAttribute('cy', String(ns[i].y));
+      }
+      const tel = textEls.current[i];
+      if (tel) {
+        tel.setAttribute('x', String(ns[i].x));
+        tel.setAttribute('y', String(ns[i].y + nodeRadius(ns[i]) + 12));
       }
     }
     for (let e = 0; e < s.edges.length; e++) {
@@ -461,12 +490,35 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
     const ns = s.sim;
     if (ns.length === 0) return;
     // Center on the root node at a fixed comfortable zoom.
+    if (fitToBounds) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const n of ns) {
+        const r = nodeRadius(n) + 8;
+        minX = Math.min(minX, n.x - r);
+        minY = Math.min(minY, n.y - r);
+        maxX = Math.max(maxX, n.x + r);
+        maxY = Math.max(maxY, n.y + r);
+      }
+      const w = Math.max(1, maxX - minX);
+      const h = Math.max(1, maxY - minY);
+      const scale = Math.min(
+        ZOOM_MAX,
+        Math.max(ZOOM_MIN, Math.min(VIEWPORT_W / w, VIEWPORT_H / h) * 0.92)
+      );
+      const bx = (minX + maxX) / 2;
+      const by = (minY + maxY) / 2;
+      setView({ scale, tx: VIEWPORT_W / 2 - bx * scale, ty: VIEWPORT_H / 2 - by * scale });
+      return;
+    }
     const root = ns.find(n => n.kind === 'root');
     const cx = root?.x ?? 0;
     const cy = root?.y ?? 0;
-    const scale = 0.17;
+    const scale = fitScale ?? 0.17;
     setView({ scale, tx: VIEWPORT_W / 2 - cx * scale, ty: VIEWPORT_H / 2 - cy * scale });
-  }, []);
+  }, [fitScale, fitToBounds]);
   fitRef.current = fitToView;
 
   // Coalesce worker ticks to one DOM write per frame.
@@ -531,7 +583,7 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
   if (nodes.length === 0) {
     return (
       <div
-        className="flex h-[640px] items-center justify-center rounded-lg border border-stone-100 dark:border-neutral-800 bg-stone-50/40 text-sm text-stone-500 dark:text-neutral-400"
+        className="flex h-[640px] items-center justify-center rounded-lg border border-line-subtle bg-surface-muted/40 text-sm text-content-muted"
         data-testid="memory-graph-empty">
         {emptyHint ?? (mode === 'contacts' ? t('graph.noContactMentions') : t('graph.noMemory'))}
       </div>
@@ -564,14 +616,16 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
 
   return (
     <div
-      className="memory-graph rounded-lg border border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900"
+      className={`memory-graph rounded-lg border border-line-subtle bg-surface ${
+        fill ? 'flex h-full flex-col overflow-hidden' : ''
+      }`}
       onMouseLeave={() => setHovered(null)}>
-      <div className="flex items-center justify-between gap-4 border-b border-stone-100 dark:border-neutral-800 px-4 py-2">
-        <div className="flex items-center gap-3 text-xs text-stone-500 dark:text-neutral-400">
+      <div className="flex flex-none items-center justify-between gap-4 border-b border-line-subtle px-4 py-2">
+        <div className="flex items-center gap-3 text-xs text-content-muted">
           <span>
             {nodes.length} {t('graph.nodes')}
           </span>
-          <span className="text-stone-300 dark:text-neutral-600">·</span>
+          <span className="text-content-faint dark:text-neutral-600">·</span>
           <span>
             {sim.edges.length}{' '}
             {mode === 'tree' ? t('graph.parentChild') : t('graph.documentContact')}{' '}
@@ -582,7 +636,7 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
           {legend.map(item => (
             <span
               key={item.label}
-              className="flex items-center gap-1.5 text-xs text-stone-600 dark:text-neutral-300">
+              className="flex items-center gap-1.5 text-xs text-content-secondary">
               <span
                 className="inline-block h-2.5 w-2.5 rounded-full"
                 style={{ backgroundColor: item.color }}
@@ -590,13 +644,14 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
               {item.label}
             </span>
           ))}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="xs"
             onClick={resetView}
             data-testid="memory-graph-reset-view"
-            className="rounded-md border border-stone-200 bg-white px-2 py-1 text-[11px] font-medium text-stone-600 shadow-sm hover:bg-stone-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800">
+            className="text-[11px] shadow-sm">
             {t('graph.resetView')}
-          </button>
+          </Button>
         </div>
       </div>
       {useWebGL ? (
@@ -604,6 +659,11 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
           nodes={nodes}
           edges={edges}
           mode={mode}
+          rootLabel={rootLabel}
+          fill={fill}
+          fitScale={fitScale}
+          fitToBounds={fitToBounds}
+          showLabels={showLabels}
           dark={
             typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
           }
@@ -619,9 +679,9 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
         <svg
           ref={svgRef}
           viewBox={`0 0 ${VIEWPORT_W} ${VIEWPORT_H}`}
-          className="block w-full touch-none select-none"
+          className={`block w-full touch-none select-none ${fill ? 'min-h-0 flex-1' : ''}`}
           style={{
-            height: 'min(640px, calc(100vh - 22rem))',
+            height: fill ? '100%' : 'min(640px, calc(100vh - 22rem))',
             cursor: grabbing ? 'grabbing' : 'grab',
           }}
           onPointerDown={onBackgroundPointerDown}
@@ -693,12 +753,35 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
                 );
               })}
             </g>
+            {showLabels && (
+              <g>
+                {sim.sim.slice(0, svgVisible).map((n, i) => {
+                  const label = (n.label ?? '').trim();
+                  const text = label.length > 22 ? `${label.slice(0, 21)}…` : label;
+                  return (
+                    <text
+                      key={n.id}
+                      ref={el => {
+                        textEls.current[i] = el;
+                      }}
+                      x={n.x}
+                      y={n.y + nodeRadius(n) + 12}
+                      textAnchor="middle"
+                      fontSize={13}
+                      fill={isDark ? '#e2e8f0' : '#334155'}
+                      style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                      {text}
+                    </text>
+                  );
+                })}
+              </g>
+            )}
           </g>
         </svg>
       )}
       {hovered && (
         <div
-          className="border-t border-stone-100 dark:border-neutral-800 bg-stone-50/70 dark:bg-neutral-900/70 px-4 py-2 text-xs text-stone-700 dark:text-neutral-200"
+          className="border-t border-line-subtle bg-surface-muted/70 dark:bg-surface/70 px-4 py-2 text-xs text-content-secondary"
           data-testid="memory-graph-tooltip">
           {hovered.kind === 'root' ? (
             <span className="font-medium text-violet-600 dark:text-violet-400">
@@ -711,29 +794,30 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
           ) : hovered.kind === 'summary' ? (
             <>
               <span className="font-mono">L{hovered.level ?? '?'}</span>
-              <span className="text-stone-400 dark:text-neutral-500"> · </span>
+              <span className="text-content-faint"> · </span>
               <span className="capitalize">{hovered.tree_kind}</span>
-              <span className="text-stone-400 dark:text-neutral-500"> · </span>
+              <span className="text-content-faint"> · </span>
               <span>{hovered.tree_scope}</span>
-              <span className="text-stone-400 dark:text-neutral-500"> · </span>
+              <span className="text-content-faint"> · </span>
               <span>
                 {hovered.child_count ?? 0} {t('graph.children')}
               </span>
               {hoveredSummaryPath && (
                 <>
-                  <span className="ml-3 break-all font-mono text-stone-400 dark:text-neutral-500">
+                  <span className="ml-3 break-all font-mono text-content-faint">
                     workspace:{hoveredSummaryPath}
                   </span>
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="xs"
                     data-testid={`memory-graph-preview-${hovered.id}`}
                     disabled={previewingPath === hoveredSummaryPath}
                     onClick={() => void previewSummary(hovered)}
-                    className="ml-3 rounded-md border border-stone-200 bg-white px-2 py-1 text-[11px] font-medium text-stone-700 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800">
+                    className="ml-3 text-[11px] shadow-sm">
                     {previewingPath === hoveredSummaryPath
                       ? t('migration.previewRunning')
                       : t('migration.previewAction')}
-                  </button>
+                  </Button>
                 </>
               )}
             </>
@@ -742,28 +826,26 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint, onReady }: MemoryGr
               <span className="font-medium text-violet-700 dark:text-violet-300">
                 {hovered.label}
               </span>
-              <span className="ml-3 text-stone-400 dark:text-neutral-500">
+              <span className="ml-3 text-content-faint">
                 {t('graph.person')} · canonical id {hovered.id.slice(0, 12)}…
               </span>
             </>
           ) : (
             <>
               <span className="font-medium">{hovered.label || 'chunk'}</span>
-              <span className="ml-3 text-stone-400 dark:text-neutral-500">
-                {t('graph.document')}
-              </span>
+              <span className="ml-3 text-content-faint">{t('graph.document')}</span>
             </>
           )}
         </div>
       )}
       {preview && (
         <div
-          className="border-t border-stone-100 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-950"
+          className="border-t border-line-subtle bg-surface px-4 py-3 dark:bg-surface-canvas"
           data-testid="memory-graph-preview">
-          <div className="mb-2 break-all font-mono text-[11px] text-stone-400 dark:text-neutral-500">
+          <div className="mb-2 break-all font-mono text-[11px] text-content-faint">
             workspace:{preview.path}
           </div>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-stone-50 p-3 text-xs text-stone-700 dark:bg-neutral-900 dark:text-neutral-200">
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface-muted p-3 text-xs text-content-secondary">
             {preview.error || preview.contents}
             {preview.truncated ? '\n…' : ''}
           </pre>

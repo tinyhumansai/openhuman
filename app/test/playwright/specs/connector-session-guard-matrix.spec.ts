@@ -74,9 +74,7 @@ async function bootSkills(page: Page, userId: string): Promise<void> {
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
   await page.getByTestId('two-pane-nav-composio').click();
-  await expect(
-    page.getByRole('heading', { name: 'Composio Integrations', exact: true })
-  ).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('composio-integrations-card')).toBeVisible({ timeout: 20_000 });
 }
 
 async function assertSessionAlive(page: Page): Promise<void> {

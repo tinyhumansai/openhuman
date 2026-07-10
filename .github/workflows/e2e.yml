@@ -1,18 +1,55 @@
 ---
 # PR/push E2E gate.
 #
-# Desktop full-flow lane (mega-flow) across Linux, macOS, and Windows.
+# Desktop E2E lane across Linux, macOS, and Windows. Manual dispatch defaults
+# to mega-flow but can target a narrower spec, such as the Appium harness smoke
+# spec, without changing the reusable workflow recipe.
 # The browser-hosted Playwright suite lives in its own standalone workflow so
 # it can be run on demand without gating every push / PR.
 name: E2E
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      run_linux:
+        description: Run the Linux (Xvfb / container) E2E job.
+        type: boolean
+        default: true
+      run_macos:
+        description: Run the macOS E2E job.
+        type: boolean
+        default: true
+      run_windows:
+        description: Run the Windows E2E job.
+        type: boolean
+        default: true
+      full:
+        description:
+          When true, run the entire spec suite (sharded). When false, run the
+          selected desktop spec only.
+        type: boolean
+        default: false
+      spec_path:
+        description: Spec path to run when full is false.
+        type: string
+        default: test/e2e/specs/mega-flow.spec.ts
+      spec_label:
+        description: Log label for the selected spec when full is false.
+        type: string
+        default: mega-flow
 
 permissions:
+  # `actions: read` lets scripts/ci-cancel-aware.sh poll the run status so
+  # cancelled builds inside container jobs stop themselves (docker exec
+  # swallows the runner's signals).
+  actions: read
   contents: read
   packages: read
   pull-requests: read
+
+env:
+  # Consumed by scripts/ci-cancel-aware.sh's cancellation watchdog.
+  GH_TOKEN: ${{ github.token }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
@@ -22,7 +59,9 @@ jobs:
   e2e-desktop:
     uses: ./.github/workflows/e2e-reusable.yml
     with:
-      run_linux: true
-      run_macos: true
-      run_windows: true
-      full: false
+      run_linux: ${{ inputs.run_linux }}
+      run_macos: ${{ inputs.run_macos }}
+      run_windows: ${{ inputs.run_windows }}
+      full: ${{ inputs.full }}
+      spec_path: ${{ inputs.spec_path }}
+      spec_label: ${{ inputs.spec_label }}

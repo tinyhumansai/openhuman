@@ -11,7 +11,10 @@ mod helpers;
 mod processor;
 mod routing;
 
-pub(crate) use processor::{process_channel_message, run_message_dispatch_loop};
+pub(crate) use processor::{
+    process_channel_message, process_channel_runtime_message, run_message_dispatch_loop,
+    RuntimeChannelMessage,
+};
 
 // `channel_has_approval_surface` stays pub(crate) on processor; re-export so
 // the inline test module can reach it via `super::channel_has_approval_surface`.
@@ -117,14 +120,17 @@ mod scoping_tests {
             max_iterations: 8,
             iteration_policy: Default::default(),
             max_result_chars: None,
+            max_turn_output_tokens: None,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,
             background: false,
             trigger_memory_agent: Default::default(),
+            tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Auto,
             subagents: vec![],
             delegate_name: None,
             agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
             source: DefinitionSource::Builtin,
+            graph: Default::default(),
         }
     }
 

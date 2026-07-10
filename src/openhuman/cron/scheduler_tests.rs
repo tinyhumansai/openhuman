@@ -101,6 +101,143 @@ async fn push_cron_alert_deduplicates_repeated_morning_briefing_failures() {
     assert_eq!(items[0].body, MORNING_BRIEFING_FAILURE_NOTIFICATION);
 }
 
+// TAURI-RUST-HCK — a failed cron job with NO delivery configured (the default
+// `mode = "none"`) must still surface in /notifications. Before the hoist,
+// `push_cron_alert` fired only inside the proactive / announce arms, so a
+// keyless agent job ("API key not set") failed silently in the alerts tab —
+// the user had no active signal that their cron was broken.
+#[tokio::test]
+async fn deliver_if_configured_alerts_no_delivery_failure() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.name = Some("hermes".into());
+    assert_eq!(job.delivery.mode, "none", "exercise the no-delivery arm");
+
+    let failure =
+        "openrouter API key not set. Configure via the web UI or set the appropriate env var.";
+    deliver_if_configured(&config, &job, failure, false)
+        .await
+        .unwrap();
+
+    let items =
+        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+    assert_eq!(
+        items.len(),
+        1,
+        "a no-delivery cron FAILURE must still alert /notifications"
+    );
+    assert!(
+        items[0].body.contains("API key not set"),
+        "alert body must carry the actionable missing-key wording"
+    );
+}
+
+// Negative guard: a successful no-delivery run with no output must NOT alert —
+// the hoist only surfaces failures + non-empty results, never quiet successes.
+#[tokio::test]
+async fn deliver_if_configured_does_not_alert_successful_empty_no_delivery() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.name = Some("hermes".into());
+
+    deliver_if_configured(&config, &job, "", true)
+        .await
+        .unwrap();
+
+    let items =
+        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+    assert!(
+        items.is_empty(),
+        "a successful empty run must not spam the alerts tab"
+    );
+}
+
+// Codex #4166 — a SUCCESSFUL no-delivery (`none`) run with output must stay
+// silent: its result lives in last_output only (the cron contract), so the
+// hoisted alert must NOT fire an unread /notifications entry every interval.
+// Failures still alert (above); delivering modes still alert success (below).
+#[tokio::test]
+async fn deliver_if_configured_does_not_alert_successful_none_delivery_with_output() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    assert_eq!(job.delivery.mode, "none", "exercise the no-delivery arm");
+
+    deliver_if_configured(&config, &job, "daily digest: 3 new items", true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        cron_alerts(&config).await,
+        0,
+        "a successful none-delivery run must not alert (silent by contract)"
+    );
+}
+
+// Counterpart to the gate: a delivering mode (proactive) DOES alert a
+// successful non-empty run — the mode gate only silences `none`.
+#[tokio::test]
+async fn deliver_if_configured_alerts_successful_proactive_with_output() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let job = proactive_job();
+
+    deliver_if_configured(&config, &job, "morning briefing ready", true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        cron_alerts(&config).await,
+        1,
+        "a delivering-mode successful run still surfaces in /notifications"
+    );
+}
+
+// CodeRabbit #4169 — a permanent config/billing halt must surface its specific,
+// actionable copy (not the generic "Something went wrong"), and that copy must
+// be a static `&'static str` (no raw-error leak). Precedence mirrors the halt
+// classifiers: credits → budget → missing key.
+#[test]
+fn permanent_halt_message_maps_each_state_to_actionable_static_copy() {
+    assert_eq!(
+        permanent_halt_message(true, false),
+        CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE
+    );
+    assert_eq!(
+        permanent_halt_message(false, true),
+        CRON_HALT_BUDGET_EXHAUSTED_MESSAGE
+    );
+    // Neither credits nor budget set → the missing-key state.
+    assert_eq!(
+        permanent_halt_message(false, false),
+        CRON_HALT_API_KEY_UNSET_MESSAGE
+    );
+    // Credits wins when both flags are set (evaluation order).
+    assert_eq!(
+        permanent_halt_message(true, true),
+        CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE
+    );
+    // None of the canned bodies are the generic fallback; all are non-empty and
+    // config-actionable rather than the "report on Discord" generic copy.
+    for body in [
+        CRON_HALT_API_KEY_UNSET_MESSAGE,
+        CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE,
+        CRON_HALT_BUDGET_EXHAUSTED_MESSAGE,
+    ] {
+        assert!(!body.is_empty());
+        assert_ne!(body, AGENT_JOB_USER_FAILURE_MESSAGE);
+        assert!(
+            !body.contains("Discord"),
+            "permanent-halt copy must be config-actionable, not the generic report message"
+        );
+    }
+}
+
 #[test]
 fn agent_session_target_tag_matches_expected_values() {
     assert_eq!(agent_session_target_tag(&SessionTarget::Main), "main");
@@ -383,6 +520,264 @@ fn is_session_expired_failure_does_not_halt_shell_jobs() {
     );
 }
 
+// TAURI-RUST-514 — a BYO provider insufficient-credits 402 ("requires more
+// credits") leaks from a cron-fired agent job through `last_agent_error`.
+// `is_insufficient_credits_failure` must consult the message classifier so the
+// retry loop halts on the first occurrence (a permanent billing state) instead
+// of retrying N times and reporting `failure=retries_exhausted` to Sentry.
+#[test]
+fn is_insufficient_credits_failure_matches_verbatim_402_in_agent_error() {
+    let wire = r#"openrouter API error (402 Payment Required): {"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 65536 tokens, but can only afford 5081."}}"#;
+    assert!(
+        is_insufficient_credits_failure(
+            &JobType::Agent,
+            Some(wire),
+            AGENT_JOB_USER_FAILURE_MESSAGE
+        ),
+        "raw agent error carrying the 402 credit body must trip the halt"
+    );
+}
+
+// Defense-in-depth: classify even if a future path surfaces the raw 402 in
+// `last_output` rather than `last_agent_error`.
+#[test]
+fn is_insufficient_credits_failure_matches_when_only_output_carries_signal() {
+    let wire = r#"openrouter API error (402 Payment Required): insufficient balance — add credits"#;
+    assert!(is_insufficient_credits_failure(&JobType::Agent, None, wire));
+}
+
+// Negative guard: the canned user-facing message carries no 402 signal, and an
+// ordinary provider error (500, or a 400 whose body merely names a token
+// count) must NOT halt — those are exactly what the retry loop +
+// `failure=retries_exhausted` capture exist for.
+#[test]
+fn is_insufficient_credits_failure_does_not_match_non_credit_errors() {
+    assert!(!is_insufficient_credits_failure(
+        &JobType::Agent,
+        Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+        AGENT_JOB_USER_FAILURE_MESSAGE,
+    ));
+    let server_err =
+        r#"OpenHuman API error (500 Internal Server Error): {"error":"Internal server error"}"#;
+    assert!(!is_insufficient_credits_failure(
+        &JobType::Agent,
+        Some(server_err),
+        ""
+    ));
+    let digit_in_body = r#"provider API error (400): can only afford 402 tokens"#;
+    assert!(
+        !is_insufficient_credits_failure(&JobType::Agent, Some(digit_in_body), ""),
+        "the 402 must be the status, not an arbitrary token count in a 400 body"
+    );
+}
+
+// Scope guard: shell jobs that echo a 402-shaped string keep their retry
+// semantics — only agent jobs route through the inference layer.
+#[test]
+fn is_insufficient_credits_failure_does_not_halt_shell_jobs() {
+    let wire = r#"openrouter API error (402 Payment Required): requires more credits"#;
+    assert!(!is_insufficient_credits_failure(
+        &JobType::Shell,
+        None,
+        wire
+    ));
+    assert!(!is_insufficient_credits_failure(
+        &JobType::Shell,
+        Some(wire),
+        wire
+    ));
+}
+
+// TAURI-RUST-BMW — a managed-backend 400 "Insufficient budget"
+// (USER_INSUFFICIENT_CREDITS) leaks from a cron-fired agent job through
+// `last_agent_error`. `is_budget_exhausted_failure` must consult the budget
+// classifier so the retry loop halts on the first occurrence (a permanent
+// billing state) instead of retrying N times and reporting
+// `failure=retries_exhausted` to Sentry — the tag-gated `is_budget_event`
+// `before_send` filter never matched this cron re-report.
+#[test]
+fn is_budget_exhausted_failure_matches_verbatim_400_in_agent_error() {
+    let wire = r#"OpenHuman API error (400 Bad Request): {"success":false,"error":"Insufficient budget","errorCode":"USER_INSUFFICIENT_CREDITS"}"#;
+    assert!(
+        is_budget_exhausted_failure(&JobType::Agent, Some(wire), AGENT_JOB_USER_FAILURE_MESSAGE),
+        "raw agent error carrying the 400 budget body must trip the halt"
+    );
+}
+
+// Defense-in-depth: classify even if a future path surfaces the raw 400 in
+// `last_output` rather than `last_agent_error`.
+#[test]
+fn is_budget_exhausted_failure_matches_when_only_output_carries_signal() {
+    let wire = r#"OpenHuman API error (400 Bad Request): budget exceeded — add credits"#;
+    assert!(is_budget_exhausted_failure(&JobType::Agent, None, wire));
+}
+
+// Negative guard: the canned user-facing message and an ordinary provider
+// error must NOT halt — those are what the retry loop +
+// `failure=retries_exhausted` capture exist for.
+#[test]
+fn is_budget_exhausted_failure_does_not_match_non_budget_errors() {
+    assert!(!is_budget_exhausted_failure(
+        &JobType::Agent,
+        Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+        AGENT_JOB_USER_FAILURE_MESSAGE,
+    ));
+    let server_err =
+        r#"OpenHuman API error (500 Internal Server Error): {"error":"Internal server error"}"#;
+    assert!(!is_budget_exhausted_failure(
+        &JobType::Agent,
+        Some(server_err),
+        ""
+    ));
+}
+
+// Scope guard: shell jobs that echo a budget-shaped string keep their retry
+// semantics — only agent jobs route through the inference layer.
+#[test]
+fn is_budget_exhausted_failure_does_not_halt_shell_jobs() {
+    let wire = r#"OpenHuman API error (400 Bad Request): {"error":"Insufficient budget"}"#;
+    assert!(!is_budget_exhausted_failure(&JobType::Shell, None, wire));
+    assert!(!is_budget_exhausted_failure(
+        &JobType::Shell,
+        Some(wire),
+        wire
+    ));
+}
+
+// TAURI-RUST-HCK — a cron agent job pinned to a provider with no configured
+// API key fails at the credential guard with "<provider> API key not set …",
+// before any HTTP, and leaks through `last_agent_error`.
+// `is_api_key_unset_failure` must consult the shared matcher so the retry loop
+// halts on the first occurrence (a permanent user-config state) instead of
+// retrying N times and reporting `failure=retries_exhausted` to Sentry (3428
+// events / 1 user) — the bare cron `report_error` bypasses the `ApiKeyMissing`
+// `expected_error_kind` demotion.
+#[test]
+fn is_api_key_unset_failure_matches_verbatim_in_agent_error() {
+    let wire =
+        "openrouter API key not set. Configure via the web UI or set the appropriate env var.";
+    assert!(
+        is_api_key_unset_failure(&JobType::Agent, Some(wire), AGENT_JOB_USER_FAILURE_MESSAGE),
+        "raw agent error carrying the verbatim 'API key not set' wording must trip the halt"
+    );
+}
+
+// Defense-in-depth: classify even if a future path surfaces the raw error in
+// `last_output` rather than `last_agent_error`.
+#[test]
+fn is_api_key_unset_failure_matches_when_only_output_carries_signal() {
+    let wire = "cohere API key not set. Configure via the web UI or set the appropriate env var.";
+    assert!(is_api_key_unset_failure(&JobType::Agent, None, wire));
+}
+
+// Negative guard: the canned user-facing message carries no key signal; an
+// ordinary provider error must NOT halt; and — critically — a *rejected* key
+// (provider 401 "Invalid API key", a present-but-wrong key) is actionable and
+// must keep reaching Sentry. This matcher is for an *absent* key only.
+#[test]
+fn is_api_key_unset_failure_does_not_match_canned_rejected_or_ordinary_errors() {
+    assert!(!is_api_key_unset_failure(
+        &JobType::Agent,
+        Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+        AGENT_JOB_USER_FAILURE_MESSAGE,
+    ));
+    let server_err =
+        r#"OpenHuman API error (500 Internal Server Error): {"error":"Internal server error"}"#;
+    assert!(!is_api_key_unset_failure(
+        &JobType::Agent,
+        Some(server_err),
+        ""
+    ));
+    let rejected_key = r#"OpenAI API error (401 Unauthorized): {"error":{"message":"Invalid API key","type":"invalid_request_error"}}"#;
+    assert!(
+        !is_api_key_unset_failure(&JobType::Agent, Some(rejected_key), ""),
+        "a present-but-rejected key (401 Invalid API key) is actionable — must NOT classify as an unset key"
+    );
+}
+
+// Scope guard: shell jobs that echo an "API key not set" string keep their
+// retry semantics — only agent jobs route through the inference credential guard.
+#[test]
+fn is_api_key_unset_failure_does_not_halt_shell_jobs() {
+    let wire =
+        "openrouter API key not set. Configure via the web UI or set the appropriate env var.";
+    assert!(!is_api_key_unset_failure(&JobType::Shell, None, wire));
+    assert!(!is_api_key_unset_failure(&JobType::Shell, Some(wire), wire));
+}
+
+// TAURI-RUST-12K — a cron agent job pinned to a local LLM provider (LM Studio
+// on localhost:1234) fails with a loopback connection-refused because the
+// user's server isn't running. `is_local_provider_unreachable_failure` must
+// consult the shared loopback matcher so the retry loop halts on the first
+// occurrence (retries can't bring the port up) instead of re-emitting the
+// `failure=retries_exhausted` bare `report_error` the classifier already
+// demotes everywhere else.
+#[test]
+fn is_local_provider_unreachable_failure_matches_localized_loopback_in_agent_error() {
+    // Verbatim from the Sentry event: zh-CN Windows host, localized
+    // WSAECONNREFUSED text, only the errno + `tcp connect error` survive.
+    let wire = "error sending request for url \
+                (http://localhost:1234/v1/chat/completions): client error (Connect): \
+                tcp connect error: 由于目标计算机积极拒绝，无法连接。 (os error 10061)";
+    assert!(
+        is_local_provider_unreachable_failure(
+            &JobType::Agent,
+            Some(wire),
+            AGENT_JOB_USER_FAILURE_MESSAGE
+        ),
+        "raw agent error carrying the localized loopback connect-refused must trip the halt"
+    );
+}
+
+// Defense-in-depth: classify even if a future path surfaces the raw error in
+// `last_output` rather than `last_agent_error`.
+#[test]
+fn is_local_provider_unreachable_failure_matches_when_only_output_carries_signal() {
+    let wire = "error sending request for url (http://localhost:1234/v1/chat/completions) \
+                → tcp connect error → Connection refused (os error 10061)";
+    assert!(is_local_provider_unreachable_failure(
+        &JobType::Agent,
+        None,
+        wire
+    ));
+}
+
+// Negative guard: a transient REMOTE provider / backend network error must NOT
+// halt — it may recover on retry and stays actionable in Sentry. Narrowing to
+// loopback is what keeps this guard from blinding real outages.
+#[test]
+fn is_local_provider_unreachable_failure_does_not_match_remote_network_errors() {
+    assert!(!is_local_provider_unreachable_failure(
+        &JobType::Agent,
+        Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+        AGENT_JOB_USER_FAILURE_MESSAGE,
+    ));
+    let remote = "error sending request for url (https://api.tinyhumans.ai/v1/chat/completions) \
+                  → tcp connect error → Connection refused (os error 61)";
+    assert!(
+        !is_local_provider_unreachable_failure(&JobType::Agent, Some(remote), ""),
+        "a remote-host connect-refused must retry + report, not halt as loopback"
+    );
+}
+
+// Scope guard: shell jobs that echo a loopback-refused string keep their retry
+// semantics — only agent jobs route through the inference layer.
+#[test]
+fn is_local_provider_unreachable_failure_does_not_halt_shell_jobs() {
+    let wire = "error sending request for url (http://localhost:1234/v1/chat/completions) \
+                → tcp connect error → Connection refused (os error 10061)";
+    assert!(!is_local_provider_unreachable_failure(
+        &JobType::Shell,
+        None,
+        wire
+    ));
+    assert!(!is_local_provider_unreachable_failure(
+        &JobType::Shell,
+        Some(wire),
+        wire
+    ));
+}
+
 #[tokio::test]
 async fn run_agent_job_returns_error_without_provider_key() {
     let tmp = TempDir::new().unwrap();
@@ -405,6 +800,34 @@ async fn run_agent_job_returns_error_without_provider_key() {
     assert!(
         !output.contains("error sending request for url"),
         "Expected sanitized output without raw transport details"
+    );
+}
+
+#[tokio::test]
+async fn cron_agent_job_uses_agent_definition_tool_scope() {
+    crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+        .expect("init built-in agent definitions");
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.name = Some("morning_briefing".into());
+    job.agent_id = Some("morning_briefing".into());
+
+    let agent = build_agent_for_cron_job(&config, &job).expect("build cron agent");
+    let visible = agent.visible_tool_names_for_test();
+
+    assert!(
+        !visible.is_empty(),
+        "morning briefing has a wildcard scope plus a disallowlist, so the builder must materialize an explicit visible-tool filter"
+    );
+    assert!(
+        !visible.contains("use_tinyplace"),
+        "morning briefing cron jobs must use the morning_briefing definition scope, not the orchestrator delegate surface"
+    );
+    assert!(
+        !visible.iter().any(|name| name.starts_with("tinyplace_")),
+        "morning briefing cron jobs must preserve tinyplace_* disallowlist"
     );
 }
 
@@ -540,7 +963,9 @@ async fn deliver_if_configured_skips_non_announce_mode() {
     let job = test_job("echo ok");
 
     // Default delivery mode is not "announce", so nothing is published.
-    assert!(deliver_if_configured(&config, &job, "x").await.is_ok());
+    assert!(deliver_if_configured(&config, &job, "x", true)
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
@@ -596,7 +1021,9 @@ async fn deliver_if_configured_publishes_event_for_announce_mode() {
     assert_eq!(received.load(Ordering::SeqCst), 1);
 
     // Also verify the function itself succeeds.
-    assert!(deliver_if_configured(&config, &job, "hello").await.is_ok());
+    assert!(deliver_if_configured(&config, &job, "hello", true)
+        .await
+        .is_ok());
 }
 
 #[test]
@@ -692,7 +1119,9 @@ async fn deliver_if_configured_skips_empty_mode() {
     let config = test_config(&tmp).await;
     let mut job = test_job("echo ok");
     job.delivery.mode = "".into();
-    assert!(deliver_if_configured(&config, &job, "output").await.is_ok());
+    assert!(deliver_if_configured(&config, &job, "output", true)
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
@@ -706,7 +1135,7 @@ async fn deliver_if_configured_announce_missing_channel_errors() {
         to: Some("target".into()),
         best_effort: true,
     };
-    let result = deliver_if_configured(&config, &job, "out").await;
+    let result = deliver_if_configured(&config, &job, "out", true).await;
     assert!(result.is_err());
 }
 
@@ -721,7 +1150,7 @@ async fn deliver_if_configured_announce_missing_target_errors() {
         to: None,
         best_effort: true,
     };
-    let result = deliver_if_configured(&config, &job, "out").await;
+    let result = deliver_if_configured(&config, &job, "out", true).await;
     assert!(result.is_err());
 }
 
@@ -736,7 +1165,9 @@ async fn deliver_if_configured_proactive_mode_succeeds() {
         to: None,
         best_effort: true,
     };
-    assert!(deliver_if_configured(&config, &job, "hello").await.is_ok());
+    assert!(deliver_if_configured(&config, &job, "hello", true)
+        .await
+        .is_ok());
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -774,7 +1205,7 @@ fn agent_error_to_user_message_classifies_provider_non_retryable() {
     let msg = agent_error_to_user_message(&err);
     assert!(msg.contains("provider"));
     assert!(msg.contains("credentials"));
-    assert!(msg.contains("Settings"));
+    assert!(msg.contains("Connections \u{2192} API keys \u{2192} LLM"));
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
 }
 
@@ -806,7 +1237,34 @@ fn agent_error_to_user_message_classifies_max_iterations() {
     let err = AgentError::MaxIterationsExceeded { max: 10 };
     let msg = agent_error_to_user_message(&err);
     assert!(msg.contains("tool iterations"));
-    assert!(msg.contains("Settings"));
+    assert!(msg.contains("Connections \u{2192} API keys \u{2192} LLM"));
+    assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
+}
+
+#[test]
+fn agent_error_to_user_message_classifies_empty_provider_response_for_3335() {
+    // Issue #3335: the cron-path copy must stay in lock-step with the
+    // web-channel `empty_response` arm — names the credits / billing
+    // remedy explicitly and drops the misleading "local provider"
+    // misdirect that broke remediation for Managed users.
+    let err = AgentError::EmptyProviderResponse { iteration: 1 };
+    let msg = agent_error_to_user_message(&err);
+    assert!(
+        msg.contains("Settings \u{2192} Billing"),
+        "must point at billing for credit exhaustion: {msg}"
+    );
+    assert!(
+        !msg.contains("local provider"),
+        "must not claim a local provider exists: {msg}"
+    );
+    assert!(
+        msg.contains("another model"),
+        "must keep the model-switch remedy: {msg}"
+    );
+    assert!(
+        msg.contains("Connections \u{2192} API keys \u{2192} LLM"),
+        "must keep the provider-config deep link: {msg}"
+    );
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
 }
 
@@ -885,6 +1343,13 @@ fn agent_error_to_user_message_canned_strings_are_short() {
             required_level: "x".into(),
             channel_max_level: "x".into(),
         },
+        // Issue #3335: EmptyProviderResponse was historically absent from
+        // this variants list — its old copy happened to fit, but nothing
+        // enforced it. The fix shipped a new copy that explicitly names
+        // the credits / billing remedy, which makes the length tradeoff
+        // active rather than incidental. Lock it in so a future copy
+        // change can't quietly grow past the drawer-render budget.
+        AgentError::EmptyProviderResponse { iteration: 0 },
     ];
     for v in &variants {
         let msg = agent_error_to_user_message(v);
@@ -1181,4 +1646,234 @@ async fn scheduler_tick_once_does_not_re_emit_recovery_signal_on_steady_state() 
             "tick #{tick} must leave the tracker at Some(true) (steady state, no publish)"
         );
     }
+}
+
+// ── Chat-delivery gating (skip failed + empty cron runs) ────────────────────
+
+#[test]
+fn chat_delivery_skipped_for_failed_runs() {
+    // A failed cron turn (e.g. a transient network/DNS error) yields a
+    // non-empty canned message; it must NOT be injected into the chat thread.
+    assert!(!should_deliver_cron_output_to_chat(
+        false,
+        "Something went wrong. Please try again."
+    ));
+}
+
+#[test]
+fn chat_delivery_skipped_for_empty_runs() {
+    assert!(!should_deliver_cron_output_to_chat(true, ""));
+    assert!(!should_deliver_cron_output_to_chat(true, "   \n  "));
+    // The empty-run placeholder counts as empty and is not delivered.
+    assert!(cron_output_is_empty(EMPTY_AGENT_OUTPUT));
+    assert!(!should_deliver_cron_output_to_chat(
+        true,
+        EMPTY_AGENT_OUTPUT
+    ));
+}
+
+#[test]
+fn chat_delivery_allowed_for_successful_nonempty_runs() {
+    assert!(!cron_output_is_empty(
+        "Good morning! You have 3 meetings today."
+    ));
+    assert!(should_deliver_cron_output_to_chat(
+        true,
+        "Good morning! You have 3 meetings today."
+    ));
+}
+
+#[test]
+fn failed_runs_still_alert_even_when_empty() {
+    // Failures must remain visible in /notifications even with no output.
+    assert!(cron_result_should_alert(false, ""));
+    assert!(cron_result_should_alert(false, EMPTY_AGENT_OUTPUT));
+    assert!(cron_result_should_alert(
+        false,
+        "Something went wrong. Please try again."
+    ));
+    // Successful non-empty runs alert; successful-but-empty runs do not.
+    assert!(cron_result_should_alert(true, "done"));
+    assert!(!cron_result_should_alert(true, ""));
+    assert!(!cron_result_should_alert(true, EMPTY_AGENT_OUTPUT));
+}
+
+fn proactive_job() -> CronJob {
+    let mut job = test_job("");
+    job.delivery = DeliveryConfig {
+        mode: "proactive".into(),
+        channel: None,
+        to: None,
+        best_effort: true,
+    };
+    job
+}
+
+async fn cron_alerts(config: &Config) -> usize {
+    crate::openhuman::notifications::store::list(config, 10, 0, Some("cron"), None)
+        .unwrap()
+        .len()
+}
+
+#[tokio::test]
+async fn deliver_if_configured_failure_skips_chat_but_alerts() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let job = proactive_job();
+    // Failed run (non-empty canned error): no chat injection, but still alerts.
+    assert!(
+        deliver_if_configured(&config, &job, "Something went wrong.", false)
+            .await
+            .is_ok()
+    );
+    assert_eq!(cron_alerts(&config).await, 1);
+}
+
+#[tokio::test]
+async fn deliver_if_configured_empty_failure_alerts_with_fallback_body() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let job = proactive_job();
+    // Empty failed run: still surfaces in /notifications with a fallback body.
+    assert!(deliver_if_configured(&config, &job, "", false)
+        .await
+        .is_ok());
+    let items =
+        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+    assert_eq!(items.len(), 1);
+    assert!(items[0].body.contains("failed without output"));
+}
+
+#[tokio::test]
+async fn deliver_if_configured_empty_success_skips_chat_and_alert() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let job = proactive_job();
+    // Successful but empty: nothing delivered anywhere.
+    assert!(deliver_if_configured(&config, &job, "", true).await.is_ok());
+    assert_eq!(cron_alerts(&config).await, 0);
+}
+
+/// Receive the next `user_error` broadcast on `rx` carrying `kind`, skipping any
+/// unrelated events. The web-channel bus is a process-global broadcast, so a
+/// sibling test running concurrently may interleave its own `user_error` (a
+/// different kind) onto the same channel — filtering on `kind` keeps each test
+/// deterministic regardless of ordering.
+///
+/// A concurrent flood can also push our event past the channel capacity before
+/// we read it, surfacing as `Lagged` (the receiver fell behind, not a real
+/// absence). We treat `Lagged` as recoverable and keep scanning (CodeRabbit
+/// #4169); only a terminal `Empty`/`Closed` — the matching event genuinely was
+/// not published — panics.
+fn next_user_error(
+    rx: &mut tokio::sync::broadcast::Receiver<crate::core::socketio::WebChannelEvent>,
+    kind: &str,
+) -> crate::core::socketio::WebChannelEvent {
+    use tokio::sync::broadcast::error::TryRecvError;
+    loop {
+        match rx.try_recv() {
+            Ok(ev) if ev.event == "user_error" && ev.error_type.as_deref() == Some(kind) => {
+                break ev
+            }
+            Ok(_) => continue,
+            // Receiver fell behind a concurrent flood — the dropped slots can't
+            // have held *our* just-published event before this point, so skip
+            // ahead and keep scanning rather than failing spuriously.
+            Err(TryRecvError::Lagged(_)) => continue,
+            Err(e) => panic!("expected a user_error broadcast for kind={kind}, bus said: {e:?}"),
+        }
+    }
+}
+
+#[test]
+fn publish_cron_user_error_broadcasts_metadata_only_for_each_kind() {
+    use crate::openhuman::channels::providers::web::subscribe_web_channel_events;
+
+    // Folded from two tests that both published `api_key_missing` to the
+    // process-global bus and could false-pass off each other's broadcast under
+    // parallel execution (CodeRabbit #4169). One subscription + serialized
+    // publishes means each assertion can only be satisfied by THIS test's own
+    // emission, so a regression in `publish_cron_user_error` actually fails.
+    // The three tokens are exactly the `UserErrorKind` values classify.ts accepts.
+    let mut rx = subscribe_web_channel_events();
+    for kind in ["insufficient_credits", "budget_exceeded", "api_key_missing"] {
+        publish_cron_user_error(kind);
+        let ev = next_user_error(&mut rx, kind);
+        // Broadcast to the "system" room every connected socket auto-joins.
+        assert_eq!(ev.client_id, "system");
+        // Stable kind token mirrors the frontend `UserErrorKind` discriminator.
+        assert_eq!(ev.error_type.as_deref(), Some(kind));
+        assert_eq!(ev.error_source.as_deref(), Some("cron"));
+        // Metadata-only: a `user_error` NEVER carries the raw provider body
+        // (CLAUDE.md) and is thread-less (no chat context).
+        assert!(ev.message.is_none(), "user_error must not carry a raw body");
+        assert!(ev.full_response.is_none());
+        assert!(ev.thread_id.is_empty(), "cron user_error is thread-less");
+        assert!(ev.request_id.is_empty());
+    }
+}
+
+// TAURI-RUST-12K (end-to-end) — the predicate tests above key on hand-written
+// wire strings; this test proves the REAL provider-generated error reaches and
+// trips the guard. A cron agent job is routed to a keyless local provider
+// (`AuthStyle::None`, LM Studio shape) whose server is offline: the chat
+// workload skips the credential guard, attempts the loopback HTTP connect, and
+// the OS refuses it. The resulting `last_agent_error` (the aggregated provider
+// fallback chain carrying `…localhost:1234… tcp connect error … Connection
+// refused (os error N)`) must classify as local-provider-unreachable so the
+// cron loop halts and skips the bypassing `failure=retries_exhausted` report.
+#[tokio::test]
+async fn cron_agent_job_local_provider_offline_trips_halt_guard() {
+    use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp).await;
+    config.reliability.scheduler_retries = 5;
+    config.reliability.provider_backoff_ms = 1;
+    // Keyless local provider (`AuthStyle::None` → no credential requirement, so
+    // the request proceeds to the HTTP connect). `chat_provider` routes the
+    // chat workload to it; the slug resolves to LM Studio's default endpoint.
+    config.cloud_providers = vec![CloudProviderCreds {
+        id: "lmstudio-offline".into(),
+        slug: "lmstudio".into(),
+        label: "LM Studio".into(),
+        endpoint: "http://127.0.0.1:1".into(),
+        auth_style: AuthStyle::None,
+        ..Default::default()
+    }];
+    config.default_model = Some("lmstudio:local-model".into());
+    config.chat_provider = Some("lmstudio:local-model".into());
+    let security = SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.workspace_dir,
+    );
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.prompt = Some("Say hello".into());
+
+    // Primary (deterministic): the real provider-generated failure trips the
+    // guard — the link the string-based predicate tests cannot prove.
+    let (success, output, raw) = run_agent_job(&config, &job).await;
+    assert!(
+        !success,
+        "a cron agent job against an offline local provider must fail"
+    );
+    assert!(
+        is_local_provider_unreachable_failure(&JobType::Agent, raw.as_deref(), &output),
+        "provider-generated loopback connect-refused must trip the halt guard; got raw={raw:?}"
+    );
+
+    // Secondary (coarse): the full retry loop halts on the first occurrence
+    // rather than exhausting all 5 retries. Not halting would add the cron
+    // backoff sleeps (200ms floor, doubling → >6s total) on top of five extra
+    // agent runs; halting skips every cron-level sleep. A generous bound keeps
+    // this robust to agent-build jitter while still catching a regressed halt.
+    let start = std::time::Instant::now();
+    let (loop_success, _out) = execute_job_with_retry(&config, &security, &job).await;
+    let elapsed = start.elapsed();
+    assert!(!loop_success);
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "loop must halt on the first loopback failure, not burn 5 retries with backoff (elapsed {elapsed:?})"
+    );
 }

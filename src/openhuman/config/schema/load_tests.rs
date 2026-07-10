@@ -1,3 +1,5 @@
+use super::dirs::{ACTION_DIR_ENV_VAR, MEMORY_SYNC_INTERVAL_SECS_ENV_VAR};
+use super::env::EnvLookup;
 use super::*;
 use crate::openhuman::config::schema::{StreamMode, TelegramConfig};
 
@@ -184,6 +186,57 @@ fn apply_env_overrides_reasoning_enabled_parses_truthy_falsy() {
     assert_eq!(cfg.runtime.reasoning_enabled, Some(false));
     unsafe {
         std::env::remove_var("OPENHUMAN_REASONING_ENABLED");
+    }
+}
+
+#[test]
+fn apply_env_overrides_shell_hide_window_parses_truthy_falsy() {
+    let _g = env_lock();
+    clear_env(&["OPENHUMAN_SHELL_HIDE_WINDOW", "SHELL_HIDE_WINDOW"]);
+    let mut cfg = Config::default();
+    assert!(!cfg.shell.hide_window, "default should be off");
+
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "on");
+    }
+    cfg.apply_env_overrides();
+    assert!(cfg.shell.hide_window);
+
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "false");
+    }
+    cfg.apply_env_overrides();
+    assert!(!cfg.shell.hide_window);
+
+    // The unprefixed alias `SHELL_HIDE_WINDOW` is honored too.
+    unsafe {
+        std::env::remove_var("OPENHUMAN_SHELL_HIDE_WINDOW");
+        std::env::set_var("SHELL_HIDE_WINDOW", "on");
+    }
+    cfg.apply_env_overrides();
+    assert!(cfg.shell.hide_window, "alias should set hide_window");
+
+    // The namespaced var takes precedence over the alias when both are set.
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "off");
+        std::env::set_var("SHELL_HIDE_WINDOW", "on");
+    }
+    cfg.apply_env_overrides();
+    assert!(
+        !cfg.shell.hide_window,
+        "OPENHUMAN_-prefixed var should win over the alias"
+    );
+
+    // Unknown value leaves the field unchanged.
+    cfg.shell.hide_window = true;
+    unsafe {
+        std::env::set_var("OPENHUMAN_SHELL_HIDE_WINDOW", "maybe");
+        std::env::remove_var("SHELL_HIDE_WINDOW");
+    }
+    cfg.apply_env_overrides();
+    assert!(cfg.shell.hide_window);
+    unsafe {
+        std::env::remove_var("OPENHUMAN_SHELL_HIDE_WINDOW");
     }
 }
 
@@ -471,6 +524,31 @@ impl EnvLookup for HashMapEnv {
     fn contains(&self, key: &str) -> bool {
         self.entries.contains_key(key)
     }
+}
+
+#[test]
+fn env_overlay_toggles_agent_tracing_capture_content() {
+    // Serialize with the sibling env-overlay tests (TEST_ENV_LOCK note at the
+    // top of the file) so a concurrent test's env mutation can't race in.
+    let _g = env_lock();
+
+    // ON by default since #4498 (`default_capture_content() == true` — traces
+    // without content aren't actionable in Langfuse). This assertion was left
+    // asserting the pre-#4498 `false` default and is corrected here.
+    let mut cfg = Config::default();
+    assert!(cfg.observability.agent_tracing.capture_content);
+
+    // An explicit falsy env value turns it off.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT", "off"),
+    );
+    assert!(!cfg.observability.agent_tracing.capture_content);
+
+    // A truthy value turns it back on.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT", "true"),
+    );
+    assert!(cfg.observability.agent_tracing.capture_content);
 }
 
 #[test]
@@ -982,6 +1060,55 @@ fn env_overlay_context_tool_result_budget_env_suppresses_legacy_migration() {
         cfg.context.tool_result_budget_bytes, default_budget,
         "env presence must suppress the legacy agent→context copy"
     );
+}
+
+#[test]
+fn env_overlay_compaction_default_on_and_kill_switch() {
+    // Default is on.
+    assert!(Config::default().context.compaction_enabled);
+
+    // `OPENHUMAN_COMPACTION=0` disables it.
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_COMPACTION", "0"));
+    assert!(!cfg.context.compaction_enabled);
+
+    // Truthy re-enables; the namespaced alias works too.
+    let mut cfg = Config::default();
+    cfg.context.compaction_enabled = false;
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_COMPACTION_ENABLED", "on"),
+    );
+    assert!(cfg.context.compaction_enabled);
+
+    // Garbage is ignored (leaves the prior value untouched).
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_COMPACTION", "maybe"));
+    assert!(cfg.context.compaction_enabled);
+}
+
+#[test]
+fn env_overlay_super_context_default_on_and_toggle() {
+    // Default is on.
+    assert!(Config::default().context.super_context_enabled);
+
+    // `OPENHUMAN_SUPER_CONTEXT=0` opts out.
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_SUPER_CONTEXT", "0"));
+    assert!(!cfg.context.super_context_enabled);
+
+    // The namespaced alias works and `on` re-enables it.
+    let mut cfg = Config::default();
+    cfg.context.super_context_enabled = false;
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUPER_CONTEXT_ENABLED", "on"),
+    );
+    assert!(cfg.context.super_context_enabled);
+
+    // Garbage is ignored (leaves the prior value untouched).
+    let mut cfg = Config::default();
+    cfg.context.super_context_enabled = false;
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_SUPER_CONTEXT", "maybe"));
+    assert!(!cfg.context.super_context_enabled);
 }
 
 #[test]
@@ -1519,30 +1646,38 @@ default_temperature = 0.5
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn load_or_init_read_failure_embeds_path_in_error_context() {
     // OPENHUMAN-TAURI-9R (~8k events, Windows): the read at the
     // `config_path.exists()` branch raced `Config::save`'s atomic rename
     // and surfaced the opaque "Failed to read config file" with no path
     // or underlying cause. The fix retries transient Windows locking
-    // errors AND embeds the config path in the context so any residual
-    // non-transient failure is triageable in Sentry.
+    // errors AND embeds the config path in the context; #3962 additionally
+    // surfaces the underlying io cause (`os error N`) through `{:#}`.
     //
-    // Simulate a non-transient read failure portably by placing a
-    // *directory* at the config path: `exists()` is true (so we enter the
-    // read branch), but `read_to_string` fails with EISDIR (unix) /
-    // ERROR_ACCESS_DENIED (windows) — neither is classified transient by
-    // `is_transient_fs_error`, so the retry bails immediately and returns
-    // the path-embedded context.
+    // Trigger a genuine non-transient read failure with a 0o000 (unreadable)
+    // *regular* file — not a directory, which `impl_load` now rejects with a
+    // distinct message before the read (see the directory guard / Codex P2).
+    // `exists()` is true so we enter the read branch; `read_to_string` fails
+    // with EACCES, which `is_transient_fs_error` does not retry. Skipped under
+    // root, which ignores file permissions.
+    use std::os::unix::fs::PermissionsExt;
+
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     let config_path = root.join("config.toml");
-    std::fs::create_dir(&config_path).unwrap();
+    std::fs::write(&config_path, "default_temperature = 0.5\n").unwrap();
+    std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    if std::fs::read_to_string(&config_path).is_ok() {
+        return; // running as root — permissions are ignored, assertion is moot
+    }
 
     let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", root.to_str().unwrap());
     let err = Config::load_or_init_with_env_lookup(root, &root.join("workspace"), &env)
         .await
-        .expect_err("reading a directory as config.toml must fail");
+        .expect_err("reading an unreadable config.toml must fail");
 
     let msg = format!("{err:#}");
     assert!(
@@ -1552,6 +1687,10 @@ async fn load_or_init_read_failure_embeds_path_in_error_context() {
     assert!(
         msg.contains("config.toml"),
         "error context must embed the config path so Sentry titles are triageable: {msg}"
+    );
+    assert!(
+        msg.contains("os error"),
+        "error must carry the underlying io cause via {{:#}} (#3962): {msg}"
     );
 }
 
@@ -1743,6 +1882,7 @@ allowed_users = ["@admin"]
     };
     cfg.channels_config.telegram = Some(TelegramConfig {
         bot_token: known_secret.to_string(),
+        chat_id: None,
         allowed_users: vec!["@admin".to_string()],
         stream_mode: StreamMode::Off,
         draft_update_interval_ms: 1000,

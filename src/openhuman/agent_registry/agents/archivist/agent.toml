@@ -4,6 +4,11 @@ delegate_name = "archive_session"
 when_to_use = "Background librarian — extracts lessons from a completed session, updates MEMORY.md, and indexes to FTS5. Runs cheap and slow."
 temperature = 0.4
 max_iterations = 3
+# Bound the archiving summary that flows up to the orchestrator verbatim
+# (delegate_archivist). 8000 chars (~2000 tokens) matches the normal
+# sub-agent cap and stops a verbose memory-write confirmation from
+# bloating the orchestrator's context (#4099).
+max_result_chars = 8000
 sandbox_mode = "none"
 background = true
 omit_identity = true

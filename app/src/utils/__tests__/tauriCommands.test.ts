@@ -68,6 +68,15 @@ describe('tauriCommands', () => {
     });
   });
 
+  test('storeSession can request deferred backend validation for trusted callbacks', async () => {
+    await storeSession('jwt-token', {}, { allowPendingBackendValidation: true });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.auth_store_session',
+      params: { token: 'jwt-token', user: {}, allowPendingBackendValidation: true },
+    });
+  });
+
   test('resetOpenHumanDataAndRestartCore invokes the destructive Tauri command', async () => {
     await resetOpenHumanDataAndRestartCore();
 

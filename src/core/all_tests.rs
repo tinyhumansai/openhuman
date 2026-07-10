@@ -218,10 +218,30 @@ fn schema_for_rpc_method_finds_internal_mcp_audit_list() {
 }
 
 #[test]
+fn schema_for_rpc_method_finds_internal_orchestration_pairing_link_session() {
+    let schema = schema_for_rpc_method("openhuman.orchestration_pairing_link_session");
+    assert!(
+        schema.is_some(),
+        "orchestration_pairing.link_session should be internally routable"
+    );
+    let s = schema.unwrap();
+    assert_eq!(s.namespace, "orchestration_pairing");
+    assert_eq!(s.function, "link_session");
+}
+
+#[test]
 fn rpc_method_from_parts_does_not_expose_internal_mcp_audit_list() {
     assert!(
         rpc_method_from_parts("mcp_audit", "list").is_none(),
         "internal MCP audit RPC must not appear in the public controller registry"
+    );
+}
+
+#[test]
+fn rpc_method_from_parts_does_not_expose_internal_orchestration_pairing() {
+    assert!(
+        rpc_method_from_parts("orchestration_pairing", "link_session").is_none(),
+        "pairing write RPCs must not appear in the public controller registry"
     );
 }
 
@@ -358,6 +378,138 @@ fn validate_params_null_for_required_is_acceptable() {
     );
     let mut p = Map::new();
     p.insert("key".into(), Value::Null);
+    assert!(validate_params(&s, &p).is_ok());
+}
+
+// --- validate_params type checking (C12) --------------------------------
+
+#[test]
+fn validate_params_rejects_wrong_scalar_type() {
+    let s = schema(
+        "test",
+        "fn",
+        vec![FieldSchema {
+            name: "count",
+            ty: TypeSchema::U64,
+            comment: "",
+            required: true,
+        }],
+    );
+    let mut p = Map::new();
+    p.insert("count".into(), Value::String("nope".into()));
+    let err = validate_params(&s, &p).unwrap_err();
+    assert!(err.contains("invalid type for param 'count'"), "got: {err}");
+    assert!(err.contains("expected unsigned integer"), "got: {err}");
+}
+
+#[test]
+fn validate_params_accepts_correct_scalar_type() {
+    let s = schema(
+        "test",
+        "fn",
+        vec![FieldSchema {
+            name: "flag",
+            ty: TypeSchema::Bool,
+            comment: "",
+            required: true,
+        }],
+    );
+    let mut p = Map::new();
+    p.insert("flag".into(), Value::Bool(true));
+    assert!(validate_params(&s, &p).is_ok());
+}
+
+#[test]
+fn validate_params_validates_array_element_types() {
+    let s = schema(
+        "test",
+        "fn",
+        vec![FieldSchema {
+            name: "ids",
+            ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+            comment: "",
+            required: true,
+        }],
+    );
+    let mut ok = Map::new();
+    ok.insert(
+        "ids".into(),
+        Value::Array(vec![Value::String("a".into()), Value::String("b".into())]),
+    );
+    assert!(validate_params(&s, &ok).is_ok());
+
+    let mut bad = Map::new();
+    bad.insert(
+        "ids".into(),
+        Value::Array(vec![Value::String("a".into()), Value::Bool(true)]),
+    );
+    let err = validate_params(&s, &bad).unwrap_err();
+    assert!(err.contains("invalid type for param 'ids'"), "got: {err}");
+}
+
+#[test]
+fn validate_params_enforces_enum_variants() {
+    let s = schema(
+        "test",
+        "fn",
+        vec![FieldSchema {
+            name: "mode",
+            ty: TypeSchema::Enum {
+                variants: vec!["read", "write"],
+            },
+            comment: "",
+            required: true,
+        }],
+    );
+    let mut ok = Map::new();
+    ok.insert("mode".into(), Value::String("read".into()));
+    assert!(validate_params(&s, &ok).is_ok());
+
+    let mut bad = Map::new();
+    bad.insert("mode".into(), Value::String("delete".into()));
+    let err = validate_params(&s, &bad).unwrap_err();
+    assert!(err.contains("enum variants"), "got: {err}");
+}
+
+#[test]
+fn validate_params_option_accepts_null_and_inner_type() {
+    let s = schema(
+        "test",
+        "fn",
+        vec![FieldSchema {
+            name: "limit",
+            ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+            comment: "",
+            required: false,
+        }],
+    );
+    let mut null_p = Map::new();
+    null_p.insert("limit".into(), Value::Null);
+    assert!(validate_params(&s, &null_p).is_ok());
+
+    let mut val_p = Map::new();
+    val_p.insert("limit".into(), Value::Number(5.into()));
+    assert!(validate_params(&s, &val_p).is_ok());
+
+    let mut bad_p = Map::new();
+    bad_p.insert("limit".into(), Value::String("x".into()));
+    assert!(validate_params(&s, &bad_p).is_err());
+}
+
+#[test]
+fn validate_params_json_type_accepts_anything() {
+    let s = schema(
+        "test",
+        "fn",
+        vec![FieldSchema {
+            name: "payload",
+            ty: TypeSchema::Json,
+            comment: "",
+            required: true,
+        }],
+    );
+    let mut p = Map::new();
+    p.insert("payload".into(), Value::Array(vec![Value::Bool(true)]));
     assert!(validate_params(&s, &p).is_ok());
 }
 

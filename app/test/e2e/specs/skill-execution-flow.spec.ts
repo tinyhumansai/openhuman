@@ -31,7 +31,8 @@ describe('Skill discovery (UI + core RPC)', () => {
   it('lands the user on a logged-in shell', async () => {
     const atHome =
       (await textExists('Ask your assistant anything')) ||
-      (await textExists('Your device is connected'));
+      (await textExists('Your device is connected')) ||
+      (await textExists('Your assistant is ready when you are'));
     expect(atHome).toBe(true);
   });
 

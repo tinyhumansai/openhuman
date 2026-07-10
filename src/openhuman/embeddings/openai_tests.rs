@@ -40,6 +40,59 @@ fn accessors() {
     assert_eq!(p.signature(), "provider=openai;model=m;dims=1");
 }
 
+// ── Gemini model-id normalization (TAURI-RUST-4SA) ──────
+
+#[test]
+fn gemini_base_url_prefixes_bare_model() {
+    // Gemini's OpenAI-compat shim requires `models/<name>`; a bare id 400s with
+    // `BatchEmbedContentsRequest.model: unexpected model name format`.
+    let p = OpenAiEmbedding::new(
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        "key",
+        "text-embedding-004",
+        768,
+    );
+    assert_eq!(p.model(), "models/text-embedding-004");
+    assert_eq!(p.model_id(), "models/text-embedding-004");
+}
+
+#[test]
+fn gemini_normalization_is_idempotent() {
+    // An already-prefixed `models/…` or a `tunedModels/…` id is left untouched.
+    let p = OpenAiEmbedding::new(
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "key",
+        "models/text-embedding-004",
+        768,
+    );
+    assert_eq!(p.model(), "models/text-embedding-004");
+
+    let tuned = OpenAiEmbedding::new(
+        "https://generativelanguage.googleapis.com",
+        "key",
+        "tunedModels/my-embed",
+        768,
+    );
+    assert_eq!(tuned.model(), "tunedModels/my-embed");
+}
+
+#[test]
+fn non_gemini_base_url_leaves_model_unchanged() {
+    // Genuine OpenAI / LocalAI / Ollama ids must not grow a `models/` prefix.
+    for base in [
+        "https://api.openai.com",
+        "http://localhost:11434",
+        "https://api.example.com/v1",
+    ] {
+        let p = OpenAiEmbedding::new(base, "key", "text-embedding-004", 768);
+        assert_eq!(
+            p.model(),
+            "text-embedding-004",
+            "non-Gemini base must not prefix the model: {base}"
+        );
+    }
+}
+
 #[test]
 fn url_standard_openai() {
     let p = OpenAiEmbedding::new("https://api.openai.com", "key", "model", 1536);
@@ -122,6 +175,55 @@ async fn empty_input_returns_empty() {
     let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
     let result = p.embed(&[]).await.unwrap();
     assert!(result.is_empty());
+}
+
+// ── empty/whitespace entries — pre-flight reject (#13021) ────────
+//
+// `embed(&[""])` and friends used to fall through to the HTTP layer
+// and trip a backend 400 ("input must be a non-empty string …"),
+// which was then captured as a Sentry server fault even though the
+// real defect was a caller passing empty text. The guard bails
+// without touching the network — the "http://unused" base URL would
+// otherwise refuse to connect.
+
+#[tokio::test]
+async fn embed_refuses_single_empty_string() {
+    let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
+    let err = p.embed(&[""]).await.unwrap_err().to_string();
+    assert!(
+        err.contains("refusing empty/whitespace input at index 0"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn embed_refuses_whitespace_only_string() {
+    let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
+    let err = p.embed(&["   \n\t"]).await.unwrap_err().to_string();
+    assert!(err.contains("refusing empty/whitespace input at index 0"));
+}
+
+#[tokio::test]
+async fn embed_refuses_mixed_batch_with_empty() {
+    let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
+    let err = p.embed(&["ok", "", "fine"]).await.unwrap_err().to_string();
+    assert!(err.contains("refusing empty/whitespace input at index 1"));
+}
+
+#[tokio::test]
+async fn embed_refuses_does_not_use_embedding_api_error_prefix() {
+    // The classifier in `core::observability` treats `"Embedding API error"`
+    // / `"(<status>"` shapes as upstream HTTP failures. The client-side
+    // pre-flight refusal MUST NOT collide with that shape, otherwise this
+    // very fix would re-enter the same Sentry-as-server-fault path that
+    // #13021 was about. Lock the bail wording so a future rename can't
+    // silently reintroduce the regression.
+    let p = OpenAiEmbedding::new("http://unused", "k", "m", 1);
+    let err = p.embed(&[""]).await.unwrap_err().to_string();
+    assert!(
+        !err.contains("Embedding API error"),
+        "bail wording must not collide with TransientUpstreamHttp classifier: {err}"
+    );
 }
 
 // ── embed — success ─────────────────────────────────────
@@ -246,6 +348,41 @@ async fn embed_skips_auth_header_when_key_empty() {
     p.embed(&["test"]).await.unwrap();
 }
 
+/// A keyed cloud provider (`with_required_api_key(true)` — genuine OpenAI /
+/// Voyage) with an empty key must bail BEFORE any HTTP request rather than
+/// POSTing with no `Authorization` header and 401-ing on every embed
+/// (TAURI-RUST-4TZ). The base URL points at an address nothing is listening on,
+/// so asserting the error is the key-guard message — not a connection error —
+/// proves no request was attempted. The "API key not set" wording is what the
+/// `ApiKeyMissing` classifier keys on to demote the flood out of Sentry.
+#[tokio::test]
+async fn embed_required_key_empty_bails_without_request() {
+    for key in ["", "   "] {
+        let p = OpenAiEmbedding::new("http://127.0.0.1:1", key, "text-embedding-3-small", 1)
+            .with_required_api_key(true);
+        let err = p.embed(&["hello"]).await.unwrap_err().to_string();
+        assert!(
+            err.contains("API key not set"),
+            "expected key-guard message for key {key:?}, got: {err}"
+        );
+    }
+}
+
+/// The keyless local/custom path is unaffected: without
+/// `with_required_api_key`, an empty key still omits the header and sends the
+/// request (LocalAI / Ollama-via-OpenAI legitimately need no bearer).
+#[tokio::test]
+async fn embed_empty_key_without_requirement_still_sends() {
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|| async { Json(serde_json::json!({ "data": [{ "embedding": [1.0] }] })) }),
+    );
+    let url = start_mock(app).await;
+    let p = OpenAiEmbedding::new(&url, "", "m", 1); // no with_required_api_key
+    let result = p.embed(&["test"]).await.unwrap();
+    assert_eq!(result.len(), 1);
+}
+
 // ── embed — error paths ─────────────────────────────────
 
 #[tokio::test]
@@ -261,6 +398,36 @@ async fn embed_server_error() {
     let msg = err.to_string();
     assert!(msg.contains("500"), "status: {msg}");
     assert!(msg.contains("rate limited"), "body: {msg}");
+}
+
+/// A 404 means the configured base URL has no embeddings route (the user
+/// pointed the Custom provider at a chat-only endpoint, e.g. DeepSeek —
+/// TAURI-RUST-5JR). The message must (a) carry an actionable remediation, and
+/// (b) PRESERVE the `Embedding API error (404…)` prefix the
+/// `observability::is_embedding_endpoint_absent` classifier keys on, so the
+/// flood is demoted from Sentry rather than firing on every re-embed.
+#[tokio::test]
+async fn embed_404_endpoint_absent_is_actionable_and_classifier_stable() {
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|| async { (StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let url = start_mock(app).await;
+    let p = OpenAiEmbedding::new(&url, "k", "m", 1);
+
+    let err = p.embed(&["hi"]).await.unwrap_err();
+    let msg = err.to_string();
+    // Classifier contract: prefix preserved.
+    assert!(
+        msg.to_ascii_lowercase()
+            .contains("embedding api error (404"),
+        "must preserve the (404 classifier prefix: {msg}"
+    );
+    // Actionable remediation appended.
+    assert!(
+        msg.contains("no embeddings API") && msg.contains("Settings → Memory"),
+        "must carry actionable remediation: {msg}"
+    );
 }
 
 /// 429 rate-limit responses must format their message in the canonical
@@ -409,6 +576,28 @@ async fn embed_dimension_mismatch() {
 
     let err = p.embed(&["hi"]).await.unwrap_err();
     assert!(err.to_string().contains("dimension mismatch"));
+}
+
+/// Issue #4056: a `dims == 0` provider is the dimension-agnostic verification
+/// probe — it must NOT enforce any length, so an endpoint returning its own
+/// native size passes instead of being rejected. This is what lets a Custom
+/// endpoint verify when the user's guessed `dimensions` differs from the
+/// model's native output; the caller then adopts the returned length.
+#[tokio::test]
+async fn embed_dims_zero_skips_dimension_guard() {
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|| async {
+            Json(serde_json::json!({
+                "data": [{ "embedding": [1.0, 2.0, 3.0, 4.0, 5.0] }]
+            }))
+        }),
+    );
+    let url = start_mock(app).await;
+    let p = OpenAiEmbedding::new(&url, "k", "m", 0);
+
+    let result = p.embed(&["hi"]).await.unwrap();
+    assert_eq!(result[0].len(), 5, "dims=0 must accept the native length");
 }
 
 #[tokio::test]

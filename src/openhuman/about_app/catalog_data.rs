@@ -14,6 +14,22 @@ const DERIVED_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
 });
 
+// Vision sub-agent ships the attached image (raw pixels) to the managed
+// multimodal model for analysis.
+const IMAGE_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Raw,
+    destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
+});
+
+// Media generation sends the prompt (and any reference image URL) to GMI Cloud
+// via the OpenHuman backend; generated media is downloaded back to the device.
+const MEDIA_GEN_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Raw,
+    destinations: &["OpenHuman backend", "GMI Cloud"],
+});
+
 const LOCAL_CREDENTIALS: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: false,
     data_kind: PrivacyDataKind::Credentials,
@@ -58,6 +74,18 @@ const GITHUB_REPO_SOURCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: true,
     data_kind: PrivacyDataKind::Metadata,
     destinations: &["GitHub API (api.github.com)"],
+});
+
+// Persona Pack fetches the published mascot manifest directly from GitHub raw
+// content, then downloads the selected runtime asset from the manifest's
+// declared file URL. The request is metadata-class (manifest and asset URLs),
+// but it does leave the device and bypasses the managed backend.
+const GITHUB_MASCOT_MANIFEST: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Metadata,
+    destinations: &[
+        "GitHub raw content (raw.githubusercontent.com) and manifest-declared mascot asset hosts",
+    ],
 });
 
 const SEARXNG_RAW_TO_CONFIGURED_INSTANCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
@@ -214,6 +242,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "conversation.plan_review",
+        name: "Plan Review",
+        domain: "conversation",
+        category: CapabilityCategory::Conversation,
+        description: "Pause an interactive turn for review whenever the assistant proposes a thread-scoped plan (a multi-step to-do list with its objective). Review the whole plan once above the composer, then Approve to run it, Reject to discard it, or send feedback to have the assistant revise and re-propose — nothing executes until you approve. Background and scheduled runs are never gated.",
+        how_to: "Conversations > review the plan card above the composer when the assistant lays out a multi-step plan",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "conversation.background_monitors",
         name: "Background Monitors",
         domain: "conversation",
@@ -232,6 +270,36 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         how_to: "Human > ask the assistant to delegate work to sub-agents",
         status: CapabilityStatus::Beta,
         privacy: None,
+    },
+    Capability {
+        id: "intelligence.vision_subagent",
+        name: "Vision Sub-agent",
+        domain: "agent",
+        category: CapabilityCategory::Intelligence,
+        description: "Delegate image / screenshot understanding to a dedicated vision sub-agent — describe, OCR, read charts/diagrams, compare images, or locate UI elements. Rides the multimodal `vision-v1` tier so attached images are always analyzed.",
+        how_to: "Attach an image in chat, or ask the assistant to look at a screenshot / image file",
+        status: CapabilityStatus::Beta,
+        privacy: IMAGE_TO_BACKEND,
+    },
+    Capability {
+        id: "intelligence.image_generation",
+        name: "Image Generation",
+        domain: "agent",
+        category: CapabilityCategory::Intelligence,
+        description: "Delegate image creation to a dedicated image sub-agent — generate images from a text prompt, or edit/restyle reference images, using hosted GMI models (Seedream / SeedEdit). Results are saved to the workspace.",
+        how_to: "Ask the assistant to generate, draw, or edit an image",
+        status: CapabilityStatus::Beta,
+        privacy: MEDIA_GEN_TO_BACKEND,
+    },
+    Capability {
+        id: "intelligence.video_generation",
+        name: "Video Generation",
+        domain: "agent",
+        category: CapabilityCategory::Intelligence,
+        description: "Delegate short-video creation to a dedicated video sub-agent — text-to-video or animate a reference image using hosted GMI models (Seedance / Veo). Generation is asynchronous; the finished clip is saved to the workspace.",
+        how_to: "Ask the assistant to generate a video or animate an image",
+        status: CapabilityStatus::Beta,
+        privacy: MEDIA_GEN_TO_BACKEND,
     },
     Capability {
         id: "conversation.label_filter",
@@ -343,6 +411,45 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.long_term_goals",
+        name: "Long-term Goals",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "An editable list of the assistant's durable long-term goals for working with \
+            you, stored locally in MEMORY_GOALS.md (capped ~500 tokens). A background goals agent \
+            keeps the list fresh: it runs when the conversation context is summarized, and on first \
+            run populates initial goals from context. Items can be added/edited/deleted explicitly \
+            via RPC or agent tools.",
+        how_to: "Automatic — refreshed on context summarization. Manage via \
+            memory_goals.list / memory_goals.add / memory_goals.edit / memory_goals.delete / \
+            memory_goals.reflect (RPC), or the goals_* agent tools.",
+        status: CapabilityStatus::Beta,
+        // Enrichment runs a cloud agentic model, so goal/context text can leave
+        // the device during a reflect pass (CRUD/storage stays local).
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
+        id: "conversation.thread_goal",
+        name: "Thread Goal",
+        domain: "conversation",
+        category: CapabilityCategory::Conversation,
+        description: "A single, thread-scoped goal (Codex-style \"completion contract\") the \
+            assistant keeps pursuing across turns, interrupts, resumes, and budget boundaries — \
+            distinct from the long-term goals list and the per-thread task board. Stored locally \
+            (one goal per thread), with a lifecycle (active/paused/budget_limited/complete) and an \
+            optional token budget. The active goal is injected into context each turn; the context \
+            scout proposes a goal on a fresh thread (only if none is set) and the orchestrator can \
+            set/refine it. When enabled, idle threads can autonomously continue toward the goal.",
+        how_to: "Set/edit via the goal chip above the composer in Conversations, or the \
+            thread_goals.* RPC (get/set/complete/pause/resume/clear); the assistant manages it via \
+            the goal_set / goal_get / goal_complete tools. Autonomous continuation is opt-in via \
+            heartbeat.goal_continuation_enabled.",
+        status: CapabilityStatus::Beta,
+        // Goal CRUD/storage is local; autonomous continuation (opt-in) runs a
+        // cloud agentic model, so objective/context can leave the device then.
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "intelligence.memory_tree_retrieval",
         name: "Memory Tree Retrieval (chat)",
         domain: "intelligence",
@@ -432,7 +539,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
              model name and embedding dimensions are tunable per provider. The \
              legacy `inference_embed` RPC is aliased to `embeddings_embed` so \
              existing callers continue to work.",
-        how_to: "Settings > AI > Embeddings",
+        how_to: "Connections → API keys → Embeddings",
         status: CapabilityStatus::Beta,
         // Privacy depends on the selected provider — see
         // `intelligence.embedding_provider_test` for the per-provider data
@@ -453,7 +560,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
              the model, dimensions, and any auth/error surface so a \
              misconfigured key doesn't get discovered halfway through a 50k \
              chunk backfill.",
-        how_to: "Settings > AI > Embeddings > Test Connection",
+        how_to: "Connections → API keys → Embeddings → Test Connection",
         // The probe payload routes to whichever provider the user has
         // selected — managed cloud (default), OpenAI, Cohere, or a custom
         // OpenAI-compatible endpoint. Using `DERIVED_TO_BACKEND` here would
@@ -504,6 +611,26 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "intelligence.workflow_orchestration",
+        name: "Workflow Orchestration",
+        domain: "workflow_runs",
+        category: CapabilityCategory::Intelligence,
+        description: "Run declarative multi-agent workflows such as parallel research with cross-checking: a question is decomposed into angles, researched in parallel, adversarially cross-checked, and synthesized into one cited report. Watch each phase progress with its child agent results, stop or resume a run, and read the final synthesis. High-cost / high-concurrency runs require explicit approval before starting.",
+        how_to: "Intelligence > Orchestration > pick a workflow and Start",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
+        id: "intelligence.language_workflows",
+        name: "Language Workflows (Rhai)",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "The orchestrator can author and run small Rhai workflow scripts to express ad-hoc control flow over delegated work — parallel fan-out, loops, and dedup-then-verify pipelines that fixed spawn/parallel primitives cannot. Each script runs bounded and fail-closed (per-cell timeout, per-session caps on tool/model/agent calls and recursion depth), and every effectful step still passes the same approval and permission gates as a direct tool call. Progress rides the existing tool-call timeline.",
+        how_to: "Runs automatically when the orchestrator chooses the `rhai_workflows` tool; disable with OPENHUMAN_RHAI_WORKFLOWS=0 or the read-only autonomy tier",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "intelligence.agent_library",
         name: "Agents Library",
         domain: "intelligence",
@@ -512,6 +639,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         how_to: "Intelligence > Agent Tasks > Agents Library",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
+        id: "intelligence.worktree_manager",
+        name: "Agent Worktrees",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Inspect and clean up the isolated git worktrees that parallel sub-agents check out under <repo>/.claude/worktrees. Each row shows the worktree's branch, dirty state, and changed files, plus a cross-worktree overlap warning when two workers touched the same file. Open, diff, or remove a worktree (a dirty worktree requires an explicit discard confirmation; the worker branch is preserved).",
+        how_to: "Intelligence > Worktrees",
+        status: CapabilityStatus::Beta,
+        privacy: None,
     },
     Capability {
         id: "intelligence.slack_memory_ingest",
@@ -797,7 +934,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "local_ai",
         category: CapabilityCategory::LocalAI,
         description: "Select Ollama, LM Studio, MLX, or a generic local OpenAI-compatible server as the local model provider and configure the endpoint.",
-        how_to: "Settings > AI > providers, or use provider strings: ollama:<model>, lmstudio:<model>, mlx:<model>, local-openai:<model>",
+        how_to: "Connections → API keys → LLM, or use provider strings: ollama:<model>, lmstudio:<model>, mlx:<model>, local-openai:<model>",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -1225,7 +1362,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "settings",
         category: CapabilityCategory::Settings,
         description: "Configure managed, local, custom, and built-in BYOK LLM providers, including SumoPod and other OpenAI-compatible gateways, plus per-workload routing preferences.",
-        how_to: "Settings > AI",
+        how_to: "Connections → API keys → LLM",
         status: CapabilityStatus::Stable,
         privacy: None,
     },
@@ -1237,7 +1374,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         description: "Personalize the assistant as one identity: set a display name and description, edit or reset the SOUL.md personality prompt, and reach mascot avatar and voice settings — all from a single Persona surface.",
         how_to: "Settings > Persona",
         status: CapabilityStatus::Beta,
-        privacy: None,
+        privacy: GITHUB_MASCOT_MANIFEST,
     },
     Capability {
         id: "settings.manage_privacy_analytics",
@@ -1352,6 +1489,21 @@ pub(super) const CAPABILITIES: &[Capability] = &[
                       filters, then enrich them onto the agent's todo board and (for proactive \
                       sources) start an agent working on them.",
         how_to: "Settings > Task Sources",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
+        id: "automation.discover_workflows",
+        name: "Suggested Workflows (Flow Scout)",
+        domain: "flows",
+        category: CapabilityCategory::Automation,
+        description: "A read-only discovery agent (\"Flow Scout\") reads your memory, past \
+                      conversations, known people, connected apps, and existing flows to figure \
+                      out which automations would actually help you, then proposes a handful of \
+                      concrete, buildable workflow suggestions. Each card explains why it was \
+                      suggested; \"Build this\" hands it to the workflow builder to author a real \
+                      flow you review and save. Discovery never creates, enables, or runs a flow.",
+        how_to: "Flows > Suggested for you > Discover",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,
     },
@@ -1653,5 +1805,21 @@ pub(super) const CAPABILITIES: &[Capability] = &[
                  \"when writing Rust, prefer Result over unwrap\".",
         status: CapabilityStatus::Stable,
         privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "intelligence.session_orchestration",
+        name: "Session Orchestration",
+        domain: "orchestration",
+        category: CapabilityCategory::Intelligence,
+        description: "Coordinate wrapped Claude Code / Codex sessions over tiny.place: the device \
+                      forwards session DMs to the hosted orchestration brain, which reasons, \
+                      replies, and steers on its own cadence server-side. The device executes the \
+                      effects the brain pushes back (send the reply, mirror an eviction into local \
+                      memory), renders the hosted read surface, and shows a notice when the cloud \
+                      brain is unreachable.",
+        how_to: "Intelligence > Orchestration (pair a wrapped session, then chat via the Master \
+                 window).",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
     },
 ];

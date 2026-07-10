@@ -15,7 +15,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   deleteArtifact,
   downloadArtifact,
+  listArtifactsForThread,
   revealArtifactInFileManager,
+  saveArtifactViaDialog,
 } from '../artifactDownloadService';
 import { callCoreRpc } from '../coreRpcClient';
 
@@ -35,6 +37,143 @@ vi.mock('../coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 vi.mock('@tauri-apps/plugin-opener', () => ({
   revealItemInDir: (...args: unknown[]) => hoisted.revealItemInDir(...args),
 }));
+
+describe('listArtifactsForThread', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns an error for empty / whitespace thread ids without calling the RPC', async () => {
+    const outcome = await listArtifactsForThread('   ');
+    expect(outcome).toEqual({ ok: false, artifacts: [], error: 'thread id missing' });
+    expect(callCoreRpc).not.toHaveBeenCalled();
+  });
+
+  it('calls ai_list_artifacts with a thread filter and maps ready artifacts', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      artifacts: [
+        {
+          id: 'art-1',
+          kind: 'document',
+          title: 'Report',
+          path: 'artifacts/art-1/report.pdf',
+          size_bytes: 1234,
+          status: 'ready',
+        },
+        {
+          id: 'art-pending',
+          kind: 'presentation',
+          title: 'Pending Deck',
+          path: 'artifacts/art-pending/deck.pptx',
+          size_bytes: 55,
+          status: 'pending',
+        },
+        {
+          id: 'art-bad-kind',
+          kind: 'video',
+          title: 'Unsupported',
+          path: 'artifacts/art-bad-kind/video.mp4',
+          size_bytes: 99,
+          status: 'ready',
+        },
+      ],
+    });
+
+    const outcome = await listArtifactsForThread(' thread-1 ');
+
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.ai_list_artifacts',
+      params: { thread_id: 'thread-1', offset: 0, limit: 200 },
+    });
+    expect(outcome).toEqual({
+      ok: true,
+      artifacts: [
+        {
+          artifactId: 'art-1',
+          kind: 'document',
+          title: 'Report',
+          path: 'artifacts/art-1/report.pdf',
+          sizeBytes: 1234,
+        },
+      ],
+    });
+  });
+
+  it('fetches subsequent artifact pages before returning mapped artifacts', async () => {
+    const firstPage = Array.from({ length: 200 }, (_, idx) => ({
+      id: `pending-${idx}`,
+      kind: 'document',
+      title: `Pending ${idx}`,
+      path: `artifacts/pending-${idx}/pending.pdf`,
+      size_bytes: idx + 1,
+      status: 'pending',
+    }));
+    firstPage[0] = {
+      id: 'art-page-1',
+      kind: 'document',
+      title: 'First Page Report',
+      path: 'artifacts/art-page-1/report.pdf',
+      size_bytes: 100,
+      status: 'ready',
+    };
+    vi.mocked(callCoreRpc)
+      .mockResolvedValueOnce({ artifacts: firstPage })
+      .mockResolvedValueOnce({
+        artifacts: [
+          {
+            id: 'art-page-2',
+            kind: 'image',
+            title: 'Second Page Image',
+            path: 'artifacts/art-page-2/image.png',
+            size_bytes: 200,
+            status: 'ready',
+          },
+        ],
+      });
+
+    const outcome = await listArtifactsForThread('thread-1');
+
+    expect(callCoreRpc).toHaveBeenNthCalledWith(1, {
+      method: 'openhuman.ai_list_artifacts',
+      params: { thread_id: 'thread-1', offset: 0, limit: 200 },
+    });
+    expect(callCoreRpc).toHaveBeenNthCalledWith(2, {
+      method: 'openhuman.ai_list_artifacts',
+      params: { thread_id: 'thread-1', offset: 200, limit: 200 },
+    });
+    expect(outcome).toEqual({
+      ok: true,
+      artifacts: [
+        {
+          artifactId: 'art-page-1',
+          kind: 'document',
+          title: 'First Page Report',
+          path: 'artifacts/art-page-1/report.pdf',
+          sizeBytes: 100,
+        },
+        {
+          artifactId: 'art-page-2',
+          kind: 'image',
+          title: 'Second Page Image',
+          path: 'artifacts/art-page-2/image.png',
+          sizeBytes: 200,
+        },
+      ],
+    });
+  });
+
+  it('returns an empty list for nullish core payloads', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce(null);
+    const outcome = await listArtifactsForThread('thread-1');
+    expect(outcome).toEqual({ ok: true, artifacts: [] });
+  });
+
+  it('returns a failed outcome when the core RPC throws', async () => {
+    vi.mocked(callCoreRpc).mockRejectedValueOnce(new Error('rpc down'));
+    const outcome = await listArtifactsForThread('thread-1');
+    expect(outcome).toEqual({ ok: false, artifacts: [], error: 'rpc down' });
+  });
+});
 
 describe('downloadArtifact', () => {
   beforeEach(() => {
@@ -295,5 +434,77 @@ describe('revealArtifactInFileManager', () => {
     const ok = await revealArtifactInFileManager('/Users/me/Downloads/deck.pptx');
     expect(ok).toBe(false);
     warn.mockRestore();
+  });
+});
+
+describe('saveArtifactViaDialog (#3162)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.isTauri.mockReturnValue(true);
+  });
+
+  const resolveOk = () =>
+    vi
+      .mocked(callCoreRpc)
+      .mockResolvedValueOnce({
+        absolute_path: '/ws/artifacts/a-1/deck.pptx',
+        meta: { id: 'a-1', title: 'Deck' },
+      } as never);
+
+  it('returns NOT_DESKTOP outside Tauri', async () => {
+    hoisted.isTauri.mockReturnValueOnce(false);
+    const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');
+    expect(outcome).toEqual({
+      ok: false,
+      code: 'NOT_DESKTOP',
+      error: expect.stringContaining('desktop'),
+    });
+    expect(callCoreRpc).not.toHaveBeenCalled();
+  });
+
+  it('saves to the user-chosen path and returns it', async () => {
+    resolveOk();
+    hoisted.invoke.mockResolvedValueOnce('/Users/me/Desktop/Deck.pptx');
+    const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');
+    expect(outcome).toEqual({ ok: true, path: '/Users/me/Desktop/Deck.pptx' });
+    expect(hoisted.invoke).toHaveBeenCalledWith('save_artifact_via_dialog', {
+      sourcePath: '/ws/artifacts/a-1/deck.pptx',
+      suggestedFilename: 'Deck.pptx',
+    });
+  });
+
+  it('treats a null result (dialog dismissed) as CANCELLED, not an error', async () => {
+    resolveOk();
+    hoisted.invoke.mockResolvedValueOnce(null);
+    const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');
+    expect(outcome).toEqual({ ok: false, code: 'CANCELLED', error: expect.any(String) });
+  });
+
+  it('falls back to the Downloads copy when the dialog is unavailable', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // First resolve (dialog path) → invoke throws; fallback re-resolves
+    // then invokes the Downloads command successfully.
+    resolveOk();
+    hoisted.invoke.mockRejectedValueOnce(new Error('no portal'));
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      absolute_path: '/ws/artifacts/a-1/deck.pptx',
+      meta: { id: 'a-1', title: 'Deck' },
+    } as never);
+    hoisted.invoke.mockResolvedValueOnce('/Users/me/Downloads/Deck.pptx');
+
+    const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');
+    expect(outcome).toEqual({ ok: true, path: '/Users/me/Downloads/Deck.pptx' });
+    expect(hoisted.invoke).toHaveBeenNthCalledWith(2, 'download_artifact_to_downloads', {
+      sourcePath: '/ws/artifacts/a-1/deck.pptx',
+      filename: 'Deck.pptx',
+    });
+    warn.mockRestore();
+  });
+
+  it('propagates resolve failures without showing a dialog', async () => {
+    vi.mocked(callCoreRpc).mockRejectedValueOnce(new Error('rpc down'));
+    const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');
+    expect(outcome).toEqual({ ok: false, code: 'RESOLVE_FAILED', error: 'rpc down' });
+    expect(hoisted.invoke).not.toHaveBeenCalled();
   });
 });

@@ -6,12 +6,14 @@
  * skill setup flows (Gmail, etc.).
  */
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useScreenIntelligenceState } from '../../features/screen-intelligence/useScreenIntelligenceState';
 import { useT } from '../../lib/i18n/I18nContext';
 import { openhumanUpdateScreenIntelligenceSettings } from '../../utils/tauriCommands';
+import { settingsNavState } from '../settings/modal/settingsOverlay';
 import { CheckIcon } from '../ui';
+import Button from '../ui/Button';
 import {
   SetupNotice,
   SetupSettingRow,
@@ -48,23 +50,23 @@ const PermissionRow = ({
     ? 'bg-sage-50 text-sage-700 border-sage-200'
     : value === 'denied'
       ? 'bg-coral-50 text-coral-700 border-coral-200'
-      : 'bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300 border-stone-200 dark:border-neutral-800';
+      : 'bg-surface-subtle text-content-secondary border-line';
 
   return (
-    <div className="flex items-center justify-between rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2.5">
+    <div className="flex items-center justify-between rounded-xl border border-line bg-surface px-3 py-2.5">
       <div className="flex items-center gap-2">
         {granted ? (
           <CheckIcon className="w-4 h-4 text-sage-500" />
         ) : (
           <svg
-            className="w-4 h-4 text-stone-400 dark:text-neutral-500"
+            className="w-4 h-4 text-content-faint"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24">
             <circle cx="12" cy="12" r="10" strokeWidth={2} />
           </svg>
         )}
-        <span className="text-sm text-stone-700 dark:text-neutral-200">{label}</span>
+        <span className="text-sm text-content-secondary">{label}</span>
       </div>
       {granted ? (
         <span
@@ -72,15 +74,11 @@ const PermissionRow = ({
           {t('skills.setup.screenIntel.granted')}
         </span>
       ) : (
-        <button
-          type="button"
-          disabled={isRequesting}
-          onClick={onRequest}
-          className="rounded-lg border border-primary-300 bg-primary-50 px-2.5 py-1 text-[11px] font-medium text-primary-700 hover:bg-primary-100 disabled:opacity-50 transition-colors">
+        <Button variant="secondary" size="xs" disabled={isRequesting} onClick={onRequest}>
           {isRequesting
             ? t('skills.setup.screenIntel.opening')
             : t('skills.setup.screenIntel.grant')}
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -90,6 +88,7 @@ const PermissionRow = ({
 
 export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: Props) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useT();
   const {
     status,
@@ -151,7 +150,7 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
 
   const handleGoToSettings = () => {
     onClose();
-    navigate('/settings/screen-intelligence');
+    navigate('/settings/screen-intelligence', settingsNavState(location));
   };
 
   if (status?.platform_supported === false) {
@@ -171,15 +170,12 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
           </svg>
         }>
         <div className="space-y-4 py-2">
-          <p className="text-sm text-stone-600 dark:text-neutral-300 leading-relaxed">
+          <p className="text-sm text-content-secondary leading-relaxed">
             {t('skills.setup.screenIntel.macosOnly')}
           </p>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-4 py-2.5 text-sm font-medium text-stone-600 dark:text-neutral-300 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 transition-colors">
+          <Button variant="secondary" size="lg" onClick={onClose} className="w-full">
             {t('common.close')}
-          </button>
+          </Button>
         </div>
       </SkillSetupModalShell>
     );
@@ -210,7 +206,7 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
       {/* ─── Step 1: Permissions ─── */}
       {step === 'permissions' && (
         <div className="space-y-3">
-          <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
+          <p className="text-xs text-content-muted leading-relaxed">
             {t('skills.setup.screenIntel.permissionsDesc')}
           </p>
 
@@ -241,7 +237,7 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
               {status?.permission_check_process_path && (
                 <p className="mt-1 opacity-75 text-[10px]">
                   {t('skills.setup.screenIntel.permissionPathLabel')}{' '}
-                  <span className="font-mono break-all text-stone-600 dark:text-neutral-300">
+                  <span className="font-mono break-all text-content-secondary">
                     {status.permission_check_process_path}
                   </span>
                 </p>
@@ -265,13 +261,14 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
                   : t('skills.setup.screenIntel.restartRefresh')}
               </button>
             ) : (
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="lg"
                 onClick={() => void refreshStatus()}
                 disabled={isRestartingCore}
-                className="flex-1 rounded-xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2.5 text-sm font-medium text-stone-600 dark:text-neutral-300 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 disabled:opacity-50 transition-colors">
+                className="flex-1">
                 {t('skills.setup.screenIntel.refreshStatus')}
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -284,7 +281,7 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
             {t('skills.setup.screenIntel.allGranted')}
           </SetupNotice>
 
-          <p className="text-xs text-stone-500 dark:text-neutral-400 leading-relaxed">
+          <p className="text-xs text-content-muted leading-relaxed">
             {t('skills.setup.screenIntel.enableDesc')}
           </p>
 
@@ -306,15 +303,16 @@ export default function ScreenIntelligenceSetupModal({ onClose, initialStep }: P
 
           {enableError && <SetupNotice tone="coral">{enableError}</SetupNotice>}
 
-          <button
-            type="button"
+          <Button
+            variant="primary"
+            size="lg"
             onClick={() => void handleEnable()}
             disabled={isEnabling}
-            className="w-full rounded-xl bg-primary-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50 transition-colors">
+            className="w-full">
             {isEnabling
               ? t('skills.setup.screenIntel.enabling')
               : t('skills.setup.screenIntel.enableBtn')}
-          </button>
+          </Button>
         </div>
       )}
 

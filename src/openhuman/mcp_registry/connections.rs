@@ -18,11 +18,105 @@ use std::sync::{Arc, OnceLock};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
-use crate::openhuman::config::Config;
+use crate::openhuman::config::{Config, HttpHeader, McpAuthConfig};
 use crate::openhuman::mcp_client::{McpHttpClient, McpRemoteTool, McpStdioClient};
 
 use super::store;
 use super::types::{ConnStatus, InstalledServer, McpTool, ServerStatus, Transport};
+
+/// Build a static HTTP auth config from an installed HTTP-remote server's
+/// stored env values. Each non-empty entry is treated as a request header
+/// (key = header name, value = the user-supplied secret) per the registry's
+/// declared `remotes[].headers`. ALL such headers are applied — a server that
+/// authenticates with more than one header (e.g. a client key + client secret)
+/// gets every header on the dial, not just the first. `__`-prefixed keys are
+/// internal bookkeeping (e.g. the OAuth refresh bundle) and are never sent.
+/// Returns [`McpAuthConfig::None`] when nothing usable is stored — e.g.
+/// OAuth-only servers, which then surface their 401 challenge at `initialize`.
+fn build_http_auth(env: &[(String, String)]) -> McpAuthConfig {
+    let headers: Vec<HttpHeader> = env
+        .iter()
+        .filter(|(k, v)| !k.starts_with("__") && !v.trim().is_empty())
+        .map(|(name, value)| HttpHeader {
+            name: name.clone(),
+            value: value.clone(),
+        })
+        .collect();
+    match headers.len() {
+        0 => McpAuthConfig::None,
+        // A single header keeps the simple `Header` variant (back-compat).
+        1 => {
+            let h = headers.into_iter().next().expect("len checked == 1");
+            McpAuthConfig::Header {
+                name: h.name,
+                value: h.value,
+            }
+        }
+        // Multiple headers are ALL sent (multi-header remote auth).
+        _ => McpAuthConfig::Headers { headers },
+    }
+}
+
+/// Follow redirects on `url` (unauthenticated) and return the final resolved
+/// URL, so the authenticated MCP dial can target it directly.
+///
+/// HTTP clients strip the `Authorization` header across a **cross-origin**
+/// redirect (a security default), so a server published behind a redirecting
+/// vanity host (e.g. `sh.inference.ac` -> `api.inference.sh/mcp`) would never
+/// receive its token. Resolving the final URL here means the authenticated
+/// request has no redirect to strip. The final status (often 401/405 from the
+/// real endpoint to an unauthenticated GET) is irrelevant — we only read
+/// `resp.url()`. Returns `None` on any error; the caller falls back to the
+/// original URL, and non-redirecting servers resolve to themselves (no-op).
+async fn resolve_final_url(url: &str) -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .ok()?;
+    match client.get(url).send().await {
+        Ok(resp) => Some(resp.url().to_string()),
+        Err(e) => {
+            tracing::debug!("[mcp-registry] redirect resolution failed for {url}: {e}");
+            None
+        }
+    }
+}
+
+/// Decide which URL to dial WITH the user's stored credentials, given the
+/// original install URL and the redirect-resolved final URL.
+///
+/// `resolve_final_url` follows redirects unauthenticated, so a vanity host can
+/// legitimately resolve cross-origin to its real API (e.g. `sh.inference.ac`
+/// -> `api.inference.sh`). But blindly replaying stored auth headers to *any*
+/// redirect target also lets a redirecting / compromised host retarget the
+/// token to a different origin. As a guard we only honor a **cross-origin**
+/// redirect for the authenticated dial when the final origin is **HTTPS** (TLS
+/// authenticates the host and prevents a cleartext/downgrade leak); otherwise
+/// we fall back to the original URL, where the HTTP client's own cross-origin
+/// `Authorization` stripping protects the token. Same-origin redirects are
+/// always honored. (Pinning the resolved origin at install time would harden
+/// this further against a same-scheme HTTPS retarget — tracked as follow-up.)
+fn credential_safe_dial_url(original: &str, resolved: String) -> String {
+    let (Ok(o), Ok(r)) = (
+        reqwest::Url::parse(original),
+        reqwest::Url::parse(&resolved),
+    ) else {
+        return original.to_string();
+    };
+    let same_origin = o.scheme() == r.scheme()
+        && o.host_str() == r.host_str()
+        && o.port_or_known_default() == r.port_or_known_default();
+    if same_origin || r.scheme() == "https" {
+        resolved
+    } else {
+        tracing::warn!(
+            "[mcp-registry] refusing to replay credentials to a non-HTTPS cross-origin redirect target \
+             ({original} -> {resolved}); dialing the original url instead"
+        );
+        original.to_string()
+    }
+}
 
 // ── Connection record ────────────────────────────────────────────────────────
 
@@ -69,12 +163,36 @@ impl ActiveClient {
 struct Connection {
     client: ActiveClient,
     tools: RwLock<Vec<McpTool>>,
+    /// Stable registry identity, stamped at connect time so a connected
+    /// overview can name + describe servers without re-reading the install
+    /// store (which needs `&Config`). Lets sync, config-free callers — e.g.
+    /// the orchestrator prompt builder — list connected servers by name and
+    /// description.
+    qualified_name: String,
+    display_name: String,
+    description: Option<String>,
 }
 
 impl Connection {
     async fn tools_snapshot(&self) -> Vec<McpTool> {
         self.tools.read().await.clone()
     }
+}
+
+/// One connected server's identity + advertised tools, for prompt-surface
+/// discovery (the orchestrator's "## Connected MCP Servers" block). Sourced
+/// entirely from the live connection map — no `Config`, no store read.
+#[derive(Debug, Clone)]
+pub struct ConnectedServerOverview {
+    pub server_id: String,
+    pub qualified_name: String,
+    pub display_name: String,
+    /// Short registry description — the primary capability hint surfaced in
+    /// the orchestrator prompt (mirrors Composio's per-toolkit description).
+    pub description: Option<String>,
+    /// Advertised tools — retained for a tool-count fallback when a server
+    /// has no description, and for any caller that wants the full list.
+    pub tools: Vec<McpTool>,
 }
 
 // ── Global registry ──────────────────────────────────────────────────────────
@@ -87,20 +205,120 @@ fn connections() -> &'static RwLock<HashMap<String, Arc<Connection>>> {
 
 // ── Per-server last connect error ────────────────────────────────────────────
 
-static LAST_ERRORS: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
+/// The most recent connect failure for one server: the raw diagnostic message
+/// (for logs/debugging) plus whether it was specifically an HTTP 401 (auth
+/// required). Both live in ONE record under ONE lock so a status read can never
+/// observe a torn snapshot — e.g. the message updated but the auth flag stale,
+/// which a two-map design would allow if `all_status` interleaved between the
+/// two writes (#3719).
+/// Why an MCP HTTP 401 happened, refining `ServerStatus::Unauthorized` so the UI
+/// can tell the user what to actually DO. Derived purely from two signals — the
+/// server's `WWW-Authenticate` challenge (does it advertise OAuth?) and whether
+/// the user supplied any credential — so it never leaks the OAuth metadata URL.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AuthFailureKind {
+    /// Server advertised an OAuth `resource_metadata` challenge. The right path
+    /// is the browser Sign-in flow; a pasted static token won't be accepted
+    /// (the Notion-style case in #4289).
+    OauthRequired,
+    /// A static credential WAS sent but the server refused it — wrong/expired.
+    TokenRejected,
+    /// 401 with no credential supplied and no OAuth challenge — plain auth that
+    /// the user simply hasn't filled in yet.
+    CredentialRequired,
+}
 
-fn last_errors() -> &'static RwLock<HashMap<String, String>> {
+impl AuthFailureKind {
+    /// Stable wire code consumed by the frontend (maps to localized copy). Kept
+    /// in sync with the FE `auth_hint` switch — see ConnectAuthModal.
+    fn as_code(self) -> &'static str {
+        match self {
+            Self::OauthRequired => "oauth_required",
+            Self::TokenRejected => "token_rejected",
+            Self::CredentialRequired => "credential_required",
+        }
+    }
+}
+
+/// Pure 401-reason decision, factored out so it's unit-testable without a live
+/// dial. `oauth_advertised` dominates: an OAuth-only server commonly 401s a
+/// pasted static bearer, and telling the user "token wrong" would misdirect
+/// them — the real action is Sign in.
+fn classify_auth_failure(oauth_advertised: bool, has_credential: bool) -> AuthFailureKind {
+    if oauth_advertised {
+        AuthFailureKind::OauthRequired
+    } else if has_credential {
+        AuthFailureKind::TokenRejected
+    } else {
+        AuthFailureKind::CredentialRequired
+    }
+}
+
+/// Classify a connect error: `Some(kind)` only when the root cause is a typed
+/// MCP HTTP 401 (`McpUnauthorizedError`), `None` for any generic transport
+/// error. Walks the whole `anyhow` chain so the classification survives
+/// `?`/`.context()` wrapping, and reads the typed `resource_metadata` field
+/// (not the message string) to decide whether OAuth was advertised.
+fn auth_failure_kind(err: &anyhow::Error, has_credential: bool) -> Option<AuthFailureKind> {
+    let unauthorized = err.chain().find_map(|cause| {
+        cause.downcast_ref::<crate::openhuman::mcp_client::McpUnauthorizedError>()
+    })?;
+    let oauth_advertised = unauthorized.resource_metadata.is_some();
+    Some(classify_auth_failure(oauth_advertised, has_credential))
+}
+
+#[derive(Clone)]
+struct ConnectFailure {
+    message: String,
+    /// `Some(kind)` when the failure was an MCP HTTP 401 → drives
+    /// `ServerStatus::Unauthorized` so the UI offers a re-auth path instead of
+    /// a raw error blob, with `kind` refining which re-auth affordance to show.
+    /// `None` for a generic (non-401) transport error.
+    auth: Option<AuthFailureKind>,
+}
+
+static LAST_ERRORS: OnceLock<RwLock<HashMap<String, ConnectFailure>>> = OnceLock::new();
+
+fn last_errors() -> &'static RwLock<HashMap<String, ConnectFailure>> {
     LAST_ERRORS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 /// Read the most recent connect-failure message for `server_id`. `None` when
 /// the server has never failed, or when the most recent connect succeeded.
 pub async fn last_error_for(server_id: &str) -> Option<String> {
-    last_errors().read().await.get(server_id).cloned()
+    last_errors()
+        .read()
+        .await
+        .get(server_id)
+        .map(|f| f.message.clone())
 }
 
-/// Drop any recorded error for `server_id`. Called on successful connect,
-/// explicit disconnect, uninstall, and enable→disable transitions.
+/// The stable auth-failure reason code for `server_id`'s most recent connect,
+/// or `None` when the last failure wasn't a 401 (or there was none). Reads the
+/// classification recorded by [`connect`] so callers (e.g. `update_env`) can
+/// surface actionable copy WITHOUT re-leaking the raw 401 message / OAuth
+/// metadata URL (#3719, #4289).
+pub async fn auth_hint_for(server_id: &str) -> Option<&'static str> {
+    last_errors()
+        .read()
+        .await
+        .get(server_id)
+        .and_then(|f| f.auth)
+        .map(AuthFailureKind::as_code)
+}
+
+/// Whether `server_id`'s most recent connect failed due to HTTP 401.
+pub async fn needs_auth(server_id: &str) -> bool {
+    last_errors()
+        .read()
+        .await
+        .get(server_id)
+        .is_some_and(|f| f.auth.is_some())
+}
+
+/// Drop any recorded error (generic or auth-required) for `server_id`. Called on
+/// successful connect, explicit disconnect, uninstall, and enable→disable
+/// transitions.
 pub async fn clear_last_error(server_id: &str) {
     last_errors().write().await.remove(server_id);
 }
@@ -131,13 +349,32 @@ pub async fn connect(config: &Config, server: &InstalledServer) -> anyhow::Resul
             );
         }
         Err(err) => {
-            last_errors()
-                .write()
-                .await
-                .insert(server.server_id.clone(), err.to_string());
+            // Re-derive whether the user supplied a credential the SAME way the
+            // dial did (`build_http_auth` over stored env) so the 401 reason has
+            // one source of truth. Cold failure path — one extra store read is
+            // negligible.
+            let has_credential = {
+                let env: Vec<(String, String)> = store::load_env_values(config, &server.server_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                !matches!(build_http_auth(&env), McpAuthConfig::None)
+            };
+            let auth = auth_failure_kind(err, has_credential);
+            // Record the raw diagnostic AND the 401 classification together in a
+            // single record under one lock, so a concurrent `all_status` can't
+            // observe a torn snapshot (message set but auth flag stale).
+            last_errors().write().await.insert(
+                server.server_id.clone(),
+                ConnectFailure {
+                    message: err.to_string(),
+                    auth,
+                },
+            );
             tracing::debug!(
-                "[mcp-registry] last_error recorded server_id={} err={err}",
-                server.server_id
+                "[mcp-registry] last_error recorded server_id={} auth={:?} err={err}",
+                server.server_id,
+                auth.map(AuthFailureKind::as_code),
             );
         }
     }
@@ -185,12 +422,41 @@ async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Res
                     server.server_id
                 );
             }
+            // Refresh an expired OAuth access token before dialing so the agent
+            // never connects with a stale token (silent refresh-token grant; a
+            // no-op for static-token / no-auth servers).
+            if let Err(e) = super::oauth::refresh_if_expired(config, &server.server_id).await {
+                tracing::warn!(
+                    "[mcp-registry] oauth refresh failed for server_id={} (using existing token): {e}",
+                    server.server_id
+                );
+            }
+            // Build static auth from the (possibly just-refreshed) stored env:
+            // each entry is a request header (key = header name, value = the
+            // secret, e.g. `Authorization` -> `Bearer <token>`), from the install
+            // form's declared `remotes[].headers` or a captured OAuth token.
+            let env_now: Vec<(String, String)> = store::load_env_values(config, &server.server_id)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            let auth = build_http_auth(&env_now);
+            // Resolve redirects up-front and dial the FINAL url directly. A
+            // server published behind a redirecting vanity host (e.g.
+            // `sh.inference.ac` -> `api.inference.sh/mcp`) would otherwise lose
+            // its `Authorization` header: HTTP clients strip auth across a
+            // cross-origin redirect, so the token never reaches the real
+            // endpoint. Resolving here means the authenticated request goes
+            // straight to the final URL with no redirect to strip it.
+            let resolved = resolve_final_url(url).await.unwrap_or_else(|| url.clone());
+            let dial_url = credential_safe_dial_url(url, resolved);
+            if dial_url != *url {
+                tracing::info!(
+                    "[mcp-registry] resolved redirecting url {url} -> {dial_url} for authenticated dial"
+                );
+            }
             // 30s timeout matches setup_ops::test_connection so install
-            // and runtime see the same connect-failure deadlines. Env
-            // values for HTTP-remote installs (typically OAuth tokens)
-            // ride through the McpHttpClient's own auth config — out of
-            // scope for this dispatch.
-            let http = Arc::new(McpHttpClient::new(url.clone(), 30));
+            // and runtime see the same connect-failure deadlines.
+            let http = Arc::new(McpHttpClient::with_options(dial_url, 30, auth, identity));
             http.initialize().await?;
             ActiveClient::Http(http)
         }
@@ -207,6 +473,9 @@ async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Res
     let conn = Arc::new(Connection {
         client,
         tools: RwLock::new(tools.clone()),
+        qualified_name: server.qualified_name.clone(),
+        display_name: server.display_name.clone(),
+        description: server.description.clone(),
     });
 
     {
@@ -316,11 +585,50 @@ pub async fn call_tool(
 
 /// Return status summaries for all installed servers.
 ///
-/// Priority order: `Disabled` > `Connected` > `Error` > `Disconnected`.
+/// Priority order: `Disabled` > `Connected` > `Unauthorized` > `Error` >
+/// `Disconnected`.
 /// - `!s.enabled` → `Disabled` (suppresses tool count and last_error).
 /// - connected (id in live registry) → `Connected` + tool count.
-/// - recorded connect failure in `LAST_ERRORS` → `Error` + last_error message.
+/// - connect failed with HTTP 401 (`AUTH_REQUIRED`) → `Unauthorized`. The raw
+///   error string is intentionally NOT surfaced (it leaks an internal OAuth
+///   metadata URL, #3719) — the UI renders a localized "needs sign-in" message
+///   and the re-auth affordance keyed off the status alone.
+/// - other recorded connect failure in `LAST_ERRORS` → `Error` + message.
 /// - otherwise → `Disconnected`.
+/// Pure status decision for one installed server, factored out of
+/// [`all_status`] so the priority order is unit-testable without a live
+/// connection registry or store. Inputs:
+/// - `enabled` — the install's enabled flag.
+/// - `connected_tool_count` — `Some(n)` when the server is in the live map
+///   (with its advertised tool count), `None` otherwise.
+/// - `auth_required` — most recent connect failed with HTTP 401.
+/// - `generic_error` — most recent (non-401) connect error message, if any.
+///
+/// Priority: `Disabled` > `Connected` > `Unauthorized` > `Error` >
+/// `Disconnected`. The raw error is surfaced ONLY for the generic `Error` case;
+/// `Unauthorized` deliberately carries no message (the UI localizes it and
+/// avoids leaking the OAuth metadata URL, #3719).
+fn classify_server_status(
+    enabled: bool,
+    connected_tool_count: Option<u32>,
+    auth_failure: Option<AuthFailureKind>,
+    generic_error: Option<String>,
+) -> (ServerStatus, u32, Option<String>, Option<&'static str>) {
+    if !enabled {
+        (ServerStatus::Disabled, 0, None, None)
+    } else if let Some(n) = connected_tool_count {
+        (ServerStatus::Connected, n, None, None)
+    } else if let Some(kind) = auth_failure {
+        // 401: surface the stable reason CODE (not the raw message) so the UI
+        // shows the right re-auth affordance without leaking the metadata URL.
+        (ServerStatus::Unauthorized, 0, None, Some(kind.as_code()))
+    } else if let Some(err) = generic_error {
+        (ServerStatus::Error, 0, Some(err), None)
+    } else {
+        (ServerStatus::Disconnected, 0, None, None)
+    }
+}
+
 pub async fn all_status(config: &Config) -> Vec<ConnStatus> {
     let installed = store::list_servers(config).unwrap_or_default();
     let connected_ids: Vec<String> = {
@@ -328,26 +636,38 @@ pub async fn all_status(config: &Config) -> Vec<ConnStatus> {
         map.keys().cloned().collect()
     };
 
-    let errors_snapshot = last_errors().read().await.clone();
+    // One snapshot of the unified failure map — message + auth flag are read
+    // together, so a server's status can't be classified from a torn pair.
+    let failures_snapshot = last_errors().read().await.clone();
 
     let mut out = Vec::with_capacity(installed.len());
     for s in installed {
         let is_connected = connected_ids.iter().any(|id| id == &s.server_id);
 
-        let (status, tool_count, last_error) = if !s.enabled {
-            (ServerStatus::Disabled, 0u32, None)
-        } else if is_connected {
+        // Resolve the live tool count up front (the only async input), then let
+        // the pure classifier pick the status — keeps the priority logic
+        // testable without a live registry / DB.
+        let connected_tool_count = if is_connected {
             let map = connections().read().await;
-            let tool_count = match map.get(&s.server_id) {
+            Some(match map.get(&s.server_id) {
                 Some(c) => c.tools_snapshot().await.len() as u32,
                 None => 0,
-            };
-            (ServerStatus::Connected, tool_count, None)
-        } else if let Some(err) = errors_snapshot.get(&s.server_id).cloned() {
-            (ServerStatus::Error, 0u32, Some(err))
+            })
         } else {
-            (ServerStatus::Disconnected, 0u32, None)
+            None
         };
+
+        let failure = failures_snapshot.get(&s.server_id);
+        let (status, tool_count, last_error, auth_hint) = classify_server_status(
+            s.enabled,
+            connected_tool_count,
+            failure.and_then(|f| f.auth),
+            // Only a generic (non-401) failure carries a surfaced message; the
+            // 401 message is withheld (it leaks the OAuth metadata URL).
+            failure
+                .filter(|f| f.auth.is_none())
+                .map(|f| f.message.clone()),
+        );
 
         out.push(ConnStatus {
             server_id: s.server_id,
@@ -356,6 +676,7 @@ pub async fn all_status(config: &Config) -> Vec<ConnStatus> {
             status,
             tool_count,
             last_error,
+            auth_hint: auth_hint.map(str::to_string),
         });
     }
     out
@@ -382,6 +703,49 @@ pub async fn all_connected_tools() -> Vec<(String, String, McpTool)> {
     out
 }
 
+/// Per-server overview of every currently-connected server: identity +
+/// advertised tools. Used to surface connected MCP capabilities in the
+/// orchestrator system prompt so it can route to `use_mcp_server` without
+/// the user naming the server. Config-free (reads only the live map).
+pub async fn connected_overview() -> Vec<ConnectedServerOverview> {
+    let snapshot: Vec<(String, Arc<Connection>)> = {
+        let map = connections().read().await;
+        map.iter()
+            .map(|(id, c)| (id.clone(), Arc::clone(c)))
+            .collect()
+    };
+
+    let mut out = Vec::with_capacity(snapshot.len());
+    for (server_id, c) in snapshot {
+        out.push(ConnectedServerOverview {
+            server_id,
+            qualified_name: c.qualified_name.clone(),
+            display_name: c.display_name.clone(),
+            description: c.description.clone(),
+            tools: c.tools_snapshot().await,
+        });
+    }
+    // Stable order so the prompt (and its KV-cache prefix) doesn't churn
+    // across turns purely from HashMap iteration order.
+    out.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
+    out
+}
+
+/// Snapshot the tools exposed by a single currently-connected server.
+///
+/// Returns `None` when `server_id` is not in the live connection map (the
+/// caller should connect first); `Some(vec![])` when connected but the
+/// server advertised no tools. This is the cheap discovery primitive the
+/// agent uses to learn a connected server's tool names + input schemas
+/// without forcing a reconnect/handshake (which [`connect`] would do).
+pub async fn tools_for(server_id: &str) -> Option<Vec<McpTool>> {
+    let conn = {
+        let map = connections().read().await;
+        map.get(server_id).cloned()
+    }?;
+    Some(conn.tools_snapshot().await)
+}
+
 // ── Boundary conversion ──────────────────────────────────────────────────────
 
 fn into_registry_tool(remote: McpRemoteTool) -> McpTool {
@@ -400,9 +764,222 @@ fn into_registry_tool(remote: McpRemoteTool) -> McpTool {
 mod tests {
     // Live-connection tests require a real MCP subprocess and live in
     // tests/json_rpc_e2e.rs. Keep this slot for sync helper tests.
+    use super::{
+        auth_failure_kind, build_http_auth, classify_auth_failure, classify_server_status,
+        credential_safe_dial_url, AuthFailureKind,
+    };
+    use crate::openhuman::config::McpAuthConfig;
+    use crate::openhuman::mcp_client::McpUnauthorizedError;
+    use crate::openhuman::mcp_registry::types::ServerStatus;
 
     #[test]
-    fn placeholder_so_module_compiles_under_test_cfg() {
-        // Intentionally empty.
+    fn classify_server_status_priority_order() {
+        let oauth = Some(AuthFailureKind::OauthRequired);
+        // Disabled wins over everything (even a live connection / 401 / error).
+        assert_eq!(
+            classify_server_status(false, Some(3), oauth, Some("boom".into())),
+            (ServerStatus::Disabled, 0, None, None)
+        );
+        // Connected → tool count surfaced, no error, no hint.
+        assert_eq!(
+            classify_server_status(true, Some(5), oauth, Some("boom".into())),
+            (ServerStatus::Connected, 5, None, None)
+        );
+        // Not connected + 401 → Unauthorized + reason CODE, and NO raw error is
+        // leaked even when a generic error is also recorded.
+        assert_eq!(
+            classify_server_status(
+                true,
+                None,
+                Some(AuthFailureKind::TokenRejected),
+                Some("MCP unauthorized … HTTP 401".into())
+            ),
+            (ServerStatus::Unauthorized, 0, None, Some("token_rejected"))
+        );
+        // Not connected + generic error (no 401) → Error + message, no hint.
+        assert_eq!(
+            classify_server_status(true, None, None, Some("timed out".into())),
+            (ServerStatus::Error, 0, Some("timed out".into()), None)
+        );
+        // Not connected, no error → Disconnected.
+        assert_eq!(
+            classify_server_status(true, None, None, None),
+            (ServerStatus::Disconnected, 0, None, None)
+        );
+    }
+
+    #[test]
+    fn classify_auth_failure_oauth_dominates() {
+        // OAuth advertised → Sign-in, regardless of whether a token was pasted
+        // (a static bearer on an OAuth-only server is the #4289 repro).
+        assert_eq!(
+            classify_auth_failure(true, false),
+            AuthFailureKind::OauthRequired
+        );
+        assert_eq!(
+            classify_auth_failure(true, true),
+            AuthFailureKind::OauthRequired
+        );
+        // No OAuth, credential sent → it was refused (wrong/expired).
+        assert_eq!(
+            classify_auth_failure(false, true),
+            AuthFailureKind::TokenRejected
+        );
+        // No OAuth, no credential → user just hasn't authenticated yet.
+        assert_eq!(
+            classify_auth_failure(false, false),
+            AuthFailureKind::CredentialRequired
+        );
+    }
+
+    #[test]
+    fn auth_failure_kind_reads_typed_401_only() {
+        // Typed 401 advertising OAuth resource metadata → OauthRequired even
+        // though a credential was supplied.
+        let oauth = anyhow::Error::new(McpUnauthorizedError {
+            endpoint: "https://example.com".into(),
+            resource_metadata: Some("https://example.com/.well-known/x".into()),
+        });
+        assert_eq!(
+            auth_failure_kind(&oauth, true),
+            Some(AuthFailureKind::OauthRequired)
+        );
+
+        // Plain 401 (no OAuth challenge) + a supplied credential → TokenRejected,
+        // and the classification survives `?`-style context wrapping.
+        let plain = anyhow::Error::new(McpUnauthorizedError {
+            endpoint: "https://example.com".into(),
+            resource_metadata: None,
+        })
+        .context("connecting to MCP server");
+        assert_eq!(
+            auth_failure_kind(&plain, true),
+            Some(AuthFailureKind::TokenRejected)
+        );
+        // Same plain 401 with NO credential → CredentialRequired.
+        let plain2 = anyhow::Error::new(McpUnauthorizedError {
+            endpoint: "https://example.com".into(),
+            resource_metadata: None,
+        });
+        assert_eq!(
+            auth_failure_kind(&plain2, false),
+            Some(AuthFailureKind::CredentialRequired)
+        );
+
+        // Any other transport failure → None (stays a generic Error).
+        let other = anyhow::anyhow!("MCP HTTP 500 — upstream exploded");
+        assert_eq!(auth_failure_kind(&other, true), None);
+    }
+
+    fn kv(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn build_http_auth_none_when_empty_or_blank() {
+        assert!(matches!(build_http_auth(&[]), McpAuthConfig::None));
+        assert!(matches!(
+            build_http_auth(&kv(&[("Authorization", "   ")])),
+            McpAuthConfig::None
+        ));
+    }
+
+    #[test]
+    fn build_http_auth_applies_all_headers_when_multiple() {
+        // A server requiring more than one header (e.g. a client key + client
+        // secret) must get EVERY header on the dial — not just the first.
+        // Values are sent verbatim (e.g. an already-`Bearer ...` Authorization).
+        let auth = build_http_auth(&kv(&[
+            ("X-Client-Key", "abc"),
+            ("authorization", "Bearer adv_sk_123"),
+        ]));
+        match auth {
+            McpAuthConfig::Headers { headers } => {
+                assert_eq!(
+                    headers.len(),
+                    2,
+                    "both headers must be applied: {headers:?}"
+                );
+                let key = headers
+                    .iter()
+                    .find(|h| h.name == "X-Client-Key")
+                    .expect("X-Client-Key present");
+                assert_eq!(key.value, "abc");
+                let auth = headers
+                    .iter()
+                    .find(|h| h.name.eq_ignore_ascii_case("authorization"))
+                    .expect("authorization present");
+                assert_eq!(auth.value, "Bearer adv_sk_123");
+            }
+            other => panic!("expected multi-header Headers auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn credential_safe_dial_url_guards_cross_origin_credential_replay() {
+        // Same-origin redirect → honored (e.g. path rewrite).
+        assert_eq!(
+            credential_safe_dial_url("https://a.example/mcp", "https://a.example/v2/mcp".into()),
+            "https://a.example/v2/mcp"
+        );
+        // Cross-origin but HTTPS (vanity host → real API) → honored: this is the
+        // legitimate inference.sh-style flow.
+        assert_eq!(
+            credential_safe_dial_url(
+                "https://sh.inference.ac/mcp",
+                "https://api.inference.sh/mcp".into()
+            ),
+            "https://api.inference.sh/mcp"
+        );
+        // Cross-origin DOWNGRADE to http → refused: falls back to the original
+        // url so creds are not replayed cleartext to a redirect-chosen origin.
+        assert_eq!(
+            credential_safe_dial_url("https://good.example/mcp", "http://evil.example/mcp".into()),
+            "https://good.example/mcp"
+        );
+    }
+
+    #[test]
+    fn build_http_auth_single_header_uses_header_variant() {
+        // Exactly one usable header keeps the simple `Header` variant.
+        match build_http_auth(&kv(&[("authorization", "Bearer t")])) {
+            McpAuthConfig::Header { name, value } => {
+                assert!(name.eq_ignore_ascii_case("authorization"));
+                assert_eq!(value, "Bearer t");
+            }
+            other => panic!("expected single Header auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_http_auth_skips_internal_underscore_keys() {
+        // The OAuth refresh bundle (`__oauth__`) must never be sent as a header.
+        assert!(matches!(
+            build_http_auth(&kv(&[("__oauth__", "{\"refresh_token\":\"r\"}")])),
+            McpAuthConfig::None
+        ));
+        // Authorization still applies alongside an internal key.
+        match build_http_auth(&kv(&[("__oauth__", "{}"), ("Authorization", "Bearer t")])) {
+            McpAuthConfig::Header { name, value } => {
+                assert!(name.eq_ignore_ascii_case("authorization"));
+                assert_eq!(value, "Bearer t");
+            }
+            other => panic!("expected Header auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_http_auth_single_custom_header() {
+        let auth = build_http_auth(&kv(&[("X-API-Key", "secret")]));
+        match auth {
+            McpAuthConfig::Header { name, value } => {
+                assert_eq!(name, "X-API-Key");
+                assert_eq!(value, "secret");
+            }
+            other => panic!("expected Header auth, got {other:?}"),
+        }
     }
 }

@@ -16,6 +16,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  chatMounted,
   clickByTitle,
   clickSend,
   getSelectedThreadId,
@@ -112,7 +113,7 @@ describe('Chat multi-tool round', () => {
   it('T2.1 — agent calls tool 1 (file_read); timeline shows it', async () => {
     console.log(`${LOG_PREFIX} T2.1: navigating to /chat, opening new thread`);
     await navigateViaHash('/chat');
-    await browser.waitUntil(async () => await textExists('Threads'), {
+    await browser.waitUntil(async () => await chatMounted(), {
       timeout: 15_000,
       timeoutMsg: 'Conversations panel did not mount',
     });

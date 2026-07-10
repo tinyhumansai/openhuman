@@ -170,6 +170,29 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     navOrder: 1,
   },
   {
+    // Theme Studio — full colour + font customization on top of the simple
+    // light/dark toggle in Appearance.
+    id: 'theme',
+    titleKey: 'settings.theme.title',
+    descriptionKey: 'settings.theme.menuDesc',
+    section: 'home',
+    searchKeywords: [
+      'theme',
+      'color',
+      'colour',
+      'font',
+      'palette',
+      'customize',
+      'customise',
+      'appearance',
+      'surface',
+      'background',
+      'accent',
+    ],
+    navGroup: 'general',
+    navOrder: 2,
+  },
+  {
     // devices: real pairing panel (the old "Coming Soon" stub was removed).
     id: 'devices',
     titleKey: 'settings.account.devices',
@@ -254,6 +277,39 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
   // to /settings/notifications and /settings/wallet-balances.
 
   // --- About ---
+  {
+    id: 'keyboard-shortcuts',
+    titleKey: 'shortcuts.title',
+    descriptionKey: 'shortcuts.menuDesc',
+    section: 'home',
+    searchKeywords: ['keyboard', 'shortcuts', 'keys', 'hotkeys', 'bindings', 'cheatsheet'],
+    navGroup: 'general',
+    navOrder: 98,
+  },
+  {
+    // Core connection — promotes cloud-mode remote-core config (persisted
+    // RPC URL + token) into a first-class setting plus a live status
+    // indicator (GH-4396). Sits just above About in General.
+    id: 'core',
+    titleKey: 'settings.core.title',
+    descriptionKey: 'settings.core.menuDesc',
+    section: 'home',
+    searchKeywords: [
+      'core',
+      'remote',
+      'rpc',
+      'url',
+      'token',
+      'cloud',
+      'local',
+      'connection',
+      'server',
+      'attach',
+      'self-hosted',
+    ],
+    navGroup: 'general',
+    navOrder: 97,
+  },
   {
     id: 'about',
     titleKey: 'settings.about',
@@ -438,13 +494,31 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     navOrder: 1,
   },
   {
+    id: 'desktop-agent',
+    titleKey: 'settings.desktopAgent.title',
+    descriptionKey: 'settings.desktopAgent.description',
+    section: 'features',
+    searchKeywords: [
+      'desktop',
+      'agent',
+      'automation',
+      'permissions',
+      'microphone',
+      'accessibility',
+      'screen recording',
+      'input monitoring',
+    ],
+    navGroup: 'connections',
+    navOrder: 2,
+  },
+  {
     id: 'tools',
     titleKey: 'pages.settings.features.tools',
     descriptionKey: 'pages.settings.features.toolsDesc',
     section: 'features',
     searchKeywords: ['tools', 'capabilities', 'functions'],
     navGroup: 'connections',
-    navOrder: 2,
+    navOrder: 3,
   },
   {
     id: 'companion',
@@ -453,7 +527,27 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     section: 'features',
     searchKeywords: ['desktop', 'overlay', 'companion'],
     navGroup: 'connections',
-    navOrder: 3,
+    navOrder: 4,
+  },
+  {
+    // meetings: Meeting Assistant settings (issue #3511 / epic #3505 PR-5).
+    id: 'meetings',
+    titleKey: 'settings.meetings.title',
+    descriptionKey: 'settings.meetings.menuDesc',
+    section: 'features',
+    searchKeywords: [
+      'meeting',
+      'meet',
+      'google meet',
+      'auto join',
+      'auto-join',
+      'summarize',
+      'summary',
+      'listen only',
+      'transcript',
+    ],
+    navGroup: 'connections',
+    navOrder: 5,
   },
 
   // =========================================================================
@@ -586,6 +680,15 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     navGroup: 'modelsInference',
   },
   {
+    id: 'agentbox',
+    titleKey: 'settings.agentbox.title',
+    descriptionKey: 'settings.agentbox.desc',
+    section: 'developer',
+    devOnly: true,
+    navGroup: 'modelsInference',
+    searchKeywords: ['agentbox', 'gmi', 'maas', 'marketplace'],
+  },
+  {
     id: 'webhooks-debug',
     titleKey: 'settings.developerMenu.webhooks.title',
     descriptionKey: 'settings.developerMenu.webhooks.desc',
@@ -679,6 +782,27 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     section: 'developer',
     devOnly: true,
     navGroup: 'diagnosticsLogs',
+  },
+
+  // Token & Cost — TokenJuice compression settings + savings statistics.
+  {
+    id: 'token-usage',
+    titleKey: 'settings.tokenUsage.title',
+    descriptionKey: 'settings.tokenUsage.menuDesc',
+    section: 'ai',
+    navGroup: 'modelsInference',
+    navOrder: 5,
+    searchKeywords: [
+      'token',
+      'tokens',
+      'cost',
+      'compression',
+      'compaction',
+      'tokenjuice',
+      'cache',
+      'ccr',
+      'savings',
+    ],
   },
 
   // =========================================================================

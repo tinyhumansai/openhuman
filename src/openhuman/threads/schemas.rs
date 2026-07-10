@@ -12,7 +12,9 @@ use crate::openhuman::memory::{
     UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
     UpdateConversationThreadTitleRequest, UpsertConversationThreadRequest,
 };
-use crate::openhuman::threads::turn_state::{ClearTurnStateRequest, GetTurnStateRequest};
+use crate::openhuman::threads::turn_state::{
+    ClearTurnStateRequest, GetTurnStateForRequestRequest, GetTurnStateRequest,
+};
 
 use super::ops;
 
@@ -31,9 +33,12 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("purge"),
         schemas("turn_state_get"),
         schemas("turn_state_list"),
+        schemas("turn_state_history"),
+        schemas("turn_state_get_turn"),
         schemas("turn_state_clear"),
         schemas("task_board_get"),
         schemas("task_board_put"),
+        schemas("token_usage"),
     ]
 }
 
@@ -92,6 +97,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_turn_state_list,
         },
         RegisteredController {
+            schema: schemas("turn_state_history"),
+            handler: handle_turn_state_history,
+        },
+        RegisteredController {
+            schema: schemas("turn_state_get_turn"),
+            handler: handle_turn_state_get_turn,
+        },
+        RegisteredController {
             schema: schemas("turn_state_clear"),
             handler: handle_turn_state_clear,
         },
@@ -102,6 +115,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("task_board_put"),
             handler: handle_task_board_put,
+        },
+        RegisteredController {
+            schema: schemas("token_usage"),
+            handler: handle_token_usage,
         },
     ]
 }
@@ -391,6 +408,49 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "turn_state_history" => ControllerSchema {
+            namespace: "threads",
+            function: "turn_state_history",
+            description:
+                "List every persisted turn snapshot for one thread, newest first — the per-turn process history.",
+            inputs: vec![FieldSchema {
+                name: "thread_id",
+                ty: TypeSchema::String,
+                comment: "Thread identifier.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Envelope with the thread's turn snapshots and a count.",
+                required: true,
+            }],
+        },
+        "turn_state_get_turn" => ControllerSchema {
+            namespace: "threads",
+            function: "turn_state_get_turn",
+            description: "Fetch one specific turn of a thread by its producing request id.",
+            inputs: vec![
+                FieldSchema {
+                    name: "thread_id",
+                    ty: TypeSchema::String,
+                    comment: "Thread identifier.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "request_id",
+                    ty: TypeSchema::String,
+                    comment: "Producing request id of the turn.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Envelope wrapping the turn state (may be null).",
+                required: true,
+            }],
+        },
         "turn_state_clear" => ControllerSchema {
             namespace: "threads",
             function: "turn_state_clear",
@@ -447,6 +507,23 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "taskBoard",
                 ty: TypeSchema::Json,
                 comment: "Task board payload.",
+                required: true,
+            }],
+        },
+        "token_usage" => ControllerSchema {
+            namespace: "threads",
+            function: "token_usage",
+            description: "Total a thread's persisted token/cost usage from its session transcripts.",
+            inputs: vec![FieldSchema {
+                name: "thread_id",
+                ty: TypeSchema::String,
+                comment: "Thread identifier.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Envelope with the thread's token/cost totals (zeros when no turns yet).",
                 required: true,
             }],
         },
@@ -549,6 +626,20 @@ fn handle_turn_state_list(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { to_json(ops::turn_state_list(EmptyRequest {}).await?) })
 }
 
+fn handle_turn_state_history(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<GetTurnStateRequest>(params)?;
+        to_json(ops::turn_state_history(p).await?)
+    })
+}
+
+fn handle_turn_state_get_turn(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<GetTurnStateForRequestRequest>(params)?;
+        to_json(ops::turn_state_get_turn(p).await?)
+    })
+}
+
 fn handle_turn_state_clear(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = parse::<ClearTurnStateRequest>(params)?;
@@ -644,6 +735,13 @@ fn handle_task_board_put(params: Map<String, Value>) -> ControllerFuture {
             "[rpc][task_board] put exit"
         );
         Ok(serde_json::json!({ "taskBoard": saved }))
+    })
+}
+
+fn handle_token_usage(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<ops::ThreadTokenUsageRequest>(params)?;
+        to_json(ops::token_usage(p).await?)
     })
 }
 

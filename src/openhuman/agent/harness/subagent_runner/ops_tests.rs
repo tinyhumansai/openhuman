@@ -60,14 +60,17 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         max_iterations: 5,
         iteration_policy: Default::default(),
         max_result_chars: None,
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: crate::openhuman::agent::harness::definition::SandboxMode::None,
         background: false,
         trigger_memory_agent: Default::default(),
+        tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Auto,
         subagents: vec![],
         delegate_name: None,
         agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: crate::openhuman::agent::harness::definition::DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 
@@ -117,6 +120,22 @@ fn filter_wildcard_includes_all_minus_disallowed() {
     let mut def = make_def_named_tools(&[]);
     def.tools = ToolScope::Wildcard;
     def.disallowed_tools = vec!["beta".into()];
+    let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
+    let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
+    assert_eq!(names, vec!["alpha", "gamma"]);
+}
+
+#[test]
+fn filter_wildcard_honours_disallowed_prefix_entries() {
+    let parent: Vec<Box<dyn Tool>> = vec![
+        stub("alpha"),
+        stub("tinyplace_registry_register"),
+        stub("tinyplace_marketplace_buy_identity"),
+        stub("gamma"),
+    ];
+    let mut def = make_def_named_tools(&[]);
+    def.tools = ToolScope::Wildcard;
+    def.disallowed_tools = vec!["tinyplace_*".into()];
     let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
     let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
     assert_eq!(names, vec!["alpha", "gamma"]);
@@ -316,6 +335,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
     let tool_specs: Vec<crate::openhuman::tools::ToolSpec> =
         tools.iter().map(|t| t.spec()).collect();
     ParentExecutionContext {
+        workspace_descriptor: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: ["test".to_string(), "child".to_string(), "inner".to_string()]
             .into_iter()
@@ -323,6 +343,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         provider,
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
+        visible_tool_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),
         temperature: 0.5,
         workspace_dir: std::env::temp_dir(),
@@ -472,6 +493,7 @@ async fn typed_mode_returns_text_through_runner() {
             &def,
             "summarise X",
             SubagentRunOptions {
+                workspace_descriptor: None,
                 skill_filter_override: None,
                 toolkit_override: None,
                 context: None,
@@ -496,13 +518,55 @@ async fn typed_mode_returns_text_through_runner() {
 }
 
 #[tokio::test]
+async fn capped_no_progress_subagent_returns_incomplete_status() {
+    use crate::openhuman::agent::harness::subagent_runner::SubagentRunStatus;
+    // A sub-agent that keeps issuing tool calls without ever producing a final
+    // answer makes no progress and is halted at its model-call cap. The runner
+    // summarizes the run-so-far into a resumable checkpoint and reports
+    // `Incomplete` (NOT `Completed`) so the orchestrator relays the partial
+    // handback instead of mistaking the no-progress summary for a result (#4096).
+    //
+    // The legacy repeat-identical-call circuit-breaker `Halted` distinction
+    // folded into this cap handling during the tinyagents migration (#4249) —
+    // see `run_subagent`'s status mapping. With `max_iterations = 2` the two
+    // scripted tool calls exhaust the budget; the checkpoint summary call then
+    // draws the deterministic "reached my tool-call limit" digest.
+    let provider = ScriptedProvider::new(vec![
+        tool_response("file_read", "{\"path\":\"a\"}"),
+        tool_response("file_read", "{\"path\":\"a\"}"),
+    ]);
+    let parent = make_parent(provider.clone(), vec![stub("file_read")]);
+    let mut def = make_def_named_tools(&["file_read"]);
+    def.max_iterations = 2;
+
+    let outcome = with_parent_context(parent, async {
+        run_subagent(&def, "read the file", SubagentRunOptions::default()).await
+    })
+    .await
+    .expect("a cap halt is still Ok (not Err)");
+
+    match outcome.status {
+        SubagentRunStatus::Incomplete { reason } => assert!(
+            reason.contains("limit") || reason.contains("tool-call"),
+            "incomplete reason should describe the cap stop: {reason}"
+        ),
+        other => panic!("expected Incomplete, got {other:?}"),
+    }
+    assert!(
+        outcome.output.contains("tool-call limit"),
+        "the partial output should carry the cap-hit checkpoint summary: {}",
+        outcome.output
+    );
+}
+
+#[tokio::test]
 async fn run_queue_steer_lands_in_subagent_history() {
     // End-to-end proof that flipping the subagent loop's run-queue arg from
     // `None` to `Some(queue)` wires steering all the way through: a message
-    // pushed to the queue before the run is drained by the inner
-    // `run_turn_engine` and appears as a `[User steering message]:` user turn
-    // in the exact request sent to the provider. This is the mechanism behind
-    // the `steer_subagent` tool.
+    // pushed to the queue before the run is drained by the steering forwarder
+    // in the child's turn (`run_turn_via_tinyagents_shared`) and appears as a
+    // `[User steering message]:` user turn in the exact request sent to the
+    // provider. This is the mechanism behind the `steer_subagent` tool.
     let provider = ScriptedProvider::new(vec![text_response("acknowledged")]);
     let parent = make_parent(provider.clone(), vec![stub("file_read")]);
     let def = make_def_named_tools(&[]);
@@ -645,6 +709,7 @@ async fn typed_mode_filters_tools_by_skill_filter() {
             &def,
             "lookup",
             SubagentRunOptions {
+                workspace_descriptor: None,
                 skill_filter_override: Some("notion".into()),
                 toolkit_override: None,
                 context: None,
@@ -744,9 +809,18 @@ async fn typed_mode_blocks_unallowed_tool_calls() {
         .iter()
         .find(|m| m.role == "tool")
         .expect("tool result message should be present");
+    // A tool outside the allowlist is never registered on the sub-agent
+    // harness, so a call to it flows through the tinyagents
+    // `UnknownToolPolicy::ReturnToolError` path (issue #4249): the runner
+    // injects a recoverable `unknown tool `forbidden_tool` …` result (naming the
+    // blocked tool and listing the valid ones) instead of executing it, and the
+    // next iteration recovers. The security guarantee — the disallowed tool does
+    // NOT run — is preserved; only the message wording changed from the legacy
+    // "not available".
     assert!(
-        tool_msg.content.contains("not available"),
-        "blocked tool should produce a 'not available' error message"
+        tool_msg.content.contains("unknown tool") && tool_msg.content.contains("forbidden_tool"),
+        "blocked tool should produce a recoverable unknown-tool error naming it: {:?}",
+        tool_msg.content
     );
 }
 
@@ -1266,16 +1340,21 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
     // We don't assert the *resulting* provider identity here (the
     // factory may return a fresh OpenHuman backend or whatever
     // primary_cloud resolves to), but we DO assert the resolved model
-    // matches the workload's configured exact id — not the legacy
-    // `{workload}-v1` synthesis.
+    // is the workload's canonical managed tier — NOT `default_model`,
+    // and NOT the parent's model.
+    //
+    // Regression (#hint-routing): the managed backend used to ignore the
+    // workload role and return `default_model`, so `hint = "agentic"`
+    // silently ran on whatever `default_model` was (here `chat-v1`).
+    // `make_openhuman_backend` now pins specialised roles to their tier,
+    // so `agentic` resolves to `agentic-v1` regardless of `default_model`.
     use crate::openhuman::config::Config;
     let mut config = Config::default();
-    // Route `agentic` to OpenHuman backend explicitly. The backend returns
-    // the configured default_model. Use `coding-v1` — a recognized tier
-    // that the factory validation accepts and that differs from the old
-    // `agentic-v1` synthesis, making the assertion meaningful.
+    // Route `agentic` to the OpenHuman backend explicitly, and set a
+    // distinct `default_model` so the assertion proves the role — not the
+    // global default — drives the resolved tier.
     config.agentic_provider = Some("openhuman".to_string());
-    config.default_model = Some("coding-v1".to_string());
+    config.default_model = Some("chat-v1".to_string());
 
     let parent: Arc<dyn Provider> = ScriptedProvider::new(vec![]);
     let (_resolved_provider, resolved_model) = super::resolve_subagent_provider(
@@ -1288,9 +1367,9 @@ fn resolve_subagent_provider_hint_with_config_routes_via_factory() {
         None,
     );
     assert_eq!(
-        resolved_model, "coding-v1",
-        "Hint must use the factory-resolved exact model, not synthesise `agentic-v1` \
-         and not fall back to parent's model"
+        resolved_model, "agentic-v1",
+        "Hint must resolve to the workload's managed tier (agentic-v1), not \
+         fall back to default_model (chat-v1) or the parent's model"
     );
 }
 
@@ -1447,8 +1526,8 @@ fn nested_subagent_dispatch_runs_on_a_constrained_worker_stack() {
     let outcome = outcome.expect(
         "nested run_subagent must complete on a 1 MiB worker stack — \
          a stack overflow here means the recursion boundary in \
-         `run_typed_mode` regressed (see `Box::pin` callsites around \
-         `run_inner_loop` and `run_turn_engine`).",
+         `run_typed_mode` regressed (see the `Box::pin` callsites around \
+         `run_typed_mode` and the child's tinyagents drive future).",
     );
     assert!(
         outcome.output.contains("inner-final"),
@@ -1456,4 +1535,163 @@ fn nested_subagent_dispatch_runs_on_a_constrained_worker_stack() {
          answer, got: {}",
         outcome.output
     );
+}
+
+// ── Repro: issue #3152 — near-miss write slug fails to resolve ──────
+//
+// The model emits `NOTION_SEARCH_NOTION` (drops the `_PAGE` suffix). The
+// real action `NOTION_SEARCH_NOTION_PAGE` is the unique superstring, yet
+// find_action's three tiers (exact / case-insensitive / normalized) all
+// miss → None → lazy registration never fires → allowlist gate blocks the
+// write. Asserts DESIRED post-fix behaviour → RED until the unique
+// prefix/superstring resolution tier lands. Must stay conservative: a
+// fabricated slug with no unique match must still resolve to None (covered
+// by `lazy_resolver_tolerates_near_miss_slugs`).
+#[test]
+fn repro_3152_near_miss_write_slug_resolves_uniquely() {
+    use crate::openhuman::context::prompt::ConnectedIntegrationTool;
+    let mk = |name: &str| ConnectedIntegrationTool {
+        name: name.into(),
+        description: "d".into(),
+        parameters: None,
+    };
+    let resolver = LazyToolkitResolver {
+        config: std::sync::Arc::new(crate::openhuman::config::Config::default()),
+        actions: vec![
+            mk("NOTION_SEARCH_NOTION_PAGE"),
+            mk("NOTION_CREATE_NOTION_PAGE"),
+            mk("NOTION_FETCH_DATA"),
+        ],
+    };
+    let resolved = resolver
+        .resolve("NOTION_SEARCH_NOTION")
+        .expect("#3152: near-miss write slug must resolve to its unique superstring");
+    assert_eq!(resolved.name(), "NOTION_SEARCH_NOTION_PAGE");
+}
+
+// ── Guard: #3152 prefix tier must stay strictly unique ──────────────
+//
+// When a truncated slug prefix-matches MORE than one catalogued action,
+// the resolver must refuse rather than guess — a mis-dispatched write
+// could create/update the wrong resource (data-integrity). Also asserts
+// the length gate: a too-short request never fans out.
+#[test]
+fn prefix_tier_refuses_ambiguous_and_short_slugs() {
+    use crate::openhuman::context::prompt::ConnectedIntegrationTool;
+    let mk = |name: &str| ConnectedIntegrationTool {
+        name: name.into(),
+        description: "d".into(),
+        parameters: None,
+    };
+    let resolver = LazyToolkitResolver {
+        config: std::sync::Arc::new(crate::openhuman::config::Config::default()),
+        actions: vec![
+            mk("NOTION_SEARCH_NOTION_PAGE"),
+            mk("NOTION_SEARCH_NOTION_DATABASE"),
+            mk("NOTION_CREATE_NOTION_PAGE"),
+        ],
+    };
+    // `NOTION_SEARCH_NOTION` is a prefix of TWO actions → ambiguous → None.
+    assert!(
+        resolver.resolve("NOTION_SEARCH_NOTION").is_none(),
+        "#3152: ambiguous prefix must not silently dispatch to a guess"
+    );
+    // Short slug below the length gate never engages the prefix tier.
+    assert!(resolver.resolve("NOTION").is_none());
+}
+
+// ── Runtime spawn-hierarchy (tier) gate (issue #4098) ───────────────────────
+// `tier_gate_decision` is the pure decision the runtime gate in `run_subagent`
+// applies to each delegation hop. Tested directly so the deny/allow/skip
+// table is covered without standing up a global registry or a live spawn.
+
+// Thin wrapper to call the gate with throwaway log-context ids.
+fn gate(parent: Option<&AgentDefinition>, child: &AgentDefinition) -> Result<(), SubagentRunError> {
+    super::runner::tier_gate_decision(parent, child, "parent-agent", "task-1")
+}
+
+#[test]
+fn tier_gate_skips_when_parent_unresolved() {
+    use crate::openhuman::agent::harness::definition::AgentTier;
+    // No resolvable parent definition (e.g. registry uninitialised, or a
+    // dynamically-named model-council juror / custom agent absent from it) →
+    // skip rather than mask. Even a would-be-illegal child tier passes, because
+    // we have no parent tier to judge against.
+    let mut child = make_def_named_tools(&[]);
+    child.agent_tier = AgentTier::Chat;
+    assert!(gate(None, &child).is_ok());
+}
+
+#[test]
+fn tier_gate_allows_legal_descending_hops() {
+    use crate::openhuman::agent::harness::definition::AgentTier;
+    let mut parent = make_def_named_tools(&[]);
+    let mut child = make_def_named_tools(&[]);
+
+    // chat → worker
+    parent.agent_tier = AgentTier::Chat;
+    child.agent_tier = AgentTier::Worker;
+    assert!(gate(Some(&parent), &child).is_ok());
+
+    // chat → reasoning
+    child.agent_tier = AgentTier::Reasoning;
+    assert!(gate(Some(&parent), &child).is_ok());
+
+    // reasoning → worker
+    parent.agent_tier = AgentTier::Reasoning;
+    child.agent_tier = AgentTier::Worker;
+    assert!(gate(Some(&parent), &child).is_ok());
+}
+
+#[test]
+fn tier_gate_allows_worker_parent_for_collapsed_integration() {
+    use crate::openhuman::agent::harness::definition::AgentTier;
+    // A worker only reaches the runtime spawn chokepoint via the documented
+    // collapsed `delegate_to_integrations_agent` path (→ `integrations_agent`,
+    // itself a worker). The gate must NOT re-deny that — the worker-leaf rule
+    // is a static boot-time authoring constraint, not a runtime one. Regression
+    // for the wildcard-integration case (CodeRabbit P2 on PR #4102).
+    let mut parent = make_def_named_tools(&[]);
+    let child = make_def_named_tools(&[]); // worker by default
+    parent.agent_tier = AgentTier::Worker;
+    assert!(gate(Some(&parent), &child).is_ok());
+}
+
+#[test]
+fn tier_gate_denies_chat_to_chat() {
+    use crate::openhuman::agent::harness::definition::AgentTier;
+    let mut parent = make_def_named_tools(&[]);
+    let mut child = make_def_named_tools(&[]);
+    parent.agent_tier = AgentTier::Chat;
+    child.agent_tier = AgentTier::Chat;
+
+    let err =
+        gate(Some(&parent), &child).expect_err("chat→chat must be denied at the runtime gate");
+    match err {
+        SubagentRunError::TierViolation {
+            parent_tier,
+            child_tier,
+            reason,
+        } => {
+            assert_eq!(parent_tier, AgentTier::Chat);
+            assert_eq!(child_tier, AgentTier::Chat);
+            assert!(
+                reason.contains("chat") && reason.contains("leaf"),
+                "got: {reason}"
+            );
+        }
+        other => panic!("expected TierViolation, got: {other:?}"),
+    }
+}
+
+#[test]
+fn tier_gate_allows_upward_reasoning_to_chat() {
+    use crate::openhuman::agent::harness::definition::AgentTier;
+    // Upward delegation is intentionally legal (subconscious reasoner →
+    // orchestrator chat). The gate must not deny it.
+    let mut parent = make_def_named_tools(&[]);
+    let mut child = make_def_named_tools(&[]);
+    parent.agent_tier = AgentTier::Reasoning;
+    child.agent_tier = AgentTier::Chat;
+    assert!(gate(Some(&parent), &child).is_ok());
 }

@@ -10,6 +10,7 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { setCoreStateSnapshot } from '../../../../lib/coreState/store';
 import {
   clearEmbeddingsApiKey,
   type EmbeddingProviderEntry,
@@ -73,9 +74,41 @@ const makeSettings = (overrides: Partial<EmbeddingsSettings> = {}): EmbeddingsSe
   ...overrides,
 });
 
+const setCoreSession = ({
+  sessionToken = 'header.payload.remote',
+  userId = 'u-1',
+  profileId = 'p-1',
+}: { sessionToken?: string; userId?: string; profileId?: string | null } = {}) => {
+  setCoreStateSnapshot({
+    isBootstrapping: false,
+    isReady: true,
+    snapshot: {
+      auth: { isAuthenticated: true, userId, user: null, profileId },
+      sessionToken,
+      currentUser: null,
+      onboardingCompleted: true,
+      chatOnboardingCompleted: true,
+      analyticsEnabled: false,
+      meetAutoOrchestratorHandoff: false,
+      localState: { encryptionKey: null, onboardingTasks: null, keyringConsent: null },
+      keyringStatus: {
+        available: true,
+        failureReason: null,
+        activeMode: 'os_keyring',
+        backendName: 'os',
+      },
+      runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
+    },
+    teams: [],
+    teamMembersById: {},
+    teamInvitesById: {},
+  });
+};
+
 describe('EmbeddingsPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setCoreSession();
     vi.mocked(loadEmbeddingsSettings).mockResolvedValue(makeSettings());
     vi.mocked(updateEmbeddingsSettings).mockResolvedValue({
       provider: 'managed',
@@ -99,6 +132,46 @@ describe('EmbeddingsPanel', () => {
     expect(await screen.findByText('Managed')).toBeInTheDocument();
     expect(screen.getByText('Openai')).toBeInTheDocument();
     expect(screen.getByText('Custom')).toBeInTheDocument();
+  });
+
+  it('marks Managed embeddings as requiring OpenHuman sign-in for local sessions', async () => {
+    setCoreSession({ sessionToken: 'header.payload.local', userId: 'local', profileId: null });
+
+    renderWithProviders(<EmbeddingsPanel />);
+
+    expect(await screen.findByText('Managed')).toBeInTheDocument();
+    expect(screen.getByText(/requires OpenHuman sign-in/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Managed embeddings route through the OpenHuman backend/i)
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Test Connection/i })).toBeDisabled();
+  });
+
+  it('blocks switching to Managed embeddings during a local session', async () => {
+    setCoreSession({ sessionToken: 'header.payload.local', userId: 'local', profileId: null });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(
+      makeSettings({
+        provider: 'openai',
+        model: 'openai-model-v1',
+        providers: [
+          makeProvider('managed', { requires_api_key: false }),
+          makeProvider('openai', { requires_api_key: true, has_api_key: true }),
+        ],
+      })
+    );
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Managed');
+
+    fireEvent.click(screen.getByRole('radio', { name: /managed/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Managed embeddings require OpenHuman sign-in/i)).toBeInTheDocument()
+    );
+    expect(
+      screen.getByText(/Managed embeddings route through the OpenHuman backend/i)
+    ).toBeInTheDocument();
+    expect(vi.mocked(updateEmbeddingsSettings)).not.toHaveBeenCalled();
   });
 
   it('shows loading state then settings', async () => {
@@ -352,6 +425,134 @@ describe('EmbeddingsPanel', () => {
     );
   });
 
+  it('surfaces an actionable error and keeps the popup open when the custom endpoint has no embeddings API', async () => {
+    // TAURI-RUST-5JR: the backend probes the endpoint and rejects a chat-only
+    // URL (DeepSeek) with EMBEDDINGS_ENDPOINT_NO_API. The panel must show the
+    // message and NOT close the setup popup, so the user can fix the endpoint.
+    const settings = makeSettings({
+      providers: [
+        makeProvider('managed', { requires_api_key: false }),
+        makeProvider('custom', { requires_api_key: false, requires_endpoint: true }),
+      ],
+    });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
+    vi.mocked(updateEmbeddingsSettings).mockResolvedValue({
+      error: 'EMBEDDINGS_ENDPOINT_NO_API',
+      message: 'This endpoint has no embeddings API. Choose an embeddings-capable provider.',
+    });
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Custom');
+
+    fireEvent.click(screen.getByRole('radio', { name: /custom/i }));
+    await screen.findByPlaceholderText(/https:\/\/your-endpoint/i);
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/your-endpoint/i), {
+      target: { value: 'https://api.deepseek.com/v1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save.*switch/i }));
+
+    // Actionable message shown.
+    await screen.findByText(/no embeddings API/i);
+    // Popup stays open — endpoint input is still present so the user can fix it.
+    expect(screen.getByPlaceholderText(/https:\/\/your-endpoint/i)).toBeInTheDocument();
+  });
+
+  it('surfaces the no-model-loaded message and keeps the popup open when LM Studio has no model loaded', async () => {
+    // TAURI-RUST-4P4: the backend runs a setup-time test embed and rejects an
+    // LM Studio endpoint with no model loaded (EMBEDDINGS_NO_MODEL_LOADED). The
+    // panel must show the one-step remediation and NOT close the popup, so the
+    // user can load a model and retry — verifying at setup is the fix.
+    const settings = makeSettings({
+      providers: [
+        makeProvider('managed', { requires_api_key: false }),
+        makeProvider('custom', { requires_api_key: false, requires_endpoint: true }),
+      ],
+    });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
+    vi.mocked(updateEmbeddingsSettings).mockResolvedValue({
+      error: 'EMBEDDINGS_NO_MODEL_LOADED',
+      message:
+        'Your local embeddings server (e.g. LM Studio) is running but has no model loaded. Load an embedding model, then save again.',
+    });
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Custom');
+
+    fireEvent.click(screen.getByRole('radio', { name: /custom/i }));
+    await screen.findByPlaceholderText(/https:\/\/your-endpoint/i);
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/your-endpoint/i), {
+      target: { value: 'http://localhost:1234/v1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save.*switch/i }));
+
+    // Actionable remediation shown.
+    await screen.findByText(/no model loaded/i);
+    // Popup stays open so the user can fix it and retry.
+    expect(screen.getByPlaceholderText(/https:\/\/your-endpoint/i)).toBeInTheDocument();
+  });
+
+  it('surfaces a verification-failed message and keeps the popup open when the test embed fails', async () => {
+    // The setup-time test embed failed (timeout / 5xx / unreachable). The
+    // config is NOT saved; the panel surfaces the generic verification message
+    // and keeps the popup open so the user can fix the endpoint and retry.
+    const settings = makeSettings({
+      providers: [
+        makeProvider('managed', { requires_api_key: false }),
+        makeProvider('custom', { requires_api_key: false, requires_endpoint: true }),
+      ],
+    });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
+    vi.mocked(updateEmbeddingsSettings).mockResolvedValue({
+      error: 'EMBEDDINGS_VERIFICATION_FAILED',
+      message:
+        "Couldn't verify the embeddings endpoint — the test embed failed. Make sure the endpoint is reachable, then save again.",
+    });
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Custom');
+
+    fireEvent.click(screen.getByRole('radio', { name: /custom/i }));
+    await screen.findByPlaceholderText(/https:\/\/your-endpoint/i);
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/your-endpoint/i), {
+      target: { value: 'http://localhost:9/v1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save.*switch/i }));
+
+    await screen.findByText(/verify the embeddings endpoint/i);
+    expect(screen.getByPlaceholderText(/https:\/\/your-endpoint/i)).toBeInTheDocument();
+  });
+
+  it('appends the underlying probe detail to the verification error so the user can self-diagnose (#4056)', async () => {
+    // The issue asks for the underlying HTTP status / error body, not just the
+    // generic message. When the backend supplies `detail`, the panel appends it.
+    const settings = makeSettings({
+      providers: [
+        makeProvider('managed', { requires_api_key: false }),
+        makeProvider('custom', { requires_api_key: false, requires_endpoint: true }),
+      ],
+    });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
+    vi.mocked(updateEmbeddingsSettings).mockResolvedValue({
+      error: 'EMBEDDINGS_VERIFICATION_FAILED',
+      message: "Couldn't verify the embeddings endpoint — the test embed failed.",
+      detail: 'Embedding API error (401 Unauthorized): invalid api key',
+    });
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Custom');
+
+    fireEvent.click(screen.getByRole('radio', { name: /custom/i }));
+    await screen.findByPlaceholderText(/https:\/\/your-endpoint/i);
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/your-endpoint/i), {
+      target: { value: 'https://api.example.com/v1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save.*switch/i }));
+
+    // The detail (HTTP status + body) is shown alongside the generic message.
+    await screen.findByText(/401 Unauthorized/i);
+    expect(screen.getByPlaceholderText(/https:\/\/your-endpoint/i)).toBeInTheDocument();
+  });
+
   // ─── Confirm wipe dialog ──────────────────────────────────────────────────
 
   it('shows confirm-wipe dialog when updateEmbeddingsSettings returns DIMENSION_CHANGE error', async () => {
@@ -535,6 +736,52 @@ describe('EmbeddingsPanel', () => {
     fireEvent.click(testBtn);
 
     await waitFor(() => expect(screen.getByText(/connection refused/i)).toBeInTheDocument());
+  });
+
+  it.each([
+    ['missing backend session', 'No backend session for cloud embeddings: log in to OpenHuman'],
+    ['session-expired sentinel', 'SESSION_EXPIRED: backend session not active'],
+    [
+      'backend invalid token',
+      'Embedding API error (401 Unauthorized): {"success":false,"error":"Invalid token"}',
+    ],
+  ])('turns Managed %s test failures into sign-in guidance', async (_case, error) => {
+    const settings = makeSettings({
+      provider: 'managed',
+      providers: [
+        makeProvider('managed', {
+          requires_api_key: false,
+          models: [
+            {
+              id: 'managed-model-v1',
+              label: 'Managed Model v1',
+              default_dimensions: 1536,
+              allowed_dimensions: [1536],
+            },
+          ],
+        }),
+      ],
+    });
+    vi.mocked(loadEmbeddingsSettings).mockResolvedValue(settings);
+    vi.mocked(testEmbeddingsConnection).mockResolvedValueOnce({
+      success: false,
+      provider: 'managed',
+      model: 'managed-model-v1',
+      error,
+    });
+
+    renderWithProviders(<EmbeddingsPanel />);
+    await screen.findByText('Managed');
+
+    fireEvent.click(await screen.findByRole('button', { name: /test connection/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Managed embeddings require OpenHuman sign-in/i)).toBeInTheDocument()
+    );
+    expect(
+      screen.getByText(/Managed embeddings route through the OpenHuman backend/i)
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /sign in again/i }));
   });
 
   // ─── Model select (multiple catalog models) ───────────────────────────────

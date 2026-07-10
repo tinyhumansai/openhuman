@@ -6,6 +6,7 @@ import {
   type DiagramViewerSettings,
   openhumanGetDashboardSettings,
 } from '../../utils/tauriCommands/config';
+import Button from '../ui/Button';
 
 const DEFAULT_SETTINGS: DiagramViewerSettings = {
   enabled: true,
@@ -91,43 +92,39 @@ export default function DiagramViewerTab() {
     <section className="space-y-5" aria-labelledby="diagram-viewer-title">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2
-            id="diagram-viewer-title"
-            className="text-lg font-semibold text-stone-900 dark:text-neutral-100">
+          <h2 id="diagram-viewer-title" className="text-lg font-semibold text-content">
             {t('intelligence.diagram.title')}
           </h2>
-          <p className="mt-1 text-sm text-stone-500 dark:text-neutral-400">
-            {t('intelligence.diagram.description')}
-          </p>
+          <p className="mt-1 text-sm text-content-muted">{t('intelligence.diagram.description')}</p>
         </div>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="md"
           onClick={refreshDiagram}
-          className="inline-flex items-center gap-2 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          leadingIcon={<LuRefreshCw aria-hidden="true" className="h-4 w-4" />}
           aria-label={t('intelligence.diagram.refreshAria')}>
-          <LuRefreshCw aria-hidden="true" className="h-4 w-4" />
           {t('intelligence.diagram.refresh')}
-        </button>
+        </Button>
       </div>
 
       {showEmptyState && (
-        <div className="flex min-h-72 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-stone-300 bg-stone-50 px-6 py-10 text-center dark:border-neutral-700 dark:bg-neutral-950/60">
+        <div className="flex min-h-72 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line-strong bg-surface-muted px-6 py-10 text-center dark:bg-surface-canvas/60">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-300">
             <LuImage aria-hidden="true" className="h-6 w-6" />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            <h3 className="text-sm font-semibold text-content">
               {t('intelligence.diagram.emptyTitle')}
             </h3>
-            <p className="mt-1 max-w-md text-sm text-stone-500 dark:text-neutral-400">
+            <p className="mt-1 max-w-md text-sm text-content-muted">
               {t('intelligence.diagram.emptyDescription')}
             </p>
           </div>
           <div className="flex max-w-full flex-col gap-2">
-            <code className="max-w-full overflow-x-auto rounded-md bg-white px-3 py-2 text-xs text-stone-600 dark:bg-neutral-900 dark:text-neutral-300">
+            <code className="max-w-full overflow-x-auto rounded-md bg-surface px-3 py-2 text-xs text-content-secondary">
               {t('intelligence.diagram.skillInstallCommand')}
             </code>
-            <code className="max-w-full overflow-x-auto rounded-md bg-white px-3 py-2 text-xs text-stone-600 dark:bg-neutral-900 dark:text-neutral-300">
+            <code className="max-w-full overflow-x-auto rounded-md bg-surface px-3 py-2 text-xs text-content-secondary">
               {t('intelligence.diagram.promptExample')}
             </code>
           </div>
@@ -140,11 +137,11 @@ export default function DiagramViewerTab() {
             key={imageUrl}
             src={imageUrl}
             alt={t('intelligence.diagram.imageAlt')}
-            className="block w-full rounded-lg border border-stone-200 bg-white object-contain dark:border-neutral-800 dark:bg-neutral-950"
+            className="block w-full rounded-lg border border-line bg-surface object-contain dark:bg-surface-canvas"
             onLoad={() => setImageState('loaded')}
             onError={() => setImageState('error')}
           />
-          <figcaption className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-500 dark:text-neutral-400">
+          <figcaption className="flex flex-wrap items-center justify-between gap-2 text-xs text-content-muted">
             <span>
               {t('intelligence.diagram.refreshesEvery').replace(
                 '{seconds}',

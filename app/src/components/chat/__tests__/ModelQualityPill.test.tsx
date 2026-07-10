@@ -23,6 +23,18 @@ describe('ModelQualityPill', () => {
     expect(svg).toBeInTheDocument();
   });
 
+  it('gives the pill trailing padding so the chevron is not clipped (#3292)', () => {
+    render(<ModelQualityPill />);
+    const button = screen.getByRole('button', { name: 'composer.modelSelector' });
+    // Horizontal padding + rounded shape keep the trailing chevron fully
+    // inside the pill instead of flush against its right edge.
+    expect(button).toHaveClass('px-2');
+    expect(button).toHaveClass('rounded-full');
+    // The chevron itself must not shrink/clip when space is tight.
+    const svg = button.querySelector('svg');
+    expect(svg).toHaveClass('shrink-0');
+  });
+
   it('has model selector aria-label', () => {
     render(<ModelQualityPill />);
     expect(screen.getByRole('button', { name: 'composer.modelSelector' })).toBeInTheDocument();

@@ -16,11 +16,26 @@ use super::{AuthStyle, OpenAiCompatibleProvider};
 
 #[async_trait]
 impl Provider for OpenAiCompatibleProvider {
+    fn telemetry_provider_id(&self) -> String {
+        // The configured provider slug ("openai", "groq", "venice", ...),
+        // normalized for stable telemetry labels.
+        self.name.trim().to_ascii_lowercase().replace(' ', "-")
+    }
+
     fn capabilities(&self) -> crate::openhuman::inference::provider::traits::ProviderCapabilities {
         crate::openhuman::inference::provider::traits::ProviderCapabilities {
             native_tool_calling: self.native_tool_calling,
             vision: self.vision,
         }
+    }
+
+    fn prompt_cache_capabilities(
+        &self,
+    ) -> crate::openhuman::inference::provider::traits::PromptCacheCapabilities {
+        // Derive from the configured slug — conservative for unknown / custom
+        // providers (#3939). The OpenHuman backend wraps this provider but
+        // declares its own grouping-aware caps on `OpenHumanBackendProvider`.
+        super::prompt_cache_for_compatible_slug(&self.name)
     }
 
     async fn chat_with_system(
@@ -80,7 +95,7 @@ impl Provider for OpenAiCompatibleProvider {
 
         if self.responses_api_primary {
             return self
-                .chat_via_responses(credential, &fallback_messages, model)
+                .chat_via_responses(credential, &fallback_messages, model, None)
                 .await;
         }
 
@@ -91,10 +106,10 @@ impl Provider for OpenAiCompatibleProvider {
         {
             Ok(response) => response,
             Err(chat_error) => {
-                if self.supports_responses_fallback {
+                if self.responses_fallback_active() {
                     let detail = super::super::format_error_chain(&chat_error);
                     return self
-                        .chat_via_responses(credential, &fallback_messages, model)
+                        .chat_via_responses(credential, &fallback_messages, model, None)
                         .await
                         .map_err(|responses_err| {
                             let fb = super::super::format_anyhow_chain(&responses_err);
@@ -122,9 +137,9 @@ impl Provider for OpenAiCompatibleProvider {
                 return Err(err);
             }
 
-            if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
+            if status == reqwest::StatusCode::NOT_FOUND && self.responses_fallback_active() {
                 return self
-                    .chat_via_responses(credential, &fallback_messages, model)
+                    .chat_via_responses(credential, &fallback_messages, model, None)
                     .await
                     .map_err(|responses_err| {
                         let fb = super::super::format_anyhow_chain(&responses_err);
@@ -154,6 +169,15 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::super::is_local_provider_no_model_loaded(status, &error) {
+                // Local inference server up but no model loaded — pure local
+                // user-state, demote instead of paging (TAURI-RUST-DMQ).
+                super::super::log_local_provider_no_model_loaded(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
             } else if super::super::is_custom_openai_upstream_bad_request_http_400(
                 self.name.as_str(),
                 status,
@@ -178,6 +202,43 @@ impl Provider for OpenAiCompatibleProvider {
                 &error,
             ) {
                 super::super::log_provider_config_rejection(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::super::is_byo_provider_auth_failure_http(
+                self.name.as_str(),
+                status,
+                &error,
+            ) {
+                super::super::log_byo_provider_auth_failure(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::super::is_provider_insufficient_credits_402(status, &error) {
+                // Insufficient-credits 402: the user's own BYO provider account
+                // is out of balance — a flat billing fact, not a reservation-
+                // window error, so there is NO local max_tokens lever to apply.
+                // Demote to info instead of paging on every retry; this is the
+                // complete classification for a genuinely-unpreventable
+                // BYO-balance condition (TAURI-RUST-4QF — DeepSeek "Insufficient
+                // Balance"; same class as the native_chat arm added for -C62).
+                super::super::log_provider_insufficient_credits_402(
+                    "chat_completions",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::super::is_provider_moderation_rejection_http_400(status, &error) {
+                // External content-moderation proxy ("Ombudsman") refused the
+                // prompt with a 400 + verdict — well-formed request, external
+                // safety guard, no client lever. Demote like the native_chat
+                // ladder so the looping triage agent doesn't flood Sentry
+                // (TAURI-RUST-ECR).
+                super::super::log_provider_moderation_rejection(
                     "chat_completions",
                     self.name.as_str(),
                     Some(model),
@@ -252,7 +313,7 @@ impl Provider for OpenAiCompatibleProvider {
         let url = self.chat_completions_url();
         if self.responses_api_primary {
             return self
-                .chat_via_responses(credential, &effective_messages, model)
+                .chat_via_responses(credential, &effective_messages, model, None)
                 .await;
         }
 
@@ -263,10 +324,10 @@ impl Provider for OpenAiCompatibleProvider {
         {
             Ok(response) => response,
             Err(chat_error) => {
-                if self.supports_responses_fallback {
+                if self.responses_fallback_active() {
                     let detail = super::super::format_error_chain(&chat_error);
                     return self
-                        .chat_via_responses(credential, &effective_messages, model)
+                        .chat_via_responses(credential, &effective_messages, model, None)
                         .await
                         .map_err(|responses_err| {
                             let fb = super::super::format_anyhow_chain(&responses_err);
@@ -292,9 +353,9 @@ impl Provider for OpenAiCompatibleProvider {
                     return Err(err);
                 }
 
-                if self.supports_responses_fallback {
+                if self.responses_fallback_active() {
                     return self
-                        .chat_via_responses(credential, &effective_messages, model)
+                        .chat_via_responses(credential, &effective_messages, model, None)
                         .await
                         .map_err(|responses_err| {
                             let fb = super::super::format_anyhow_chain(&responses_err);
@@ -489,7 +550,7 @@ impl Provider for OpenAiCompatibleProvider {
                 effective_messages.clone()
             };
             let text = self
-                .chat_via_responses(credential, &response_messages, model)
+                .chat_via_responses(credential, &response_messages, model, request.max_tokens)
                 .await?;
             if let Some(tx) = request.stream {
                 let _ = tx
@@ -525,6 +586,7 @@ impl Provider for OpenAiCompatibleProvider {
                 // field (Google Gemini shim — TAURI-RUST-4PJ); the reactive
                 // retry below stays as defense-in-depth for unknown providers.
                 frequency_penalty: self.effective_frequency_penalty(),
+                max_tokens: request.max_tokens,
             };
             let stream_dump_seq = reserve_dump_seq();
             dump_prompt_if_enabled(&self.name, model, stream_dump_seq, &native_request);
@@ -611,6 +673,7 @@ impl Provider for OpenAiCompatibleProvider {
             // The buffered non-streaming path omits `frequency_penalty` for maximum
             // compatibility. The streaming path carries it and retries without on rejection.
             frequency_penalty: None,
+            max_tokens: request.max_tokens,
         };
         let dump_seq = reserve_dump_seq();
         dump_prompt_if_enabled(&self.name, model, dump_seq, &native_request);
@@ -626,10 +689,15 @@ impl Provider for OpenAiCompatibleProvider {
         {
             Ok(response) => response,
             Err(chat_error) => {
-                if self.supports_responses_fallback {
+                if self.responses_fallback_active() {
                     let detail = super::super::format_error_chain(&chat_error);
                     return self
-                        .chat_via_responses(credential, &effective_messages, model)
+                        .chat_via_responses(
+                            credential,
+                            &effective_messages,
+                            model,
+                            request.max_tokens,
+                        )
                         .await
                         .map(|text| ProviderChatResponse {
                             text: Some(text),
@@ -677,9 +745,9 @@ impl Provider for OpenAiCompatibleProvider {
                 return Err(err);
             }
 
-            if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
+            if status == reqwest::StatusCode::NOT_FOUND && self.responses_fallback_active() {
                 return self
-                    .chat_via_responses(credential, &effective_messages, model)
+                    .chat_via_responses(credential, &effective_messages, model, request.max_tokens)
                     .await
                     .map(|text| ProviderChatResponse {
                         text: Some(text),
@@ -697,7 +765,7 @@ impl Provider for OpenAiCompatibleProvider {
             }
 
             let status_str = status.as_u16().to_string();
-            let message = self.enrich_404_message(
+            let mut message = self.enrich_404_message(
                 format!("{} API error ({status}): {sanitized}", self.name),
                 status,
             );
@@ -708,6 +776,19 @@ impl Provider for OpenAiCompatibleProvider {
                     Some(model),
                     status,
                 );
+            } else if super::super::is_local_provider_no_model_loaded(status, &error) {
+                // Local inference server (LM Studio etc.) is up but has no model
+                // loaded — pure local user-state, nothing we sent is malformed.
+                // Demote instead of paging on every retry, and replace the body
+                // with actionable "load a model" guidance (TAURI-RUST-DMQ,
+                // mirrors the embeddings #3688 special-case).
+                super::super::log_local_provider_no_model_loaded(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+                message = super::super::local_provider_no_model_loaded_user_message();
             } else if super::super::is_custom_openai_upstream_bad_request_http_400(
                 self.name.as_str(),
                 status,
@@ -732,6 +813,69 @@ impl Provider for OpenAiCompatibleProvider {
                 &error,
             ) {
                 super::super::log_provider_config_rejection(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::super::is_byo_provider_auth_failure_http(
+                self.name.as_str(),
+                status,
+                &error,
+            ) {
+                super::super::log_byo_provider_auth_failure(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::super::is_provider_insufficient_credits_402(status, &error) {
+                // Residual 402 after the request already caps max_tokens: the
+                // user's own BYO provider balance is exhausted — no local lever,
+                // so demote to info instead of paging on every retry
+                // (TAURI-RUST-C62).
+                super::super::log_provider_insufficient_credits_402(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::super::is_provider_quota_exhausted(&error) {
+                // Upstream plan quota spent (e.g. Kiro `MONTHLY_REQUEST_COUNT`),
+                // sometimes wrapped in a 500 envelope so the credits matcher
+                // above (402-gated) misses it — no local lever, demote instead
+                // of paging once per memory-extraction retry (TAURI-RUST-C9A).
+                super::super::log_provider_quota_exhausted(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+            } else if super::super::is_ollama_cloud_internal_500(self.name.as_str(), status, &error)
+            {
+                // ollama.com hosted-inference 500: opaque `Internal Server Error
+                // (ref: <uuid>)` from the cloud backend for `*:cloud` models.
+                // Non-deterministic, byte-identical request succeeds when the
+                // cloud is healthy → no client lever; the reliable-provider layer
+                // retries + falls back. Demote to info and replace the ref body
+                // with actionable guidance (TAURI-RUST-5MV).
+                super::super::log_ollama_cloud_internal_500(
+                    "native_chat",
+                    self.name.as_str(),
+                    Some(model),
+                    status,
+                );
+                message = super::super::ollama_cloud_internal_500_user_message(Some(model), status);
+            } else if super::super::is_provider_moderation_rejection_http_400(status, &error) {
+                // External content-moderation proxy ("Ombudsman") refused the
+                // prompt with a 400 + verdict
+                // (`{"error":"Message rejected by Ombudsman","score":80}`).
+                // Well-formed request, external safety guard, no local lever —
+                // the triage agent re-issues the same prompt every turn and
+                // floods report_error (400 ∉ the transient set). Demote to info
+                // while the error still propagates so retry/fallback runs
+                // unchanged (TAURI-RUST-ECR).
+                super::super::log_provider_moderation_rejection(
                     "native_chat",
                     self.name.as_str(),
                     Some(model),
@@ -899,6 +1043,17 @@ impl Provider for OpenAiCompatibleProvider {
                         Some(model_owned.as_str()),
                         status,
                     );
+                } else if crate::openhuman::inference::provider::is_local_provider_no_model_loaded(
+                    status, &raw_error,
+                ) {
+                    // Local inference server up but no model loaded — pure local
+                    // user-state, demote instead of paging (TAURI-RUST-DMQ).
+                    crate::openhuman::inference::provider::log_local_provider_no_model_loaded(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
                 } else if crate::openhuman::inference::provider::is_custom_openai_upstream_bad_request_http_400(
                     provider_name.as_str(),
                     status,
@@ -944,6 +1099,49 @@ impl Provider for OpenAiCompatibleProvider {
                         Some(model_owned.as_str()),
                         status,
                         &raw_error,
+                    );
+                } else if crate::openhuman::inference::provider::is_byo_provider_auth_failure_http(
+                    provider_name.as_str(),
+                    status,
+                    &raw_error,
+                ) {
+                    crate::openhuman::inference::provider::log_byo_provider_auth_failure(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if crate::openhuman::inference::provider::is_provider_insufficient_credits_402(
+                    status,
+                    &raw_error,
+                ) {
+                    // Insufficient-credits 402: the user's own BYO provider
+                    // account is out of balance — a flat billing fact, not a
+                    // reservation-window error, so there is NO local max_tokens
+                    // lever to apply. Demote to info instead of paging on every
+                    // retry; complete classification for a genuinely-
+                    // unpreventable BYO-balance condition
+                    // (TAURI-RUST-4QF — DeepSeek "Insufficient Balance").
+                    crate::openhuman::inference::provider::log_provider_insufficient_credits_402(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if crate::openhuman::inference::provider::is_provider_moderation_rejection_http_400(
+                    status,
+                    &raw_error,
+                ) {
+                    // External content-moderation proxy ("Ombudsman") refused
+                    // the prompt with a 400 + verdict — well-formed request,
+                    // external safety guard, no client lever. Demote like the
+                    // native_chat ladder so the looping triage agent doesn't
+                    // flood Sentry (TAURI-RUST-ECR).
+                    crate::openhuman::inference::provider::log_provider_moderation_rejection(
+                        "stream_chat",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
                     );
                 } else if crate::openhuman::inference::provider::should_report_provider_http_failure(
                     status,
@@ -1105,6 +1303,17 @@ impl Provider for OpenAiCompatibleProvider {
                         Some(model_owned.as_str()),
                         status,
                     );
+                } else if crate::openhuman::inference::provider::is_local_provider_no_model_loaded(
+                    status, &raw_error,
+                ) {
+                    // Local inference server up but no model loaded — pure local
+                    // user-state, demote instead of paging (TAURI-RUST-DMQ).
+                    crate::openhuman::inference::provider::log_local_provider_no_model_loaded(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
                 } else if crate::openhuman::inference::provider::is_custom_openai_upstream_bad_request_http_400(
                     provider_name.as_str(),
                     status,
@@ -1151,6 +1360,49 @@ impl Provider for OpenAiCompatibleProvider {
                         status,
                         &raw_error,
                     );
+                } else if crate::openhuman::inference::provider::is_byo_provider_auth_failure_http(
+                    provider_name.as_str(),
+                    status,
+                    &raw_error,
+                ) {
+                    crate::openhuman::inference::provider::log_byo_provider_auth_failure(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if crate::openhuman::inference::provider::is_provider_insufficient_credits_402(
+                    status,
+                    &raw_error,
+                ) {
+                    // Insufficient-credits 402: the user's own BYO provider
+                    // account is out of balance — a flat billing fact, not a
+                    // reservation-window error, so there is NO local max_tokens
+                    // lever to apply. Demote to info instead of paging on every
+                    // retry; complete classification for a genuinely-
+                    // unpreventable BYO-balance condition
+                    // (TAURI-RUST-4QF — DeepSeek "Insufficient Balance").
+                    crate::openhuman::inference::provider::log_provider_insufficient_credits_402(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if crate::openhuman::inference::provider::is_provider_moderation_rejection_http_400(
+                    status,
+                    &raw_error,
+                ) {
+                    // External content-moderation proxy ("Ombudsman") refused
+                    // the prompt with a 400 + verdict — well-formed request,
+                    // external safety guard, no client lever. Demote like the
+                    // native_chat ladder so the looping triage agent doesn't
+                    // flood Sentry (TAURI-RUST-ECR).
+                    crate::openhuman::inference::provider::log_provider_moderation_rejection(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
                 } else if crate::openhuman::inference::provider::should_report_provider_http_failure(
                     status,
                 ) {
@@ -1195,6 +1447,10 @@ impl Provider for OpenAiCompatibleProvider {
         Ok(())
     }
 
+    fn is_local_provider(&self) -> bool {
+        self.local_provider_kind.is_some()
+    }
+
     /// Resolve the effective context window for pre-dispatch trimming.
     ///
     /// For cloud (non-local) providers this is the static model table. For
@@ -1222,6 +1478,20 @@ impl Provider for OpenAiCompatibleProvider {
             model,
             Some(kind),
         )
+    }
+
+    /// Authoritative runtime-loaded window: only the value the local runtime
+    /// genuinely reports. Today that is LM Studio's native `/api/v0/models`
+    /// `loaded_context_length`. For every other case — cloud, llama.cpp / vLLM
+    /// (no loaded window endpoint), or a missing probe — we return `None`
+    /// rather than a guess, so the engine's hard pre-dispatch abort never fires
+    /// on an estimated window (Codex P1 review on PR #3771 / TAURI-RUST-6V0).
+    async fn loaded_context_window(&self, model: &str) -> Option<u64> {
+        use crate::openhuman::inference::local::profile::LocalProviderKind;
+        if self.local_provider_kind == Some(LocalProviderKind::LmStudio) {
+            return self.lm_studio_loaded_context_window(model).await;
+        }
+        None
     }
 }
 

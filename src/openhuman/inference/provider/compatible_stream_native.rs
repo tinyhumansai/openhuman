@@ -1,9 +1,10 @@
 use crate::openhuman::inference::provider::traits::ChatResponse as ProviderChatResponse;
+use crate::openhuman::inference::provider::ProviderDelta;
 
 use super::compatible_dump::dump_response_if_enabled;
 use super::compatible_repeat::{StreamRepeatDetector, STREAM_REPEAT_THRESHOLD};
 use super::compatible_types::{
-    ApiChatResponse, ApiUsage, Choice, Function, NativeChatRequest, OpenHumanMeta, ResponseMessage,
+    ApiChatResponse, ApiUsage, Choice, NativeChatRequest, OpenHumanMeta, ResponseMessage,
     StreamChunkResponse, StreamingToolCall, ToolCall,
 };
 use super::OpenAiCompatibleProvider;
@@ -32,6 +33,11 @@ impl OpenAiCompatibleProvider {
             native_request.tools.as_ref().map_or(0, |t| t.len()),
         );
 
+        // Captured at request send so the empty-2xx-stream diagnostic
+        // below can report elapsed_ms — a fast empty stream points at a
+        // backend reject, a slow one at an upstream stall / timeout.
+        let stream_started_at = std::time::Instant::now();
+
         let response = self
             .apply_auth_header(
                 self.http_client()
@@ -48,7 +54,7 @@ impl OpenAiCompatibleProvider {
             let status_str = status.as_u16().to_string();
             let body = response.text().await.unwrap_or_default();
             let sanitized = super::super::sanitize_api_error(&body);
-            let message = format!(
+            let mut message = format!(
                 "{} streaming API error ({}): {}",
                 self.name, status, sanitized
             );
@@ -117,6 +123,47 @@ impl OpenAiCompatibleProvider {
                     status,
                     &body,
                 );
+            } else if super::super::is_byo_provider_auth_failure_http(
+                self.name.as_str(),
+                status,
+                &body,
+            ) {
+                super::super::log_byo_provider_auth_failure(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
+            } else if super::super::is_provider_insufficient_credits_402(status, &body) {
+                // Insufficient-credits 402: the user's own BYO provider account
+                // is out of balance — a flat billing fact, not a reservation-
+                // window error, so there is NO local max_tokens lever to apply.
+                // Demote to info instead of paging on every retry; this is the
+                // complete classification for a genuinely-unpreventable
+                // BYO-balance condition
+                // (TAURI-RUST-4QF — DeepSeek "Insufficient Balance").
+                super::super::log_provider_insufficient_credits_402(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
+            } else if super::super::is_ollama_cloud_internal_500(self.name.as_str(), status, &body)
+            {
+                // ollama.com hosted-inference 500 on the streaming path — same
+                // provider-internal, no-client-lever condition as the native
+                // cascade. Demote to info and swap the opaque ref body for
+                // actionable guidance (TAURI-RUST-5MV).
+                super::super::log_ollama_cloud_internal_500(
+                    "streaming_chat",
+                    self.name.as_str(),
+                    Some(native_request.model.as_str()),
+                    status,
+                );
+                message = super::super::ollama_cloud_internal_500_user_message(
+                    Some(native_request.model.as_str()),
+                    status,
+                );
             } else if super::super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),
@@ -146,9 +193,45 @@ impl OpenAiCompatibleProvider {
                 self.name,
             );
             let response_bytes = response.bytes().await?;
+            let body_bytes_received = response_bytes.len();
             dump_response_if_enabled(&self.name, &native_request.model, dump_seq, &response_bytes);
             let api_resp: ApiChatResponse = serde_json::from_slice(&response_bytes)
                 .map_err(|err| anyhow::anyhow!("{} response parse error: {err}", self.name))?;
+
+            // Mirror the SSE-branch empty-2xx-stream diagnostic (#3335 /
+            // #3386) on the buffered JSON path. The same upstream
+            // collapse to `AgentError::EmptyProviderResponse` is
+            // reachable here when a managed backend returns 200 with a
+            // content-less JSON payload (credit exhaustion served as
+            // JSON instead of SSE, or an upstream stall flushed as an
+            // empty completion). Without this sibling guard the warn
+            // would only fire on the SSE branch and the buffered case
+            // would silently miss the very signal we're trying to
+            // capture.
+            let buffered_is_empty = api_resp
+                .choices
+                .first()
+                .map(|c| {
+                    let m = &c.message;
+                    let content_empty = m.content.as_deref().is_none_or(str::is_empty);
+                    let reasoning_empty = m.reasoning_content.as_deref().is_none_or(str::is_empty);
+                    let tool_calls_empty = m.tool_calls.as_ref().is_none_or(|t| t.is_empty());
+                    let function_call_empty = m.function_call.is_none();
+                    content_empty && reasoning_empty && tool_calls_empty && function_call_empty
+                })
+                .unwrap_or(true);
+            if buffered_is_empty {
+                let elapsed_ms = stream_started_at.elapsed().as_millis() as u64;
+                log::warn!(
+                    "[stream] {} empty 2xx buffered JSON — model={} elapsed_ms={} body_bytes={} has_usage={} has_openhuman_meta={}",
+                    self.name,
+                    native_request.model,
+                    elapsed_ms,
+                    body_bytes_received,
+                    api_resp.usage.is_some(),
+                    api_resp.openhuman.is_some(),
+                );
+            }
             return Self::parse_native_response(api_resp, &self.name);
         }
 
@@ -163,9 +246,53 @@ impl OpenAiCompatibleProvider {
         let mut buffer = String::new();
         let mut repeat_detector = StreamRepeatDetector::new();
         let mut degenerate_repeat = false;
+        // Forensic counters for the empty-2xx-stream diagnostic below
+        // (issue #3335 / #3386). Both are append-only, never read by
+        // request path logic — strictly observability.
+        //
+        // `body_bytes_received` is the count of body bytes yielded by
+        // `bytes_stream()`. This crate builds reqwest without the
+        // `gzip` / `brotli` / `zstd` / `deflate` features (see
+        // root Cargo.toml), so no Content-Encoding decompression happens
+        // and the count matches what's on the wire. The neutral name
+        // (rather than `raw_bytes` / `decoded_bytes`) sidesteps the
+        // ambiguity an operator would otherwise hit reading the log.
+        let mut sse_chunks_parsed: usize = 0;
+        let mut body_bytes_received: usize = 0;
 
-        'stream: while let Some(item) = bytes_stream.next().await {
+        // #4269: bound each SSE read with a per-chunk inactivity watchdog. The
+        // window RESETS on every received chunk, so a legitimately long response
+        // that keeps emitting tokens is never cut — only a stream that goes
+        // silent for the whole window (an upstream that flushed 200 then stalled
+        // / half-closed the body) trips it. Without this the read parks on
+        // `next().await` until the blunt whole-request timeout fires — which
+        // operators are told to raise up to 3600s for long research turns
+        // (#3856) — presenting as the indefinite RESPONSE-phase hang in #4269.
+        // The bail classifies as retryable, so `ReliableProvider` replays it.
+        let idle_window = self.stream_idle_timeout;
+        'stream: loop {
+            let item = match tokio::time::timeout(idle_window, bytes_stream.next()).await {
+                Ok(Some(item)) => item,
+                Ok(None) => break 'stream,
+                Err(_elapsed) => {
+                    let idle_secs = idle_window.as_secs();
+                    log::warn!(
+                        "[stream] {} watchdog fired — no SSE data for {}s (elapsed_ms={} sse_chunks={} body_bytes={}); aborting stalled stream for retry",
+                        self.name,
+                        idle_secs,
+                        stream_started_at.elapsed().as_millis(),
+                        sse_chunks_parsed,
+                        body_bytes_received,
+                    );
+                    anyhow::bail!(
+                        "{} streaming watchdog: no response data for {}s — aborting stalled stream for retry",
+                        self.name,
+                        idle_secs,
+                    );
+                }
+            };
             let bytes = item?;
+            body_bytes_received += bytes.len();
             buffer.push_str(&String::from_utf8_lossy(&bytes));
 
             while let Some(sep_idx) = buffer.find("\n\n") {
@@ -199,11 +326,20 @@ impl OpenAiCompatibleProvider {
                     };
                     let data = data.trim();
                     if data == "[DONE]" {
-                        continue;
+                        // `[DONE]` is the terminal SSE sentinel — the response is
+                        // complete. Stop reading immediately rather than looping
+                        // back to another watchdog-armed read: a provider that
+                        // sends `[DONE]` but lingers the socket would otherwise
+                        // trip the inactivity watchdog and fail a finished
+                        // response as a retryable stall (#4269 watchdog review).
+                        break 'stream;
                     }
 
                     let chunk: StreamChunkResponse = match serde_json::from_str(data) {
-                        Ok(v) => v,
+                        Ok(v) => {
+                            sse_chunks_parsed += 1;
+                            v
+                        }
                         Err(e) => {
                             log::debug!(
                                 "[stream] {} skipping unparseable chunk: {} — data={}",
@@ -226,11 +362,13 @@ impl OpenAiCompatibleProvider {
                         if let Some(content) = choice.delta.content.as_ref() {
                             if !content.is_empty() {
                                 text_accum.push_str(content);
-                                let _ = delta_tx
-                                    .send(crate::openhuman::inference::provider::ProviderDelta::TextDelta {
+                                self.forward_delta(
+                                    delta_tx,
+                                    ProviderDelta::TextDelta {
                                         delta: content.clone(),
-                                    })
-                                    .await;
+                                    },
+                                )
+                                .await?;
                                 if repeat_detector.observe(content) {
                                     log::warn!(
                                         "[stream] {} degenerate repetition detected (≥{} identical lines) — aborting generation, truncating (text_chars={})",
@@ -246,13 +384,13 @@ impl OpenAiCompatibleProvider {
                         if let Some(reasoning) = choice.delta.reasoning_content.as_ref() {
                             if !reasoning.is_empty() {
                                 thinking_accum.push_str(reasoning);
-                                let _ = delta_tx
-                                    .send(
-                                        crate::openhuman::inference::provider::ProviderDelta::ThinkingDelta {
-                                            delta: reasoning.clone(),
-                                        },
-                                    )
-                                    .await;
+                                self.forward_delta(
+                                    delta_tx,
+                                    ProviderDelta::ThinkingDelta {
+                                        delta: reasoning.clone(),
+                                    },
+                                )
+                                .await?;
                             }
                         }
                         // Tool-call fragments.
@@ -343,12 +481,14 @@ impl OpenAiCompatibleProvider {
                                             id,
                                             name,
                                         );
-                                        let _ = delta_tx
-                                            .send(crate::openhuman::inference::provider::ProviderDelta::ToolCallStart {
+                                        self.forward_delta(
+                                            delta_tx,
+                                            ProviderDelta::ToolCallStart {
                                                 call_id: id.clone(),
                                                 tool_name: name.clone(),
-                                            })
-                                            .await;
+                                            },
+                                        )
+                                        .await?;
                                         entry.emitted_start = true;
                                         if !entry.arguments.is_empty() {
                                             log::debug!(
@@ -358,12 +498,14 @@ impl OpenAiCompatibleProvider {
                                                 entry.arguments.len(),
                                             );
                                             let buffered = entry.arguments.clone();
-                                            let _ = delta_tx
-                                                .send(crate::openhuman::inference::provider::ProviderDelta::ToolCallArgsDelta {
+                                            self.forward_delta(
+                                                delta_tx,
+                                                ProviderDelta::ToolCallArgsDelta {
                                                     call_id: id.clone(),
                                                     delta: buffered,
-                                                })
-                                                .await;
+                                                },
+                                            )
+                                            .await?;
                                             entry.emitted_chars = entry.arguments.len();
                                         }
                                     }
@@ -371,12 +513,14 @@ impl OpenAiCompatibleProvider {
                                     if let Some(ref id) = entry.id {
                                         let fresh =
                                             entry.arguments[entry.emitted_chars..].to_string();
-                                        let _ = delta_tx
-                                            .send(crate::openhuman::inference::provider::ProviderDelta::ToolCallArgsDelta {
+                                        self.forward_delta(
+                                            delta_tx,
+                                            ProviderDelta::ToolCallArgsDelta {
                                                 call_id: id.clone(),
                                                 delta: fresh,
-                                            })
-                                            .await;
+                                            },
+                                        )
+                                        .await?;
                                         entry.emitted_chars = entry.arguments.len();
                                     }
                                 }
@@ -401,6 +545,42 @@ impl OpenAiCompatibleProvider {
             thinking_accum.chars().count(),
             tool_call_count,
         );
+
+        // Issue #3335 / #3386 forensic signal. The streaming chat call
+        // completed with HTTP 2xx but delivered zero visible text, zero
+        // thinking, and zero tool calls. This is the upstream shape that
+        // collapses to `AgentError::EmptyProviderResponse` and gets
+        // rendered to the user as "The model returned an empty
+        // response" with the wrong remediation. Most likely causes:
+        //   (a) backend closed the SSE cleanly under credit exhaustion
+        //       (no `[stream] streaming API error` breadcrumb fires
+        //       because status was 200) — common on the OpenHuman
+        //       managed route under #3386,
+        //   (b) backend's upstream LLM provider stalled / timed out
+        //       and the backend forwarded an empty stream instead of
+        //       propagating the upstream error,
+        //   (c) a genuine degenerate model output (rare on hosted
+        //       reasoning models; more common on community quants).
+        // Logged at warn so it lands in Sentry breadcrumbs even after
+        // `AgentError::skips_sentry()` (PR #2790) silences the parent
+        // event. Correlate by elapsed_ms (fast == reject, slow ==
+        // stall), sse_chunks (0 == no SSE at all, >0 == backend
+        // streamed metadata-only chunks), has_usage (the upstream
+        // counted tokens but delivered no content), and
+        // has_openhuman_meta (managed backend reported routing info).
+        if text_accum.is_empty() && thinking_accum.is_empty() && tool_call_count == 0 {
+            let elapsed_ms = stream_started_at.elapsed().as_millis() as u64;
+            log::warn!(
+                "[stream] {} empty 2xx stream — model={} elapsed_ms={} sse_chunks={} body_bytes={} has_usage={} has_openhuman_meta={}",
+                self.name,
+                native_request.model,
+                elapsed_ms,
+                sse_chunks_parsed,
+                body_bytes_received,
+                last_usage.is_some(),
+                last_openhuman.is_some(),
+            );
+        }
 
         let tool_calls_for_api: Vec<ToolCall> = tool_accum
             .into_values()
@@ -488,6 +668,36 @@ impl OpenAiCompatibleProvider {
         }
 
         Self::parse_native_response(api_resp, &self.name)
+    }
+
+    /// Forward a streamed [`ProviderDelta`] to the caller under the same
+    /// inactivity watchdog as the SSE read (#4269). A dropped receiver is a
+    /// benign stop (the consumer is gone — `Ok`, and the loop keeps aggregating
+    /// as before); a consumer that backpressures for the whole idle window is a
+    /// wedge (e.g. a stalled UI progress bridge), which trips the watchdog so a
+    /// turn can't hang on a full delta channel. The bail classifies as retryable.
+    async fn forward_delta(
+        &self,
+        delta_tx: &tokio::sync::mpsc::Sender<ProviderDelta>,
+        delta: ProviderDelta,
+    ) -> anyhow::Result<()> {
+        match tokio::time::timeout(self.stream_idle_timeout, delta_tx.send(delta)).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Ok(()), // receiver dropped — consumer gone, not a stall
+            Err(_elapsed) => {
+                let idle_secs = self.stream_idle_timeout.as_secs();
+                log::warn!(
+                    "[stream] {} watchdog fired — delta channel backpressured for {}s; aborting stalled stream for retry",
+                    self.name,
+                    idle_secs,
+                );
+                anyhow::bail!(
+                    "{} streaming watchdog: delta channel stalled for {}s — aborting stalled stream for retry",
+                    self.name,
+                    idle_secs,
+                )
+            }
+        }
     }
 }
 

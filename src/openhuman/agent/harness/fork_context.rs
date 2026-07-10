@@ -14,11 +14,12 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::config::AgentConfig;
 use crate::openhuman::inference::provider::Provider;
 use crate::openhuman::memory::Memory;
+use crate::openhuman::skills::Workflow;
 use crate::openhuman::tools::{Tool, ToolSpec};
-use crate::openhuman::workflows::Workflow;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tinyagents::harness::workspace::WorkspaceDescriptor;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parent execution context
@@ -52,6 +53,16 @@ pub struct ParentExecutionContext {
     /// provider for prefix-cache reuse.
     pub all_tool_specs: Arc<Vec<ToolSpec>>,
 
+    /// Names of the tools the parent actually advertises and will execute
+    /// this turn (the visibility-filtered subset of `all_tools`, including
+    /// runtime-synthesised `delegate_*` tools). Tools call sites that need
+    /// to reason about what the parent can *actually* invoke — e.g.
+    /// `agent_prepare_context` recommending next tool calls — must consult
+    /// this, not `all_tool_specs` (which is the full registry, including
+    /// hidden direct-exec/spawn tools the parent never advertises). Empty
+    /// means "unknown" — callers should treat that as "no restriction".
+    pub visible_tool_names: std::collections::HashSet<String>,
+
     /// Model name the parent is currently using (after classification).
     pub model_name: String,
 
@@ -60,6 +71,13 @@ pub struct ParentExecutionContext {
 
     /// Working directory of the parent agent.
     pub workspace_dir: PathBuf,
+
+    /// TinyAgents workspace descriptor currently active for this parent turn.
+    /// Tool-boundary spawns pass descriptors explicitly through
+    /// `SubagentRunOptions`; this ambient field is only a fallback for
+    /// internal/background fanout paths that already inherit the parent runtime
+    /// through this task-local.
+    pub workspace_descriptor: Option<WorkspaceDescriptor>,
 
     /// Parent's memory backing store. Sub-agents share it for read access
     /// but skip the per-turn context injection to save tokens — the
@@ -129,11 +147,29 @@ pub struct ParentExecutionContext {
     pub run_queue: Option<Arc<crate::openhuman::agent::harness::run_queue::RunQueue>>,
 }
 
+/// A context-preparation source that already ran for the current parent turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentContextPreparedSource {
+    pub source: String,
+    pub has_enough_context: Option<bool>,
+}
+
 tokio::task_local! {
     /// Parent execution context, scoped per agent turn. `None` for any
     /// tool invocation that happens outside an agent turn (e.g. CLI/RPC
     /// direct tool calls); `spawn_subagent` rejects in that case.
     pub static PARENT_CONTEXT: ParentExecutionContext;
+
+    /// Context-preparation sources that already ran for this parent turn.
+    /// Tools such as `agent_prepare_context` use this to avoid spawning a
+    /// second context scout after the harness has already prepared context.
+    ///
+    /// Behind an `Arc<Mutex<…>>` (not a plain `Arc<Vec<…>>`) so a source can be
+    /// **appended live** mid-turn — the graph's `SuperContextMiddleware` runs its
+    /// scout during the harness run (after the initial list is scoped) and
+    /// registers its source via [`push_agent_context_prepared_source`] so a later
+    /// `agent_prepare_context` call in the same turn still self-suppresses.
+    pub static AGENT_CONTEXT_PREPARED_SOURCES: Arc<std::sync::Mutex<Vec<AgentContextPreparedSource>>>;
 }
 
 /// Returns a clone of the current parent execution context, if one is set.
@@ -150,4 +186,41 @@ where
     F: std::future::Future<Output = R>,
 {
     PARENT_CONTEXT.scope(ctx, future).await
+}
+
+/// Returns the one-shot context-preparation sources that have already run for
+/// the current parent turn (a snapshot of the live list).
+pub fn current_agent_context_prepared_sources() -> Vec<AgentContextPreparedSource> {
+    AGENT_CONTEXT_PREPARED_SOURCES
+        .try_with(|sources| sources.lock().map(|s| s.clone()).unwrap_or_default())
+        .unwrap_or_default()
+}
+
+/// Append a source to the current turn's prepared-context list, live.
+///
+/// Used by the graph's `SuperContextMiddleware`, which prepares context *during*
+/// the harness run (after [`with_agent_context_prepared_sources`] scoped the
+/// initial list) so a later `agent_prepare_context` tool call in the same turn
+/// observes it and self-suppresses. No-op outside an agent turn.
+pub fn push_agent_context_prepared_source(source: AgentContextPreparedSource) {
+    let _ = AGENT_CONTEXT_PREPARED_SOURCES.try_with(|sources| {
+        if let Ok(mut guard) = sources.lock() {
+            guard.push(source);
+        }
+    });
+}
+
+/// Run `future` with the current turn's already-prepared context sources
+/// installed. The list is appendable mid-turn via
+/// [`push_agent_context_prepared_source`].
+pub async fn with_agent_context_prepared_sources<F, R>(
+    sources: Vec<AgentContextPreparedSource>,
+    future: F,
+) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    AGENT_CONTEXT_PREPARED_SOURCES
+        .scope(Arc::new(std::sync::Mutex::new(sources)), future)
+        .await
 }

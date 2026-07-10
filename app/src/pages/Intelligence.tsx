@@ -5,14 +5,16 @@ import { useSearchParams } from 'react-router-dom';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import IntelligenceAgentsTab from '../components/intelligence/IntelligenceAgentsTab';
 import IntelligenceAgentWorkTab from '../components/intelligence/IntelligenceAgentWorkTab';
+import IntelligenceOrchestrationTab from '../components/intelligence/IntelligenceOrchestrationTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
 import IntelligenceTeamsTab from '../components/intelligence/IntelligenceTeamsTab';
+import IntelligenceWorktreesTab from '../components/intelligence/IntelligenceWorktreesTab';
 import MemorySection from '../components/intelligence/MemorySection';
 import ModelCouncilTab from '../components/intelligence/ModelCouncilTab';
 import { ToastContainer } from '../components/intelligence/Toast';
 import WorkflowsTab from '../components/intelligence/WorkflowsTab';
-import PillTabBar from '../components/PillTabBar';
+import ChipTabs from '../components/layout/ChipTabs';
 import SettingsHeader from '../components/settings/components/SettingsHeader';
 import { useSettingsNavigation } from '../components/settings/hooks/useSettingsNavigation';
 import { useDeveloperMode } from '../hooks/useDeveloperMode';
@@ -34,9 +36,11 @@ type IntelligenceTab =
   | 'subconscious'
   | 'tasks'
   | 'agent-work'
+  | 'worktrees'
   | 'teams'
   | 'agents'
   | 'workflows'
+  | 'orchestration'
   | 'council';
 
 const INTELLIGENCE_TABS: IntelligenceTab[] = [
@@ -44,9 +48,11 @@ const INTELLIGENCE_TABS: IntelligenceTab[] = [
   'subconscious',
   'tasks',
   'agent-work',
+  'worktrees',
   'teams',
   'agents',
   'workflows',
+  'orchestration',
   'council',
 ];
 
@@ -118,9 +124,11 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
   // Subconscious engine data
   const {
     status: subconsciousEngineStatus,
+    instances: subconsciousInstances,
     mode: subconsciousMode,
     intervalMinutes: subconsciousInterval,
     triggering: subconsciousTriggering,
+    isTriggering: subconsciousIsTriggering,
     settingMode: subconsciousSettingMode,
     triggerTick,
     setMode: setSubconsciousMode,
@@ -170,6 +178,11 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
       label: t('memory.tab.agentWork'),
       description: t('memory.tab.agentWorkDescription'),
     },
+    {
+      id: 'worktrees',
+      label: t('memory.tab.worktrees'),
+      description: t('memory.tab.worktreesDescription'),
+    },
     { id: 'teams', label: t('memory.tab.teams'), description: t('memory.tab.teamsDescription') },
     { id: 'memory', label: t('memory.tab.memory') },
     { id: 'subconscious', label: t('memory.tab.subconscious') },
@@ -178,6 +191,11 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
       label: t('memory.tab.workflows'),
       description: t('memory.tab.workflowsDescription'),
     },
+    {
+      id: 'orchestration',
+      label: t('memory.tab.orchestration'),
+      description: t('memory.tab.orchestrationDescription'),
+    },
     { id: 'council', label: t('memory.tab.council'), devOnly: true },
     { id: 'agents', label: t('memory.tab.agents'), description: t('memory.tab.agentsDescription') },
   ];
@@ -185,41 +203,44 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
   const activeTabDef = tabs.find(tab => tab.id === activeTab);
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.developerMenu.intelligence.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+    // Rendered inside Brain's `h-full overflow-hidden` card, so this panel must
+    // own its own scroll (like the sibling PanelPage panels) — otherwise its
+    // content overflows the card and is clipped with no scrollbar (#4267). A
+    // flex column pins the header (`flex-shrink-0`) and gives the body the one
+    // vertical scroll (`min-h-0 flex-1 overflow-y-auto`).
+    <div className="z-10 relative flex h-full min-h-0 flex-col">
+      <div className="flex-shrink-0">
+        <SettingsHeader
+          title={t('settings.developerMenu.intelligence.title')}
+          showBackButton={true}
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      </div>
 
-      <div className="p-4 space-y-4">
-        <PillTabBar
-          items={tabs.map(tab => ({ label: tab.label, value: tab.id }))}
-          selected={activeTab}
-          onChange={setActiveTab}
-          activeClassName="border-primary-600 bg-primary-600 text-white"
-          renderItem={(item, active) => {
-            const tab = tabs.find(entry => entry.id === item.value);
-            return (
+      <div
+        className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4"
+        data-testid="intelligence-scroll">
+        <ChipTabs<IntelligenceTab>
+          items={tabs.map(tab => ({
+            id: tab.id,
+            label: (
               <span className="inline-flex items-center gap-1.5">
-                <span>{item.label}</span>
-                {tab?.comingSoon && (
-                  <span
-                    className={`rounded-full border px-1.5 py-0.5 text-[10px] ${
-                      active
-                        ? 'border-white/30 bg-white/15 text-white'
-                        : 'border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/60 text-neutral-500 dark:text-neutral-400'
-                    }`}>
+                <span>{tab.label}</span>
+                {tab.comingSoon && (
+                  <span className="rounded-full border border-line bg-surface-muted px-1.5 py-0.5 text-[10px] text-content-muted">
                     {t('misc.beta')}
                   </span>
                 )}
               </span>
-            );
-          }}
+            ),
+          }))}
+          value={activeTab}
+          onChange={setActiveTab}
+          className="flex flex-wrap gap-2 pb-1"
         />
 
-        <div className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-neutral-200 dark:border-neutral-800 p-6">
+        <div className="bg-surface rounded-2xl shadow-soft border border-line p-6">
           <div>
             {/* Sub-heading — reflects the active tab (e.g. "Agent Tasks") so
                 the panel body title matches what's shown below it, rather than
@@ -227,14 +248,12 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
             <div className="flex items-center justify-between mb-6">
               <div className="min-w-0">
                 <h2
-                  className="text-xl font-bold text-neutral-800 dark:text-neutral-100"
+                  className="text-xl font-bold text-content"
                   data-walkthrough="intelligence-header">
                   {activeTabDef?.label ?? t('memory.title')}
                 </h2>
                 {activeTabDef?.description && (
-                  <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-                    {activeTabDef.description}
-                  </p>
+                  <p className="mt-1 text-sm text-content-muted">{activeTabDef.description}</p>
                 )}
                 {/* Header count badge was sourced from `stats.total` which
                     in turn came from the legacy actionable-items pipeline
@@ -253,13 +272,16 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
             {activeTab === 'subconscious' && (
               <IntelligenceSubconsciousTab
                 status={subconsciousEngineStatus}
+                instances={subconsciousInstances}
                 mode={subconsciousMode}
                 intervalMinutes={subconsciousInterval}
                 triggerTick={triggerTick}
                 triggering={subconsciousTriggering}
+                isTriggering={subconsciousIsTriggering}
                 settingMode={subconsciousSettingMode}
                 setMode={setSubconsciousMode}
                 setIntervalMinutes={setSubconsciousInterval}
+                onViewDirectives={() => setActiveTab('orchestration')}
               />
             )}
 
@@ -267,11 +289,15 @@ export default function Intelligence({ tabParamKey = 'tab' }: IntelligenceProps 
 
             {activeTab === 'agent-work' && <IntelligenceAgentWorkTab />}
 
+            {activeTab === 'worktrees' && <IntelligenceWorktreesTab />}
+
             {activeTab === 'teams' && <IntelligenceTeamsTab />}
 
             {activeTab === 'agents' && <IntelligenceAgentsTab />}
 
             {activeTab === 'workflows' && <WorkflowsTab />}
+
+            {activeTab === 'orchestration' && <IntelligenceOrchestrationTab />}
 
             {activeTab === 'council' && <ModelCouncilTab />}
           </div>

@@ -7,6 +7,14 @@ pub enum JobType {
     #[default]
     Shell,
     Agent,
+    /// A `flows::Flow` schedule trigger binding (issue B2). The job's
+    /// `command` column carries the bound flow's id (there is no shell
+    /// command / agent prompt to run); on fire the scheduler publishes
+    /// `DomainEvent::FlowScheduleTick { flow_id }` instead of running
+    /// anything itself — `flows::bus::FlowTriggerSubscriber` does the actual
+    /// dispatch. Created by `flows::ops::flows_set_enabled` (via
+    /// `cron::add_flow_schedule_job`), never via the `cron_add` agent tool.
+    Flow,
 }
 
 impl JobType {
@@ -14,12 +22,15 @@ impl JobType {
         match self {
             Self::Shell => "shell",
             Self::Agent => "agent",
+            Self::Flow => "flow",
         }
     }
 
     pub(crate) fn parse(raw: &str) -> Self {
         if raw.eq_ignore_ascii_case("agent") {
             Self::Agent
+        } else if raw.eq_ignore_ascii_case("flow") {
+            Self::Flow
         } else {
             Self::Shell
         }
@@ -268,9 +279,11 @@ mod tests {
     fn job_type_parse_and_as_str_roundtrip() {
         assert_eq!(JobType::parse("shell").as_str(), "shell");
         assert_eq!(JobType::parse("agent").as_str(), "agent");
+        assert_eq!(JobType::parse("flow").as_str(), "flow");
         // Case-insensitive
         assert_eq!(JobType::parse("AGENT"), JobType::Agent);
         assert_eq!(JobType::parse("Agent"), JobType::Agent);
+        assert_eq!(JobType::parse("FLOW"), JobType::Flow);
         // Anything unknown falls back to Shell (the default) — guards
         // against unexpected legacy DB rows silently turning into Agent.
         assert_eq!(JobType::parse(""), JobType::Shell);

@@ -42,21 +42,22 @@ async fn ingest_doc(
     result.document_id
 }
 
-/// Two-tick E2E test — verifies the agent-per-tick model can process
-/// ingested memory data and persist tick state.
+/// Two-tick E2E test — verifies the structured tick model persists tick
+/// state across runs. The first tick has no world baseline, so it
+/// establishes one; subsequent ticks diff against it. (Exercising the full
+/// diff → decide path additionally requires configured + synced memory
+/// sources; this smoke test focuses on the tick lifecycle + state.)
 #[tokio::test]
 #[ignore] // requires running Ollama
 async fn two_tick_e2e_with_real_ollama() {
     use openhuman_core::openhuman::embeddings::NoopEmbedding;
-    use openhuman_core::openhuman::memory::{MemoryClient, UnifiedMemory};
+    use openhuman_core::openhuman::memory::UnifiedMemory;
     use openhuman_core::openhuman::subconscious::store;
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let workspace = tmp.path();
 
     let memory = UnifiedMemory::new(workspace, Arc::new(NoopEmbedding), None).expect("init memory");
-    let memory_client =
-        MemoryClient::from_workspace_dir(workspace.to_path_buf()).expect("memory client");
 
     // Ingest test data
     ingest_doc(
@@ -80,10 +81,7 @@ async fn two_tick_e2e_with_real_ollama() {
     config.local_ai.runtime_enabled = true;
     config.local_ai.usage.subconscious = true;
 
-    let engine = openhuman_core::openhuman::subconscious::SubconsciousEngine::new(
-        &config,
-        Some(Arc::new(memory_client)),
-    );
+    let engine = openhuman_core::openhuman::subconscious::memory_instance(&config);
 
     // Tick 1
     println!("\n=== TICK 1 ===");
@@ -92,7 +90,8 @@ async fn two_tick_e2e_with_real_ollama() {
     println!("  Response chars: {}", result1.response_chars);
 
     let last_tick1 =
-        store::with_connection(workspace, store::get_last_tick_at).expect("read last tick");
+        store::with_connection(workspace, |conn| store::get_last_tick_at(conn, "memory"))
+            .expect("read last tick");
     assert!(last_tick1 >= result1.tick_at);
 
     // Tick 2 with new data

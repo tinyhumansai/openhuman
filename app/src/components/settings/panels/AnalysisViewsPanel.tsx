@@ -9,8 +9,9 @@ import GraphCohesionTab from '../../intelligence/GraphCohesionTab';
 import MemoryFreshnessTab from '../../intelligence/MemoryFreshnessTab';
 import MemoryTimelineTab from '../../intelligence/MemoryTimelineTab';
 import NamespaceOverviewTab from '../../intelligence/NamespaceOverviewTab';
-import PillTabBar from '../../PillTabBar';
-import SettingsHeader from '../components/SettingsHeader';
+import ChipTabs from '../../layout/ChipTabs';
+import PanelPage from '../../layout/PanelPage';
+import SettingsBackButton from '../components/SettingsBackButton';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 /**
@@ -33,7 +34,7 @@ type AnalysisView =
 
 const AnalysisViewsPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack } = useSettingsNavigation();
   const [activeView, setActiveView] = useState<AnalysisView>('diagram');
 
   const views: { id: AnalysisView; label: string }[] = [
@@ -48,19 +49,17 @@ const AnalysisViewsPanel = () => {
   ];
 
   return (
-    <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.analysisViews.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-      <div className="p-4 space-y-4">
-        <PillTabBar
-          items={views.map(view => ({ label: view.label, value: view.id }))}
-          selected={activeView}
+    <PanelPage
+      className="z-10"
+      contentClassName=""
+      description={t('settings.analysisViews.menuDesc')}
+      leading={<SettingsBackButton onBack={navigateBack} />}>
+      <div className="p-4 space-y-5">
+        <ChipTabs<AnalysisView>
+          items={views.map(view => ({ id: view.id, label: view.label }))}
+          value={activeView}
           onChange={setActiveView}
-          containerClassName="flex flex-wrap gap-2 pb-1"
+          className="flex flex-wrap gap-1.5 pb-1"
         />
 
         {activeView === 'diagram' && <DiagramViewerTab />}
@@ -72,7 +71,7 @@ const AnalysisViewsPanel = () => {
         {activeView === 'paths' && <ConnectionPathTab />}
         {activeView === 'namespaces' && <NamespaceOverviewTab />}
       </div>
-    </div>
+    </PanelPage>
   );
 };
 
