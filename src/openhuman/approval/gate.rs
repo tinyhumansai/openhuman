@@ -203,6 +203,72 @@ pub struct ApprovalGate {
     meeting_to_request: Mutex<HashMap<String, String>>,
 }
 
+/// Cleans up a parked approval if its future is dropped before the normal
+/// decision/timeout path can run (for example, by an outer turn deadline).
+struct ParkedApprovalCleanupGuard<'a> {
+    gate: &'a ApprovalGate,
+    request_id: String,
+    thread_id: Option<String>,
+    in_call_ctx: Option<InCallApprovalContext>,
+    armed: bool,
+}
+
+impl<'a> ParkedApprovalCleanupGuard<'a> {
+    fn new(
+        gate: &'a ApprovalGate,
+        request_id: String,
+        thread_id: Option<String>,
+        in_call_ctx: Option<InCallApprovalContext>,
+    ) -> Self {
+        Self {
+            gate,
+            request_id,
+            thread_id,
+            in_call_ctx,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for ParkedApprovalCleanupGuard<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+
+        tracing::warn!(
+            request_id = %self.request_id,
+            "[approval::gate] parked approval future dropped externally; cleaning up"
+        );
+
+        // Remove in-memory routing first so a storage failure cannot leave a
+        // later yes/no reply pointed at a waiter that no longer exists.
+        self.gate.evict_waiter(&self.request_id);
+        self.gate.clear_thread(&self.thread_id);
+        self.gate.clear_meeting(&self.in_call_ctx);
+
+        match store::decide(&self.gate.config, &self.request_id, ApprovalDecision::Deny) {
+            Ok(Some(_)) => tracing::debug!(
+                request_id = %self.request_id,
+                "[approval::gate] externally dropped approval marked denied"
+            ),
+            Ok(None) => tracing::debug!(
+                request_id = %self.request_id,
+                "[approval::gate] externally dropped approval was already resolved"
+            ),
+            Err(err) => tracing::error!(
+                request_id = %self.request_id,
+                error = %err,
+                "[approval::gate] failed to persist denial for externally dropped approval"
+            ),
+        }
+    }
+}
+
 impl ApprovalGate {
     /// Install the process-global gate. Returns the existing gate if
     /// one was already installed (re-install is a no-op so repeated
@@ -644,6 +710,7 @@ impl ApprovalGate {
         if let Err(err) = store::insert_pending(&self.config, &pending, &self.session_id) {
             self.evict_waiter(&request_id);
             self.clear_thread(&chat_thread_id);
+            self.clear_meeting(&in_call_ctx);
             tracing::error!(
                 error = %err,
                 tool = tool_name,
@@ -659,6 +726,13 @@ impl ApprovalGate {
                 None,
             );
         }
+
+        let mut cleanup_guard = ParkedApprovalCleanupGuard::new(
+            self,
+            request_id.clone(),
+            chat_thread_id.clone(),
+            in_call_ctx.clone(),
+        );
 
         tracing::info!(
             request_id = %request_id,
@@ -830,6 +904,7 @@ impl ApprovalGate {
         // every exit (decision, channel drop, or timeout).
         self.clear_thread(&chat_thread_id);
         self.clear_meeting(&in_call_ctx);
+        cleanup_guard.disarm();
         outcome
     }
 
@@ -1320,6 +1395,86 @@ mod tests {
             GateOutcome::Deny { reason } => assert!(reason.contains("pushover")),
             other => panic!("expected deny, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn externally_aborted_chat_waiter_cleans_pending_state() {
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                web_origin(),
+                APPROVAL_CHAT_CONTEXT.scope(
+                    chat_ctx(),
+                    g.intercept("composio", "send slack", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let mut tries = 0;
+        let request_id = loop {
+            if let Some(request_id) = gate.pending_for_thread("t-test") {
+                break request_id;
+            }
+            tries += 1;
+            assert!(tries < 1_000, "chat approval route never appeared");
+            tokio::task::yield_now().await;
+        };
+        assert!(gate.waiters.lock().contains_key(&request_id));
+
+        handle.abort();
+        assert!(handle.await.unwrap_err().is_cancelled());
+
+        assert!(gate.pending_for_thread("t-test").is_none());
+        assert!(!gate.waiters.lock().contains_key(&request_id));
+        assert!(gate.list_pending().unwrap().is_empty());
+        assert_eq!(
+            store::get_decision(&gate.config, &request_id).unwrap(),
+            Some(ApprovalDecision::Deny)
+        );
+    }
+
+    #[tokio::test]
+    async fn externally_aborted_in_call_waiter_cleans_meeting_route() {
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                meet_origin(),
+                APPROVAL_IN_CALL_CONTEXT.scope(
+                    in_call_ctx(),
+                    g.intercept("composio", "send email", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let mut tries = 0;
+        let request_id = loop {
+            if let Some(request_id) = gate.pending_for_meeting("meet-1") {
+                break request_id;
+            }
+            tries += 1;
+            assert!(tries < 1_000, "meeting approval route never appeared");
+            tokio::task::yield_now().await;
+        };
+        assert!(gate.waiters.lock().contains_key(&request_id));
+
+        handle.abort();
+        assert!(handle.await.unwrap_err().is_cancelled());
+
+        assert!(gate.pending_for_meeting("meet-1").is_none());
+        assert!(!gate.waiters.lock().contains_key(&request_id));
+        assert!(gate.list_pending().unwrap().is_empty());
+        assert_eq!(
+            store::get_decision(&gate.config, &request_id).unwrap(),
+            Some(ApprovalDecision::Deny)
+        );
     }
 
     #[tokio::test]
