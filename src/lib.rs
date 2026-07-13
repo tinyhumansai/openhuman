@@ -24,7 +24,7 @@ pub use openhuman::memory_store::{MemoryClient, MemoryState};
 /// Embeddable core composition API. Host the OpenHuman core in any process —
 /// the Tauri shell, a CLI, a stdio MCP server, or a cloud/team server — via
 /// [`CoreBuilder`] → [`CoreRuntime`]. See `docs/plans/pluggable-core/`.
-pub use core::runtime::{CoreBuilder, CoreRuntime, ServiceSet, TokenSource};
+pub use core::runtime::{CoreBuilder, CoreRuntime, DomainSet, ServiceSet, TokenSource};
 pub use core::types::HostKind;
 
 /// Runs the core logic based on the provided command-line arguments.

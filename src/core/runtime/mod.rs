@@ -28,4 +28,4 @@ pub mod builder;
 pub mod context;
 pub mod services;
 
-pub use builder::{CoreBuilder, CoreRuntime, ServiceSet, TokenSource};
+pub use builder::{CoreBuilder, CoreRuntime, DomainSet, ServiceSet, TokenSource};

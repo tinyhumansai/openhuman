@@ -50,6 +50,11 @@ tokio::task_local! {
 pub struct CoreContext {
     host_kind: HostKind,
     workspace_dir: RwLock<Option<std::path::PathBuf>>,
+    /// Which domain families are live for this context (#4796). The registry
+    /// filters its controller/schema/dispatch surface by this set via
+    /// [`CoreContext::current`] → [`CoreContext::domains`]. `full()` for the
+    /// desktop shell / standalone CLI (byte-identical to pre-#4796).
+    domains: crate::core::runtime::DomainSet,
 }
 
 impl CoreContext {
@@ -65,11 +70,13 @@ impl CoreContext {
     pub async fn init(
         host_kind: HostKind,
         token: &TokenSource,
+        domains: crate::core::runtime::DomainSet,
     ) -> anyhow::Result<(
         Arc<CoreContext>,
         bool,
         Option<crate::openhuman::config::Config>,
     )> {
+        log::debug!("[core-context] init: host_kind={host_kind:?} domains={domains:?}");
         // 1. Ensure all controllers are registered before anything dispatches.
         let _ = crate::core::all::all_registered_controllers();
 
@@ -115,7 +122,7 @@ impl CoreContext {
         //    (memory, attachments, whatsapp, people) with that exact workspace.
         let config = match crate::openhuman::config::Config::load_or_init().await {
             Ok(cfg) => {
-                init_stores(&cfg).await;
+                init_stores(&cfg, domains).await;
                 Some(cfg)
             }
             Err(e) => {
@@ -138,11 +145,12 @@ impl CoreContext {
         //    background jobs start later, from CoreRuntime::serve(), after bind
         //    succeeds.
         let runtime_config = config.clone();
-        crate::core::jsonrpc::bootstrap_core_runtime(host_kind, config).await;
+        crate::core::jsonrpc::bootstrap_core_runtime(host_kind, config, domains).await;
 
         let ctx = Arc::new(CoreContext {
             host_kind,
             workspace_dir: RwLock::new(workspace_dir),
+            domains,
         });
 
         // Register the process default context (first build wins). Dispatch
@@ -155,6 +163,13 @@ impl CoreContext {
     /// The host that constructed this context (Tauri shell / CLI / Docker).
     pub fn host_kind(&self) -> HostKind {
         self.host_kind
+    }
+
+    /// Which domain families are live for this context (#4796). The controller
+    /// registry consults this (via [`CoreContext::current`]) to filter its
+    /// schema/dispatch/tool surface. `full()` for desktop/CLI.
+    pub fn domains(&self) -> crate::core::runtime::DomainSet {
+        self.domains
     }
 
     /// The resolved per-user workspace directory this context is bound to.
@@ -242,6 +257,23 @@ impl CoreContext {
     pub async fn scope<F: Future>(ctx: Arc<CoreContext>, fut: F) -> F::Output {
         CURRENT_CONTEXT.scope(ctx, fut).await
     }
+
+    /// Test-only constructor: build a context with an explicit
+    /// [`DomainSet`](crate::core::runtime::DomainSet) and optional workspace, so
+    /// cross-module tests (e.g. `core::all`'s registry filter) can exercise the
+    /// ambient DomainSet gate without going through the full [`CoreContext::init`]
+    /// boot sequence.
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        domains: crate::core::runtime::DomainSet,
+        workspace_dir: Option<std::path::PathBuf>,
+    ) -> Arc<CoreContext> {
+        Arc::new(CoreContext {
+            host_kind: HostKind::Cli,
+            workspace_dir: RwLock::new(workspace_dir),
+            domains,
+        })
+    }
 }
 
 /// Initialize the global `MemoryClient` and the other workspace-bound stores so
@@ -260,41 +292,63 @@ impl CoreContext {
 /// client not ready" error rather than reading/writing the wrong workspace. The
 /// server still comes up; the operator sees the loud error and fixes their
 /// config or sets `OPENHUMAN_WORKSPACE` to a writable path, then restarts.
-pub async fn init_stores(cfg: &crate::openhuman::config::Config) {
+pub async fn init_stores(
+    cfg: &crate::openhuman::config::Config,
+    domains: crate::core::runtime::DomainSet,
+) {
+    use crate::core::all::DomainGroup;
+
     let keyring_dir = crate::openhuman::keyring::store::workspace_dir_for_file_backend();
+    // Keyring path log + credentials Sentry bind (below) are unguarded — they
+    // are core infra every DomainSet needs. Each workspace-bound store init is
+    // gated on its owning DomainGroup so an excluded domain's store stays
+    // uninitialized under `harness()`/`none()` (#4796 DoD item 3).
     log::info!(
-        "[boot] paths: config={} workspace={} keyring_dir={} keyring_backend={}",
+        "[boot] paths: config={} workspace={} keyring_dir={} keyring_backend={} domains={:?}",
         cfg.config_path.display(),
         cfg.workspace_dir.display(),
         keyring_dir.display(),
         crate::openhuman::keyring::backend_name(),
+        domains,
     );
-    match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
-        Ok(_) => log::info!(
-            "[boot] memory::global initialized (workspace={})",
-            cfg.workspace_dir.display()
-        ),
-        Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
+    if domains.allows(DomainGroup::Memory) {
+        match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
+            Ok(_) => log::info!(
+                "[boot] memory::global initialized (workspace={})",
+                cfg.workspace_dir.display()
+            ),
+            Err(e) => log::warn!("[boot] memory::global init failed: {e}"),
+        }
+    } else {
+        log::debug!("[boot] memory::global init SKIPPED — Memory domain disabled");
     }
     // Install the on-disk image-attachment sidecar dir so inbound
     // image markers persist under <workspace>/attachments/ instead
     // of an in-memory FIFO (survives restarts + delegation hops).
     // Also fires a best-effort stale-file sweep.
-    crate::openhuman::agent::multimodal::init_attachments_dir(
-        cfg.workspace_dir.join("attachments"),
-    );
-    log::info!(
-        "[boot] image attachments sidecar dir = {}",
-        cfg.workspace_dir.join("attachments").display()
-    );
+    if domains.allows(DomainGroup::Agent) {
+        crate::openhuman::agent::multimodal::init_attachments_dir(
+            cfg.workspace_dir.join("attachments"),
+        );
+        log::info!(
+            "[boot] image attachments sidecar dir = {}",
+            cfg.workspace_dir.join("attachments").display()
+        );
+    } else {
+        log::debug!("[boot] image attachments sidecar dir SKIPPED — Agent domain disabled");
+    }
     // Initialize the WhatsApp data store so scanner ingest calls
     // can write data without requiring a lazy-init fallback.
-    match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
-        Ok(_) => log::info!(
-            "[boot] whatsapp_data::global initialized (workspace={})",
-            cfg.workspace_dir.display()
-        ),
-        Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
+    if domains.allows(DomainGroup::Channels) {
+        match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
+            Ok(_) => log::info!(
+                "[boot] whatsapp_data::global initialized (workspace={})",
+                cfg.workspace_dir.display()
+            ),
+            Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
+        }
+    } else {
+        log::debug!("[boot] whatsapp_data::global init SKIPPED — Channels domain disabled");
     }
     // Seed the people store so people controllers + `people_*`
     // tools can read/write. Without this the process-global stays
@@ -302,18 +356,26 @@ pub async fn init_stores(cfg: &crate::openhuman::config::Config) {
     // initialised" (Sentry TAURI-RUST-8NM). Sits inside this
     // Ok(cfg) arm so it inherits the wrong-workspace guard above
     // (never seed against a Config::default fallback).
-    match crate::openhuman::people::store::init_from_workspace(&cfg.workspace_dir) {
-        Ok(_) => log::info!(
-            "[boot] people::store initialized (workspace={})",
-            cfg.workspace_dir.display()
-        ),
-        Err(e) => log::warn!("[boot] people::store init failed: {e}"),
+    if domains.allows(DomainGroup::Platform) {
+        match crate::openhuman::people::store::init_from_workspace(&cfg.workspace_dir) {
+            Ok(_) => log::info!(
+                "[boot] people::store initialized (workspace={})",
+                cfg.workspace_dir.display()
+            ),
+            Err(e) => log::warn!("[boot] people::store init failed: {e}"),
+        }
+    } else {
+        log::debug!("[boot] people::store init SKIPPED — Platform domain disabled");
     }
     // Prune legacy bundled skills (dev-workflow / github-issue-crusher
     // / pr-review-shepherd) that older builds seeded into
     // <workspace>/skills/. OpenHuman no longer ships bundled defaults;
     // this removes the stale dirs on upgrade. Idempotent.
-    crate::openhuman::skills::registry::prune_legacy_default_workflows(&cfg.workspace_dir);
+    if domains.allows(DomainGroup::Skills) {
+        crate::openhuman::skills::registry::prune_legacy_default_workflows(&cfg.workspace_dir);
+    } else {
+        log::debug!("[boot] skills legacy-workflow prune SKIPPED — Skills domain disabled");
+    }
     // Boot-time Sentry user binding — issue #3135. If the user is
     // already signed in (typical desktop restart), the auth-profile
     // store has their `user_id` *now*, before any background loop
@@ -341,6 +403,7 @@ mod tests {
         Arc::new(CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(Some(PathBuf::from(dir))),
+            domains: crate::core::runtime::DomainSet::full(),
         })
     }
 
@@ -358,6 +421,19 @@ mod tests {
         })
         .await;
         assert_eq!(seen, Some(PathBuf::from("/tmp/ctx-a")));
+    }
+
+    #[tokio::test]
+    async fn scoped_context_exposes_its_domain_set() {
+        // The ambient `current().domains()` must reflect the scoped context's
+        // DomainSet — this is the seam the registry filter reads (#4796).
+        let harness = crate::core::runtime::DomainSet::harness();
+        let ctx = CoreContext::for_test(harness, Some(PathBuf::from("/tmp/ctx-domains")));
+        let seen =
+            CoreContext::scope(ctx, async { CoreContext::current().map(|c| c.domains()) }).await;
+        assert_eq!(seen, Some(harness));
+        assert!(seen.unwrap().allows(crate::core::all::DomainGroup::Memory));
+        assert!(!seen.unwrap().allows(crate::core::all::DomainGroup::Web3));
     }
 
     #[tokio::test]
@@ -390,10 +466,12 @@ mod tests {
         let a = Arc::new(CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(Some(dir_a.path().to_path_buf())),
+            domains: crate::core::runtime::DomainSet::full(),
         });
         let b = Arc::new(CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(Some(dir_b.path().to_path_buf())),
+            domains: crate::core::runtime::DomainSet::full(),
         });
 
         let store_a = a.people().expect("open people store for workspace A");
@@ -413,6 +491,7 @@ mod tests {
         let ctx = CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(Some(dir_a.path().to_path_buf())),
+            domains: crate::core::runtime::DomainSet::full(),
         };
 
         let store_a = ctx.people().expect("open people store for workspace A");
@@ -433,10 +512,12 @@ mod tests {
         let a = Arc::new(CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(Some(dir_a.path().to_path_buf())),
+            domains: crate::core::runtime::DomainSet::full(),
         });
         let b = Arc::new(CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(Some(dir_b.path().to_path_buf())),
+            domains: crate::core::runtime::DomainSet::full(),
         });
 
         let params = serde_json::json!({
@@ -483,6 +564,7 @@ mod tests {
         let ctx = CoreContext {
             host_kind: HostKind::Cli,
             workspace_dir: RwLock::new(None),
+            domains: crate::core::runtime::DomainSet::full(),
         };
 
         let err = match ctx.people() {
