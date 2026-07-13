@@ -3009,3 +3009,47 @@ fn try_create_cloud_slug_flips_openai_but_declines_non_cloud() {
     unconfigured.chat_provider = Some("deepseek:deepseek-chat".to_string());
     assert!(try_create_cloud_slug_chat_model("chat", &unconfigured).is_none());
 }
+
+/// Real-path smoke (privacy epic S2, #4436): driving the actual inference
+/// chokepoint `create_chat_provider_from_string` with an EXTERNAL provider must
+/// publish an `ExternalTransferPending` egress event — proving the emit is wired
+/// into the live construction path, not merely callable in isolation.
+/// Complements the isolated emit unit tests in `security::egress`.
+#[tokio::test]
+async fn from_string_external_provider_emits_egress_realpath() {
+    use crate::core::event_bus::{init_global, DomainEvent, DEFAULT_CAPACITY};
+    use crate::openhuman::security::egress::EgressReason;
+
+    init_global(DEFAULT_CAPACITY);
+    let mut rx = crate::core::event_bus::global().unwrap().raw_receiver();
+
+    let config = Config::default();
+    // External provider → real chokepoint must emit BEFORE constructing.
+    let _ = create_chat_provider_from_string("agentic", "openai:gpt-4o-mini", &config);
+
+    // Bus is process-wide; drain past unrelated events until our descriptor lands.
+    let found = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            match rx.recv().await {
+                Ok(DomainEvent::ExternalTransferPending { descriptor, .. })
+                    if descriptor.provider_slug == "openai"
+                        && descriptor.is_external
+                        && matches!(descriptor.reason, EgressReason::Inference) =>
+                {
+                    return descriptor;
+                }
+                Ok(_) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    panic!("event bus closed before ExternalTransferPending arrived")
+                }
+            }
+        }
+    })
+    .await;
+
+    assert!(
+        found.is_ok(),
+        "external inference via create_chat_provider_from_string must publish ExternalTransferPending"
+    );
+}
