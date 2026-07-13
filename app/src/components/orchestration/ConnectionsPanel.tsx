@@ -128,15 +128,19 @@ function SessionView({
   );
 
   // Runtime tool-approval decision → reply "allow"/"deny" to the runtime peer (the
-  // same send path as a typed reply). Wired into SessionTranscript's approval card.
+  // same send path as a typed reply). Returns the promise (rethrows on failure) so
+  // SessionTranscript rolls the card back to buttons for a retry.
   const decide = useCallback(
-    (decision: 'allow' | 'deny'): void => {
+    (decision: 'allow' | 'deny'): Promise<void> => {
       setSendError(null);
-      void orchestrationClient
+      return orchestrationClient
         .sendMasterMessage({ body: decision, recipient: contactAddr, sessionId: session.sessionId })
-        .then(() => void refresh())
+        .then(() => {
+          void refresh();
+        })
         .catch((error: unknown) => {
           setSendError(error instanceof Error ? error.message : String(error));
+          throw error;
         });
     },
     [contactAddr, session.sessionId, refresh]

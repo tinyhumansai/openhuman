@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ChatMessage } from '../../../lib/orchestration/useOrchestrationChats';
@@ -94,9 +94,9 @@ describe('SessionTranscript', () => {
     expect(screen.getByTestId('approval-resolved')).toHaveTextContent('chat.approval.deny');
   });
 
-  it('resolves an approval from its persisted decision echo (survives reload)', () => {
-    // No onDecide (as after remount), but a decision echo message is present —
-    // the card should still render resolved rather than showing buttons again.
+  it('resolves from a persisted decision echo (survives reload) and suppresses that echo', () => {
+    // No onDecide (as after remount), but a paired decision echo is present — the
+    // card renders resolved, and the redundant echo bubble is hidden.
     render(
       <SessionTranscript
         messages={[
@@ -107,18 +107,44 @@ describe('SessionTranscript', () => {
     );
     expect(screen.getByTestId('approval-resolved')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'chat.approval.approve' })).not.toBeInTheDocument();
+    expect(screen.queryByText('allow')).not.toBeInTheDocument();
   });
 
-  it('suppresses the standalone approval-decision echo bubble', () => {
+  it('preserves an unpaired one-word owner reply (real chat, no approval)', () => {
     render(
       <SessionTranscript
         messages={[
           msg({ id: 'a', from: 'agent', body: 'the answer' }),
-          msg({ id: 'echo', from: 'owner', body: 'allow' }),
+          msg({ id: 'reply', from: 'owner', body: 'allow' }),
         ]}
       />
     );
-    expect(screen.queryByText('allow')).not.toBeInTheDocument();
+    // no preceding approval → "allow" is a normal reply and must stay visible
+    expect(screen.getByText('allow')).toBeInTheDocument();
     expect(screen.getByText('the answer')).toBeInTheDocument();
+  });
+
+  it('hides "Always allow" by default and shows it only when enabled', () => {
+    const approval = msg({ id: 'ap', eventKind: 'approval_request', body: 'run it' });
+    const { rerender } = render(<SessionTranscript messages={[approval]} onDecide={vi.fn()} />);
+    expect(
+      screen.queryByRole('button', { name: 'chat.approval.alwaysAllow' })
+    ).not.toBeInTheDocument();
+    rerender(<SessionTranscript messages={[approval]} onDecide={vi.fn()} alwaysAllow />);
+    expect(
+      screen.getByRole('button', { name: 'chat.approval.alwaysAllow' })
+    ).toBeInTheDocument();
+  });
+
+  it('rolls the card back to buttons if the decision send fails', async () => {
+    const onDecide = vi.fn().mockRejectedValue(new Error('relay down'));
+    const approval = msg({ id: 'ap', eventKind: 'approval_request', body: 'run it' });
+    render(<SessionTranscript messages={[approval]} onDecide={onDecide} />);
+    fireEvent.click(screen.getByRole('button', { name: 'chat.approval.approve' }));
+    // optimistic resolve, then rollback on rejection → the buttons return for retry
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'chat.approval.approve' })).toBeInTheDocument()
+    );
+    expect(screen.queryByTestId('approval-resolved')).not.toBeInTheDocument();
   });
 });

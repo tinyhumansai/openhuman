@@ -20,8 +20,17 @@ export type ApprovalDecision = 'approve' | 'deny' | 'always';
 
 export interface SessionTranscriptProps {
   messages: ChatMessage[];
-  /** When present, approval rows show actionable buttons wired to this. */
-  onDecide?: (message: ChatMessage, decision: ApprovalDecision) => void;
+  /**
+   * When present, approval rows show actionable Approve/Deny buttons wired to
+   * this. May return a promise; the card rolls back to buttons if it rejects.
+   */
+  onDecide?: (message: ChatMessage, decision: ApprovalDecision) => void | Promise<unknown>;
+  /**
+   * Show the "Always allow" action. Off by default — only enable it where a
+   * persistent always-allow is actually honored. A runtime that understands only
+   * one-shot allow/deny must NOT offer it (it would silently be a one-time allow).
+   */
+  alwaysAllow?: boolean;
 }
 
 /**
@@ -52,19 +61,31 @@ function isDecisionEcho(message: ChatMessage): boolean {
  * Derive each approval's outcome from the persisted message stream so a resolved
  * card survives a reload/remount (local click state alone is lost). Approvals and
  * their decision echoes alternate, so pair them FIFO in order of appearance.
+ *
+ * Returns the per-approval outcome AND the ids of the echo messages that were
+ * actually paired to an approval — only THOSE are suppressed from the render. A
+ * one-word "allow"/"deny" with no pending approval is a real chat reply and must
+ * stay visible.
  */
-function deriveDecisions(messages: ChatMessage[]): Record<string, ApprovalDecision> {
-  const out: Record<string, ApprovalDecision> = {};
+function deriveDecisions(messages: ChatMessage[]): {
+  decided: Record<string, ApprovalDecision>;
+  suppressed: Set<string>;
+} {
+  const decided: Record<string, ApprovalDecision> = {};
+  const suppressed = new Set<string>();
   const pending: string[] = [];
   for (const m of messages) {
     if (m.eventKind === 'approval_request') {
       pending.push(m.id);
     } else if (isDecisionEcho(m)) {
-      const id = pending.shift();
-      if (id) out[id] = /^(deny|skip)/i.test(m.body.trim()) ? 'deny' : 'approve';
+      const approvalId = pending.shift();
+      if (approvalId) {
+        decided[approvalId] = /^(deny|skip)/i.test(m.body.trim()) ? 'deny' : 'approve';
+        suppressed.add(m.id);
+      }
     }
   }
-  return out;
+  return { decided, suppressed };
 }
 
 /** Lightweight `**bold**` rendering without pulling in a markdown lib. */
@@ -172,11 +193,14 @@ function ApprovalRow({
   message,
   onDecide,
   decided,
+  allowAlways,
 }: {
   message: ChatMessage;
   onDecide?: (message: ChatMessage, decision: ApprovalDecision) => void;
   /** Once decided, the card resolves in place: buttons are replaced by the outcome. */
   decided?: ApprovalDecision;
+  /** Whether to render the "Always allow" action (only where it's honored). */
+  allowAlways?: boolean;
 }): ReactElement {
   const { t } = useT();
   const denied = decided === 'deny';
@@ -229,12 +253,14 @@ function ApprovalRow({
               className="rounded-lg border border-line bg-surface px-3 py-1 text-xs font-medium text-content-secondary transition hover:bg-surface-hover">
               {t('chat.approval.deny')}
             </button>
-            <button
-              type="button"
-              onClick={() => onDecide(message, 'always')}
-              className="rounded-lg px-2 py-1 text-xs font-medium text-content-faint transition hover:text-content-secondary">
-              {t('chat.approval.alwaysAllow')}
-            </button>
+            {allowAlways ? (
+              <button
+                type="button"
+                onClick={() => onDecide(message, 'always')}
+                className="rounded-lg px-2 py-1 text-xs font-medium text-content-faint transition hover:text-content-secondary">
+                {t('chat.approval.alwaysAllow')}
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -245,19 +271,26 @@ function ApprovalRow({
 export default function SessionTranscript({
   messages,
   onDecide,
+  alwaysAllow = false,
 }: SessionTranscriptProps): ReactElement {
-  // Persistent outcomes derived from the message stream (survive reload).
-  const derivedDecided = deriveDecisions(messages);
-  // Drop standalone approval-decision echoes ("allow"/"deny") — the card resolves
-  // in place, so the bubble is redundant.
-  const rows = mergeToolActivity(messages.filter(m => !isDecisionEcho(m)));
+  // Persistent outcomes derived from the message stream (survive reload); only the
+  // decision echoes actually paired to an approval are suppressed from the render.
+  const { decided: derivedDecided, suppressed } = deriveDecisions(messages);
+  const rows = mergeToolActivity(messages.filter(m => !suppressed.has(m.id)));
   // Local clicks give immediate feedback before the echo message arrives; they
-  // layer on top of the derived (persisted) outcomes.
+  // layer on top of the derived (persisted) outcomes. Rolled back if the send
+  // fails, so the buttons return for a retry.
   const [clicked, setClicked] = useState<Record<string, ApprovalDecision>>({});
+  const rollback = (id: string): void =>
+    setClicked(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   const handleDecide = onDecide
     ? (message: ChatMessage, decision: ApprovalDecision): void => {
         setClicked(prev => ({ ...prev, [message.id]: decision }));
-        onDecide(message, decision);
+        Promise.resolve(onDecide(message, decision)).catch(() => rollback(message.id));
       }
     : undefined;
   const decidedFor = (id: string): ApprovalDecision | undefined =>
@@ -281,6 +314,7 @@ export default function SessionTranscript({
                 message={message}
                 onDecide={handleDecide}
                 decided={decidedFor(message.id)}
+                allowAlways={alwaysAllow}
               />
             );
           default:
