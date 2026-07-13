@@ -15,6 +15,7 @@ pub use crate::openhuman::agent::tools::*;
 pub use crate::openhuman::agent_memory::tools::*;
 pub use crate::openhuman::agent_orchestration::tools::*;
 pub use crate::openhuman::artifacts::tools::*;
+#[cfg(feature = "voice")]
 pub use crate::openhuman::audio_toolkit::tools::*;
 pub use crate::openhuman::billing::tools::*;
 pub use crate::openhuman::codegraph::tools::*;

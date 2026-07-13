@@ -167,6 +167,10 @@ fn internal_registry() -> &'static [GroupedController] {
 /// Returns a reference to the global CLI adapter registry.
 fn cli_adapters() -> &'static [RegisteredCliAdapter] {
     CLI_ADAPTERS.get_or_init(|| {
+        // The `voice` namespace stays registered regardless of the `voice`
+        // feature: with the feature off, `voice::cli::run_standalone_subcommand`
+        // resolves to the facade stub, which returns a "voice disabled" error so
+        // `openhuman voice` fails gracefully instead of the subcommand vanishing.
         vec![RegisteredCliAdapter {
             namespace: "voice",
             handler: crate::openhuman::voice::cli::run_standalone_subcommand,
@@ -202,7 +206,8 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Platform,
         crate::openhuman::app_state::all_app_state_registered_controllers(),
     );
-    // Audio generation + podcast-style email delivery
+    // Audio generation + podcast-style email delivery (gated with voice).
+    #[cfg(feature = "voice")]
     push(
         &mut controllers,
         DomainGroup::Voice,
@@ -632,7 +637,8 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Platform,
         crate::openhuman::text_input::all_text_input_registered_controllers(),
     );
-    // Voice transcription and synthesis
+    // Voice transcription and synthesis (gated behind the `voice` feature).
+    #[cfg(feature = "voice")]
     push(
         &mut controllers,
         DomainGroup::Voice,

@@ -201,6 +201,39 @@ fn all_controller_schemas_matches_registered_count() {
     assert_eq!(schemas.len(), controllers.len());
 }
 
+/// With the `voice` feature on (the default), the voice + audio_toolkit
+/// controllers are compiled in and registered — the desktop build is
+/// byte-identical.
+#[test]
+#[cfg(feature = "voice")]
+fn voice_and_audio_controllers_registered_when_feature_on() {
+    let schemas = all_controller_schemas();
+    assert!(
+        schemas.iter().any(|s| s.namespace == "voice"),
+        "voice controllers must be registered when the `voice` feature is on"
+    );
+    assert!(
+        schemas.iter().any(|s| s.namespace == "audio_toolkit"),
+        "audio_toolkit controllers must be registered when the `voice` feature is on"
+    );
+}
+
+/// With the `voice` feature off, both domains are compiled out: their
+/// controllers never enter the registry, so voice/audio RPC methods are
+/// unknown-method and absent from `/schema`. This is the compile-time
+/// stub-facade correctness gate (see `openhuman::voice::stub`).
+#[test]
+#[cfg(not(feature = "voice"))]
+fn voice_and_audio_controllers_absent_when_feature_off() {
+    let schemas = all_controller_schemas();
+    assert!(
+        !schemas
+            .iter()
+            .any(|s| s.namespace == "voice" || s.namespace == "audio_toolkit"),
+        "voice/audio_toolkit controllers must be compiled out when the `voice` feature is off"
+    );
+}
+
 #[test]
 fn schema_for_rpc_method_finds_known_method() {
     let schema = schema_for_rpc_method("openhuman.health_snapshot");

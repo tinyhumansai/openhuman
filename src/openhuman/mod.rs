@@ -28,6 +28,7 @@ pub mod announcements;
 pub mod app_state;
 pub mod approval;
 pub mod artifacts;
+#[cfg(feature = "voice")]
 pub mod audio_toolkit;
 pub mod autocomplete;
 pub mod billing;
