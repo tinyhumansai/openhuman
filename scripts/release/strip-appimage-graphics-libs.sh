@@ -516,7 +516,7 @@ validate_appimage_required_libs() {
         echo "[strip-libs] ERROR: AppImage is missing libcef.so — the CEF runtime was not copied into the final bundle (issue #4020). Ensure the CEF cache/prewarm step exposes the directory containing libcef.so before the Tauri AppImage build." >&2
         ;;
     esac
-    exit 1
+    return 1
   done
 }
 
@@ -660,7 +660,10 @@ strip_one_appimage() {
     rewrote_rpaths=1
   fi
   validate_sharun_lib_path "$appdir"
-  validate_appimage_required_libs "$appdir"
+  if ! validate_appimage_required_libs "$appdir"; then
+    rm -rf "$workdir"
+    return 1
+  fi
 
   if [ "$removed" -eq 0 ] && [ "$added_loader" -eq 0 ] && [ "$rewrote_libpath" -eq 0 ] && [ "$patched_apprun" -eq 0 ] && [ "$rewrote_rpaths" -eq 0 ]; then
     echo "[strip-libs] No graphics libs, missing sharun interpreter, or build-machine RPATHs found in $original; leaving unchanged."

@@ -145,6 +145,7 @@ echo "[test-rpaths] ok: guard fails when libcef.so is absent"
 
 # 2c — both required runtime libraries present → must pass.
 mkdir -p "$GUARD_DIR/usr/lib"
+: > "$GUARD_DIR/shared/lib/libxdo.so.3"
 : > "$GUARD_DIR/usr/lib/libcef.so"
 if ! ( validate_appimage_required_libs "$GUARD_DIR" ) 2>/dev/null; then
   fail "validate_appimage_required_libs failed despite libxdo.so.3 and libcef.so being present"
