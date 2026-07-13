@@ -3142,8 +3142,20 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       { slug: existing.slug, isLocalRuntime: false },
       remaining
     );
-    await persist({ ...draft, cloudProviders: remaining, routing: nextRouting });
-  }, [draft, persist]);
+    try {
+      await persist({ ...draft, cloudProviders: remaining, routing: nextRouting });
+      console.debug('[ai-settings:openai-oauth] provider removal succeeded', {
+        provider: 'openai',
+      });
+    } catch (err) {
+      console.warn('[ai-settings:openai-oauth] provider removal failed', {
+        provider: 'openai',
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await reload();
+      throw err;
+    }
+  }, [draft, persist, reload]);
 
   // applyPreset removed alongside the Cloud / Local / Mixed preset pills —
   // the new Default/Custom binary toggle handles routing per workload.
