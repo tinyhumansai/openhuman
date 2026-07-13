@@ -244,6 +244,41 @@ async fn invoke_doctor_models_rejects_unknown_param() {
 }
 
 #[tokio::test]
+async fn gated_method_is_unknown_at_transport_even_with_malformed_params() {
+    // #4808 review (CodeRabbit): prove the schema-gate fix at the JSON-RPC
+    // TRANSPORT layer (`invoke_method`), not only via direct dispatch. Under a
+    // harness() ambient context a gated method must return an unknown-method
+    // error for BOTH well-formed and malformed params — never the controller's
+    // param-validation error, which would leak that the hidden method exists.
+    use crate::core::runtime::context::CoreContext;
+    use crate::core::runtime::DomainSet;
+
+    let gated_method = crate::core::all::all_registered_controllers()
+        .into_iter()
+        .find(|c| c.schema.namespace == "flows")
+        .map(|c| c.rpc_method_name())
+        .expect("a flows.* method exists in the full registry");
+
+    for params in [json!({}), json!({ "obviously_not_a_real_param_xyz": true })] {
+        let ctx = CoreContext::for_test(DomainSet::harness(), None);
+        let err = CoreContext::scope(
+            ctx,
+            invoke_method(default_state(), &gated_method, params.clone()),
+        )
+        .await
+        .expect_err("gated flows method must error under harness()");
+        assert!(
+            err.contains("unknown method"),
+            "gated `{gated_method}` with params {params} must be unknown-method at transport, got: {err}"
+        );
+        assert!(
+            !err.contains("param"),
+            "gated `{gated_method}` must NOT leak a param-validation error (surface leak), got: {err}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn invoke_config_get_runtime_flags_via_registry() {
     let result = invoke_method(
         default_state(),
