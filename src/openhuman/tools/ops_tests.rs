@@ -2174,3 +2174,55 @@ fn desktop_default_off_tools_retained_when_opted_in() {
         );
     }
 }
+
+// --- DomainSet tool classifier (#4796) ----------------------------------
+
+#[test]
+fn tool_group_classifies_gate_and_harness_families() {
+    use crate::core::all::DomainGroup;
+
+    // Gate families → their gate group (dropped under harness()).
+    assert_eq!(tool_group("wallet_status"), DomainGroup::Web3);
+    assert_eq!(tool_group("web3_swap_quote"), DomainGroup::Web3);
+    assert_eq!(tool_group("x402_request"), DomainGroup::Web3);
+    assert_eq!(tool_group("mcp_registry_search"), DomainGroup::Mcp);
+    assert_eq!(tool_group("mcp_call_tool"), DomainGroup::Mcp);
+    assert_eq!(tool_group("run_workflow"), DomainGroup::Skills);
+    assert_eq!(tool_group("skill_registry_browse"), DomainGroup::Skills);
+    assert_eq!(tool_group("list_workflows"), DomainGroup::Skills);
+    assert_eq!(tool_group("propose_workflow"), DomainGroup::Flows);
+    assert_eq!(tool_group("list_flows"), DomainGroup::Flows);
+    assert_eq!(tool_group("media_generate_image"), DomainGroup::Media);
+
+    // Harness-mapped families → kept under harness().
+    assert_eq!(tool_group("memory_store"), DomainGroup::Memory);
+    assert_eq!(tool_group("goals_add"), DomainGroup::Memory);
+    assert_eq!(tool_group("update_memory_md"), DomainGroup::Memory);
+    assert_eq!(tool_group("thread_list"), DomainGroup::Threads);
+    assert_eq!(tool_group("todo_add"), DomainGroup::Threads);
+    assert_eq!(tool_group("goal_get"), DomainGroup::Threads);
+
+    // Everything else → Platform (dropped under harness()).
+    assert_eq!(tool_group("shell"), DomainGroup::Platform);
+    assert_eq!(tool_group("file_read"), DomainGroup::Platform);
+    assert_eq!(tool_group("config_snapshot"), DomainGroup::Platform);
+    assert_eq!(tool_group("spawn_subagent"), DomainGroup::Platform);
+}
+
+#[test]
+fn tool_group_gate_families_dropped_under_harness_not_full() {
+    use crate::core::runtime::DomainSet;
+
+    let full = DomainSet::full();
+    let harness = DomainSet::harness();
+    // Full keeps every family.
+    for name in ["wallet_status", "run_workflow", "memory_store", "shell"] {
+        assert!(full.allows(tool_group(name)), "full() keeps {name}");
+    }
+    // Harness keeps memory/threads, drops gate families AND platform.
+    assert!(harness.allows(tool_group("memory_store")));
+    assert!(harness.allows(tool_group("thread_list")));
+    assert!(!harness.allows(tool_group("wallet_status")));
+    assert!(!harness.allows(tool_group("run_workflow")));
+    assert!(!harness.allows(tool_group("shell")));
+}
