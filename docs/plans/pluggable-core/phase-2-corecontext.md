@@ -116,6 +116,32 @@ pub enum StorageBackend { WorkspaceFs }   // CoreBuilder::storage(..); only impl
 | Store trait too narrow, churns later     | extract traits from _observed_ handler usage per domain, not speculatively             |
 | Coverage gate on mechanical diffs        | signature/registry PRs carry existing tests; per-domain PRs add store-trait unit tests |
 
+## 2.d `DomainSet` — the runtime composition axis (#4796)
+
+`DomainSet` (in `src/core/runtime/builder.rs`, sibling of `ServiceSet`) is the
+**runtime** axis that selects which domain *families* exist, complementing
+`ServiceSet` (which selects background services). One flag per `DomainGroup`
+(`src/core/all.rs`); presets `full()` (default — byte-identical to pre-#4796),
+`harness()` (agent + memory + threads + config + security only), `none()`.
+
+Mechanism (Shape B — filter seam, **not** the full per-domain
+`DomainRegistration` struct collapse, which remains phase-2-deferred):
+
+- Every controller is tagged with its `DomainGroup` once, at the single
+  registration site (`build_registered_controllers` /
+  `build_internal_only_controllers`), via a `GroupedController { group,
+  controller }` wrapper — the ~109 domain modules keep returning bare
+  `RegisteredController` lists and never learn about groups.
+- The live surface filters by the **ambient** `CoreContext::domains()`:
+  `all_registered_controllers` / `all_controller_schemas` (so `/schema` omits
+  gated namespaces), `try_invoke_registered_rpc` (gated method ⇒ `None`, i.e.
+  unknown-method), the agent tool surface (`tools::ops::all_tools_with_runtime`
+  post-filter by `tool_group`), workspace-bound store init (`init_stores`), and
+  domain event subscribers (`register_domain_subscribers`).
+- No active context (pre-boot unit tests) ⇒ no filtering (treated as full).
+- Per-gate Cargo `[features]` (children #4797–#4804) narrow the *compile-time*
+  surface further; `DomainSet` is the runtime axis they compose with.
+
 ## Verification
 
 - `pnpm test:rust` + `json_rpc_e2e` green after each sub-series.
@@ -124,3 +150,7 @@ pub enum StorageBackend { WorkspaceFs }   // CoreBuilder::storage(..); only impl
 - `all::try_invoke_registered_rpc` installs an ambient `CoreContext::scope`
   around registered handler futures, and tests verify `CoreContext::current()`
   propagation through registered RPC invocation.
+- `DomainSet`: `full_registration_is_byte_identical`,
+  `harness_excludes_gated_namespaces`, `dispatch_returns_none_for_gated_method`,
+  `group_mapping_smoke` (`src/core/all_tests.rs`) +
+  `domain_set_presets_have_expected_flags` (`builder.rs`).
