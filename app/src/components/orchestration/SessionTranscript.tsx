@@ -9,7 +9,7 @@
  * Approvals are actionable only on your OWN agent (master/subconscious) — pass
  * `onDecide`. In a peer session omit it and the approval renders read-only.
  */
-import type { ReactElement } from 'react';
+import { type ReactElement, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { mergeToolActivity, type ToolActivity } from '../../lib/orchestration/mergeToolActivity';
@@ -31,6 +31,40 @@ export interface SessionTranscriptProps {
  */
 function isOwnerAuthored(from: string): boolean {
   return from === 'you' || from === 'owner' || from === 'user';
+}
+
+/**
+ * An approval decision (Approve/Deny) is sent to the runtime as a one-word reply
+ * ("allow"/"deny"), which mirrors back as an owner bubble. The approval card
+ * already resolves in place to show the outcome, so that echo bubble is pure
+ * noise — suppress a standalone owner-authored decision word.
+ */
+const DECISION_ECHO_RE = /^(allow|deny|approve|skip|always(\s+allow)?)$/i;
+function isDecisionEcho(message: ChatMessage): boolean {
+  return (
+    !message.eventKind &&
+    isOwnerAuthored(message.from) &&
+    DECISION_ECHO_RE.test(message.body.trim())
+  );
+}
+
+/**
+ * Derive each approval's outcome from the persisted message stream so a resolved
+ * card survives a reload/remount (local click state alone is lost). Approvals and
+ * their decision echoes alternate, so pair them FIFO in order of appearance.
+ */
+function deriveDecisions(messages: ChatMessage[]): Record<string, ApprovalDecision> {
+  const out: Record<string, ApprovalDecision> = {};
+  const pending: string[] = [];
+  for (const m of messages) {
+    if (m.eventKind === 'approval_request') {
+      pending.push(m.id);
+    } else if (isDecisionEcho(m)) {
+      const id = pending.shift();
+      if (id) out[id] = /^(deny|skip)/i.test(m.body.trim()) ? 'deny' : 'approve';
+    }
+  }
+  return out;
 }
 
 /** Lightweight `**bold**` rendering without pulling in a markdown lib. */
@@ -137,17 +171,29 @@ function ToolBlock({ tool }: { tool: ToolActivity }): ReactElement {
 function ApprovalRow({
   message,
   onDecide,
+  decided,
 }: {
   message: ChatMessage;
   onDecide?: (message: ChatMessage, decision: ApprovalDecision) => void;
+  /** Once decided, the card resolves in place: buttons are replaced by the outcome. */
+  decided?: ApprovalDecision;
 }): ReactElement {
   const { t } = useT();
+  const denied = decided === 'deny';
   return (
     <div className="flex justify-start" data-event-kind="approval_request">
-      <div className="w-full max-w-[85%] rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 dark:border-amber-500/40 dark:bg-amber-500/10">
+      <div
+        className={`w-full max-w-[85%] rounded-xl border px-3 py-2.5 ${
+          decided
+            ? 'border-line bg-surface/60 dark:bg-black/20'
+            : 'border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10'
+        }`}>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-amber-500">⚠</span>
-          <span className="text-xs font-semibold text-amber-700 dark:text-amber-300">
+          <span className={`text-sm ${decided ? 'text-content-faint' : 'text-amber-500'}`}>⚠</span>
+          <span
+            className={`text-xs font-semibold ${
+              decided ? 'text-content-faint' : 'text-amber-700 dark:text-amber-300'
+            }`}>
             {t('chat.approval.title')}
           </span>
           {message.toolName ? (
@@ -159,7 +205,17 @@ function ApprovalRow({
         <code className="mt-1.5 block overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-content-secondary">
           {message.body}
         </code>
-        {onDecide ? (
+        {decided ? (
+          // Resolved in place — no more actions, just the outcome.
+          <div
+            className={`mt-2.5 flex items-center gap-1.5 text-xs font-semibold ${
+              denied ? 'text-danger' : 'text-sage-600 dark:text-sage-400'
+            }`}
+            data-testid="approval-resolved">
+            <span>{denied ? '✕' : '✓'}</span>
+            <span>{denied ? t('chat.approval.deny') : t('chat.approval.approve')}</span>
+          </div>
+        ) : onDecide ? (
           <div className="mt-2.5 flex gap-2">
             <button
               type="button"
@@ -190,7 +246,22 @@ export default function SessionTranscript({
   messages,
   onDecide,
 }: SessionTranscriptProps): ReactElement {
-  const rows = mergeToolActivity(messages);
+  // Persistent outcomes derived from the message stream (survive reload).
+  const derivedDecided = deriveDecisions(messages);
+  // Drop standalone approval-decision echoes ("allow"/"deny") — the card resolves
+  // in place, so the bubble is redundant.
+  const rows = mergeToolActivity(messages.filter(m => !isDecisionEcho(m)));
+  // Local clicks give immediate feedback before the echo message arrives; they
+  // layer on top of the derived (persisted) outcomes.
+  const [clicked, setClicked] = useState<Record<string, ApprovalDecision>>({});
+  const handleDecide = onDecide
+    ? (message: ChatMessage, decision: ApprovalDecision): void => {
+        setClicked(prev => ({ ...prev, [message.id]: decision }));
+        onDecide(message, decision);
+      }
+    : undefined;
+  const decidedFor = (id: string): ApprovalDecision | undefined =>
+    clicked[id] ?? derivedDecided[id];
   return (
     <div className="space-y-3" data-testid="session-transcript">
       {rows.map((row, i) => {
@@ -204,7 +275,14 @@ export default function SessionTranscript({
           case 'error':
             return <ErrorRow key={message.id} message={message} />;
           case 'approval_request':
-            return <ApprovalRow key={message.id} message={message} onDecide={onDecide} />;
+            return (
+              <ApprovalRow
+                key={message.id}
+                message={message}
+                onDecide={handleDecide}
+                decided={decidedFor(message.id)}
+              />
+            );
           default:
             // agent_message + legacy v1 rows → bubble by sender. Owner/user-
             // authored rows (incl. a reply mirrored back with role "owner") sit

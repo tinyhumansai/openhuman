@@ -127,6 +127,21 @@ function SessionView({
     [body, sending, contactAddr, session.sessionId, refresh]
   );
 
+  // Runtime tool-approval decision → reply "allow"/"deny" to the runtime peer (the
+  // same send path as a typed reply). Wired into SessionTranscript's approval card.
+  const decide = useCallback(
+    (decision: 'allow' | 'deny'): void => {
+      setSendError(null);
+      void orchestrationClient
+        .sendMasterMessage({ body: decision, recipient: contactAddr, sessionId: session.sessionId })
+        .then(() => void refresh())
+        .catch((error: unknown) => {
+          setSendError(error instanceof Error ? error.message : String(error));
+        });
+    },
+    [contactAddr, session.sessionId, refresh]
+  );
+
   return (
     <div className="space-y-3" data-testid="orch-session-view">
       <button
@@ -163,7 +178,10 @@ function SessionView({
             {t('tinyplaceOrchestration.noMessages')}
           </p>
         ) : (
-          <SessionTranscript messages={messages} />
+          <SessionTranscript
+            messages={messages}
+            onDecide={(_message, decision) => decide(decision === 'deny' ? 'deny' : 'allow')}
+          />
         )}
         {sendError ? (
           <p

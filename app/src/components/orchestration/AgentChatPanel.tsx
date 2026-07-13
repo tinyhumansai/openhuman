@@ -307,7 +307,10 @@ function SessionChatView({ session }: { session: SessionSummary }) {
             {t('tinyplaceOrchestration.noMessages')}
           </p>
         ) : (
-          <SessionTranscript messages={messages} />
+          <SessionTranscript
+            messages={messages}
+            onDecide={(_message, decision) => void send(decision === 'deny' ? 'deny' : 'allow')}
+          />
         )}
       </div>
     </ChatPageScaffold>
