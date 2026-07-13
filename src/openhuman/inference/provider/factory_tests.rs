@@ -672,7 +672,7 @@ async fn cloud_provider_without_stored_key_fails_with_actionable_error() {
         .await
         .expect_err("missing key should fail at call time");
     assert!(
-        err.to_string().contains("API key not set"),
+        err.to_string().contains("provide an API key"),
         "expected missing-key guidance, got: {err}"
     );
 }
@@ -1818,11 +1818,10 @@ async fn lmstudio_provider_does_not_fall_back_to_responses_on_404() {
     );
 }
 
-/// Counterpart to the no-fallback tests: a cloud provider (responses_fallback=true)
-/// MUST retry against `/v1/responses` when chat/completions returns 404.
-/// This guards against an accidental inversion of the supports_responses_fallback flag.
+/// Generic crate-native cloud providers do not speculate that a chat 404 means
+/// the endpoint implements the Responses API.
 #[tokio::test]
-async fn cloud_provider_falls_back_to_responses_on_404() {
+async fn cloud_provider_does_not_fall_back_to_responses_on_404() {
     let mock_server = MockServer::start().await;
 
     // chat/completions returns 404 → should trigger fallback.
@@ -1836,7 +1835,7 @@ async fn cloud_provider_falls_back_to_responses_on_404() {
         .mount(&mock_server)
         .await;
 
-    // /v1/responses MUST be called — the provider should fall back to it.
+    // Responses is primary-only on tinyagents; a chat provider does not retry it.
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
         .respond_with(
@@ -1844,7 +1843,7 @@ async fn cloud_provider_falls_back_to_responses_on_404() {
                 r#"{"output":[{"content":[{"type":"output_text","text":"ok"}]}]}"#,
             ),
         )
-        .expect(1) // must be called exactly once
+        .expect(0)
         .mount(&mock_server)
         .await;
 
@@ -1865,14 +1864,8 @@ async fn cloud_provider_falls_back_to_responses_on_404() {
         create_chat_provider_from_string("chat", "test-cloud:test-model", &config)
             .expect("cloud provider must build");
 
-    // The call should succeed via the responses fallback.
     let result = provider.chat_with_system(None, "hello", &model, 0.0).await;
-
-    // wiremock verifies expect(1) on the responses mock when the server is dropped.
-    // We don't assert Ok here because the provider may return an error even after a
-    // successful fallback call (e.g. if the response body doesn't fully satisfy parsing).
-    // The important invariant is that /v1/responses was called — verified by wiremock.
-    drop(result);
+    assert!(result.is_err());
 }
 
 /// TAURI-RUST-5EN: a built-in chat-completions-only cloud provider (DeepSeek)
@@ -1938,12 +1931,10 @@ async fn deepseek_builtin_does_not_fall_back_to_responses_on_404() {
     // wiremock verifies expect(0) on /v1/responses when the server is dropped.
 }
 
-/// Counterpart guard: a custom (non-built-in) Bearer slug KEEPS the responses
-/// fallback — its endpoint may be a genuine OpenAI proxy that serves
-/// `/v1/responses`. Ensures the 5EN slug-gate only disables the fallback for
-/// known chat-completions-only built-ins, not for unknown providers.
+/// Custom Bearer providers also remain on their configured Chat Completions
+/// protocol; Responses routing must be selected explicitly.
 #[tokio::test]
-async fn custom_bearer_provider_keeps_responses_fallback_on_404() {
+async fn custom_bearer_provider_does_not_fall_back_to_responses_on_404() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -1956,7 +1947,6 @@ async fn custom_bearer_provider_keeps_responses_fallback_on_404() {
         .mount(&mock_server)
         .await;
 
-    // Unknown slug → fallback retained → /v1/responses MUST be called.
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
         .respond_with(
@@ -1964,7 +1954,7 @@ async fn custom_bearer_provider_keeps_responses_fallback_on_404() {
                 r#"{"output":[{"content":[{"type":"output_text","text":"ok"}]}]}"#,
             ),
         )
-        .expect(1)
+        .expect(0)
         .mount(&mock_server)
         .await;
 
@@ -1994,9 +1984,7 @@ async fn custom_bearer_provider_keeps_responses_fallback_on_404() {
             .expect("custom bearer provider must build");
 
     let result = provider.chat_with_system(None, "hello", &model, 0.0).await;
-    drop(result);
-
-    // wiremock verifies expect(1) on /v1/responses when the server is dropped.
+    assert!(result.is_err());
 }
 
 #[tokio::test]
@@ -2885,6 +2873,22 @@ fn create_chat_model_routes_local_runtime_to_crate_native() {
 }
 
 #[test]
+fn explicit_local_provider_string_routes_to_crate_native_model() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    let config = Config::default();
+    let (model, model_id) =
+        create_chat_model_from_string_with_model_id("chat", "ollama:qwen2.5", &config, 0.7)
+            .expect("explicit local model must build");
+    assert_eq!(model_id, "qwen2.5");
+    assert_eq!(
+        model
+            .profile()
+            .and_then(|profile| profile.provider.as_deref()),
+        Some("ollama")
+    );
+}
+
+#[test]
 fn try_create_local_runtime_returns_none_for_managed_and_cloud() {
     let _guard = crate::openhuman::inference::inference_test_guard();
     // Default config resolves to the managed backend, not a local runtime.
@@ -2932,6 +2936,27 @@ fn create_chat_model_routes_plain_bearer_cloud_slug_to_crate_native() {
     // A generic cloud model keeps native tool calling + vision on (unlike the
     // local runtimes), so this is the crate `OpenAiModel` default profile.
     assert!(profile.tool_calling);
+}
+
+#[test]
+fn explicit_cloud_provider_string_routes_to_crate_native_model() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    let mut config = Config::default();
+    config.cloud_providers.push(deepseek_entry("p_ds"));
+    let (model, model_id) = create_chat_model_from_string_with_model_id(
+        "chat",
+        "deepseek:deepseek-reasoner",
+        &config,
+        0.7,
+    )
+    .expect("explicit cloud model must build");
+    assert_eq!(model_id, "deepseek-reasoner");
+    assert_eq!(
+        model
+            .profile()
+            .and_then(|profile| profile.provider.as_deref()),
+        Some("deepseek")
+    );
 }
 
 #[test]

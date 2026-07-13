@@ -1916,6 +1916,137 @@ async fn validate_tool_contracts_passes_a_fully_wired_real_slug() {
     assert!(errors.is_empty(), "{errors:?}");
 }
 
+// ── validate_required_arg_resolvability (issue B18) ─────────────────────────
+//
+// `validate_tool_contracts`'s `missing_required_args` only proves an arg is
+// PRESENT (absent/literal-null) — it says nothing about whether an arg wired
+// to a real-looking `=`-expression actually RESOLVES to a value at runtime,
+// nor about an arg the schema doesn't individually mark `required` even
+// though the provider enforces it as a business rule (the real B18 bug:
+// `GMAIL_SEND_EMAIL.subject`/`.body` are each optional in the schema, but
+// Gmail rejects a send where both are empty). These tests sandbox-run the
+// graph the same way `dry_run_workflow` does and prove ANY tool_call arg
+// that resolves `null` (because it's bound to a field that doesn't exist
+// upstream) is a hard reject, while a fully-resolved graph passes clean. No
+// live-catalog seeding needed — this check doesn't consult the Composio
+// schema at all, only the sandbox's own traced diagnostics.
+
+#[tokio::test]
+async fn validate_required_arg_resolvability_rejects_a_null_resolved_arg() {
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "prep", "kind": "code", "name": "Prep",
+              "config": { "language": "javascript", "source": "return {};" } },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "GMAIL_SEND_EMAIL",
+                "args": { "recipient_email": "a@b.com", "subject": "=item.nonexistent_field" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "prep" },
+            { "from_node": "prep", "to_node": "post" }
+        ]
+    }));
+    let errors = validate_required_arg_resolvability(&g).await;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("post"), "{}", errors[0]);
+    assert!(errors[0].contains("`subject`"), "{}", errors[0]);
+    assert!(errors[0].contains("GMAIL_SEND_EMAIL"), "{}", errors[0]);
+}
+
+#[tokio::test]
+async fn validate_required_arg_resolvability_accepts_a_fully_resolved_graph() {
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "GMAIL_SEND_EMAIL",
+                "args": { "recipient_email": "a@b.com", "subject": "hello", "body": "hi there" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_required_arg_resolvability(&g).await;
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+#[tokio::test]
+async fn validate_required_arg_resolvability_ignores_native_and_dynamic_slugs() {
+    // `oh:` native tools and `=`-derived slugs have no external-provider
+    // rejection mode this gate should be checking.
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "prep", "kind": "code", "name": "Prep",
+              "config": { "language": "javascript", "source": "return {};" } },
+            { "id": "native", "kind": "tool_call", "name": "Native",
+              "config": { "slug": "oh:web_search",
+                "args": { "query": "=item.nonexistent_field" } } },
+            { "id": "dynamic", "kind": "tool_call", "name": "Dynamic",
+              "config": { "slug": "=item.nonexistent_field",
+                "args": { "x": "=item.nonexistent_field" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "prep" },
+            { "from_node": "prep", "to_node": "native" },
+            { "from_node": "native", "to_node": "dynamic" }
+        ]
+    }));
+    let errors = validate_required_arg_resolvability(&g).await;
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// (Codex feedback on PR #4826) This gate sandbox-runs every graph against
+/// `json!({})` as the trigger payload, so a `tool_call` arg wired straight to
+/// the trigger's own data — `"to": "=item.email"` on a node whose only
+/// predecessor is the trigger — always resolves `null` here, even though a
+/// real webhook/app-event/manual trigger fires with a real payload. Hard-
+/// rejecting that blocked every ordinary trigger-bound workflow. Contrast
+/// with `validate_required_arg_resolvability_rejects_a_null_resolved_arg`
+/// above, where the same `=item.<field>` shorthand addresses a real
+/// (non-trigger) upstream node and stays a hard reject.
+#[tokio::test]
+async fn validate_required_arg_resolvability_allows_a_trigger_scoped_null_arg() {
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Webhook" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "GMAIL_SEND_EMAIL",
+                "args": { "recipient_email": "a@b.com", "subject": "hi", "body": "=item.email" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_required_arg_resolvability(&g).await;
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// The `nodes.<id>...` explicit-addressing form of the real B18 bug: an arg
+/// wired to a specific upstream (non-trigger) node's output path that never
+/// exists there. Unlike the trigger-scoped case above, this stays broken
+/// regardless of what the trigger payload looks like at runtime, so it must
+/// still hard-reject.
+#[tokio::test]
+async fn validate_required_arg_resolvability_rejects_an_explicit_nodes_reference() {
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "build_body", "kind": "code", "name": "Build Body",
+              "config": { "language": "javascript", "source": "return {};" } },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "GMAIL_SEND_EMAIL",
+                "args": { "recipient_email": "a@b.com",
+                  "subject": "=nodes.build_body.item.subject" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "build_body" },
+            { "from_node": "build_body", "to_node": "post" }
+        ]
+    }));
+    let errors = validate_required_arg_resolvability(&g).await;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("`subject`"), "{}", errors[0]);
+    assert!(errors[0].contains("nodes.build_body"), "{}", errors[0]);
+}
+
 /// (Codex feedback on this PR) `notion` ships a static curated catalog
 /// (`catalog_for_toolkit`), so at RUNTIME `flow_tool_allowed`'s Path A
 /// hard-rejects any slug `find_curated` doesn't recognize — even a real,
@@ -2992,4 +3123,75 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
             "authoring tool `{keep}` must remain visible after restriction; visible = {visible:?}"
         );
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// B23/B24 — condition node branch label must be on `from_port`, not `to_port`
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn condition_graph(
+    true_from_port: &str,
+    true_to_port: &str,
+    false_from_port: &str,
+    false_to_port: &str,
+) -> Value {
+    json!({
+        "name": "condition-routing",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger" },
+            { "id": "gate", "kind": "condition", "name": "Gate", "config": { "field": "has_important" } },
+            { "id": "send_summary", "kind": "output_parser", "name": "Send" },
+            { "id": "done", "kind": "output_parser", "name": "Done" }
+        ],
+        "edges": [
+            { "from_node": "t", "from_port": "main", "to_node": "gate", "to_port": "main" },
+            { "from_node": "gate", "from_port": true_from_port, "to_node": "send_summary", "to_port": true_to_port },
+            { "from_node": "gate", "from_port": false_from_port, "to_node": "done", "to_port": false_to_port }
+        ]
+    })
+}
+
+#[test]
+fn validate_and_migrate_graph_rejects_condition_edges_with_branch_label_on_to_port() {
+    // The exact malformed shape the workflow_builder agent produced live
+    // (see issue B23): both edges share `from_port: "main"` with the branch
+    // label on `to_port` instead. The engine routes exclusively on
+    // `from_port` (B24, `tinyflows::validate`), so this must be a hard
+    // reject here — never persisted as a silently-broken no-op condition.
+    let bad_graph = condition_graph("main", "true", "main", "false");
+
+    let err = validate_and_migrate_graph(bad_graph)
+        .expect_err("condition edges with the branch label on to_port must be rejected");
+    assert!(
+        err.contains("condition") && err.contains("from_port"),
+        "expected an InvalidConditionRouting-style error naming from_port, got: {err}"
+    );
+}
+
+#[test]
+fn validate_and_migrate_graph_accepts_condition_edges_with_branch_label_on_from_port() {
+    // The correct shape: `from_port` carries "true"/"false", `to_port` stays
+    // "main".
+    let good_graph = condition_graph("true", "main", "false", "main");
+
+    validate_and_migrate_graph(good_graph)
+        .expect("correctly-routed condition graph (branch label on from_port) must validate");
+}
+
+#[tokio::test]
+async fn flows_create_rejects_condition_edges_with_branch_label_on_to_port() {
+    // The same hard gate applies at the actual persistence path
+    // (`flows_create`), not just the standalone validate helper — a graph
+    // with this shape must never reach the store.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let bad_graph = condition_graph("main", "true", "main", "false");
+    let err = flows_create(&config, "bad-condition".to_string(), bad_graph, false)
+        .await
+        .expect_err("flows_create must reject a condition graph routed on to_port");
+    assert!(
+        err.contains("condition") && err.contains("from_port"),
+        "expected an InvalidConditionRouting-style error, got: {err}"
+    );
 }

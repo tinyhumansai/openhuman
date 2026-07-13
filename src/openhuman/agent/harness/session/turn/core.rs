@@ -879,7 +879,7 @@ impl Agent {
             .await;
         let turn_models =
             self.turn_model_source
-                .build(effective_model, temperature, context_window);
+                .build(effective_model, temperature, context_window)?;
 
         // Honor custom/BYOK vision models too: they can set `model_vision` even
         // when the provider capability bit is false, and must still rehydrate

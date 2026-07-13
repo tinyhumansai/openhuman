@@ -78,6 +78,23 @@ impl AgentBuilder {
         self
     }
 
+    /// Sets the AI provider as a **crate-native** turn-model source (Phase 3 P3-B):
+    /// `build`/`build_summarizer` construct crate `ChatModel`s from `(role, config)`
+    /// via `create_turn_chat_model` (managed → `OpenHumanBackendModel`, local/cloud →
+    /// crate `OpenAiModel`) instead of wrapping `provider` in `ProviderModel`s.
+    /// Used by the production session factory; the plain
+    /// [`provider`](Self::provider) setter (Provider path) stays for tests that
+    /// inject a mock they observe.
+    pub fn crate_native_provider(
+        mut self,
+        role: impl Into<String>,
+        config: Arc<crate::openhuman::config::Config>,
+    ) -> Self {
+        self.turn_model_source =
+            Some(crate::openhuman::tinyagents::TurnModelSource::new_crate_native(role, config));
+        self
+    }
+
     /// Sets the available tools for the agent.
     pub fn tools(mut self, tools: Vec<Box<dyn Tool>>) -> Self {
         self.tools = Some(tools);

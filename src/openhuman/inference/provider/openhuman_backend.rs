@@ -1,7 +1,6 @@
 //! Inference via the OpenHuman backend OpenAI-compatible API (`{api_url}/openai/v1/...`) using the app session JWT.
 //! Session material is loaded via [`crate::openhuman::credentials`] (see also [`crate::api::jwt`] for shared helpers).
 
-use super::compatible::{AuthStyle, OpenAiCompatibleProvider};
 use super::traits::{
     ChatMessage, ChatRequest, ChatResponse, Provider, ProviderCapabilities, StreamChunk,
     StreamOptions, StreamResult,
@@ -50,6 +49,7 @@ fn resolve_model(model: &str) -> String {
 }
 
 /// Routes chat to `config.api_url` + `/openai` with `Authorization: Bearer` from the `app-session` profile.
+#[derive(Clone)]
 pub struct OpenHumanBackendProvider {
     options: ProviderRuntimeOptions,
     api_url: Option<String>,
@@ -108,20 +108,13 @@ impl OpenHumanBackendProvider {
         Ok(format!("{}/openai/v1", u.trim_end_matches('/')))
     }
 
-    fn inner(&self, token: &str) -> anyhow::Result<OpenAiCompatibleProvider> {
-        // Hosted OpenHuman API is chat-completions only; skip /v1/responses fallback so transport
-        // errors stay a single clear message (fallback would duplicate the same connection failure).
-        // Opt into the `thread_id` extension so the backend can group
-        // InferenceLog entries and align KV-cache keys with the same
-        // logical chat thread the user sees — third-party providers
-        // never see this field (see `with_openhuman_thread_id`).
-        Ok(OpenAiCompatibleProvider::new_no_responses_fallback(
-            PROVIDER_LABEL,
-            &self.base_url()?,
-            Some(token),
-            AuthStyle::Bearer,
-        )
-        .with_openhuman_thread_id())
+    fn crate_provider(&self, model: &str) -> super::crate_provider::CrateBackedProvider {
+        let model =
+            std::sync::Arc::new(super::openhuman_backend_model::OpenHumanBackendModel::new(
+                self.clone(),
+                resolve_model(model),
+            ));
+        super::crate_provider::CrateBackedProvider::new(model, "managed")
     }
 }
 
@@ -164,10 +157,8 @@ impl Provider for OpenHumanBackendProvider {
         model: &str,
         temperature: f64,
     ) -> anyhow::Result<String> {
-        let token = self.resolve_bearer()?;
-        let inner = self.inner(&token)?;
         let model = resolve_model(model);
-        inner
+        self.crate_provider(&model)
             .chat_with_system(system_prompt, message, &model, temperature)
             .await
     }
@@ -178,10 +169,10 @@ impl Provider for OpenHumanBackendProvider {
         model: &str,
         temperature: f64,
     ) -> anyhow::Result<String> {
-        let token = self.resolve_bearer()?;
-        let inner = self.inner(&token)?;
         let model = resolve_model(model);
-        inner.chat_with_history(messages, &model, temperature).await
+        self.crate_provider(&model)
+            .chat_with_history(messages, &model, temperature)
+            .await
     }
 
     async fn chat(
@@ -190,16 +181,14 @@ impl Provider for OpenHumanBackendProvider {
         model: &str,
         temperature: f64,
     ) -> anyhow::Result<ChatResponse> {
-        let token = self.resolve_bearer()?;
-        let inner = self.inner(&token)?;
         let model = resolve_model(model);
-        inner.chat(request, &model, temperature).await
+        self.crate_provider(&model)
+            .chat(request, &model, temperature)
+            .await
     }
 
     async fn warmup(&self) -> anyhow::Result<()> {
-        let token = self.resolve_bearer()?;
-        let inner = self.inner(&token)?;
-        inner.warmup().await
+        self.resolve_bearer().map(|_| ())
     }
 
     fn supports_streaming(&self) -> bool {

@@ -1,64 +1,30 @@
-//! Scoring weight profiles for hybrid retrieval.
+//! Scoring weight profiles for hybrid retrieval — thin host shim over
+//! `tinycortex::memory::WeightProfile` (W5).
+//!
+//! The weight profile (graph/vector/keyword/freshness weights + the
+//! `BALANCED`/`SEMANTIC`/`LEXICAL`/`GRAPH_FIRST` presets + `by_name`) is the
+//! crate's, a byte-identical port. The host keeps only [`compose_score`] — the
+//! trivial weighted combination the crate expresses via
+//! `retrieval::scoring::hybrid_score` at its own call sites; exposed here as a
+//! free function so `memory_search::tools::hybrid_search` keeps its call shape.
 
-#[derive(Debug, Clone, Copy)]
-pub struct WeightProfile {
-    pub graph: f64,
-    pub vector: f64,
-    pub keyword: f64,
-    pub freshness: f64,
-}
+pub use tinycortex::memory::WeightProfile;
 
-impl WeightProfile {
-    pub const BALANCED: Self = Self {
-        graph: 0.35,
-        vector: 0.35,
-        keyword: 0.15,
-        freshness: 0.15,
-    };
-
-    pub const SEMANTIC: Self = Self {
-        graph: 0.15,
-        vector: 0.65,
-        keyword: 0.20,
-        freshness: 0.0,
-    };
-
-    pub const LEXICAL: Self = Self {
-        graph: 0.25,
-        vector: 0.15,
-        keyword: 0.60,
-        freshness: 0.0,
-    };
-
-    pub const GRAPH_FIRST: Self = Self {
-        graph: 0.55,
-        vector: 0.30,
-        keyword: 0.15,
-        freshness: 0.0,
-    };
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "balanced" => Some(Self::BALANCED),
-            "semantic" => Some(Self::SEMANTIC),
-            "lexical" => Some(Self::LEXICAL),
-            "graph_first" => Some(Self::GRAPH_FIRST),
-            _ => None,
-        }
-    }
-
-    pub fn compose_score(
-        &self,
-        graph_relevance: f64,
-        vector_similarity: f64,
-        keyword_relevance: f64,
-        freshness: f64,
-    ) -> f64 {
-        (self.graph * graph_relevance)
-            + (self.vector * vector_similarity)
-            + (self.keyword * keyword_relevance)
-            + (self.freshness * freshness)
-    }
+/// Weighted composite of the four retrieval signals under `profile`.
+///
+/// `graph·graph_relevance + vector·vector_similarity + keyword·keyword_relevance
+/// + freshness·freshness`.
+pub fn compose_score(
+    profile: &WeightProfile,
+    graph_relevance: f64,
+    vector_similarity: f64,
+    keyword_relevance: f64,
+    freshness: f64,
+) -> f64 {
+    (profile.graph * graph_relevance)
+        + (profile.vector * vector_similarity)
+        + (profile.keyword * keyword_relevance)
+        + (profile.freshness * freshness)
 }
 
 #[cfg(test)]
@@ -66,35 +32,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn profiles_sum_to_one() {
-        for profile in [
-            WeightProfile::BALANCED,
-            WeightProfile::SEMANTIC,
-            WeightProfile::LEXICAL,
-            WeightProfile::GRAPH_FIRST,
-        ] {
-            let sum = profile.graph + profile.vector + profile.keyword + profile.freshness;
-            assert!(
-                (sum - 1.0).abs() < 0.01,
-                "profile weights should sum to ~1.0, got {sum}"
-            );
-        }
-    }
-
-    #[test]
-    fn from_name_resolves() {
-        assert!(WeightProfile::from_name("balanced").is_some());
-        assert!(WeightProfile::from_name("semantic").is_some());
-        assert!(WeightProfile::from_name("lexical").is_some());
-        assert!(WeightProfile::from_name("graph_first").is_some());
-        assert!(WeightProfile::from_name("unknown").is_none());
-    }
-
-    #[test]
-    fn compose_score_applies_weights() {
-        let profile = WeightProfile::SEMANTIC;
-        let score = profile.compose_score(0.5, 1.0, 0.5, 0.0);
-        let expected = 0.15 * 0.5 + 0.65 * 1.0 + 0.20 * 0.5;
-        assert!((score - expected).abs() < f64::EPSILON);
+    fn compose_score_is_weighted_sum() {
+        let p = WeightProfile::BALANCED;
+        let s = compose_score(&p, 1.0, 1.0, 1.0, 1.0);
+        assert!((s - (p.graph + p.vector + p.keyword + p.freshness)).abs() < 1e-9);
     }
 }

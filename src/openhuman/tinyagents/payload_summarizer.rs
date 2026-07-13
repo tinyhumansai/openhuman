@@ -261,14 +261,15 @@ impl SubagentPayloadSummarizer {
             anyhow!("payload summarizer cannot use invoke_in_parent without ParentExecutionContext")
         })?;
         let config_loaded = crate::openhuman::config::Config::load_or_init().await;
-        let (provider, model) = subagent_runner::resolve_subagent_provider(
+        let (source, model) = subagent_runner::resolve_subagent_source(
             &self.definition.model,
             &self.definition.id,
             config_loaded.as_ref().ok(),
-            parent.turn_model_source.provider(),
+            parent.turn_model_source.clone(),
             parent.model_name.clone(),
             false,
             None,
+            self.definition.temperature,
         );
         let max_output_tokens = self
             .definition
@@ -284,9 +285,10 @@ impl SubagentPayloadSummarizer {
 
         let mut harness: AgentHarness<()> = AgentHarness::new();
         harness.with_policy(policy);
-        let provider_model =
-            super::model::ProviderModel::new(provider, model.clone(), self.definition.temperature)
-                .with_max_tokens(max_output_tokens);
+        let provider_model = super::model::MaxTokensModel::new(
+            source.build_summarizer(&model, self.definition.temperature)?,
+            max_output_tokens,
+        );
         harness
             .register_model(&model, Arc::new(provider_model))
             .set_default_model(&model);

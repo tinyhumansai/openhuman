@@ -136,10 +136,36 @@ job payload_json parity (P4/P9). Any red = upstream fix in tinycortex, re-bump s
 - **P13 sync-status parity** — `memory_sync_status_list` output (per-`source_kind` freshness rows)
   byte-equal pre/post flip on a golden workspace; asserter added to
   `src/openhuman/tinycortex/parity.rs`.
-- **P14 Composio sync test pair** — the crate's mocked-HTTP gmail pipeline test
-  (`vendor/tinycortex/tests/composio_sync_mock.rs`, wiremock, always-on) green in crate CI before
-  the W-SYNC.3 flip; the live `#[ignore]` test (`composio_sync_live.rs`, `COMPOSIO_API_KEY`) run
-  manually at least once per flip wave.
+- **P14 Composio sync test pair** — the crate's mocked-HTTP provider suite
+  (`vendor/tinycortex/tests/composio_sync_mock.rs`, wiremock, always-on) covers Gmail, Slack,
+  GitHub, Notion, Linear, and ClickUp, including pagination/cursors, request budgets, retries,
+  taint, idempotency, proxied envelopes, and secret redaction. The live `#[ignore]` test
+  (`composio_sync_live.rs`, `COMPOSIO_API_KEY`) remains the manual direct-mode smoke gate.
+
+### W8 test-ownership audit (2026-07-13)
+
+Engine tests now run at their ownership boundary rather than through OpenHuman re-export shims:
+
+- TinyCortex owns memory value/chunk/tree/queue/scoring behavior and the Composio sync pipelines.
+  Duplicate engine assertions were removed from the pure `chunks::types`, `trees::types`,
+  queue-backfill flag, retrieval-weight, and score re-export shims.
+- OpenHuman retains tests that cross a product boundary: config and credential mapping,
+  `SkillDocSink` persistence, event-bus subscribers, RPC envelopes, provider profile/task/catalog
+  surfaces, agent-tool response post-processing, source registry side effects, and the
+  security-critical `MemoryTaint` seam.
+- OpenHuman CI now runs `cargo test --manifest-path vendor/tinycortex/Cargo.toml --features
+  git-diff,sync` when the submodule pointer changes and in the reusable full Rust suite. This is
+  required because Cargo does not run dependency test targets while testing `openhuman`.
+
+The focused local verification commands are:
+
+```bash
+cargo test --manifest-path vendor/tinycortex/Cargo.toml --features git-diff,sync
+cargo test --test raw_coverage_all memory_sync -- --test-threads=1
+cargo test --test memory_sync_pipeline_e2e --test memory_artifacts_e2e \
+  --test memory_golden_parity_e2e --test memory_roundtrip_e2e --test memory_sources_e2e
+cargo test --test json_rpc_e2e json_rpc_memory
+```
 
 **W-EMB gate:** the existing **P10 `embedding_signature_parity`** asserter is the regression pin —
 the tinyagents-backed provider stack must emit byte-identical

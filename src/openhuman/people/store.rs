@@ -100,6 +100,47 @@ pub fn get() -> Result<Arc<PeopleStore>, &'static str> {
         .ok_or("people store not initialised — core startup hasn't completed")
 }
 
+/// Per-workspace store cache keyed by workspace dir. Backs [`for_workspace`],
+/// the context-scoped accessor ([`crate::core::runtime::CoreContext::people`]).
+/// Distinct from the single `GLOBAL` slot above (which tracks the one
+/// active-user workspace for the legacy free-function handlers): this map lets
+/// multiple workspaces' stores coexist in one process, which is what per-context
+/// isolation (Phase 3) needs.
+static STORES: OnceLock<RwLock<std::collections::HashMap<PathBuf, Arc<PeopleStore>>>> =
+    OnceLock::new();
+
+/// Open (or return the cached) people store for a specific workspace dir. Unlike
+/// [`get`], this is not tied to the single active-user global — two different
+/// workspaces resolve to two isolated stores, and the same workspace always
+/// resolves to the same cached `Arc`. Opening `<workspace>/people/people.db`
+/// runs schema migrations.
+pub fn for_workspace(workspace_dir: &Path) -> Result<Arc<PeopleStore>, String> {
+    let cache = STORES.get_or_init(Default::default);
+    if let Some(store) = cache
+        .read()
+        .map_err(|e| format!("[people:store] cache read lock poisoned: {e}"))?
+        .get(workspace_dir)
+    {
+        return Ok(Arc::clone(store));
+    }
+
+    let db_path = workspace_dir.join("people").join("people.db");
+    let store = Arc::new(
+        PeopleStore::open_at(&db_path).map_err(|e| format!("people store open failed: {e}"))?,
+    );
+
+    let mut guard = cache
+        .write()
+        .map_err(|e| format!("[people:store] cache write lock poisoned: {e}"))?;
+    // Re-check under the write lock: a concurrent caller may have opened the
+    // same workspace while we were opening — reuse theirs so callers always
+    // share one store per workspace.
+    let entry = guard
+        .entry(workspace_dir.to_path_buf())
+        .or_insert_with(|| Arc::clone(&store));
+    Ok(Arc::clone(entry))
+}
+
 pub struct PeopleStore {
     pub conn: ConnHandle,
 }

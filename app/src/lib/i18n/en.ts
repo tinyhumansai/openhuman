@@ -4462,8 +4462,18 @@ const en: TranslationMap = {
   'flowRuns.inspector.approval.loadError': 'Could not load pending approvals for this run.',
   'flowRuns.inspector.steps': 'Steps',
   'flowRuns.inspector.noSteps': 'No steps recorded yet.',
-  'flowRuns.inspector.output': 'Output',
+  // Issue B20 — raw JSON now lives behind this disclosure; the plain-language
+  // summary above it (`flowRuns.inspector.summary.*`) is the primary view.
+  'flowRuns.inspector.output': 'Show raw output',
   'flowRuns.inspector.port': 'Port',
+  // Issue B20 — plain-language, always-visible step summary (no costUsd/
+  // labelIds/markdownFormatted or flow:/run: ids — those stay behind
+  // "Show raw output"). `{count}` is substituted client-side, not via ICU.
+  'flowRuns.inspector.summary.failedPrefix': "Couldn't complete:",
+  'flowRuns.inspector.summary.unknownError': 'something went wrong',
+  'flowRuns.inspector.summary.itemsFetched': 'Fetched {count} item(s)',
+  'flowRuns.inspector.summary.completed': 'Step completed',
+  'flowRuns.inspector.summary.noOutput': 'No output produced',
   // Null-resolution diagnostics: `=`-expressions in a step's config that
   // resolved to null during the run (likely a mis-wired reference).
   'flowRuns.inspector.diagnosticsTitle': 'Expression warnings',

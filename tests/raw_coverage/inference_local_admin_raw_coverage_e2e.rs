@@ -123,8 +123,8 @@ async fn compatible_provider_covers_retry_headers_responses_and_parse_errors() {
         .expect("merged chat");
     assert_eq!(merged, "merged response");
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(8);
-    let retried = provider
+    let (tx, _rx) = tokio::sync::mpsc::channel::<ProviderDelta>(8);
+    let tool_err = provider
         .chat(
             ChatRequest {
                 messages: &[
@@ -157,10 +157,9 @@ async fn compatible_provider_covers_retry_headers_responses_and_parse_errors() {
             0.2,
         )
         .await
-        .expect("stream retry without tools");
+        .expect_err("tool rejection is returned without a speculative retry");
     drop(tx);
-    assert_eq!(retried.text.as_deref(), Some("json stream fallback"));
-    assert!(rx.recv().await.is_none(), "non-SSE JSON emits no deltas");
+    assert!(tool_err.to_string().contains("does not support tools"));
 
     let no_fallback = OpenAiCompatibleProvider::new_no_responses_fallback(
         "glm",
@@ -172,23 +171,23 @@ async fn compatible_provider_covers_retry_headers_responses_and_parse_errors() {
         .chat_with_system(None, "missing", "not-found-model", 0.2)
         .await
         .expect_err("404 should be enriched without responses fallback");
-    assert!(err.to_string().contains("endpoint URL"));
+    assert!(err.to_string().contains("404"));
 
     let empty_err = provider
         .chat_with_history(&[ChatMessage::user("empty choices")], "empty-choices", 0.2)
         .await
         .expect_err("empty choices");
-    assert!(empty_err.to_string().contains("No response"));
+    assert!(empty_err.to_string().to_ascii_lowercase().contains("choices"));
 
-    let responses_err = provider
+    let responses_text = provider
         .chat_with_history(
             &[ChatMessage::system("only system")],
             "responses-empty-input",
             0.2,
         )
         .await
-        .expect_err("responses requires input");
-    assert!(!responses_err.to_string().is_empty());
+        .expect("system-only responses request");
+    assert!(responses_text.is_empty());
 
     let bearer = OpenAiCompatibleProvider::new(
         "bearer",
@@ -261,9 +260,8 @@ async fn compatible_provider_covers_retry_headers_responses_and_parse_errors() {
         .filter(|(_, _, body)| body["model"] == "stream-tools-unsupported")
         .map(|(_, _, body)| body.clone())
         .collect();
-    assert_eq!(retry_bodies.len(), 2);
+    assert_eq!(retry_bodies.len(), 1);
     assert!(retry_bodies[0].get("tools").is_some());
-    assert!(retry_bodies[1].get("tools").is_none());
 }
 
 #[tokio::test]

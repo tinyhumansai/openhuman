@@ -187,6 +187,38 @@ jobs:
             fi
           done < <(integration_test_targets)
 
+  tinycortex-tests:
+    if: inputs.run_rust_core
+    name: TinyCortex Memory Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Init tinycortex submodule
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init vendor/tinycortex
+
+      - name: Cache TinyCortex build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vendor/tinycortex -> vendor/tinycortex/target
+          cache-on-failure: true
+          key: tinycortex-full
+
+      - name: Run TinyCortex engine and Composio sync tests
+        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinycortex/Cargo.toml --features git-diff,sync
+
   rust-core-tests-windows:
     if: inputs.run_rust_core
     name: Rust Core Tests (Windows — secrets ACL)

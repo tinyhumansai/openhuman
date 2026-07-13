@@ -38,7 +38,6 @@ use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRu
 use crate::openhuman::approval::{
     redact_args, summarize_action, ApprovalGate, ExecutionOutcome, GateOutcome,
 };
-use crate::openhuman::tinyagents::model::provider_chat_model;
 use crate::openhuman::tinyagents::tools::{
     execute_openhuman_tool, tool_policy_from_openhuman_tool,
 };
@@ -87,15 +86,15 @@ mod tests {
 /// Reads the parent's visible tool set, provider/model, and sub-agent
 /// allowlist. The returned registry carries no `rhai`, `spawn_*`, or workflow
 /// tools, and no `CliRpcOnly`-scoped tools.
-pub(super) fn build_capability_registry(parent: &ParentExecutionContext) -> CapabilityRegistry<()> {
+pub(super) fn build_capability_registry(
+    parent: &ParentExecutionContext,
+) -> anyhow::Result<CapabilityRegistry<()>> {
     let mut registry = CapabilityRegistry::<()>::new();
 
     // ── Model: the turn's provider, under its registered name. ──
-    let model = provider_chat_model(
-        parent.turn_model_source.provider(),
-        parent.model_name.clone(),
-        parent.temperature,
-    );
+    let model = parent
+        .turn_model_source
+        .build_summarizer(&parent.model_name, parent.temperature)?;
     registry.replace_model(parent.model_name.clone(), model);
 
     // ── Tools: visible, non-excluded, agent-scoped only. ──
@@ -134,7 +133,7 @@ pub(super) fn build_capability_registry(parent: &ParentExecutionContext) -> Capa
         model = %parent.model_name,
         "[rhai_workflows] built capability registry"
     );
-    registry
+    Ok(registry)
 }
 
 /// A `tinyagents` tool backed by an openhuman [`Tool`](OhTool), located by name

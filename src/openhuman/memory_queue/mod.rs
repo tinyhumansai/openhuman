@@ -31,7 +31,6 @@
 //! `openhuman::memory` re-exports it as `memory::jobs` during the migration.
 
 mod ops;
-mod redact;
 pub mod scheduler;
 pub mod store;
 pub mod testing;

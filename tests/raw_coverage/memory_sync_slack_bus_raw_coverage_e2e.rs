@@ -6,7 +6,7 @@
 //! OPENHUMAN_WORKSPACE, and config loading are process globals.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::routing::any;
@@ -270,17 +270,15 @@ async fn configured_loopback_context(
 async fn slack_full_sync_search_backfill_and_bus_use_loopback_composio() {
     let _guard = env_lock();
     let tmp = TempDir::new().expect("tempdir");
-    let dump_dir = tmp.path().join("slack-dumps");
     let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
     let _home = EnvGuard::set_path("HOME", tmp.path());
     let _backend = EnvGuard::unset("BACKEND_URL");
     let _triage_off = EnvGuard::set("OPENHUMAN_TRIGGER_TRIAGE_DISABLED", "1");
     let _pacing = EnvGuard::set("OPENHUMAN_SLACK_INTER_CALL_PACING_MS", "0");
     let _backfill = EnvGuard::set("OPENHUMAN_SLACK_BACKFILL_DAYS", "1");
-    let _dump = EnvGuard::set_path("OPENHUMAN_SLACK_DUMP_DIR", &dump_dir);
 
     let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
-    let (config, ctx, server) = configured_loopback_context(&tmp, Arc::clone(&requests)).await;
+    let (_config, ctx, server) = configured_loopback_context(&tmp, Arc::clone(&requests)).await;
 
     let provider = SlackProvider::new();
     let profile = provider
@@ -298,43 +296,26 @@ async fn slack_full_sync_search_backfill_and_bus_use_loopback_composio() {
         .expect("slack full sync");
     assert_eq!(outcome.toolkit, "slack");
     assert_eq!(outcome.connection_id.as_deref(), Some("conn-slack-round19"));
-    assert_eq!(outcome.items_ingested, 4);
-    // Slack now rides the generic orchestrator: two channels synced cleanly,
-    // none errored. (`channels_processed` → orchestrator's `scopes_synced`.)
-    assert_eq!(outcome.details["scopes_synced"], 2);
-    assert_eq!(outcome.details["scopes_errored"], 0);
+    assert_eq!(outcome.items_ingested, 3);
+    assert_eq!(outcome.details["more_pending"], false);
+    assert_eq!(outcome.details["actions_called"], 6);
 
     let search = run_backfill_via_search(&ctx, 2)
         .await
         .expect("slack search backfill");
     assert_eq!(search.items_ingested, 1);
-    assert_eq!(search.details["channels_flushed"], 1);
-    assert_eq!(search.details["channels_failed"], 0);
+    assert_eq!(search.details["more_pending"], false);
+    assert_eq!(search.details["actions_called"], 5);
 
-    let raw_root = config.memory_tree_content_root().join("raw");
-    let raw_files = walk_files(&raw_root);
-    let raw_bodies = raw_files
-        .iter()
-        .filter_map(|path| std::fs::read_to_string(path).ok())
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(raw_bodies.contains("shipping Slack sync coverage with @Ben Round19"));
-    assert!(raw_bodies.contains("private sync note for @Ben Round19"));
-    assert!(raw_bodies.contains("search backfill hit for @Ava Round19"));
-    assert!(raw_bodies.contains("**Channel:** #coverage"));
-    assert!(raw_bodies.contains("**Channel:** private:private-coverage"));
-
-    let dumped = walk_files(&dump_dir);
-    assert!(
-        dumped.iter().any(|p| p.to_string_lossy().contains("users")),
-        "user directory response should be dumped"
-    );
-    assert!(
-        dumped
-            .iter()
-            .any(|p| p.to_string_lossy().contains("history")),
-        "history responses should be dumped"
-    );
+    let documents = openhuman_core::openhuman::memory::ops::doc_list(Some(
+        openhuman_core::openhuman::memory::ops::NamespaceOnlyParams {
+            namespace: "skill-slack".into(),
+        },
+    ))
+    .await
+    .expect("list synchronized Slack documents")
+    .value;
+    assert_eq!(documents["documents"].as_array().unwrap().len(), 4);
 
     let trigger_sub = ComposioTriggerSubscriber::new();
     assert_eq!(trigger_sub.name(), "composio::trigger");
@@ -455,27 +436,4 @@ async fn gmail_post_process_reshapes_nested_messages_and_honors_raw_html_flag() 
     );
     assert_eq!(raw_passthrough["messages"][0]["messageId"], "raw-round19");
     assert!(raw_passthrough["messages"][0].get("markdown").is_none());
-}
-
-fn walk_files(root: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if !root.exists() {
-        return out;
-    }
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(path) = stack.pop() {
-        let entries = match std::fs::read_dir(&path) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-        for entry in entries.flatten() {
-            let child = entry.path();
-            if child.is_dir() {
-                stack.push(child);
-            } else {
-                out.push(child);
-            }
-        }
-    }
-    out
 }

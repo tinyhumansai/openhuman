@@ -285,7 +285,7 @@ impl Tool for ExtractFromResultTool {
         // carries the messages.
         let chat = self
             .source
-            .build_summarizer(&self.model, EXTRACT_TEMPERATURE);
+            .build_summarizer(&self.model, EXTRACT_TEMPERATURE)?;
         // Model id for the per-chunk transcript metadata (the chat call itself
         // bakes it into `chat`).
         let model = self.model.clone();
@@ -415,7 +415,7 @@ impl ExtractFromResultTool {
         let call_seq = self.next_call_seq();
         let provider_result = self
             .source
-            .build_summarizer(&self.model, EXTRACT_TEMPERATURE)
+            .build_summarizer(&self.model, EXTRACT_TEMPERATURE)?
             .invoke(
                 &(),
                 ModelRequest::new(vec![

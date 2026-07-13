@@ -160,6 +160,13 @@ A `WorkflowGraph` is `{ name?, nodes: [...], edges: [...] }`.
 - **Node:** `{ id, kind, name, config }`. `id` is unique within the graph.
 - **Edge:** `{ from_node, to_node, from_port?, to_port? }`. Ports default to
   `"main"`. Branch nodes emit on named ports (below) — wire those explicitly.
+  **The branch label ALWAYS goes on `from_port` — never on `to_port`.**
+  Routing is keyed exclusively on the SOURCE node's `from_port`; `to_port`
+  is not consulted to pick a successor, so a branch label put on `to_port`
+  instead (a common mistake) is silently wrong: `save_workflow`/
+  `propose_workflow`/`revise_workflow` now HARD-REJECT it (a `condition`
+  node's outgoing edges must have `from_port` in `"true"`/`"false"`), so
+  fix the graph and call the tool again if you see that error.
 - **Exactly ONE `trigger` node is required.** Every other node should be
   reachable from it; a dry-run helps catch orphans.
 
@@ -288,6 +295,22 @@ A `WorkflowGraph` is `{ name?, nodes: [...], edges: [...] }`.
    `output_parser.schema` property MUST be declared `"type": "boolean"` (see
    the `agent` node kind above) — an untyped/string field can carry the
    truthy string `"false"` and route to the wrong port.
+
+   **The branch label is the edge's `from_port`, not `to_port`** — `to_port`
+   on an edge leaving a `condition` node just stays `"main"` (or is omitted).
+   Given a condition node `"gate"` with a `"true"` successor `"send_summary"`
+   and a `"false"` successor `"done"`, the two outgoing edges are:
+   ```json
+   { "from_node": "gate", "from_port": "true",  "to_node": "send_summary", "to_port": "main" },
+   { "from_node": "gate", "from_port": "false", "to_node": "done",         "to_port": "main" }
+   ```
+   NOT `{ "from_node": "gate", "from_port": "main", "to_node": "send_summary", "to_port": "true" }`
+   — that shape puts both edges in the same `from_port` group, which the
+   engine treats as an unconditional parallel fan-out (BOTH branches run
+   every time, regardless of the condition's actual result). This is
+   enforced: `propose_workflow`/`revise_workflow`/`save_workflow` reject a
+   `condition` node whose outgoing edges don't emit `"true"`/`"false"` on
+   `from_port`.
 7. **`switch`** — multi-way on `config.expression` or `config.field`; routes to
    the matching **case** port, else **`default`**.
 8. **`merge`** — fan-in barrier; passes inputs through. No config.

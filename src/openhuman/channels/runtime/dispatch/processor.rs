@@ -229,33 +229,37 @@ pub(crate) async fn process_channel_runtime_message(
 
     let history_key = conversation_history_key(&msg);
     let route = get_route_selection(ctx.as_ref(), &history_key);
-    let active_provider = match get_or_create_provider(ctx.as_ref(), &route.provider).await {
-        Ok(provider) => provider,
-        Err(err) => {
-            crate::core::observability::report_error(
-                &err,
-                "channels",
-                "provider_init",
-                &[
-                    ("channel", msg.channel.as_str()),
-                    ("provider", route.provider.as_str()),
-                ],
-            );
-            let safe_err = provider::sanitize_api_error(&err.to_string());
-            let message = format!(
+    let active_provider = if ctx.config.is_none() {
+        match get_or_create_provider(ctx.as_ref(), &route.provider).await {
+            Ok(provider) => Some(provider),
+            Err(err) => {
+                crate::core::observability::report_error(
+                    &err,
+                    "channels",
+                    "provider_init",
+                    &[
+                        ("channel", msg.channel.as_str()),
+                        ("provider", route.provider.as_str()),
+                    ],
+                );
+                let safe_err = provider::sanitize_api_error(&err.to_string());
+                let message = format!(
                 "⚠️ Failed to initialize provider `{}`. Please run `/models` to choose another provider.\nDetails: {safe_err}",
                 route.provider
             );
-            if let Some(channel) = target_channel.as_ref() {
-                let _ = channel
-                    .send_with_outbound_intent(
-                        &SendMessage::new(message, &msg.reply_target)
-                            .in_thread(msg.thread_ts.clone()),
-                    )
-                    .await;
+                if let Some(channel) = target_channel.as_ref() {
+                    let _ = channel
+                        .send_with_outbound_intent(
+                            &SendMessage::new(message, &msg.reply_target)
+                                .in_thread(msg.thread_ts.clone()),
+                        )
+                        .await;
+                }
+                return;
             }
-            return;
         }
+    } else {
+        None
     };
 
     let memory_context =
@@ -459,13 +463,24 @@ pub(crate) async fn process_channel_runtime_message(
     };
 
     let turn_request = AgentTurnRequest {
-        // Wrap the channel's cached provider into the seam turn-model source at
-        // the bus boundary (issue #4249, Phase 3 / Motion A) so the harness holds
-        // crate model types only. The channel provider cache stays provider-typed
-        // (a producer concern) until Motion B swaps in crate-native clients.
-        turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(Arc::clone(
-            &active_provider,
-        )),
+        // Crate-native channel turn models (Phase 3 P3-B): when the runtime carries
+        // the full config, build crate `ChatModel`s from `("chat", route.provider,
+        // config)` — `route.provider` is the effective provider string. Tests (no
+        // `config`) stay on the injected `Provider` path.
+        turn_model_source: match &ctx.config {
+            Some(cfg) => {
+                crate::openhuman::tinyagents::TurnModelSource::new_crate_native_from_string(
+                    "chat",
+                    route.provider.clone(),
+                    cfg.clone(),
+                )
+            }
+            None => crate::openhuman::tinyagents::TurnModelSource::new(Arc::clone(
+                active_provider
+                    .as_ref()
+                    .expect("test channel context must inject a provider"),
+            )),
+        },
         history: std::mem::take(&mut history),
         tools_registry: Arc::clone(&ctx.tools_registry),
         provider_name: route.provider.clone(),

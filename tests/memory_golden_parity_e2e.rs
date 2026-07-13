@@ -261,29 +261,15 @@ async fn golden_workspace_composes_substrate_and_unified_tiers() {
         tables.contains("mem_tree_chunks") && tables.contains("memory_docs"),
         "both the crate substrate and the host unified tier must coexist"
     );
-}
 
-/// Comparator 5 (idempotent re-open) — re-running the production flow over an
-/// existing workspace must not add or drop tables (no lazy second-run schema
-/// churn / migration storm).
-#[tokio::test]
-async fn golden_workspace_reopen_is_schema_stable() {
-    let _lock = env_lock();
-    let tmp = tempdir().expect("tempdir");
-    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
-    let workspace = tmp.path().join("workspace");
-    std::fs::create_dir_all(&workspace).expect("mkdir workspace");
-    let _ws = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);
-
-    let first = init_and_scan("golden-parity-reopen", &workspace).await;
-    let second = init_and_scan("golden-parity-reopen", &workspace).await;
+    // Comparator 5 (idempotent re-open): keep this in the same test because
+    // the production memory client is process-global and deliberately binds
+    // to its first workspace. Separate tests with separate temp workspaces can
+    // therefore pass or fail depending on test scheduling.
+    let reopened = init_and_scan("golden-parity-e2e", &workspace).await;
 
     assert_eq!(
-        first, second,
+        tables, reopened,
         "re-running the flow changed the workspace table set (schema churn on re-open)"
-    );
-    assert!(
-        !first.is_empty(),
-        "sanity: the first pass should have created tables"
     );
 }

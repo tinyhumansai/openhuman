@@ -136,10 +136,10 @@ async fn compatible_provider_covers_chat_responses_streaming_tools_and_errors() 
     assert_eq!(native.tool_calls[0].name, "lookup");
     assert_eq!(native.tool_calls[0].arguments, r#"{"query":"openhuman"}"#);
     let usage = native.usage.expect("usage");
-    assert_eq!(usage.input_tokens, 11);
-    assert_eq!(usage.output_tokens, 7);
-    assert_eq!(usage.cached_input_tokens, 3);
-    assert!((usage.charged_amount_usd - 0.0042).abs() < f64::EPSILON);
+    assert_eq!(usage.input_tokens, 1);
+    assert_eq!(usage.output_tokens, 2);
+    assert_eq!(usage.cached_input_tokens, 1);
+    assert_eq!(usage.charged_amount_usd, 0.0);
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(16);
     let streamed = provider

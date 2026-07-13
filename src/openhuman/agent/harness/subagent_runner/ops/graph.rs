@@ -215,7 +215,7 @@ pub(super) async fn run_subagent_via_graph(
     // turn's own model set is consumed by the run). Built off the same source, so
     // the checkpoint invokes a crate `ChatModel` without naming `Provider`
     // (issue #4249, Phase 3 / Motion A).
-    let summary_model = source.build_summarizer(model, temperature);
+    let summary_model = source.build_summarizer(model, temperature)?;
 
     // Resolve the sub-agent model's effective context window so the harness runs
     // the context-window summarization step (issue #4249) on sub-agent turns too.
@@ -227,7 +227,7 @@ pub(super) async fn run_subagent_via_graph(
     // Build the child turn's crate `ChatModel` set from the source; capability
     // reads (vision/native-tools) + telemetry id now come off the built bundle,
     // so the sub-agent path names crate model types only.
-    let turn_models = source.build(model, temperature, context_window);
+    let turn_models = source.build(model, temperature, context_window)?;
 
     // Vision forwarding (parity with the legacy `run_inner_loop`): rehydrate
     // `[IMAGE:…]` placeholders in the sub-agent's history when either the model

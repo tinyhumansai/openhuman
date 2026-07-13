@@ -64,6 +64,14 @@ export interface FlowRunStep {
   /** Output port the node routed on, if any (branching/switch nodes). Omitted when absent. */
   port?: string;
   /**
+   * Live step outcome as observed by `FlowRunObserver::on_step_finish` — `undefined`
+   * for a step reconstructed post-hoc (e.g. the trigger node) rather than
+   * observed live, not "unknown/neutral" in the UI sense.
+   */
+  status?: 'success' | 'error';
+  /** Wall-clock duration of this step, if the observer recorded one. */
+  duration_ms?: number;
+  /**
    * Config `=`-expressions that resolved to `null` while running this step
    * (`location` is the config path, e.g. `args.to`). Empty/absent when clean.
    */

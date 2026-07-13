@@ -5,9 +5,9 @@ use super::super::types::Agent;
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::ARCHIVIST_EXTRACTION_PROMPT;
-use crate::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ProviderDelta, UsageInfo, AGENT_TURN_MAX_OUTPUT_TOKENS,
-};
+use crate::openhuman::inference::provider::{ChatMessage, UsageInfo, AGENT_TURN_MAX_OUTPUT_TOKENS};
+use futures::StreamExt;
+use tinyagents::harness::model::{ModelRequest, ModelStreamItem};
 
 impl Agent {
     // ─────────────────────────────────────────────────────────────────
@@ -92,89 +92,82 @@ impl Agent {
         let mut messages = base_messages.to_vec();
         messages.push(ChatMessage::user(instruction));
 
-        // Mirror the main loop's streaming sink so the checkpoint renders
-        // incrementally. Only text deltas are relevant here (tools are
-        // disabled for this call).
-        let (delta_tx_opt, delta_forwarder) = if self.on_progress.is_some() {
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(128);
-            let progress_tx = self.on_progress.clone();
-            let forwarder = tokio::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    let Some(ref sink) = progress_tx else {
-                        continue;
-                    };
-                    if let ProviderDelta::TextDelta { delta } = event {
-                        if sink
-                            .send(AgentProgress::TextDelta {
-                                delta,
-                                iteration: iteration_for_stream,
-                            })
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                }
-            });
-            (Some(tx), Some(forwarder))
-        } else {
-            (None, None)
+        let chat_model = match self
+            .turn_model_source
+            .build_summarizer(effective_model, self.temperature)
+        {
+            Ok(model) => model,
+            Err(error) => {
+                tracing::error!(
+                    error = %error,
+                    model = effective_model,
+                    "[agent::session] failed to build wrap-up model"
+                );
+                return (String::new(), None);
+            }
+        };
+        let request = ModelRequest::new(
+            messages
+                .iter()
+                .map(crate::openhuman::tinyagents::chat_message_to_message)
+                .collect(),
+        )
+        .with_model(effective_model)
+        .with_temperature(self.temperature)
+        .with_max_tokens(AGENT_TURN_MAX_OUTPUT_TOKENS);
+        let mut stream = match chat_model.stream(&(), request).await {
+            Ok(stream) => stream,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    model = effective_model,
+                    "[agent::session] wrap-up stream failed to start"
+                );
+                return (String::new(), None);
+            }
         };
 
-        // The cap-hit checkpoint summary streams text deltas to the session
-        // progress sink (draft updates), which the crate `ChatModel::invoke` path
-        // doesn't expose — so this one call resolves the raw provider off the
-        // source inline (issue #4249, Phase 3 / Motion A). The `Agent` struct
-        // itself holds no `Provider`; this stays a `.provider()` escape hatch until
-        // the streaming checkpoint moves onto the crate stream API (Motion B).
-        let result = self
-            .turn_model_source
-            .provider()
-            .chat(
-                ChatRequest {
-                    messages: &messages,
-                    tools: None,
-                    stream: delta_tx_opt.as_ref(),
-                    // Reservation-pricing pre-flight budget cap (TAURI-RUST-C62).
-                    max_tokens: Some(AGENT_TURN_MAX_OUTPUT_TOKENS),
-                },
-                effective_model,
-                self.temperature,
-            )
-            .await;
-        drop(delta_tx_opt);
-        if let Some(handle) = delta_forwarder {
-            let _ = handle.await;
-        }
-
-        match result {
-            Ok(resp) => {
-                let usage = resp.usage.clone();
-                // Strip any stray tool-call XML a text-mode model may have
-                // emitted; keep only the prose.
-                let (text, calls) = self.tool_dispatcher.parse_response(&resp);
-                let checkpoint = if !text.trim().is_empty() {
-                    text
-                } else if calls.is_empty() {
-                    // No tool-call markup was present, so the raw text (if
-                    // any) is genuine prose — safe to use.
-                    resp.text.unwrap_or_default()
-                } else {
-                    // `parse_response` stripped tool-call markup and left no
-                    // prose. Do NOT re-emit `resp.text` here: it would persist
-                    // the raw `<tool_call>…` markup verbatim as the checkpoint.
-                    // Return empty so the caller uses the deterministic
-                    // fallback instead (bug-report-2026-05-26 A1).
-                    String::new()
-                };
-                (checkpoint, usage)
-            }
-            Err(e) => {
-                log::warn!("[agent_loop] checkpoint summary call failed: {e:#}");
-                (String::new(), None)
+        let mut streamed_text = String::new();
+        let mut completed = None;
+        while let Some(item) = stream.next().await {
+            match item {
+                ModelStreamItem::MessageDelta(delta) if !delta.text.is_empty() => {
+                    streamed_text.push_str(&delta.text);
+                    if let Some(sink) = &self.on_progress {
+                        let _ = sink
+                            .send(AgentProgress::TextDelta {
+                                delta: delta.text,
+                                iteration: iteration_for_stream,
+                            })
+                            .await;
+                    }
+                }
+                ModelStreamItem::Completed(response) => completed = Some(response),
+                ModelStreamItem::Failed(error) => {
+                    tracing::warn!(%error, "[agent::session] wrap-up stream failed");
+                    return (String::new(), None);
+                }
+                ModelStreamItem::ProviderFailed(error) => {
+                    tracing::warn!(error = %error.message, "[agent::session] wrap-up provider failed");
+                    return (String::new(), None);
+                }
+                _ => {}
             }
         }
+        let Some(response) = completed else {
+            tracing::warn!("[agent::session] wrap-up stream ended without completion");
+            return (String::new(), None);
+        };
+        let usage = crate::openhuman::tinyagents::model::usage_info_from_response(&response);
+        let text = response.text();
+        let checkpoint = if !text.trim().is_empty() {
+            text
+        } else if response.tool_calls().is_empty() {
+            streamed_text
+        } else {
+            String::new()
+        };
+        (checkpoint, usage)
     }
 
     /// Persist the exact provider messages as a session transcript.

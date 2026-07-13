@@ -54,7 +54,11 @@ impl Tool for ProposeWorkflowTool {
          ONLY VALIDATES the graph and returns a summary — it NEVER creates or enables the flow; \
          the user must click \"Save & enable\" in the UI before anything is persisted or can \
          run. Build a tinyflows WorkflowGraph: nodes[] ({id, kind, name, config}) + edges[] \
-         ({from_node, to_node, from_port?, to_port?}; ports default \"main\"). Exactly ONE \
+         ({from_node, to_node, from_port?, to_port?}; ports default \"main\"). For a branching \
+         node (condition/switch), the branch label goes on from_port — NEVER on to_port \
+         (to_port just stays \"main\"); routing is keyed exclusively on from_port, so a label \
+         on to_port instead silently turns the branch into an unconditional fan-out and is a \
+         hard reject. Exactly ONE \
          trigger node is required. The 12 node kinds: trigger (config.trigger_kind: manual | \
          schedule | webhook | app_event | form | chat_message | evaluation | system | \
          execute_by_workflow; schedule needs config.schedule = {kind:\"cron\",expr,tz?} | \
@@ -62,7 +66,8 @@ impl Tool for ProposeWorkflowTool {
          config.trigger_slug), agent (config.prompt), tool_call (config.slug REQUIRED + \
          config.args), http_request (config.method/url, optional headers/body), code \
          (config.language: \"javascript\"|\"python\" + config.source), condition (config.field; \
-         routes ports \"true\"/\"false\"), switch (config.expression or config.field; routes to \
+         routes on from_port \"true\"/\"false\", e.g. {from_node:\"gate\",from_port:\"true\",\
+         to_node:\"x\",to_port:\"main\"}), switch (config.expression or config.field; routes to \
          the matching case port, or \"default\"), transform (config.set: {key: \"=expr\"} \
          merged onto each item), split_out (config.path to an array field; fans out one item per \
          element), merge (fan-in passthrough, no config), output_parser (passthrough today; no \
@@ -109,8 +114,8 @@ impl Tool for ProposeWorkflowTool {
                                 "properties": {
                                     "from_node": { "type": "string" },
                                     "to_node": { "type": "string" },
-                                    "from_port": { "type": "string", "description": "Defaults to \"main\"." },
-                                    "to_port": { "type": "string", "description": "Defaults to \"main\"." }
+                                    "from_port": { "type": "string", "description": "Defaults to \"main\". For a condition/switch branch, this is where the branch label (e.g. \"true\"/\"false\") goes." },
+                                    "to_port": { "type": "string", "description": "Defaults to \"main\". Almost always stays \"main\" — branch labels go on from_port, not here." }
                                 },
                                 "required": ["from_node", "to_node"]
                             }
@@ -212,6 +217,26 @@ impl Tool for ProposeWorkflowTool {
             return Ok(ToolResult::error(format!(
                 "{}\n\nFix these tool_call nodes and call propose_workflow again.",
                 contract_errors.join("\n\n")
+            )));
+        }
+
+        // Required-arg resolvability gate (issue B18): reject outright —
+        // rather than merely warn — a REQUIRED outbound arg (e.g.
+        // `GMAIL_SEND_EMAIL.subject`/`.body`) that LOOKS wired but resolves
+        // to `null` in a sandboxed test run, before the user ever reviews
+        // the proposal. See `ops::validate_required_arg_resolvability`.
+        let null_arg_errors =
+            crate::openhuman::flows::ops::validate_required_arg_resolvability(&graph).await;
+        if !null_arg_errors.is_empty() {
+            tracing::debug!(
+                target: "flows",
+                %name,
+                error_count = null_arg_errors.len(),
+                "[flows] propose_workflow: required-arg resolvability check rejected the graph"
+            );
+            return Ok(ToolResult::error(format!(
+                "{}\n\nFix these bindings and call propose_workflow again.",
+                null_arg_errors.join("\n\n")
             )));
         }
 

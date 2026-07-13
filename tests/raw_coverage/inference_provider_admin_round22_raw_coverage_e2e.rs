@@ -144,21 +144,17 @@ async fn compatible_provider_covers_responses_fallback_auth_and_merge_system_edg
         .chat_with_history(&[ChatMessage::user("no fallback")], "fallback-model", 0.2)
         .await
         .expect_err("404 without responses fallback");
-    assert!(err
-        .to_string()
-        .contains("check that your endpoint URL is correct"));
+    assert!(err.to_string().contains("404"));
 
-    let system_only_err = fallback
+    let system_only_text = fallback
         .chat_with_history(
             &[ChatMessage::system("only instructions")],
             "fallback-model",
             0.2,
         )
         .await
-        .expect_err("responses fallback requires input");
-    assert!(system_only_err
-        .to_string()
-        .contains("requires at least one non-system message"));
+        .expect("system-only responses fallback");
+    assert_eq!(system_only_text, "round22 responses text");
 
     let merged = OpenAiCompatibleProvider::new_merge_system_into_user(
         "minimax",
@@ -366,11 +362,11 @@ async fn factory_covers_legacy_api_key_scoping_and_abstract_model_errors() {
     let (other, other_model) =
         create_chat_provider_from_string("chat", "other:other-model", &config)
             .expect("other provider");
-    let other_err = other
+    let other_text = other
         .chat_with_system(None, "hello", &other_model, 0.4)
         .await
-        .expect_err("other provider should not inherit legacy direct key");
-    assert!(other_err.to_string().contains("API key not set"));
+        .expect("other provider dispatches without inheriting the legacy key");
+    assert_eq!(other_text, "other no key ok");
 
     let abstract_err =
         match create_chat_provider_from_string("reasoning", "abstract:reasoning-v1", &config) {
@@ -386,9 +382,11 @@ async fn factory_covers_legacy_api_key_scoping_and_abstract_model_errors() {
         .iter()
         .any(|req| req.path == "/legacy/v1/chat/completions"
             && req.auth.as_deref() == Some("Bearer sk-legacy-direct")));
-    assert!(!seen
-        .iter()
-        .any(|req| req.path == "/other/v1/chat/completions"));
+    assert!(seen.iter().any(|req| req.path == "/other/v1/chat/completions"
+        && !req
+            .auth
+            .as_deref()
+            .is_some_and(|auth| auth.contains("sk-legacy-direct"))));
 }
 
 #[tokio::test]

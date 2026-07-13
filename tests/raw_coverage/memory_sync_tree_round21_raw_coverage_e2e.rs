@@ -35,7 +35,7 @@ use openhuman_core::openhuman::memory_sync::composio::providers::{
     ComposioProvider, ProviderContext, SyncReason, TaskFetchFilter,
 };
 use openhuman_core::openhuman::memory_tree::retrieval::source::query_source;
-use openhuman_core::openhuman::memory_tree::score::embed::{pack_embedding, EMBEDDING_DIM};
+use tinycortex::memory::score::embed::{pack_embedding, EMBEDDING_DIM};
 use openhuman_core::openhuman::memory_tree::tree::store as tree_store;
 use openhuman_core::openhuman::memory_tree::tree::TreeStatus;
 
@@ -358,16 +358,16 @@ async fn linear_provider_profile_tasks_sync_and_periodic_bookkeeping_use_loopbac
         .await
         .expect("linear sync");
     assert_eq!(sync.items_ingested, 4);
-    assert_eq!(sync.details["issues_fetched"], 4);
-    assert_eq!(sync.details["issues_persisted"], 4);
-    assert_eq!(sync.details["cursor"], "2026-05-30T10:00:00.000Z");
+    assert_eq!(sync.details["more_pending"], false);
+    assert_eq!(sync.details["actions_called"], 3);
 
     let second = provider
         .sync(&ctx, SyncReason::Manual)
         .await
         .expect("second sync");
     assert_eq!(second.items_ingested, 0);
-    assert_eq!(second.details["issues_persisted"], 0);
+    assert_eq!(second.details["more_pending"], false);
+    assert_eq!(second.details["actions_called"], 3);
 
     record_sync_success("linear", "conn-linear-round21");
     record_sync_success("linear", "conn-linear-round21");
@@ -422,7 +422,12 @@ async fn slack_sync_status_rpc_reads_mock_connections_and_persisted_state() {
     state.advance_cursor(r#"{"C21":"1714003200.000100"}"#);
     state.mark_synced("C21:1714003200.000100");
     state.record_requests(7);
-    state.save(&memory).await.expect("save slack sync state");
+    let state_adapter =
+        openhuman_core::openhuman::tinycortex::HostSyncAdapter::new(memory.clone());
+    state
+        .save(&state_adapter)
+        .await
+        .expect("save slack sync state");
 
     let outcome = sync_status_rpc(&config, SyncStatusRequest::default())
         .await

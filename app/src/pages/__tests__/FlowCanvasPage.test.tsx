@@ -194,6 +194,78 @@ describe('FlowCanvasPage', () => {
     ]);
   });
 
+  // Issue B21: `flows_update` re-validates/normalizes the graph server-side
+  // before persisting, so the canonical response can legitimately differ from
+  // what the client sent (schema migration, id defaults, etc.). Previously the
+  // canvas re-baselined against its OWN pre-save nodes/edges and ignored the
+  // response entirely — the canonical shape only ever appeared after a
+  // navigate-away-and-back remount refetched it via `flows_get`. Assert the
+  // canvas now reflects the SAVE RESPONSE's graph immediately, with no
+  // navigation and no remount of `FlowCanvasPage`.
+  it('re-syncs the canvas from the flows_update response on save, without a remount (B21)', async () => {
+    getFlow.mockResolvedValue(makeFlow());
+    // The server "normalizes" the saved graph: it accepts the client's
+    // trigger+agent nodes but also injects a third node the client never
+    // added (standing in for a server-side migration/default-fill), and
+    // renames the trigger. A stale canvas would keep showing only the two
+    // client-added nodes named "Start"/"New agent".
+    updateFlow.mockResolvedValue(
+      makeFlow({
+        graph: {
+          schema_version: 1,
+          id: 'test-id',
+          name: 'Daily digest',
+          nodes: [
+            {
+              id: 't',
+              kind: 'trigger',
+              name: 'Start (normalized)',
+              config: {},
+              ports: [],
+              position: { x: 0, y: 0 },
+            },
+            {
+              id: 'new-agent-0',
+              kind: 'agent',
+              name: 'New agent',
+              config: {},
+              ports: [],
+              position: { x: 80, y: 80 },
+            },
+            {
+              id: 'server-added',
+              kind: 'transform',
+              name: 'Server-added node',
+              config: {},
+              ports: [],
+              position: { x: 160, y: 160 },
+            },
+          ],
+          edges: [],
+        },
+      })
+    );
+    renderEditor();
+    await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('flow-palette-item-agent'));
+    expect(screen.getAllByTestId('flow-node')).toHaveLength(2);
+
+    fireEvent.click(screen.getByTestId('flow-editor-save'));
+    await waitFor(() => expect(updateFlow).toHaveBeenCalledTimes(1));
+
+    // The canvas now shows the RESPONSE's three nodes (including the one the
+    // client never added and the renamed trigger) — no navigation, no
+    // `flows_get` refetch, no remount required.
+    await waitFor(() => expect(screen.getAllByTestId('flow-node')).toHaveLength(3));
+    expect(screen.getByText('Start (normalized)')).toBeInTheDocument();
+    expect(screen.getByText('Server-added node')).toBeInTheDocument();
+    // Still the same page/component — proving this wasn't a navigate-away
+    // remount refetch in disguise.
+    expect(getFlow).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('flow-canvas-page')).toBeInTheDocument();
+  });
+
   it('does not prompt when navigating Back with no unsaved changes', async () => {
     getFlow.mockResolvedValue(makeFlow());
     renderEditor();

@@ -216,7 +216,7 @@ tinyagents = { path = "../../vendor/tinyagents" }
 # TinyAgents so integration work can test crate changes against OpenHuman before
 # publishing.
 tinyflows = { path = "../../vendor/tinyflows" }
-tinycortex = { path = "../../vendor/tinycortex" }
+tinycortex = { path = "../../vendor/tinycortex", features = ["git-diff"] }
 tinyjuice = { path = "../../vendor/tinyjuice" }
 tinychannels = { path = "../../vendor/tinychannels" }
 tinyplace = { path = "../../vendor/tinyplace/sdk/rust" }
@@ -247,6 +247,11 @@ tauri-plugin-deep-link = { git = "https://github.com/tauri-apps/plugins-workspac
 tauri-plugin-global-shortcut = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "c6561ab6b4f9e7f650d4fc8c53fd8acc9b65b9b2" }
 tauri-plugin-single-instance = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "c6561ab6b4f9e7f650d4fc8c53fd8acc9b65b9b2" }
 tauri-plugin-notification = { path = "vendor/tauri-plugin-notification" }
+
+# Match the root Cargo world: TinyCortex's temporary git pin must resolve to
+# the vendored TinyAgents crate to preserve one embedding trait identity.
+[patch."https://github.com/senamakel/tinyagents"]
+tinyagents = { path = "../../vendor/tinyagents" }
 
 [dev-dependencies]
 # `test-util` enables `#[tokio::test(start_paused = true)]` for the

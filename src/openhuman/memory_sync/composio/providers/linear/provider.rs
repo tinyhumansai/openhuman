@@ -21,13 +21,10 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::source::run_linear_sync;
 use super::sync;
-use crate::openhuman::memory_sync::composio::providers::sync_state::extract_item_id;
 use crate::openhuman::memory_sync::composio::providers::{
     merge_extra, pick_str, resolve_sync_interval_secs, ComposioProvider, CuratedTool,
-    NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
-    TaskKind,
+    NormalizedTask, ProviderContext, ProviderUserProfile, TaskFetchFilter, TaskKind,
 };
 
 pub(super) const ACTION_LIST_USERS: &str = "LINEAR_LIST_LINEAR_USERS";
@@ -115,10 +112,6 @@ impl ComposioProvider for LinearProvider {
     /// viewer resolution, pagination, dedup, the `max_items` cap, the
     /// `sync_depth_days` window, and cursor handling live in `run_sync`; the
     /// Linear-specific primitives live in [`super::source`].
-    async fn sync(&self, ctx: &ProviderContext, reason: SyncReason) -> Result<SyncOutcome, String> {
-        run_linear_sync(ctx, reason).await
-    }
-
     async fn fetch_tasks(
         &self,
         ctx: &ProviderContext,
@@ -209,7 +202,7 @@ impl ComposioProvider for LinearProvider {
 
 /// Map a raw Linear issue payload into a [`NormalizedTask`].
 fn normalize_linear_issue(issue: &serde_json::Value) -> Option<NormalizedTask> {
-    let external_id = extract_item_id(issue, ISSUE_ID_PATHS)?;
+    let external_id = pick_str(issue, ISSUE_ID_PATHS)?;
     let title =
         sync::extract_issue_title(issue).unwrap_or_else(|| format!("Linear issue {external_id}"));
     Some(NormalizedTask {

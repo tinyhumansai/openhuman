@@ -1292,13 +1292,12 @@ fn set_main_window_hidden(hide: bool) {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, ShowWindow, SW_HIDE,
-        SW_SHOW,
+        EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, ShowWindow,
     };
 
     struct EnumCtx {
         target_pid: u32,
-        action: i32,
+        hide: bool,
         require_visible: bool,
         matched: u32,
     }
@@ -1324,15 +1323,20 @@ fn set_main_window_hidden(hide: bool) {
         if class != "Chrome_WidgetWin_1" {
             return 1;
         }
-        unsafe { ShowWindow(hwnd, ctx.action) };
+        // Choose the restore command per frame: a minimized frame needs
+        // SW_RESTORE to un-minimize, but a hidden-but-maximized frame must be
+        // shown with SW_SHOW so it stays maximized (#4818). IsIconic is only
+        // consulted on the restore path.
+        let is_iconic = !ctx.hide && unsafe { IsIconic(hwnd) } != 0;
+        let action = window_show_command(ctx.hide, is_iconic);
+        unsafe { ShowWindow(hwnd, action) };
         ctx.matched += 1;
         1
     }
 
-    let action = if hide { SW_HIDE } else { SW_SHOW };
     let mut ctx = EnumCtx {
         target_pid: std::process::id(),
-        action,
+        hide,
         // Hide path: only touch currently-visible frames. Show path: also
         // pick up frames already in the SW_HIDE state.
         require_visible: hide,
@@ -1341,10 +1345,47 @@ fn set_main_window_hidden(hide: bool) {
     unsafe { EnumWindows(Some(enum_proc), &mut ctx as *mut _ as LPARAM) };
     log::info!(
         "[window-hide] EnumWindows: action={} matched={} pid={}",
-        if hide { "SW_HIDE" } else { "SW_SHOW" },
+        if hide {
+            "SW_HIDE"
+        } else {
+            "restore(SW_RESTORE/SW_SHOW)"
+        },
         ctx.matched,
         ctx.target_pid,
     );
+}
+
+/// `ShowWindow` command for [`set_main_window_hidden`], chosen per frame.
+///
+/// Restore is *not* a single command — it depends on whether the frame is
+/// iconic (minimized):
+///
+/// - **Minimized frame** (`is_iconic`): `SW_RESTORE`. `SW_SHOW` displays a
+///   window in its *current* state, so a minimized `Chrome_WidgetWin_1` frame
+///   stays minimized — clicking the desktop shortcut / taskbar entry while the
+///   app was minimized did nothing, because the second-instance callback ran a
+///   no-op `SW_SHOW` and then `WebviewWindow::unminimize()`, which the vendored
+///   CEF runtime routes to the internal `cef::Window` proxy handle rather than
+///   the visible top-level frame (#1607), so neither un-minimized the OS window
+///   (#4809). `SW_RESTORE` un-minimizes AND un-hides.
+/// - **Hidden-but-not-minimized frame** (the plain hide-to-tray case, which may
+///   be **maximized**): `SW_SHOW`. `SW_RESTORE` would force a maximized frame
+///   back to its normal size, so a window closed to the tray while maximized
+///   would come back un-maximized. `SW_SHOW` displays it in its current state,
+///   preserving the maximized geometry (chatgpt-codex review on #4809/#4818).
+///
+/// Split out as a pure `i32`-returning helper so the command selection is unit
+/// testable without driving real windows.
+#[cfg(target_os = "windows")]
+const fn window_show_command(hide: bool, is_iconic: bool) -> i32 {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_RESTORE, SW_SHOW};
+    if hide {
+        SW_HIDE
+    } else if is_iconic {
+        SW_RESTORE
+    } else {
+        SW_SHOW
+    }
 }
 
 /// Look up the main `WebviewWindow`, optionally waiting briefly on Windows
@@ -3905,6 +3946,19 @@ pub fn run() {
                     "[window] close requested on main window — hiding to tray"
                 );
                 api.prevent_close();
+                // Persist geometry now, while the window handle is still
+                // reachable. On Windows the hide below is a raw SW_HIDE on the
+                // OS frame, after which `get_webview_window("main")` returns
+                // `None` until the window is shown again (#1607). If the user
+                // then picks tray "Quit" while hidden, the ExitRequested save
+                // finds no window and nothing is persisted, so the next launch
+                // falls back to the default geometry (#4810). Saving here
+                // captures the last on-screen size/position before it becomes
+                // unreachable; ExitRequested still saves for the shown-window
+                // quit paths (`save_main` is best-effort and idempotent).
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    window_state::save_main(&window);
+                }
                 // Hide the OS top-level Chrome_WidgetWin_1 frame via
                 // EnumWindows + SW_HIDE — full hide-to-tray as PR #1548
                 // intended. `window.hide()` and `window.minimize()` through
@@ -3925,6 +3979,18 @@ pub fn run() {
                 }
             }
             RunEvent::ExitRequested { .. } => {
+                // Persist the main window's geometry on every clean quit
+                // (Cmd+Q, tray "Quit", dock quit, or the frontend
+                // `app_quit` command) so the next launch restores the
+                // user's size + position. Previously `save_main` ran only
+                // on the identity-flip `restart_app` path (#900): a normal
+                // quit never saved, so the window always reopened at the
+                // default small centered size (#4810). `save_main` is
+                // best-effort and idempotent — safe to also run here even
+                // though `restart_app` saves before it triggers exit.
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    window_state::save_main(&window);
+                }
                 // Run our cleanup BEFORE CEF's own Exit handler does
                 // `close_all_windows() → cef::shutdown()`. Doing this in
                 // RunEvent::Exit instead races CEF's teardown and the

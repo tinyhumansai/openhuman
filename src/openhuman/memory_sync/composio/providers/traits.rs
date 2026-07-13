@@ -50,10 +50,39 @@ pub trait ComposioProvider: Send + Sync {
         ctx: &ProviderContext,
     ) -> Result<ProviderUserProfile, String>;
 
-    /// Run a sync pass for the current connection in `ctx`. Implementations
-    /// are responsible for persisting whatever they fetch (typically into
-    /// the memory layer via [`ProviderContext::memory_client`]).
-    async fn sync(&self, ctx: &ProviderContext, reason: SyncReason) -> Result<SyncOutcome, String>;
+    /// Compatibility entry point backed exclusively by tinycortex.
+    async fn sync(&self, ctx: &ProviderContext, reason: SyncReason) -> Result<SyncOutcome, String> {
+        let connection_id = ctx.connection_id.as_deref().ok_or_else(|| {
+            format!(
+                "[composio:{}] sync missing connection_id",
+                self.toolkit_slug()
+            )
+        })?;
+        let started_at_ms = now_ms();
+        let outcome = crate::openhuman::tinycortex::run_composio_connection_with_budgets(
+            self.toolkit_slug(),
+            connection_id,
+            ctx.config.as_ref(),
+            ctx.max_items,
+            ctx.sync_depth_days,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        Ok(SyncOutcome {
+            toolkit: self.toolkit_slug().into(),
+            connection_id: Some(connection_id.into()),
+            reason: reason.as_str().into(),
+            items_ingested: outcome.records_ingested as usize,
+            started_at_ms,
+            finished_at_ms: now_ms(),
+            summary: outcome.note.unwrap_or_else(|| "sync completed".into()),
+            details: serde_json::json!({
+                "more_pending": outcome.more_pending,
+                "actions_called": outcome.actions_called,
+                "provider_cost_usd": outcome.provider_cost_usd,
+            }),
+        })
+    }
 
     /// Fetch a filtered set of work items as structured
     /// [`NormalizedTask`]s — the read path that powers the
@@ -112,7 +141,8 @@ pub trait ComposioProvider: Send + Sync {
     /// Hook fired when an OAuth handoff completes
     /// ([`crate::core::event_bus::DomainEvent::ComposioConnectionCreated`]).
     ///
-    /// Default impl: fetch the user profile, then run an initial sync.
+    /// Default impl: fetch and persist the user profile. Initial memory
+    /// ingestion is dispatched separately through tinycortex by the bus.
     /// Providers can override to add provider-specific bootstrapping
     /// (e.g. registering Composio triggers, seeding labels, …).
     async fn on_connection_created(&self, ctx: &ProviderContext) -> Result<(), String> {
@@ -120,7 +150,7 @@ pub trait ComposioProvider: Send + Sync {
         tracing::info!(
             toolkit = %toolkit,
             connection_id = ?ctx.connection_id,
-            "[composio:provider] on_connection_created → fetch_user_profile + initial sync"
+            "[composio:provider] on_connection_created: fetching user profile"
         );
         match self.fetch_user_profile(ctx).await {
             Ok(profile) => {
@@ -178,13 +208,6 @@ pub trait ComposioProvider: Send + Sync {
                 );
             }
         }
-        let outcome = self.sync(ctx, SyncReason::ConnectionCreated).await?;
-        tracing::info!(
-            toolkit = %toolkit,
-            items = outcome.items_ingested,
-            elapsed_ms = outcome.elapsed_ms(),
-            "[composio:provider] initial sync complete"
-        );
         Ok(())
     }
 
@@ -233,6 +256,13 @@ pub trait ComposioProvider: Send + Sync {
         );
         Ok(())
     }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 /// Build the env var name read by [`resolve_sync_interval_secs`] for a

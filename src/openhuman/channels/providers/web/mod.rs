@@ -35,8 +35,9 @@ pub use event_bus::fresh_approval_surface_subscription;
 #[cfg(any(test, debug_assertions))]
 pub use ops::parallel_in_flight_entries_for_test;
 pub use ops::{
-    cancel_chat, channel_web_cancel, channel_web_chat, channel_web_queue_clear,
-    channel_web_queue_status, in_flight_entries_for_test, invalidate_thread_sessions, start_chat,
+    cancel_chat, cancel_chat_scoped, cancel_should_target, channel_web_cancel, channel_web_chat,
+    channel_web_queue_clear, channel_web_queue_status, in_flight_entries_for_test,
+    invalidate_thread_sessions, start_chat,
 };
 pub use types::ChatRequestMetadata;
 
@@ -46,6 +47,9 @@ pub use schemas::{
 };
 
 // Helpers re-exported for tests
+#[cfg(any(test, debug_assertions))]
+#[allow(unused_imports)]
+pub(crate) use ops::sentry_suppression_reason;
 pub(crate) use ops::{event_session_id_for, key_for};
 pub(crate) use progress_bridge::spawn_progress_bridge;
 
@@ -75,6 +79,8 @@ pub(crate) use web_errors::{
 // Test helpers (debug/test builds only)
 #[cfg(any(test, debug_assertions))]
 pub use ops::set_test_forced_run_chat_task_error;
+#[cfg(any(test, debug_assertions))]
+pub use ops::RUN_CHAT_TASK_TEST_LOCK;
 #[cfg(any(test, debug_assertions))]
 pub use ops::{set_test_run_chat_task_block, TestRunChatTaskBlock};
 

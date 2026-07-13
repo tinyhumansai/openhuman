@@ -1037,13 +1037,15 @@ mod tests {
     /// A 404/405 (no `/embeddings` route) keeps its dedicated code.
     #[test]
     fn classify_embed_probe_rejects_endpoint_absent() {
-        assert_eq!(
-            reject_code(EmbedProbe::Failed(
-                "Embedding API error (404 Not Found): no route".into()
-            ))
-            .as_deref(),
-            Some("EMBEDDINGS_ENDPOINT_NO_API")
-        );
+        for detail in [
+            "Embedding API error (404 Not Found): no route",
+            "openai embeddings returned HTTP 404 Not Found: no route",
+        ] {
+            assert_eq!(
+                reject_code(EmbedProbe::Failed(detail.into())).as_deref(),
+                Some("EMBEDDINGS_ENDPOINT_NO_API")
+            );
+        }
     }
 
     /// Any other failure (5xx/auth/network) and timeouts both reject — the

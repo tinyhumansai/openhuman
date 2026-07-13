@@ -92,6 +92,14 @@ fn required_str(args: &Value, field: &str) -> Result<String, ToolResult> {
     }
 }
 
+fn recipient_may_receive_message(
+    locally_linked: bool,
+    has_known_session: bool,
+    accepted_contact: bool,
+) -> bool {
+    locally_linked || has_known_session || accepted_contact
+}
+
 // ── Reasoning-core session-history read tools (Master chat) ──────────────────
 
 /// Default / cap on how many messages a `orchestration_read_session` call returns.
@@ -473,15 +481,39 @@ impl Tool for SendToAgentTool {
 
         let workspace = self.config.workspace_dir.clone();
 
-        // Guardrail: linked peer OR an existing session with them. Never cold-DM
-        // an arbitrary new address from this un-gated background origin.
+        // Guardrail: locally linked peer, accepted tiny.place contact, OR an
+        // existing session with them. Never cold-DM an arbitrary new address
+        // from this un-gated background origin. The live contact check matters
+        // after login changes the workspace: the relay contact remains accepted
+        // while the workspace-local orchestration pairing/session stores start
+        // empty.
         let linked =
             crate::openhuman::agent_orchestration::pairing::linked_agent_ids(&workspace).await;
         let known_session = store::with_connection(&workspace, |conn| {
             store::latest_session_for_agent(conn, &recipient)
         })
         .map_err(|e| anyhow::anyhow!("lookup session: {e}"))?;
-        if !linked.contains(&recipient) && known_session.is_none() {
+        let accepted_contact = if linked.contains(&recipient) || known_session.is_some() {
+            false
+        } else {
+            match crate::openhuman::agent_orchestration::pairing::is_accepted_contact(&recipient)
+                .await
+            {
+                Ok(accepted) => accepted,
+                Err(e) => {
+                    log::warn!(
+                        target: "orchestration",
+                        "[orchestration] tool.send_to_agent contact check failed: {e}"
+                    );
+                    false
+                }
+            }
+        };
+        if !recipient_may_receive_message(
+            linked.contains(&recipient),
+            known_session.is_some(),
+            accepted_contact,
+        ) {
             log::debug!(
                 target: "orchestration",
                 "[orchestration] tool.send_to_agent refused unlinked recipient",
@@ -826,5 +858,13 @@ mod tests {
             .unwrap();
         assert!(out.is_error);
         assert!(out.text().contains("not a linked"));
+    }
+
+    #[test]
+    fn accepted_contact_can_receive_without_workspace_pairing_or_session() {
+        assert!(recipient_may_receive_message(false, false, true));
+        assert!(recipient_may_receive_message(true, false, false));
+        assert!(recipient_may_receive_message(false, true, false));
+        assert!(!recipient_may_receive_message(false, false, false));
     }
 }

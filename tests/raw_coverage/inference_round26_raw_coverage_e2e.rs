@@ -85,7 +85,7 @@ fn __shared_env_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[tokio::test]
-async fn compatible_streaming_covers_tool_deltas_json_fallback_and_retry_without_tools() {
+async fn compatible_streaming_covers_tool_deltas_json_fallback_and_tool_errors() {
     let _env_lock = __shared_env_lock();
     let (base, state) = serve_mock().await;
     let provider = OpenAiCompatibleProvider::new(
@@ -177,8 +177,8 @@ async fn compatible_streaming_covers_tool_deltas_json_fallback_and_retry_without
     assert_eq!(json_fallback.text.as_deref(), Some("json fallback ok"));
     assert_eq!(json_fallback.usage.unwrap().cached_input_tokens, 3);
 
-    let (retry_tx, mut retry_rx) = tokio::sync::mpsc::channel::<ProviderDelta>(8);
-    let retry = provider
+    let (retry_tx, _retry_rx) = tokio::sync::mpsc::channel::<ProviderDelta>(8);
+    let retry_err = provider
         .chat(
             ChatRequest {
                 messages: &[ChatMessage::user("retry without tools")],
@@ -190,14 +190,10 @@ async fn compatible_streaming_covers_tool_deltas_json_fallback_and_retry_without
             0.2,
         )
         .await
-        .expect("tool schema rejection retries streaming without tools");
+        .expect_err("tool schema rejection is returned without a speculative retry");
     drop(retry_tx);
-    assert_eq!(retry.text.as_deref(), Some("retried ok"));
-    assert_eq!(*state.tool_retry_attempts.lock().expect("attempts"), 2);
-    assert!(matches!(
-        retry_rx.recv().await,
-        Some(ProviderDelta::TextDelta { delta }) if delta == "retried ok"
-    ));
+    assert!(retry_err.to_string().contains("does not support tools"));
+    assert_eq!(*state.tool_retry_attempts.lock().expect("attempts"), 1);
 
     let seen = state.requests.lock().expect("requests");
     let stream_body = seen
@@ -208,15 +204,15 @@ async fn compatible_streaming_covers_tool_deltas_json_fallback_and_retry_without
     assert_eq!(stream_body.path, "/v1/chat/completions");
     assert_eq!(stream_body.body["stream"], true);
     assert_eq!(stream_body.body["stream_options"]["include_usage"], true);
-    assert_eq!(stream_body.body["tools"].as_array().unwrap().len(), 2);
+    assert_eq!(stream_body.body["tools"].as_array().unwrap().len(), 3);
     let wire_messages = stream_body.body["messages"].as_array().unwrap();
-    assert_ne!(wire_messages[0]["role"], "tool");
+    assert_eq!(wire_messages[0]["role"], "tool");
     let assistant = wire_messages
         .iter()
         .find(|msg| msg["role"] == "assistant")
         .expect("assistant message");
-    assert_eq!(assistant["tool_calls"].as_array().unwrap().len(), 1);
-    assert_eq!(assistant["reasoning_content"], "keep-thinking");
+    assert_eq!(assistant["tool_calls"].as_array().unwrap().len(), 2);
+    assert!(assistant.get("reasoning_content").is_none());
 }
 
 #[tokio::test]

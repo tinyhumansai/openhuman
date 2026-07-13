@@ -138,6 +138,7 @@ function FlowEditor({
   initialCopilotSeed = null,
   initialBuildSeed = null,
   onBuildSeedConsumed,
+  locationKey,
 }: {
   editorFlow: EditorFlow;
   initialCopilotSeed?: CopilotRepairSeed | null;
@@ -145,6 +146,16 @@ function FlowEditor({
   initialBuildSeed?: CopilotBuildSeed | null;
   /** Clear the route's build seed once the copilot has dispatched it (#4597). */
   onBuildSeedConsumed?: () => void;
+  /**
+   * The route's `location.key` (issue B22) — react-router mints a fresh one on
+   * every navigation, including a same-path repeat navigation (e.g. the "Fix
+   * with agent" action from {@link FlowRunsSidebar}, which stays on this same
+   * `/flows/:id` route and so does NOT remount `FlowEditor`). Folded into the
+   * copilot panel's `key` below so a repair seed arriving without a page-level
+   * remount still forces a fresh panel mount — required for the panel's
+   * once-per-mount auto-fire guard (`repairSentRef`) to actually fire again.
+   */
+  locationKey: string;
 }) {
   const { t } = useT();
   const navigate = useNavigate();
@@ -206,6 +217,19 @@ function FlowEditor({
   const [copilotOpen, setCopilotOpen] = useState(
     initialCopilotSeed !== null || initialBuildSeed !== null
   );
+  // Issue B22: a repair seed can also arrive WITHOUT a `FlowEditor` remount —
+  // "Fix with agent" clicked from `FlowRunsSidebar` stays on this same
+  // `/flows/:id` route (only `location.state`/`location.key` change), so the
+  // `useState` initializer above (mount-only) won't re-open the panel for it.
+  // Re-assert open whenever a new repair seed prop arrives — done during
+  // render (React's "adjusting state when a prop changes" pattern) rather
+  // than a `useEffect`, so it lands in the same render pass instead of an
+  // extra one.
+  const [seenCopilotSeed, setSeenCopilotSeed] = useState(initialCopilotSeed);
+  if (initialCopilotSeed !== seenCopilotSeed) {
+    setSeenCopilotSeed(initialCopilotSeed);
+    if (initialCopilotSeed) setCopilotOpen(true);
+  }
   // Per-workflow copilot thread: seeded from the session cache so opening/closing
   // the panel (or switching flows and back) resumes the same conversation
   // instead of starting a fresh `workflow_builder` thread each time.
@@ -323,6 +347,14 @@ function FlowEditor({
   // the new flow's canonical `/flows/:id` canvas so further saves update it.
   // Rejections propagate so the canvas surfaces the failure inline (and leaves
   // the draft dirty).
+  //
+  // Issue B21: `flows_update` re-validates/normalizes the graph server-side
+  // (schema migration, id defaults, port normalization, etc.) before
+  // persisting, so the canonical saved shape can differ from what the client
+  // sent. Re-sync the canvas draft from the RESPONSE (not just the just-sent
+  // `next`) and bump `canvasVersion` so the editable canvas re-seeds from the
+  // canonical persisted graph immediately — matching what a navigate-away-
+  // and-back remount would show, without requiring one.
   const handleSave = useCallback(
     async (next: WorkflowGraph) => {
       if (isDraft) {
@@ -338,9 +370,17 @@ function FlowEditor({
         return;
       }
       log('save: flow id=%s nodes=%d edges=%d', flowId, next.nodes.length, next.edges.length);
-      await updateFlow(flowId, { graph: next });
-      persistedGraphRef.current = next;
-      log('save: flow id=%s persisted', flowId);
+      const updated = await updateFlow(flowId, { graph: next });
+      const persisted = updated.graph as WorkflowGraph;
+      persistedGraphRef.current = persisted;
+      setDraftGraph(persisted);
+      setCanvasVersion(v => v + 1);
+      log(
+        'save: flow id=%s persisted — canvas re-synced from response nodes=%d edges=%d',
+        flowId,
+        persisted.nodes.length,
+        persisted.edges.length
+      );
     },
     [isDraft, flowId, name, requireApproval, navigate]
   );
@@ -534,6 +574,14 @@ function FlowEditor({
 
         {copilotOpen && (
           <WorkflowCopilotPanel
+            // Stable ('copilot') across manual open/close and build-seed
+            // navigations (unaffected — those always land on a fresh
+            // `FlowEditor` mount already, see `locationKey`'s doc comment).
+            // Repair seeds fold in `locationKey` so a same-route "Fix with
+            // agent" click (no `FlowEditor` remount) still forces a fresh
+            // panel mount, resetting the once-per-mount `repairSentRef` guard
+            // so the repair turn actually (re)fires (issue B22).
+            key={initialCopilotSeed ? `copilot-repair-${locationKey}` : 'copilot'}
             graph={preview?.base ?? draftGraph}
             flowId={flowId}
             onProposal={handleProposal}
@@ -647,6 +695,7 @@ export default function FlowCanvasPage() {
         initialCopilotSeed={copilotSeed}
         initialBuildSeed={buildSeed}
         onBuildSeedConsumed={clearBuildSeed}
+        locationKey={location.key}
       />
     );
   }
@@ -735,6 +784,7 @@ export function FlowCanvasDraftPage() {
             graph: draft.graph,
             requireApproval: draft.requireApproval,
           }}
+          locationKey={location.key}
         />
         <ToastContainer notifications={toasts} onRemove={removeToast} />
       </>

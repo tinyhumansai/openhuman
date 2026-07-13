@@ -148,4 +148,9 @@ pub(super) struct WebQueueParams {
 pub(super) struct WebCancelParams {
     pub(super) client_id: String,
     pub(super) thread_id: String,
+    /// The `request_id` this cancel targets. When present, the cancel is scoped
+    /// to that exact turn, so a stale cancel for a superseded request can't kill
+    /// the newer turn on the thread (#4760). Absent = stop whatever is running.
+    #[serde(default)]
+    pub(super) request_id: Option<String>,
 }

@@ -30,7 +30,7 @@ use crate::openhuman::channels::yuanbao::YuanbaoChannel;
 use crate::openhuman::channels::Channel;
 use crate::openhuman::config::Config;
 use crate::openhuman::context::channels_prompt::build_system_prompt;
-use crate::openhuman::inference::provider::{self, Provider};
+use crate::openhuman::inference::provider;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::memory_store;
 use crate::openhuman::security::SecurityPolicy;
@@ -289,42 +289,32 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
-    let (provider, model, provider_name): (Arc<dyn Provider>, String, String) =
-        match resolve_chat_workload(&config) {
-            ChatWorkloadResolution::Cloud => {
-                let p: Arc<dyn Provider> =
-                    Arc::from(provider::create_intelligent_routing_provider(
-                        config.inference_url.as_deref(),
-                        config.api_url.as_deref(),
-                        config.api_key.as_deref(),
-                        &config,
-                        &provider_runtime_options,
-                    )?);
-                let m = config
-                    .default_model
-                    .clone()
-                    .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into());
-                (p, m, provider::INFERENCE_BACKEND_ID.to_string())
-            }
-            ChatWorkloadResolution::Workload {
-                provider_string,
-                slug,
-            } => {
-                tracing::info!(
-                    chat_provider = %provider_string,
-                    slug = %slug,
-                    "[channels][startup] chat workload routed to per-workload provider — building dedicated channel provider"
-                );
-                let (boxed, model_id) = provider::create_chat_provider("chat", &config)?;
-                (Arc::from(boxed), model_id, slug)
-            }
-        };
-
-    // Warm up the provider connection pool (TLS handshake, DNS, HTTP/2 setup)
-    // so the first real message doesn't hit a cold-start timeout.
-    if let Err(e) = provider.warmup().await {
-        tracing::warn!("Provider warmup failed (non-fatal): {e}");
-    }
+    let (model, provider_name) = match resolve_chat_workload(&config) {
+        ChatWorkloadResolution::Cloud => {
+            let (_chat, model) = provider::create_chat_model_with_model_id(
+                "chat",
+                &config,
+                config.default_temperature,
+            )?;
+            (model, provider::INFERENCE_BACKEND_ID.to_string())
+        }
+        ChatWorkloadResolution::Workload {
+            provider_string,
+            slug,
+        } => {
+            tracing::info!(
+                chat_provider = %provider_string,
+                slug = %slug,
+                "[channels][startup] chat workload routed to per-workload provider — building dedicated channel provider"
+            );
+            let (_chat, model_id) = provider::create_chat_model_with_model_id(
+                "chat",
+                &config,
+                config.default_temperature,
+            )?;
+            (model_id, slug)
+        }
+    };
 
     let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(host_runtime::create_runtime(
         &config.runtime,
@@ -905,14 +895,12 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
 
-    let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
-    provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
     let message_timeout_secs =
         effective_channel_message_timeout_secs(config.channels_config.message_timeout_secs);
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name,
-        provider: Arc::clone(&provider),
+        provider: None,
         default_provider: Arc::new(provider_name),
         memory: Arc::clone(&mem),
         tools_registry: Arc::clone(&tools_registry),
@@ -923,7 +911,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         max_tool_iterations: config.agent.max_tool_iterations,
         min_relevance_score: config.memory.min_relevance_score,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(provider_cache_seed)),
+        provider_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: config.api_url.clone(),
         inference_url: config.inference_url.clone(),
@@ -933,6 +921,8 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         message_timeout_secs,
         multimodal: config.multimodal.clone(),
         multimodal_files: config.multimodal_files.clone(),
+        // Crate-native turn models for the channel turn (Phase 3 P3-B).
+        config: Some(std::sync::Arc::new(config.clone())),
     });
 
     run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages).await;

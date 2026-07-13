@@ -251,6 +251,17 @@ async fn contact_status(agent_id: &str) -> Result<String, String> {
     Ok(remote_status(&remote).unwrap_or_else(|| "none".to_string()))
 }
 
+/// Whether the peer is an accepted tiny.place contact.
+///
+/// This is intentionally a live relay check rather than a read of the local
+/// orchestration pairing store. An accepted contact is already a
+/// user-consented recipient for an outbound message, even when it has not been
+/// linked as an inbound orchestration session in the current workspace.
+pub(crate) async fn is_accepted_contact(agent_id: &str) -> Result<bool, String> {
+    let agent_id = normalize_agent_id(agent_id)?;
+    Ok(contact_status(&agent_id).await? == "accepted")
+}
+
 fn remote_status(value: &Value) -> Option<String> {
     value
         .get("status")

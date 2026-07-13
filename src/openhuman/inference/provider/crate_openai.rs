@@ -25,7 +25,7 @@ use std::sync::Arc;
 use tinyagents::harness::model::ChatModel;
 use tinyagents::harness::providers::openai::{AuthStyle as CrateAuthStyle, OpenAiModel};
 
-use super::compatible::AuthStyle as HostAuthStyle;
+use super::auth::AuthStyle as HostAuthStyle;
 
 /// Map the host [`AuthStyle`](HostAuthStyle) to the crate's `AuthStyle`. The
 /// variants are 1:1 (both were derived from the same OpenHuman provider catalog).

@@ -411,7 +411,7 @@ async fn composio_providers_sync_state_and_bus_surfaces_cover_read_write_edges()
 }
 
 #[tokio::test]
-async fn default_composio_provider_hooks_return_expected_noop_shapes() {
+async fn default_composio_provider_hooks_cover_defaults_and_sync_preconditions() {
     struct MinimalProvider;
 
     #[async_trait]
@@ -447,22 +447,6 @@ async fn default_composio_provider_hooks_return_expected_noop_shapes() {
             })
         }
 
-        async fn sync(
-            &self,
-            ctx: &ProviderContext,
-            reason: SyncReason,
-        ) -> Result<SyncOutcome, String> {
-            Ok(SyncOutcome {
-                toolkit: ctx.toolkit.clone(),
-                connection_id: ctx.connection_id.clone(),
-                reason: reason.as_str().into(),
-                items_ingested: 3,
-                started_at_ms: 10,
-                finished_at_ms: 25,
-                summary: "synced".into(),
-                details: json!({"reason": reason.as_str()}),
-            })
-        }
     }
 
     let tmp = TempDir::new().expect("tempdir");
@@ -499,11 +483,11 @@ async fn default_composio_provider_hooks_return_expected_noop_shapes() {
 
     let profile = provider.fetch_user_profile(&ctx).await.expect("profile");
     assert_eq!(profile.email.as_deref(), Some("round14@example.com"));
-    let sync = provider
+    let sync_error = provider
         .sync(&ctx, SyncReason::Manual)
         .await
-        .expect("sync outcome");
-    assert_eq!(sync.elapsed_ms(), 15);
+        .expect_err("sync requires an initialized memory client");
+    assert!(sync_error.contains("memory client is not ready"));
 
     let extracted = ExtractedEntities {
         entities: vec![

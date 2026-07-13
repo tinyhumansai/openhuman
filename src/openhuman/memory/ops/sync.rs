@@ -5,7 +5,7 @@
 
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::memory::sync::{emit_sync_stage, MemorySyncStage, MemorySyncTrigger};
-use crate::openhuman::memory_sync::composio::{self, SyncReason};
+use crate::openhuman::memory_sync::composio;
 use crate::rpc::RpcOutcome;
 
 /// Parameters for `memory_sync_channel`.
@@ -165,38 +165,33 @@ async fn spawn_manual_sync(requested_connection: Option<String>) -> Result<(), S
                 None, // provider-level composio sync — not a memory-source row
             );
 
-            match composio::run_connection_sync(
-                config.clone(),
+            match crate::openhuman::tinycortex::run_composio_connection(
+                &target.toolkit,
                 &target.connection_id,
-                SyncReason::Manual,
+                &config,
             )
             .await
             {
-                // `run_connection_sync` returns `(SyncOutcome, ComposioUsage)`
-                // post-#3111; this caller only surfaces the outcome for UI
-                // stage events, so the usage tally is intentionally ignored
-                // here (the sync-audit caller in `memory_sources::sync` is the
-                // one that records it).
-                Ok((outcome, _usage)) => {
+                Ok(outcome) => {
                     emit_sync_stage(
                         MemorySyncTrigger::Manual,
                         MemorySyncStage::Completed,
-                        Some(&outcome.toolkit),
-                        outcome.connection_id.as_deref(),
+                        Some(&target.toolkit),
+                        Some(&target.connection_id),
                         Some(format!(
                             "provider sync completed items_ingested={}",
-                            outcome.items_ingested
+                            outcome.records_ingested
                         )),
                         None, // provider-level composio sync — not a memory-source row
                     );
                 }
-                Err((error, _usage)) => {
+                Err(error) => {
                     emit_sync_stage(
                         MemorySyncTrigger::Manual,
                         MemorySyncStage::Failed,
                         Some(&target.toolkit),
                         Some(&target.connection_id),
-                        Some(error.clone()),
+                        Some(error.to_string()),
                         None, // provider-level composio sync — not a memory-source row
                     );
                     tracing::warn!(

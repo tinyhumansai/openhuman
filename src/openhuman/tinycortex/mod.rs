@@ -36,21 +36,31 @@
 mod chat;
 mod config;
 mod embeddings;
+mod ingest;
 #[cfg(test)]
 mod parity;
 mod queue_driver;
+mod seal;
+mod summariser;
+mod sync;
 
 pub use chat::{build_chat_provider, SeamChatProvider};
 pub use config::memory_config_from;
 pub use embeddings::SeamEmbedder;
+pub use ingest::{context as ingest_context, HostTreeJobSink};
 pub use queue_driver::{
     classify_worker_error, HostQueueDelegates, WorkerErrorAction, WorkerReport,
 };
-// `chunk_tree_scope` is a crate-internal pure helper (the single canonical host
-// copy after the W4 handlers deletion); read paths like
-// `memory_tree::retrieval::cover` import it through this seam.
-pub(crate) use queue_driver::chunk_tree_scope;
-
+pub use seal::{
+    cascade_tree, flush_stale_tree_buffers, seal_document_subtree,
+    seal_one_level as seal_tree_level,
+};
+pub use summariser::HostSummariser;
+pub use sync::{
+    load_composio_sync_state, run_composio_connection, run_composio_connection_with_budgets,
+    run_gmail_backfill, run_slack_search_backfill, run_source_pipeline, sync_context,
+    HostSyncAdapter, SourcePipelineFailure, HOST_SYNC_STATE_NAMESPACE,
+};
 // Facade re-exports — the rest of the host imports memory-engine types through
 // this one seam so consumer import paths stay stable as the internals flip to
 // the crate (the type-unification decision, spec §0.5). `MemoryTaint` is the

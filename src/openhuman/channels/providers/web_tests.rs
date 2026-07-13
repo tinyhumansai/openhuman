@@ -5,27 +5,30 @@ use super::{
     in_flight_entries_for_test, inference_budget_exceeded_user_message,
     is_inference_budget_exceeded_error, json_output, key_for, locale_reply_directive,
     normalize_model_override, optional_f64, optional_string, parallel_in_flight_entries_for_test,
-    provider_role_for_model_override, required_string, schemas,
+    provider_role_for_model_override, required_string, schemas, sentry_suppression_reason,
     set_test_forced_run_chat_task_error, set_test_run_chat_task_block, start_chat,
     subscribe_web_channel_events, ChatRequestMetadata, ClassifiedError, TestRunChatTaskBlock,
     WebChatParams,
 };
 use crate::core::TypeSchema;
-use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
 use tokio::time::{timeout, Duration};
 
-/// Serializes every test that drives `start_chat` with a
-/// `TEST_FORCED_RUN_CHAT_TASK_ERROR` toggle. The toggle and the
-/// per-thread session cache are process-global, so two such tests
-/// running concurrently can clobber each other's forced error before
-/// `run_chat_task` reads it — leading to flaky asserts where one test
-/// observes another test's error string. Holding this mutex for the
-/// duration of each test body restores isolation without disabling
-/// `cargo test`'s default parallelism for the rest of the suite.
-static FORCED_ERROR_TEST_LOCK: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex::new(()));
+// Serializes every test that drives `start_chat` with the process-global
+// `run_chat_task` test hooks (forced error / forced block) or the
+// `OPENHUMAN_WEB_TURN_TIMEOUT_SECS` override. Those toggles and the per-thread
+// session cache are process-global, so two such tests running concurrently can
+// clobber each other before `run_chat_task` reads them — leading to flaky
+// asserts where one test observes another test's state. Holding this mutex for
+// the duration of each test body restores isolation without disabling
+// `cargo test`'s default parallelism for the rest of the suite.
+//
+// This is the *shared* lock defined at the hook boundary
+// (`web::ops::RUN_CHAT_TASK_TEST_LOCK`), not a file-local one, so tests in other
+// modules that exercise `start_chat`/`run_chat_task` serialize on the same lock
+// (CodeRabbit review on #4746).
+use super::RUN_CHAT_TASK_TEST_LOCK as FORCED_ERROR_TEST_LOCK;
 
 #[tokio::test]
 async fn start_chat_validates_required_fields() {
@@ -395,6 +398,97 @@ fn classify_inference_error_max_iterations_gets_dedicated_branch() {
     assert!(
         message.contains("retry the same question in this thread"),
         "must reassure same-thread recovery: {message}"
+    );
+}
+
+#[test]
+fn classify_inference_error_turn_timeout_gets_dedicated_branch() {
+    // Issue #4746: the web turn driver's wall-clock backstop raises a synthetic
+    // error carrying a stable marker when a wedged turn is stopped. It must
+    // classify to a dedicated, retryable `turn_timeout` bucket with graceful
+    // copy — never the generic catch-all, and the internal marker must not leak.
+    let raw = super::web_errors::turn_timeout_error_message(600);
+    let ClassifiedError {
+        error_type: category,
+        message,
+        source,
+        retryable,
+        ..
+    } = classify_inference_error(&raw);
+    assert_eq!(category, "turn_timeout");
+    assert_eq!(source, "agent_loop");
+    assert!(
+        retryable,
+        "a wedged-turn timeout is safe to retry in-thread"
+    );
+    assert!(
+        message.contains("past its time budget"),
+        "must explain the turn was stopped: {message}"
+    );
+    assert!(
+        message.contains("retry your question in this thread"),
+        "must reassure same-thread recovery: {message}"
+    );
+    assert!(
+        !message.contains("openhuman_turn_wall_clock_timeout"),
+        "internal marker must not leak into user copy: {message}"
+    );
+}
+
+#[test]
+fn classify_inference_error_harness_wall_clock_timeout_is_turn_timeout() {
+    // Issue #4746: the root-cause guard is the tinyagents harness policy
+    // wall-clock ceiling. When it fires the loop returns TinyAgentsError::Timeout,
+    // rendered `run timed out: <model|tool> call for run `..` exceeded its
+    // remaining wall-clock budget (.. ms)`. That terminal error must classify to
+    // the graceful `turn_timeout` bucket, not the generic catch-all, so the user
+    // sees actionable copy instead of "something went wrong".
+    for raw in [
+        "run timed out: model call for run `abc123` exceeded its remaining wall-clock budget (600000 ms)",
+        "run timed out: tool call for run `abc123` exceeded its remaining wall-clock budget (12345 ms)",
+        "run `abc123` exceeded its wall-clock deadline",
+    ] {
+        let ClassifiedError {
+            error_type: category,
+            retryable,
+            ..
+        } = classify_inference_error(raw);
+        assert_eq!(category, "turn_timeout", "must classify as turn_timeout: {raw}");
+        assert!(retryable, "a wall-clock timeout is retryable: {raw}");
+    }
+}
+
+#[test]
+fn turn_timeout_error_is_suppressed_from_sentry() {
+    // Issue #4746 (maintainer review): a wedged turn that trips the wall-clock
+    // ceiling is a deterministic, user-surfaced, retryable outcome — the client
+    // already gets a graceful `turn_timeout` chat_error, so it must NOT page
+    // Sentry (same tier as the max-iteration cap). `run_chat_task`'s emit site
+    // gates on `sentry_suppression_reason`; assert both the synthetic backstop
+    // marker and the harness `Timeout` renderings are suppressed, while a
+    // genuine provider defect still reports.
+    let detailed_marker = format!(
+        "run_chat_task failed client_id=c thread_id=t request_id=r error={}",
+        super::web_errors::turn_timeout_error_message(600)
+    );
+    assert_eq!(
+        sentry_suppression_reason(&detailed_marker),
+        Some("turn wall-clock backstop"),
+        "the synthetic backstop marker must suppress the Sentry emit"
+    );
+    assert_eq!(
+        sentry_suppression_reason(
+            "run timed out: model call for run `abc` exceeded its remaining wall-clock budget (600000 ms)"
+        ),
+        Some("turn wall-clock backstop"),
+        "the harness Timeout rendering must suppress the Sentry emit"
+    );
+    // A real provider defect is NOT a deterministic agent-loop outcome and must
+    // still page.
+    assert_eq!(
+        sentry_suppression_reason("openrouter API error (500 Internal Server Error)"),
+        None,
+        "a genuine provider error must still reach Sentry"
     );
 }
 
@@ -1940,6 +2034,83 @@ async fn cancel_chat_cooperatively_stops_in_flight_turn() {
     wait_for_flag(&block.dropped, "turn future dropped by cooperative cancel").await;
 
     set_test_run_chat_task_block(None).await;
+}
+
+/// Issue #4746: a turn that never produces a terminal event on its own — a
+/// wedged main agent stuck mid tool-call, or a delegated sub-agent that never
+/// returns (modeled here by the parked test block) — must still end in a
+/// terminal `chat_error`, never an empty reply / an endless `inference_heartbeat`
+/// stream until the socket dies. The web turn driver's wall-clock backstop fires
+/// and emits a graceful, retryable `turn_timeout` chat_error, and tears the
+/// wedged future down cooperatively (its `Drop` guard flips well before the 30s
+/// test sleep would elapse).
+#[tokio::test]
+async fn wedged_turn_hits_wall_clock_backstop_and_emits_turn_timeout_chat_error() {
+    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
+    // Panic-safe teardown of the process-global env override: if any assertion
+    // below unwinds, this guard still clears `OPENHUMAN_WEB_TURN_TIMEOUT_SECS` so
+    // a 1s backstop can't leak into unrelated tests sharing this process.
+    struct EnvGuard;
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            std::env::remove_var("OPENHUMAN_WEB_TURN_TIMEOUT_SECS");
+        }
+    }
+    let _env_guard = EnvGuard;
+    // Tight 1s backstop so the parked (30s) turn trips it quickly. Scoped to this
+    // serialized test and cleared by `EnvGuard` on drop (even on unwind).
+    std::env::set_var("OPENHUMAN_WEB_TURN_TIMEOUT_SECS", "1");
+    let block = make_block();
+    set_test_run_chat_task_block(Some(block.clone())).await;
+
+    let mut rx = subscribe_web_channel_events();
+    let request_id = start_chat(
+        "backstop-client",
+        "backstop-thread",
+        "park me until the wall-clock backstop fires",
+        None,
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect("turn should start");
+
+    let recv = timeout(Duration::from_secs(20), async move {
+        loop {
+            let event = rx.recv().await.expect("event stream should stay open");
+            if event.event == "chat_error" && event.request_id == request_id {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("a wedged turn must still emit a terminal chat_error (issue #4746)");
+
+    assert_eq!(
+        recv.error_type.as_deref(),
+        Some("turn_timeout"),
+        "the backstop must surface a graceful turn_timeout, not a generic error"
+    );
+    assert_eq!(
+        recv.error_retryable,
+        Some(true),
+        "a turn_timeout is safe to retry in the same thread"
+    );
+    let message = recv.message.unwrap_or_default();
+    assert!(
+        !message.contains("openhuman_turn_wall_clock_timeout"),
+        "internal marker must not leak into user copy: {message}"
+    );
+
+    // The wedged future is torn down cooperatively when the backstop drops it
+    // (the Drop guard flips), not left sleeping to its 30s test wall.
+    wait_for_flag(&block.dropped, "wedged turn future dropped by backstop").await;
+
+    set_test_run_chat_task_block(None).await;
+    // `OPENHUMAN_WEB_TURN_TIMEOUT_SECS` is cleared by `_env_guard`'s Drop.
 }
 
 /// Helper: poll the parallel in-flight lane until `pred` holds (or time out).

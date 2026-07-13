@@ -9,9 +9,11 @@
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
+use crate::core::runtime::context::CoreContext;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::openhuman::people::rpc;
+use crate::openhuman::people::store::PeopleStore;
 use crate::openhuman::people::types::{Handle, PersonId};
-use crate::openhuman::people::{rpc, store};
 use crate::rpc::RpcOutcome;
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -288,16 +290,23 @@ fn score_components_schema() -> TypeSchema {
     }
 }
 
+fn current_people_store() -> Result<std::sync::Arc<PeopleStore>, String> {
+    CoreContext::current()
+        .ok_or_else(|| "people store unavailable: core context not initialized".to_string())?
+        .people()
+        .map_err(|e| format!("people store unavailable: {e}"))
+}
+
 fn handle_refresh_address_book(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let store = store::get().map_err(|e| e.to_string())?;
+        let store = current_people_store()?;
         to_json(rpc::handle_refresh_address_book(&store).await?)
     })
 }
 
 fn handle_list(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let store = store::get().map_err(|e| e.to_string())?;
+        let store = current_people_store()?;
         let limit = read_optional_u64(&params, "limit")?.unwrap_or(100) as usize;
         to_json(rpc::handle_list(&store, limit).await?)
     })
@@ -305,7 +314,7 @@ fn handle_list(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_resolve(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let store = store::get().map_err(|e| e.to_string())?;
+        let store = current_people_store()?;
         let kind = read_required_string(&params, "kind")?;
         let value = read_required_string(&params, "value")?;
         let create = read_optional_bool(&params, "create_if_missing")?.unwrap_or(false);
@@ -325,7 +334,7 @@ fn handle_resolve(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_score(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let store = store::get().map_err(|e| e.to_string())?;
+        let store = current_people_store()?;
         let id_s = read_required_string(&params, "person_id")?;
         let id = uuid::Uuid::parse_str(&id_s)
             .map(PersonId)

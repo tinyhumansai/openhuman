@@ -5,7 +5,7 @@ use crate::openhuman::config::LocalAiConfig;
 use crate::openhuman::inference::local::lm_studio::lm_studio_base_url_from_local_ai;
 use crate::openhuman::inference::local::ollama_base_url;
 use crate::openhuman::inference::local::provider::normalize_provider;
-use crate::openhuman::inference::provider::compatible::{AuthStyle, OpenAiCompatibleProvider};
+use crate::openhuman::inference::provider::auth::AuthStyle;
 use crate::openhuman::inference::provider::Provider;
 
 use super::health::LocalHealthChecker;
@@ -115,9 +115,25 @@ pub fn new_provider(
     } else {
         AuthStyle::None
     };
+    let model =
+        crate::openhuman::inference::provider::crate_openai::make_crate_local_runtime_chat_model(
+            provider_label,
+            &local_base,
+            local_api_key.unwrap_or(""),
+            local_auth_style,
+            &local_ai_config.chat_model_id,
+            temperature_unsupported_models,
+            None,
+            (provider_label == "ollama")
+                .then_some(local_ai_config.num_ctx)
+                .flatten(),
+        );
     let local: Box<dyn Provider> = Box::new(
-        OpenAiCompatibleProvider::new(provider_label, &local_base, local_api_key, local_auth_style)
-            .with_temperature_unsupported_models(temperature_unsupported_models.to_vec()),
+        crate::openhuman::inference::provider::crate_provider::CrateBackedProvider::new(
+            model,
+            provider_label,
+        )
+        .with_local(),
     );
 
     IntelligentRoutingProvider::new(

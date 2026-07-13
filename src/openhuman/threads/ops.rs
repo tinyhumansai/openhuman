@@ -2,7 +2,7 @@
 
 use crate::openhuman::channels::providers::web as web_channel;
 use crate::openhuman::config::Config;
-use crate::openhuman::inference::provider::{self, ProviderRuntimeOptions};
+use crate::openhuman::inference::provider;
 use crate::openhuman::memory::{
     ApiEnvelope, ApiMeta, AppendConversationMessageRequest, ConversationMessageRecord,
     ConversationMessagesRequest, ConversationMessagesResponse, ConversationThreadSummary,
@@ -30,6 +30,8 @@ use crate::rpc::RpcOutcome;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::ModelRequest;
 
 fn request_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -346,21 +348,8 @@ pub async fn thread_generate_title(
         ));
     };
 
-    let provider_runtime_options = ProviderRuntimeOptions {
-        auth_profile_override: None,
-        openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
-        secrets_encrypt: config.secrets.encrypt,
-        reasoning_enabled: config.runtime.reasoning_enabled,
-    };
-
-    let provider = match provider::create_intelligent_routing_provider(
-        config.inference_url.as_deref(),
-        config.api_url.as_deref(),
-        config.api_key.as_deref(),
-        &config,
-        &provider_runtime_options,
-    ) {
-        Ok(provider) => provider,
+    let chat_model = match provider::create_chat_model("summarization", &config, 0.2) {
+        Ok(model) => model,
         Err(error) => {
             tracing::warn!(
                 thread_id = %request.thread_id,
@@ -384,16 +373,19 @@ pub async fn thread_generate_title(
         "{THREAD_TITLE_LOG_PREFIX} generating thread title"
     );
 
-    let raw_title = match provider
-        .chat_with_system(
-            Some(THREAD_TITLE_SYSTEM_PROMPT),
-            &build_title_prompt(&first_user_message, &assistant_message),
-            THREAD_TITLE_MODEL_HINT,
-            0.2,
+    let raw_title = match chat_model
+        .invoke(
+            &(),
+            ModelRequest::new(vec![
+                Message::system(THREAD_TITLE_SYSTEM_PROMPT),
+                Message::user(build_title_prompt(&first_user_message, &assistant_message)),
+            ])
+            .with_model(THREAD_TITLE_MODEL_HINT)
+            .with_temperature(0.2),
         )
         .await
     {
-        Ok(title) => title,
+        Ok(response) => response.text(),
         Err(error) => {
             tracing::warn!(
                 thread_id = %request.thread_id,

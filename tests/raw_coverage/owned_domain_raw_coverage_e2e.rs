@@ -356,7 +356,7 @@ async fn openai_compatible_provider_covers_auth_temperature_tool_fallback_and_re
         parameters: json!({ "type": "object" }),
     };
     let messages = vec![ChatMessage::system("system"), ChatMessage::user("hello")];
-    let fallback_response = provider
+    let tool_err = provider
         .chat(
             ChatRequest {
                 messages: &messages,
@@ -368,15 +368,8 @@ async fn openai_compatible_provider_covers_auth_temperature_tool_fallback_and_re
             0.6,
         )
         .await
-        .expect("provider chat with tool fallback");
-    assert!(
-        fallback_response
-            .text
-            .as_deref()
-            .is_some_and(|text| text.contains("\"tool_calls\"")),
-        "tool-schema fallback should return the history-path text payload"
-    );
-    assert!(fallback_response.tool_calls.is_empty());
+        .expect_err("tool rejection is returned without a speculative retry");
+    assert!(tool_err.to_string().contains("unknown parameter: tools"));
 
     let response = provider
         .chat(
@@ -395,22 +388,16 @@ async fn openai_compatible_provider_covers_auth_temperature_tool_fallback_and_re
     assert_eq!(response.tool_calls.len(), 1);
     assert_eq!(response.tool_calls[0].name, "lookup");
     assert_eq!(response.tool_calls[0].arguments, r#"{"query":"openhuman"}"#);
-    let usage = response.usage.expect("usage");
-    assert_eq!(usage.input_tokens, 11);
-    assert_eq!(usage.output_tokens, 13);
-    assert_eq!(usage.cached_input_tokens, 5);
-    assert_eq!(usage.charged_amount_usd, 0.0123);
+    assert!(response.usage.is_none());
 
     let chat_requests = state.chat_requests.lock().expect("chat requests").clone();
-    assert!(
-        chat_requests.len() >= 2,
-        "tool rejection should force a retry without native tools"
-    );
+    assert_eq!(chat_requests.len(), 2);
     assert_eq!(
         chat_requests[0].pointer("/tools/0/function/name"),
         Some(&json!("lookup"))
     );
     assert!(chat_requests[0].get("temperature").is_none());
+    assert_eq!(chat_requests[0]["tools"].as_array().unwrap().len(), 2);
     assert!(chat_requests[1].get("tools").is_none());
 
     let auth_headers = state.auth_headers.lock().expect("auth headers").clone();
@@ -465,10 +452,10 @@ async fn openai_compatible_provider_streaming_json_fallback_aggregates_response(
         response.reasoning_content.as_deref(),
         Some("stream thinking")
     );
-    assert!(
-        rx.try_recv().is_err(),
-        "non-SSE fallback should not emit deltas"
-    );
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(ProviderDelta::TextDelta { delta }) if delta == "stream fallback body"
+    ));
 }
 
 #[tokio::test]

@@ -61,6 +61,9 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       rust-core: ${{ steps.filter.outputs['rust-core'] }}
       rust-core-full: ${{ steps.filter.outputs['rust-core-full'] }}
+      # The vendored engine owns migrated memory tests; Cargo does not run
+      # dependency tests as part of the OpenHuman crate suite.
+      tinycortex: ${{ steps.filter.outputs.tinycortex }}
       # Shell-quoted list of changed src/ + tests/ files, consumed by
       # scripts/ci/rust-coverage-changed.sh (domain-scoped llvm-cov).
       rust-core-src-files: ${{ steps.filter.outputs['rust-core-src_files'] }}
@@ -160,6 +163,12 @@ jobs:
             rust-core-src:
               - 'src/**'
               - 'tests/**'
+            tinycortex:
+              - '.github/workflows/ci-lite.yml'
+              - '.github/workflows/test-reusable.yml'
+              - '.gitmodules'
+              - 'scripts/ci-cancel-aware.sh'
+              - 'vendor/tinycortex'
             rust-tauri:
               - '.github/workflows/ci-lite.yml'
               - 'Cargo.lock'
@@ -624,6 +633,38 @@ jobs:
       - name: Run install.ps1 unit tests
         run: pwsh -NoProfile -File scripts/tests/OpenHumanWindowsInstall.Tests.ps1
 
+  tinycortex-tests:
+    name: TinyCortex Memory Tests
+    needs: [changes]
+    if: needs.changes.outputs.tinycortex == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Init tinycortex submodule
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init vendor/tinycortex
+
+      - name: Cache TinyCortex build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vendor/tinycortex -> vendor/tinycortex/target
+          cache-on-failure: true
+          key: tinycortex
+
+      - name: Run TinyCortex engine and Composio sync tests
+        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinycortex/Cargo.toml --features git-diff,sync
+
   pr-ci-gate:
     name: PR CI Gate
     needs:
@@ -635,6 +676,7 @@ jobs:
       - scripts-tests
       - test-inventory
       - pester-install
+      - tinycortex-tests
       - orch-ip-gate
     if: always()
     runs-on: ubuntu-latest
@@ -652,6 +694,7 @@ jobs:
             ["Scripts Self-Tests"]="${{ needs['scripts-tests'].result }}"
             ["Test Inventory"]="${{ needs['test-inventory'].result }}"
             ["PowerShell Install Test"]="${{ needs['pester-install'].result }}"
+            ["TinyCortex Memory Tests"]="${{ needs['tinycortex-tests'].result }}"
             ["Orchestration IP Gate"]="${{ needs['orch-ip-gate'].result }}"
           )
 

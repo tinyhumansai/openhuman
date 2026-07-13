@@ -109,6 +109,7 @@ fn response_to_model_response(
                 id: tc.id.clone(),
                 name: tc.name.clone(),
                 arguments: serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null),
+                invalid: None,
             })
             .collect();
         (response.text.clone().unwrap_or_default(), calls)
@@ -127,6 +128,7 @@ fn response_to_model_response(
                     id: p.id.unwrap_or_else(|| format!("call_{i}")),
                     name: p.name,
                     arguments: p.arguments,
+                    invalid: None,
                 })
                 .collect();
             (prose, calls)
@@ -215,6 +217,47 @@ fn openhuman_usage_meta_raw(usage: Option<&UsageInfo>) -> Option<serde_json::Val
         context_window: u.context_window,
     };
     Some(serde_json::json!({ OPENHUMAN_USAGE_META_KEY: meta }))
+}
+
+/// Merge the host billing/context metadata the crate [`Usage`] cannot carry into
+/// a crate [`ModelResponse::raw`] under [`OPENHUMAN_USAGE_META_KEY`], so
+/// [`usage_info_from_response`] recovers the charged-USD + context window from a
+/// crate-native model (e.g. [`OpenHumanBackendModel`](crate::openhuman::inference::provider::OpenHumanBackendModel))
+/// exactly as it does from a [`ProviderModel`].
+///
+/// The crate `OpenAiModel` leaves the managed backend's `openhuman.{billing,usage}`
+/// envelope only on the raw wire JSON — it has no field for charged USD — so the
+/// crate-native managed path would otherwise report `$0` charged and fall back to
+/// the catalog estimate (issue #4249, Phase 3 usage-parity). This is the symmetric
+/// writer for [`usage_info_from_response`]'s reader.
+///
+/// No-op when both values are zero (keeps billing-free responses `raw`-clean);
+/// otherwise inserts the meta key into the existing raw object (preserving the
+/// wire JSON) or creates a fresh object.
+pub(crate) fn merge_openhuman_usage_meta(
+    raw: Option<serde_json::Value>,
+    charged_amount_usd: f64,
+    context_window: u64,
+) -> Option<serde_json::Value> {
+    if charged_amount_usd <= 0.0 && context_window == 0 {
+        return raw;
+    }
+    let meta = match serde_json::to_value(OpenhumanUsageMeta {
+        charged_amount_usd,
+        context_window,
+    }) {
+        Ok(v) => v,
+        Err(_) => return raw,
+    };
+    match raw {
+        Some(serde_json::Value::Object(mut obj)) => {
+            obj.insert(OPENHUMAN_USAGE_META_KEY.to_string(), meta);
+            Some(serde_json::Value::Object(obj))
+        }
+        // A non-object (or absent) raw can't hold the key alongside wire fields —
+        // stash the meta on its own so the reader still recovers it.
+        _ => Some(serde_json::json!({ OPENHUMAN_USAGE_META_KEY: meta })),
+    }
 }
 
 /// Reconstruct a host [`UsageInfo`] from a crate [`ModelResponse`], recovering
@@ -348,6 +391,41 @@ pub(crate) fn provider_chat_model(
     Arc::new(ProviderModel::new(provider, model, temperature))
 }
 
+pub(super) struct MaxTokensModel {
+    inner: Arc<dyn ChatModel<()>>,
+    max_tokens: u32,
+}
+
+impl MaxTokensModel {
+    pub(super) fn new(inner: Arc<dyn ChatModel<()>>, max_tokens: u32) -> Self {
+        Self { inner, max_tokens }
+    }
+
+    fn cap(&self, mut request: ModelRequest) -> ModelRequest {
+        request.max_tokens = Some(
+            request
+                .max_tokens
+                .map_or(self.max_tokens, |current| current.min(self.max_tokens)),
+        );
+        request
+    }
+}
+
+#[async_trait]
+impl ChatModel<()> for MaxTokensModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        self.inner.profile()
+    }
+
+    async fn invoke(&self, state: &(), request: ModelRequest) -> tinyagents::Result<ModelResponse> {
+        self.inner.invoke(state, self.cap(request)).await
+    }
+
+    async fn stream(&self, state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
+        self.inner.stream(state, self.cap(request)).await
+    }
+}
+
 impl ProviderModel {
     /// Build a model adapter for `provider`, pinned to `model`/`temperature`.
     ///
@@ -441,6 +519,15 @@ impl ProviderModel {
         self.profile.reasoning = reasoning;
         self
     }
+
+    /// Override tool calling for this model without changing the underlying
+    /// provider. Text-mode sub-agents use this to preserve injected providers
+    /// while omitting native tool schemas from their requests.
+    pub(super) fn with_tool_calling(mut self, enabled: bool) -> Self {
+        self.profile.tool_calling = enabled;
+        self.profile.parallel_tool_calls = enabled;
+        self
+    }
 }
 
 #[async_trait]
@@ -454,7 +541,7 @@ impl ChatModel<()> for ProviderModel {
         _state: &(),
         request: ModelRequest,
     ) -> tinyagents::Result<ModelResponse> {
-        let native = self.provider.supports_native_tools();
+        let native = self.profile.tool_calling;
         let (messages, specs) = build_chat_inputs(&request, native);
         // Honor a per-request temperature when the caller sets one (e.g. one-shot
         // inference callers that reuse a single model across prompts of differing
@@ -558,7 +645,7 @@ impl ChatModel<()> for ProviderModel {
     /// aggregated response, which still arrives as the terminal `Completed`
     /// item. Native tool calls always ride on `Completed`.
     async fn stream(&self, _state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
-        let native = self.provider.supports_native_tools();
+        let native = self.profile.tool_calling;
         let (messages, specs) = build_chat_inputs(&request, native);
         // Positional layouts for the text-mode P-Format fallback (issue #4465);
         // built here so it can move into the `'static` producer task below.

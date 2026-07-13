@@ -111,13 +111,13 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
 }
 
 pub(crate) fn clear_composio_sync_state(db_path: &std::path::Path) -> Result<u64> {
-    use crate::openhuman::composio::providers::sync_state::KV_NAMESPACE;
+    use crate::openhuman::tinycortex::HOST_SYNC_STATE_NAMESPACE;
     let conn = rusqlite::Connection::open(db_path)
         .with_context(|| format!("open unified memory db {}", db_path.display()))?;
     let n = conn
         .execute(
             "DELETE FROM kv_namespace WHERE namespace = ?1",
-            params![KV_NAMESPACE],
+            params![HOST_SYNC_STATE_NAMESPACE],
         )
         .context("delete composio-sync-state rows")?;
     Ok(n as u64)

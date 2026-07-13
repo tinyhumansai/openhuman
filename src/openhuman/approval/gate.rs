@@ -203,69 +203,69 @@ pub struct ApprovalGate {
     meeting_to_request: Mutex<HashMap<String, String>>,
 }
 
-/// Cleans up a parked approval if its future is dropped before the normal
-/// decision/timeout path can run (for example, by an outer turn deadline).
-struct ParkedApprovalCleanupGuard<'a> {
+/// RAII guard that tears the parked waiter down even when the surrounding turn
+/// future is dropped mid-park.
+///
+/// `intercept_audited_inner` only runs its cleanup (`evict_waiter` /
+/// `store::decide(Deny)` / routing-map removal) inside the
+/// `tokio::time::timeout(...).await` match arms — i.e. only when the park
+/// resolves *normally*. Once a turn future can be torn down *externally* — the
+/// harness `max_wall_clock_ms` backstop (#4746) or the outer web backstop
+/// (#4751) firing while a tool call is parked — dropping the future skips those
+/// arms entirely, leaving the in-memory waiter, the thread/meeting routing
+/// mappings, and the `pending_approvals` row dangling until the store TTL
+/// sweeps them. A later yes/no arriving before that expiry would then route to a
+/// dead request and return without starting a fresh turn (#4774).
+///
+/// The guard is created just before the park await and [`disarm`](Self::disarm)ed
+/// on every normal exit (the match arm already ran the exact teardown for its
+/// outcome), so its `Drop` fires *only* on external cancellation.
+struct WaiterGuard<'a> {
     gate: &'a ApprovalGate,
     request_id: String,
     thread_id: Option<String>,
-    in_call_ctx: Option<InCallApprovalContext>,
+    meeting_key: Option<String>,
     armed: bool,
 }
 
-impl<'a> ParkedApprovalCleanupGuard<'a> {
-    fn new(
-        gate: &'a ApprovalGate,
-        request_id: String,
-        thread_id: Option<String>,
-        in_call_ctx: Option<InCallApprovalContext>,
-    ) -> Self {
-        Self {
-            gate,
-            request_id,
-            thread_id,
-            in_call_ctx,
-            armed: true,
-        }
-    }
-
+impl WaiterGuard<'_> {
+    /// Mark the park as resolved normally so `Drop` becomes a no-op.
     fn disarm(&mut self) {
         self.armed = false;
     }
 }
 
-impl Drop for ParkedApprovalCleanupGuard<'_> {
+impl Drop for WaiterGuard<'_> {
     fn drop(&mut self) {
         if !self.armed {
             return;
         }
-
+        // External teardown: the normal cleanup was skipped. Evict the waiter,
+        // drop the routing mappings so a later chat/voice reply is not
+        // mis-routed to this now-dead request, and deny the still-open pending
+        // row. `store::decide` is `WHERE decided_at IS NULL`, so a decision that
+        // committed in the same instant is honored rather than overwritten.
+        self.gate.evict_waiter(&self.request_id);
+        // Only clear the routing entry when it still points at *this* request.
+        // On external teardown a replacement turn can park a new approval on the
+        // same thread/meeting and overwrite the mapping before this guard drops;
+        // an unconditional `remove` would delete the *new* request's routing, so
+        // the next typed yes/no would fall through as a fresh chat turn instead
+        // of resolving the live gate (#4774).
+        if let Some(thread_id) = &self.thread_id {
+            self.gate
+                .clear_thread_route_if_owned(thread_id, &self.request_id);
+        }
+        if let Some(meeting_key) = &self.meeting_key {
+            self.gate
+                .clear_meeting_route_if_owned(meeting_key, &self.request_id);
+        }
+        let _ = store::decide(&self.gate.config, &self.request_id, ApprovalDecision::Deny);
         tracing::warn!(
             request_id = %self.request_id,
-            "[approval::gate] parked approval future dropped externally; cleaning up"
+            "[approval::gate] parked approval future dropped mid-park (external turn teardown) — \
+             evicted waiter, cleared routing, denied pending row (#4774)"
         );
-
-        // Remove in-memory routing first so a storage failure cannot leave a
-        // later yes/no reply pointed at a waiter that no longer exists.
-        self.gate.evict_waiter(&self.request_id);
-        self.gate.clear_thread(&self.thread_id, &self.request_id);
-        self.gate.clear_meeting(&self.in_call_ctx, &self.request_id);
-
-        match store::decide(&self.gate.config, &self.request_id, ApprovalDecision::Deny) {
-            Ok(Some(_)) => tracing::debug!(
-                request_id = %self.request_id,
-                "[approval::gate] externally dropped approval marked denied"
-            ),
-            Ok(None) => tracing::debug!(
-                request_id = %self.request_id,
-                "[approval::gate] externally dropped approval was already resolved"
-            ),
-            Err(err) => tracing::error!(
-                request_id = %self.request_id,
-                error = %err,
-                "[approval::gate] failed to persist denial for externally dropped approval"
-            ),
-        }
     }
 }
 
@@ -396,6 +396,76 @@ impl ApprovalGate {
         tool_name: &str,
         action_summary: &str,
         args_redacted: serde_json::Value,
+    ) -> (GateOutcome, Option<String>) {
+        // No caller-supplied park bound: identical behavior to before. With
+        // `park_bound = None` the inner never takes the caller-bound abandon
+        // path, so the out-flag stays `false` and is discarded here.
+        let mut _park_bound_elapsed = false;
+        self.intercept_audited_inner(
+            tool_name,
+            action_summary,
+            args_redacted,
+            None,
+            &mut _park_bound_elapsed,
+        )
+        .await
+    }
+
+    /// Like [`Self::intercept_audited`] but the caller may cap how long the
+    /// gate parks (issue #4756).
+    ///
+    /// When `park_bound` is `Some` and shorter than the gate's own effective
+    /// TTL and it elapses before a decision arrives, the gate abandons the park
+    /// in a **cancellation-safe** way — it evicts the in-memory waiter and
+    /// clears the thread/meeting routing mappings (so a later chat/voice reply
+    /// is not mis-routed to this now-abandoned request) but deliberately LEAVES
+    /// the `pending_approvals` row open, so a later human card-click can still
+    /// resolve it in the DB — and returns `None`. This is why callers must bound
+    /// the park through the gate rather than racing an outer
+    /// `tokio::time::timeout` against [`Self::intercept_audited`]: dropping the
+    /// parked future would skip that cleanup and orphan the waiter + routing
+    /// mappings (chatgpt-codex review on #4756).
+    ///
+    /// A `None` bound (or one `>=` the effective TTL) behaves exactly like
+    /// [`Self::intercept_audited`] and always returns `Some`.
+    pub async fn intercept_audited_bounded(
+        &self,
+        tool_name: &str,
+        action_summary: &str,
+        args_redacted: serde_json::Value,
+        park_bound: Option<Duration>,
+    ) -> Option<(GateOutcome, Option<String>)> {
+        let mut park_bound_elapsed = false;
+        let resolved = self
+            .intercept_audited_inner(
+                tool_name,
+                action_summary,
+                args_redacted,
+                park_bound,
+                &mut park_bound_elapsed,
+            )
+            .await;
+        if park_bound_elapsed {
+            None
+        } else {
+            Some(resolved)
+        }
+    }
+
+    /// Shared core of [`Self::intercept_audited`] and
+    /// [`Self::intercept_audited_bounded`]. When `park_bound` is `Some` and
+    /// shorter than the effective TTL, the park is capped at it; on that bound
+    /// elapsing the park is abandoned cancellation-safely (waiter evicted,
+    /// thread/meeting routing cleared, `pending_approvals` row left open) and
+    /// `*park_bound_elapsed` is set so the bounded caller can render its own
+    /// fast-path result instead of a `Deny`.
+    async fn intercept_audited_inner(
+        &self,
+        tool_name: &str,
+        action_summary: &str,
+        args_redacted: serde_json::Value,
+        park_bound: Option<Duration>,
+        park_bound_elapsed: &mut bool,
     ) -> (GateOutcome, Option<String>) {
         // Origin tells us who scheduled this turn. Entry points (web channel,
         // channel runtime, subconscious, cron, CLI) scope a typed
@@ -727,13 +797,6 @@ impl ApprovalGate {
             );
         }
 
-        let mut cleanup_guard = ParkedApprovalCleanupGuard::new(
-            self,
-            request_id.clone(),
-            chat_thread_id.clone(),
-            in_call_ctx.clone(),
-        );
-
         tracing::info!(
             request_id = %request_id,
             tool = tool_name,
@@ -808,7 +871,32 @@ impl ApprovalGate {
             self.effective_ttl()
         };
 
-        let outcome = match tokio::time::timeout(effective_ttl, rx).await {
+        // Optional caller-supplied park bound (issue #4756). A caller
+        // (`composio_connect`) can cap how long the gate parks so a turn
+        // degrades to a fast prompt instead of blocking to the full TTL.
+        // Bounding must never *extend* the park, so we wait `min(bound, ttl)`;
+        // the caller-bound abandon path fires only when the bound is what
+        // elapses (`park_bound_active`).
+        let park_bound_active = matches!(park_bound, Some(b) if b < effective_ttl);
+        let wait = match park_bound {
+            Some(b) => b.min(effective_ttl),
+            None => effective_ttl,
+        };
+
+        // RAII cleanup for external teardown (#4774): if the turn future is
+        // dropped while parked on the await below (the #4746/#4751 wall-clock
+        // backstop firing), the match arms never run, so this guard evicts the
+        // waiter, clears routing, and denies the pending row on drop. Disarmed
+        // right after the match on every normal exit.
+        let mut waiter_guard = WaiterGuard {
+            gate: self,
+            request_id: request_id.clone(),
+            thread_id: chat_thread_id.clone(),
+            meeting_key: in_call_ctx.as_ref().map(|ic| ic.meeting_key.clone()),
+            armed: true,
+        };
+
+        let outcome = match tokio::time::timeout(wait, rx).await {
             Ok(Ok(decision)) => {
                 tracing::info!(
                     request_id = %request_id,
@@ -845,6 +933,39 @@ impl ApprovalGate {
                         reason: format!(
                             "{POLICY_DENIED_MARKER} Approval channel for '{tool_name}' closed \
                              before a decision was made."
+                        ),
+                    },
+                    None,
+                )
+            }
+            Err(_elapsed) if park_bound_active => {
+                // Caller park bound elapsed (#4756) — NOT the gate's own TTL.
+                // Abandon the park cancellation-safely: evict the in-memory
+                // waiter and (via `clear_thread`/`clear_meeting` below, on every
+                // exit) drop the routing mappings so a later chat/voice reply is
+                // not mis-routed to this now-abandoned request. Deliberately do
+                // NOT `store::decide(Deny)` — the `pending_approvals` row stays
+                // open so a later human card-click still resolves it in the DB
+                // and a re-ask sees it already-connected. Signal the elapse so
+                // the bounded caller renders its own fast-path result rather than
+                // a `Deny`.
+                self.evict_waiter(&request_id);
+                *park_bound_elapsed = true;
+                tracing::info!(
+                    request_id = %request_id,
+                    tool = tool_name,
+                    bound_secs = wait.as_secs(),
+                    "[approval::gate] caller park bound elapsed — abandoning park (row left \
+                     pending for a later card-click; waiter + routing cleared) (#4756)"
+                );
+                // Placeholder outcome; the bounded caller discards it once
+                // `*park_bound_elapsed` is set (returns `None`).
+                (
+                    GateOutcome::Deny {
+                        reason: format!(
+                            "{POLICY_DENIED_MARKER} Approval for '{tool_name}' exceeded the caller \
+                             park bound ({}s).",
+                            wait.as_secs()
                         ),
                     },
                     None,
@@ -900,11 +1021,14 @@ impl ApprovalGate {
                 }
             }
         };
+        // Reached only on a normal park resolution: the match arm above already
+        // ran the exact teardown for its outcome, so disarm the RAII guard (its
+        // Drop is reserved for external cancellation — see `WaiterGuard`).
+        waiter_guard.disarm();
         // The routing mappings are only needed while parked; clear them on
         // every exit (decision, channel drop, or timeout).
         self.clear_thread(&chat_thread_id, &request_id);
         self.clear_meeting(&in_call_ctx, &request_id);
-        cleanup_guard.disarm();
         outcome
     }
 
@@ -1076,23 +1200,34 @@ impl ApprovalGate {
     /// Drop the thread → request mapping when it still belongs to this request.
     fn clear_thread(&self, thread_id: &Option<String>, request_id: &str) {
         if let Some(t) = thread_id {
-            let mut routes = self.thread_to_request.lock();
-            if routes.get(t).is_some_and(|current| current == request_id) {
-                routes.remove(t);
-            }
+            self.clear_thread_route_if_owned(t, request_id);
         }
     }
 
     /// Drop the meeting → request mapping when it still belongs to this request.
     fn clear_meeting(&self, ctx: &Option<InCallApprovalContext>, request_id: &str) {
         if let Some(ic) = ctx {
-            let mut routes = self.meeting_to_request.lock();
-            if routes
-                .get(&ic.meeting_key)
-                .is_some_and(|current| current == request_id)
-            {
-                routes.remove(&ic.meeting_key);
-            }
+            self.clear_meeting_route_if_owned(&ic.meeting_key, request_id);
+        }
+    }
+
+    /// Drop the thread → request mapping **only if** it still points at
+    /// `request_id`. Used by [`WaiterGuard::drop`] on external teardown, where a
+    /// replacement turn may have already parked a new approval on the same
+    /// thread and overwritten the entry; clearing unconditionally would delete
+    /// the *new* request's routing (#4774).
+    fn clear_thread_route_if_owned(&self, thread_id: &str, request_id: &str) {
+        let mut map = self.thread_to_request.lock();
+        if map.get(thread_id).is_some_and(|rid| rid == request_id) {
+            map.remove(thread_id);
+        }
+    }
+
+    /// Meeting-map analogue of [`Self::clear_thread_route_if_owned`].
+    fn clear_meeting_route_if_owned(&self, meeting_key: &str, request_id: &str) {
+        let mut map = self.meeting_to_request.lock();
+        if map.get(meeting_key).is_some_and(|rid| rid == request_id) {
+            map.remove(meeting_key);
         }
     }
 }
@@ -1271,6 +1406,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn guard_cleanup_only_clears_routing_it_still_owns() {
+        // Regression for #4774: on external turn teardown a replacement turn may
+        // have already parked a new approval on the same thread/meeting and
+        // overwritten the routing entry. The dropped guard for the *old* request
+        // must not clobber the *new* request's mapping.
+        let (gate, _dir) = test_gate();
+
+        gate.thread_to_request
+            .lock()
+            .insert("thread-1".into(), "req-new".into());
+        gate.meeting_to_request
+            .lock()
+            .insert("meet-1".into(), "req-new".into());
+
+        // Stale guard for the superseded request is a no-op.
+        gate.clear_thread_route_if_owned("thread-1", "req-old");
+        gate.clear_meeting_route_if_owned("meet-1", "req-old");
+        assert_eq!(
+            gate.pending_for_thread("thread-1").as_deref(),
+            Some("req-new")
+        );
+        assert_eq!(
+            gate.pending_for_meeting("meet-1").as_deref(),
+            Some("req-new")
+        );
+
+        // The owning request's guard clears its own routing.
+        gate.clear_thread_route_if_owned("thread-1", "req-new");
+        gate.clear_meeting_route_if_owned("meet-1", "req-new");
+        assert!(gate.pending_for_thread("thread-1").is_none());
+        assert!(gate.pending_for_meeting("meet-1").is_none());
+    }
+
     #[tokio::test]
     async fn in_call_voice_deny_resolves_parked_approval_with_deny() {
         let (gate, _dir) = test_gate();
@@ -1407,46 +1576,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn externally_aborted_chat_waiter_cleans_pending_state() {
-        let (gate, _dir) = test_gate();
-        let gate = Arc::new(gate);
-
-        let g = gate.clone();
-        let handle = tokio::spawn(async move {
-            turn_origin::with_origin(
-                web_origin(),
-                APPROVAL_CHAT_CONTEXT.scope(
-                    chat_ctx(),
-                    g.intercept("composio", "send slack", serde_json::json!({})),
-                ),
-            )
-            .await
-        });
-
-        let mut tries = 0;
-        let request_id = loop {
-            if let Some(request_id) = gate.pending_for_thread("t-test") {
-                break request_id;
-            }
-            tries += 1;
-            assert!(tries < 1_000, "chat approval route never appeared");
-            tokio::task::yield_now().await;
-        };
-        assert!(gate.waiters.lock().contains_key(&request_id));
-
-        handle.abort();
-        assert!(handle.await.unwrap_err().is_cancelled());
-
-        assert!(gate.pending_for_thread("t-test").is_none());
-        assert!(!gate.waiters.lock().contains_key(&request_id));
-        assert!(gate.list_pending().unwrap().is_empty());
-        assert_eq!(
-            store::get_decision(&gate.config, &request_id).unwrap(),
-            Some(ApprovalDecision::Deny)
-        );
-    }
-
-    #[tokio::test]
     async fn aborting_older_chat_waiter_preserves_newer_thread_route() {
         let (gate, _dir) = test_gate();
         let gate = Arc::new(gate);
@@ -1515,6 +1644,38 @@ mod tests {
             .unwrap();
         assert!(matches!(new_handle.await.unwrap(), GateOutcome::Allow));
         assert!(gate.pending_for_thread("t-test").is_none());
+    }
+
+    #[tokio::test]
+    async fn pending_store_failure_clears_in_call_meeting_route() {
+        let dir = TempDir::new().unwrap();
+        let blocked_workspace = dir.path().join("workspace-file");
+        std::fs::write(&blocked_workspace, b"not a directory").unwrap();
+        let config = Config {
+            workspace_dir: blocked_workspace,
+            ..Config::default()
+        };
+        let gate = ApprovalGate::new(
+            config,
+            format!("session-{}", uuid::Uuid::new_v4()),
+            Duration::from_secs(2),
+        );
+
+        let outcome = turn_origin::with_origin(
+            meet_origin(),
+            APPROVAL_IN_CALL_CONTEXT.scope(
+                in_call_ctx(),
+                gate.intercept("composio", "send email", serde_json::json!({})),
+            ),
+        )
+        .await;
+
+        assert!(matches!(
+            outcome,
+            GateOutcome::Deny { reason } if reason.contains("could not persist")
+        ));
+        assert!(gate.waiters.lock().is_empty());
+        assert!(gate.pending_for_meeting("meet-1").is_none());
     }
 
     #[tokio::test]
@@ -1799,6 +1960,154 @@ mod tests {
 
         // Mapping is cleared once intercept returns.
         assert!(gate.pending_for_thread("thread-42").is_none());
+    }
+
+    #[tokio::test]
+    async fn waiter_future_dropped_mid_park_evicts_waiter_clears_routing_and_denies_row() {
+        // #4774: once a turn future can be torn down *externally* (the #4746
+        // harness wall-clock backstop / #4751 outer web backstop firing while a
+        // tool call is parked), dropping the intercept future must not leak the
+        // waiter, the thread→request routing mapping, or the still-open pending
+        // row. The `WaiterGuard` Drop impl runs the cleanup the timeout match
+        // arms would otherwise own.
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        // Build the parked future with the WebChat origin + chat context scoped,
+        // exactly like the production web channel caller — but drive it locally
+        // so we can drop it mid-park instead of resolving it.
+        let g = gate.clone();
+        // `Box::pin` (not `tokio::pin!`) so `drop(fut)` below drops the *future
+        // itself* — and thus the `WaiterGuard` saved in its async state — rather
+        // than just a `Pin<&mut _>` reference.
+        let mut fut = Box::pin(turn_origin::with_origin(
+            web_origin(),
+            APPROVAL_CHAT_CONTEXT.scope(
+                chat_ctx(),
+                g.intercept("shell", "run rm", serde_json::json!({})),
+            ),
+        ));
+
+        // Poll it just long enough to register the waiter, persist the pending
+        // row, and park on the TTL timeout. Nothing resolves it, so the outer
+        // timeout must elapse with the future still pending.
+        let parked = tokio::time::timeout(Duration::from_millis(200), &mut fut).await;
+        assert!(
+            parked.is_err(),
+            "future should still be parked, not resolved"
+        );
+
+        // Capture the request_id from the routing mapping while parked, and
+        // confirm the waiter + pending row exist before teardown.
+        let request_id = gate
+            .pending_for_thread("t-test")
+            .expect("thread→request mapping must exist while parked");
+        assert!(
+            gate.waiters.lock().contains_key(&request_id),
+            "waiter must be registered while parked"
+        );
+        assert!(
+            matches!(store::get_decision(&gate.config, &request_id), Ok(None)),
+            "pending row must be open (undecided) while parked"
+        );
+
+        // External teardown: the wall-clock backstop tears the turn future down
+        // mid-park. This skips the timeout match arms entirely.
+        drop(fut);
+
+        // The RAII guard must have run the cleanup on drop.
+        assert!(
+            !gate.waiters.lock().contains_key(&request_id),
+            "waiter must be evicted when the parked future is dropped"
+        );
+        assert!(
+            gate.pending_for_thread("t-test").is_none(),
+            "thread→request routing must be cleared on external teardown"
+        );
+        assert!(
+            matches!(
+                store::get_decision(&gate.config, &request_id),
+                Ok(Some(ApprovalDecision::Deny))
+            ),
+            "pending row must be denied when the parked future is dropped"
+        );
+    }
+
+    // ── caller park bound (issue #4756) ──────────────────────────────
+    //
+    // A caller (composio_connect) can cap the park via
+    // `intercept_audited_bounded`. When the bound elapses before the gate's own
+    // TTL the gate must abandon the park cancellation-safely: return `None`,
+    // clear the thread→request routing so a later reply is not mis-routed (the
+    // codex concern), yet LEAVE the `pending_approvals` row open so a later
+    // card-click still resolves it in the DB.
+    #[tokio::test]
+    async fn intercept_audited_bounded_abandons_park_and_leaves_row_pending() {
+        let (gate, _dir) = test_gate(); // boot-time TTL = 2s
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let ctx = ApprovalChatContext {
+            thread_id: "thread-bound".into(),
+            client_id: "client-1".into(),
+        };
+        let origin = AgentTurnOrigin::WebChat {
+            thread_id: "thread-bound".into(),
+            client_id: "client-1".into(),
+            request_id: Some("req-bound".into()),
+        };
+        // 100ms caller bound — far below the 2s gate TTL — so the bound is what
+        // elapses, not the gate's own timeout.
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                origin,
+                APPROVAL_CHAT_CONTEXT.scope(
+                    ctx,
+                    g.intercept_audited_bounded(
+                        "shell",
+                        "run ls",
+                        serde_json::json!({}),
+                        Some(Duration::from_millis(100)),
+                    ),
+                ),
+            )
+            .await
+        });
+
+        // While parked, the thread → request mapping is queryable.
+        let mut tries = 0;
+        let request_id = loop {
+            if let Some(r) = gate.pending_for_thread("thread-bound") {
+                break r;
+            }
+            tries += 1;
+            assert!(tries < 50, "thread mapping never appeared");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        };
+
+        // The bound elapses → `None`, so the caller renders its own fast path
+        // instead of the park resolving to a Deny.
+        let resolved = handle.await.unwrap();
+        assert!(
+            resolved.is_none(),
+            "caller park bound must surface as None, not a resolved outcome"
+        );
+
+        // Routing is cleared so a later reply is not mis-routed to the abandoned
+        // request (the codex #4756 concern).
+        assert!(
+            gate.pending_for_thread("thread-bound").is_none(),
+            "thread → request mapping must be cleared on caller-bound abandon"
+        );
+
+        // The row is LEFT open — a later human card-click still resolves it.
+        let decided = gate
+            .decide(&request_id, ApprovalDecision::ApproveOnce)
+            .unwrap();
+        assert!(
+            decided.is_some(),
+            "pending row must survive the abandon so a later card-click resolves it"
+        );
     }
 
     /// Tests for `effective_ttl` env-override parsing.

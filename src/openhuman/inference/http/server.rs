@@ -31,11 +31,13 @@ use axum::{extract::State, Json, Router};
 use futures_util::stream::{self, StreamExt};
 use serde_json::json;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tinyagents::harness::model::{ModelRequest, ModelStreamItem};
 use tracing::{debug, error};
 
 use crate::core::types::AppState;
 use crate::openhuman::config::Config;
-use crate::openhuman::inference::provider;
 use crate::openhuman::inference::provider::traits::ChatMessage;
 
 use super::types::{
@@ -93,21 +95,23 @@ async fn chat_completions_handler(
         format!("ollama:{}", req.model)
     };
 
-    let (provider_box, model_id) = match provider::factory::create_chat_provider_from_string(
-        "agentic",
-        &provider_string,
-        &config,
-    ) {
-        Ok(pair) => pair,
-        Err(e) => {
-            error!("{LOG_PREFIX} chat_completions: provider build failed: {e}");
-            return (
+    let (chat_model, model_id) =
+        match crate::openhuman::inference::provider::create_chat_model_from_string_with_model_id(
+            "agentic",
+            &provider_string,
+            &config,
+            req.temperature.unwrap_or(config.default_temperature),
+        ) {
+            Ok(pair) => pair,
+            Err(e) => {
+                error!("{LOG_PREFIX} chat_completions: provider build failed: {e}");
+                return (
                     StatusCode::BAD_REQUEST,
                     Json(json!({ "error": { "message": format!("provider error: {e}"), "type": "invalid_request_error" }})),
                 )
                     .into_response();
-        }
-    };
+            }
+        };
 
     // Map request messages to provider ChatMessage type.
     let messages: Vec<ChatMessage> = req
@@ -142,28 +146,59 @@ async fn chat_completions_handler(
     let completion_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
     let created = chrono::Utc::now().timestamp();
     let model_name = req.model.clone();
+    let model_request = ModelRequest::new(
+        messages
+            .iter()
+            .map(crate::openhuman::tinyagents::chat_message_to_message)
+            .collect(),
+    )
+    .with_model(model_id.clone())
+    .with_temperature(temperature);
 
     if req.stream {
-        // Streaming response via SSE
-        let options = provider::traits::StreamOptions::new(true);
-        let stream =
-            provider_box.stream_chat_with_history(&messages, &model_id, temperature, options);
+        let model_stream = match chat_model.stream(&(), model_request).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                error!(error = %e, model = %model_id, "{LOG_PREFIX} chat_completions: stream start failed");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": { "message": format!("inference error: {e}"), "type": "internal_error" }})),
+                )
+                    .into_response();
+            }
+        };
 
         let cid = completion_id.clone();
         let model_clone = model_name.clone();
-        let event_stream = stream
-            .enumerate()
-            .map(move |(i, chunk_result)| {
+        let first_delta = Arc::new(AtomicBool::new(true));
+        let event_stream = model_stream
+            .filter_map(move |item| {
                 let cid = cid.clone();
                 let model_clone = model_clone.clone();
-                match chunk_result {
-                    Ok(chunk) => {
-                        let finish_reason = if chunk.is_final { Some("stop") } else { None };
-                        let content = if chunk.delta.is_empty() && chunk.is_final {
-                            None
-                        } else {
-                            Some(chunk.delta)
-                        };
+                let first_delta = Arc::clone(&first_delta);
+                async move {
+                    let (content, finish_reason) = match item {
+                        ModelStreamItem::MessageDelta(delta) if !delta.text.is_empty() => {
+                            (Some(delta.text), None)
+                        }
+                        ModelStreamItem::Completed(_) => (None, Some("stop")),
+                        ModelStreamItem::Failed(message) => {
+                            let body = json!({"error": {"message": message, "type": "stream_error"}});
+                            return Some(Ok::<Event, std::convert::Infallible>(
+                                Event::default().data(body.to_string()),
+                            ));
+                        }
+                        ModelStreamItem::ProviderFailed(error) => {
+                            let body = json!({"error": {"message": error.message, "type": "stream_error"}});
+                            return Some(Ok::<Event, std::convert::Infallible>(
+                                Event::default().data(body.to_string()),
+                            ));
+                        }
+                        _ => return None,
+                    };
+                    let role = first_delta
+                        .swap(false, Ordering::Relaxed)
+                        .then(|| "assistant".to_string());
                         let sse_chunk = ChatCompletionChunk {
                             id: cid,
                             object: "chat.completion.chunk",
@@ -172,11 +207,7 @@ async fn chat_completions_handler(
                             choices: vec![ChatCompletionChunkChoice {
                                 index: 0,
                                 delta: ChatCompletionDelta {
-                                    role: if i == 0 {
-                                        Some("assistant".to_string())
-                                    } else {
-                                        None
-                                    },
+                                    role,
                                     content,
                                 },
                                 finish_reason,
@@ -184,15 +215,9 @@ async fn chat_completions_handler(
                         };
                         let data =
                             serde_json::to_string(&sse_chunk).unwrap_or_else(|_| "{}".to_string());
-                        Ok::<Event, std::convert::Infallible>(Event::default().data(data))
-                    }
-                    Err(e) => {
-                        let err_event = json!({
-                            "error": { "message": e.to_string(), "type": "stream_error" }
-                        });
-                        Ok(Event::default()
-                            .data(serde_json::to_string(&err_event).unwrap_or_default()))
-                    }
+                    Some(Ok::<Event, std::convert::Infallible>(
+                        Event::default().data(data),
+                    ))
                 }
             })
             .chain(stream::once(async {
@@ -205,13 +230,10 @@ async fn chat_completions_handler(
             .into_response();
     }
 
-    // Non-streaming: call chat_with_history
-    match provider_box
-        .chat_with_history(&messages, &model_id, temperature)
-        .await
-    {
-        Ok(content) => {
+    match chat_model.invoke(&(), model_request).await {
+        Ok(model_response) => {
             debug!("{LOG_PREFIX} chat_completions: non-streaming ok");
+            let usage = model_response.usage.unwrap_or_default();
             let response = ChatCompletionResponse {
                 id: completion_id,
                 object: "chat.completion",
@@ -221,14 +243,14 @@ async fn chat_completions_handler(
                     index: 0,
                     message: ChatCompletionMessage {
                         role: "assistant".to_string(),
-                        content,
+                        content: model_response.text(),
                     },
                     finish_reason: "stop",
                 }],
                 usage: ChatCompletionUsage {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
+                    prompt_tokens: usage.input_tokens,
+                    completion_tokens: usage.output_tokens,
+                    total_tokens: usage.total_tokens,
                 },
             };
             (StatusCode::OK, Json(response)).into_response()
