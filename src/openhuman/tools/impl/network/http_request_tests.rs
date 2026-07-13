@@ -205,3 +205,51 @@ fn readonly_http_request_is_not_external_effect_because_execute_blocks() {
         "method": "GET"
     })));
 }
+
+#[test]
+fn egress_descriptor_reports_host_and_url_kind_when_bare() {
+    // A bodyless, headerless GET discloses only the destination host + URL.
+    let desc = network_egress_descriptor("https://api.example.com/v1/data", false, false);
+    assert_eq!(desc.provider_slug, "network");
+    assert_eq!(desc.service, "api.example.com");
+    assert!(desc.is_external);
+    assert_eq!(
+        desc.data_kinds,
+        vec![crate::openhuman::security::egress::DataKind::Url]
+    );
+}
+
+#[test]
+fn egress_descriptor_adds_tool_arguments_for_body() {
+    let desc = network_egress_descriptor("https://api.example.com/v1", true, false);
+    assert!(desc
+        .data_kinds
+        .contains(&crate::openhuman::security::egress::DataKind::ToolArguments));
+    assert!(!desc
+        .data_kinds
+        .contains(&crate::openhuman::security::egress::DataKind::Metadata));
+}
+
+#[test]
+fn egress_descriptor_reports_headers_as_metadata_even_without_body() {
+    // Regression for the under-reporting fix: a header-only call (e.g. an
+    // Authorization token, no body) must still disclose the header metadata.
+    let desc = network_egress_descriptor("https://api.example.com/v1", false, true);
+    assert!(desc
+        .data_kinds
+        .contains(&crate::openhuman::security::egress::DataKind::Metadata));
+}
+
+#[test]
+fn egress_descriptor_reports_both_body_and_headers() {
+    let desc = network_egress_descriptor("https://api.example.com/v1", true, true);
+    let kinds = &desc.data_kinds;
+    assert!(kinds.contains(&crate::openhuman::security::egress::DataKind::ToolArguments));
+    assert!(kinds.contains(&crate::openhuman::security::egress::DataKind::Metadata));
+}
+
+#[test]
+fn egress_descriptor_falls_back_to_unknown_host_on_unparseable_url() {
+    let desc = network_egress_descriptor("not a url", false, false);
+    assert_eq!(desc.service, "unknown");
+}
