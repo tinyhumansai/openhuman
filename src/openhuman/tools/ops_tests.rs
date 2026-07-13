@@ -2246,3 +2246,26 @@ fn tool_group_gate_families_dropped_under_harness_not_full() {
     assert!(!harness.allows(tool_group("audio_generate_podcast")));
     assert!(!harness.allows(tool_group("whatsapp_data_list_chats")));
 }
+
+#[test]
+fn no_gate_family_tool_silently_defaults_to_platform() {
+    use crate::core::all::DomainGroup;
+    // #4808 maintainer review: a future tool in a prefix-gated family must NOT
+    // fall through to Platform — otherwise it would stay callable under a custom
+    // `DomainSet { platform: true, <family>: false }`, leaking the gated surface.
+    // These synthetic names match no exact list, only the family prefix.
+    for name in [
+        "wallet_new_thing",
+        "web3_new_thing",
+        "x402_new_thing",
+        "mcp_new_thing",
+        "media_new_thing",
+        "whatsapp_data_new_thing",
+    ] {
+        assert_ne!(
+            tool_group(name),
+            DomainGroup::Platform,
+            "gate-family tool `{name}` must not silently default to Platform"
+        );
+    }
+}

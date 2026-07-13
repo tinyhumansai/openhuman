@@ -1091,23 +1091,13 @@ pub fn all_tools_with_runtime(
 fn tool_group(name: &str) -> crate::core::all::DomainGroup {
     use crate::core::all::DomainGroup;
 
-    // Exact tool names per family (grep of `fn name(&self)` on each Tool impl).
-    const WEB3: &[&str] = &[
-        "wallet_status",
-        "wallet_chain_status",
-        "wallet_prepare_transfer",
-        "wallet_tx_status",
-        "wallet_tx_receipt",
-        "wallet_lookup_tx",
-        "web3_swap_quote",
-        "web3_swap_routes",
-        "web3_swap_execute",
-        "web3_bridge_quote",
-        "web3_bridge_execute",
-        "web3_dapp_call",
-        "web3_dapp_execute",
-        "x402_request",
-    ];
+    // Gate families with a domain-exclusive name prefix are matched by prefix
+    // (not an exact list) so a NEW tool in the family auto-gates instead of
+    // silently defaulting to Platform and leaking under a custom DomainSet
+    // (#4808 maintainer review). Web3 = wallet_/web3_/x402_, Media = media_,
+    // Mcp = mcp_ (below). Families without a clean prefix (Skills/Flows) keep
+    // their exact lists; `no_gate_family_tool_silently_defaults_to_platform`
+    // guards the prefix families.
     const SKILLS: &[&str] = &[
         "run_workflow",
         "await_workflow",
@@ -1142,11 +1132,6 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         "get_tool_output_sample",
         "list_agent_profiles",
     ];
-    const MEDIA: &[&str] = &[
-        "media_generate_image",
-        "media_generate_video",
-        "media_list_models",
-    ];
     // Voice family agent tools (audio_toolkit) — no `voice_`/`tts_`/`stt_`
     // prefix, so they must be listed explicitly or they fall through to
     // Platform and stay callable when Voice is gated off (#4808 review).
@@ -1170,7 +1155,8 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
     if name.starts_with("mcp_") {
         return DomainGroup::Mcp;
     }
-    if WEB3.contains(&name) {
+    // Web3: wallet_/web3_/x402_ are all Web3-exclusive prefixes.
+    if name.starts_with("wallet_") || name.starts_with("web3_") || name.starts_with("x402_") {
         return DomainGroup::Web3;
     }
     if SKILLS.contains(&name) {
@@ -1179,7 +1165,8 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
     if FLOWS.contains(&name) {
         return DomainGroup::Flows;
     }
-    if MEDIA.contains(&name) {
+    // Media generation: `media_` prefix (media_generate_image/video, media_list_models).
+    if name.starts_with("media_") {
         return DomainGroup::Media;
     }
     // Channels family agent tools: read-only WhatsApp data surface. Gated with
