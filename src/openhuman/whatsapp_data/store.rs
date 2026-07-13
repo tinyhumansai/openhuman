@@ -149,6 +149,22 @@ impl WhatsAppDataStore {
         Ok(())
     }
 
+    /// Open a fresh connection to the DB file.
+    ///
+    /// Read paths (`list_chats` / `list_messages` / `search_messages`) call this
+    /// **without** taking `write_lock`, so a read can race the brief file-rename
+    /// window inside [`Self::recover_corrupt_db`] (which quarantines the corrupt
+    /// image then rebuilds under `write_lock`). We deliberately do NOT serialize
+    /// reads behind the write lock: the race is not a correctness or
+    /// data-integrity problem, only a rare transient read error that self-heals
+    /// on the next poll. Three outcomes are possible and all are safe —
+    /// (1) the read opens before the rename and reads valid (old) data via its
+    /// still-live fd; (2) it opens after the rebuild and reads the fresh schema;
+    /// (3) it opens in the sub-millisecond gap after the rename but before the
+    /// rebuild, gets an empty auto-created file, and returns a benign
+    /// "no such table" error the caller retries. Guarding this hot path with a
+    /// global read/write lock would trade that vanishingly-rare transient for
+    /// permanent read/write contention on every list/search — not worth it.
     fn open_conn(&self) -> Result<Connection> {
         let conn = Connection::open(&self.db_path)
             .with_context(|| format!("open whatsapp_data db: {}", self.db_path.display()))?;
