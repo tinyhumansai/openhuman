@@ -186,11 +186,15 @@ fn orchestrator_reaches_memory_agent_on_demand() {
         !has_call_memory_agent,
         "orchestrator agent.toml must not expose the 'call_memory_agent' tool"
     );
-    // Verify all superseded tool names are gone.
+    // Verify all superseded tool names are gone. NOTE: `memory_recall` is
+    // intentionally NOT in this list — #4764 (`fix(agent): give the orchestrator
+    // direct memory tools so recall/store don't over-delegate`) re-added
+    // `memory_recall`/`memory_store` as first-class orchestrator tools so a
+    // store→recall loop closes inline; only the deep tree-walk tools remain
+    // delegated behind `agent_memory`.
     for old_name in [
         "memory_tree",
         "query_memory",
-        "memory_recall",
         "memory_tree_search_entities",
         "memory_tree_query_topic",
         "memory_tree_query_source",
