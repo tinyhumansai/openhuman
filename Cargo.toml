@@ -217,7 +217,7 @@ sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
-lettre = { version = "0.11.22", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
+lettre = { version = "0.11.22", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"], optional = true }
 mail-parser = "0.11.2"
 async-imap = { version = "0.11", features = ["runtime-tokio"], default-features = false }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "macros"] }
@@ -233,7 +233,7 @@ whisper-rs = "0.16"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 tempfile = "3"
 cpal = "0.15"
-hound = "3.5"
+hound = { version = "3.5", optional = true }
 enigo = "0.3"
 arboard = "3"
 rdev = "0.5"
@@ -334,12 +334,23 @@ tokio = { version = "1", features = ["test-util"] }
 proptest = "1"
 
 [features]
-default = ["tokenjuice-treesitter"]
+default = ["tokenjuice-treesitter", "voice"]
 # AST-aware code compression (tree-sitter Rust/TS/Python grammars; C build).
 # On by default; disable to fall back to the brace-depth heuristic.
 tokenjuice-treesitter = [
     "tinyjuice/tinyjuice-treesitter",
 ]
+# Voice + audio_toolkit domains: STT/TTS providers, the standalone dictation
+# server, always-on listening, and podcast audio generation/email delivery.
+# Default-ON — the desktop app always ships with voice. Slim / headless builds
+# opt out via `--no-default-features --features "<explicit list without voice>"`,
+# which also drops the exclusive `hound` (WAV I/O) + `lettre` (podcast email)
+# dependencies. Composes with the runtime `DomainSet::voice` flag (#4796): the
+# feature narrows the compile-time surface, `DomainSet` gates it at runtime.
+# NOTE: this gate does NOT drop whisper-rs / llama / cpal — those live in the
+# inference domain (shared with accessibility for cpal) and await a separate
+# `inference` gate.
+voice = ["dep:hound", "dep:lettre"]
 sandbox-landlock = ["dep:landlock"]
 sandbox-bubblewrap = []
 peripheral-rpi = ["dep:rppal"]
