@@ -13,17 +13,36 @@
 //! - **Noop**: A fallback provider for keyword-only search.
 
 pub mod catalog;
+#[path = "cloud_adapter.rs"]
 pub mod cloud;
+#[path = "cohere_adapter.rs"]
 pub mod cohere;
 mod factory;
 pub mod noop;
+#[path = "ollama_adapter.rs"]
 pub mod ollama;
+#[path = "openai_adapter.rs"]
 pub mod openai;
 mod provider_trait;
-pub mod rate_limit;
-pub mod retry_after;
+pub mod rate_limit {
+    pub use tinyagents::harness::embeddings::{
+        rate_limit as embedding_rate_limit, set_rate_limit as set_embedding_rate_limit,
+        DEFAULT_REQUESTS_PER_MINUTE as DEFAULT_EMBEDDING_RATE_LIMIT_PER_MIN,
+    };
+
+    pub async fn acquire_embedding_slot(base_url: &str) {
+        tinyagents::harness::embeddings::acquire(base_url).await;
+    }
+}
+pub mod retry_after {
+    pub use tinyagents::harness::embeddings::{
+        backoff_ms_for_attempt, parse_retry_after_ms, BASE_BACKOFF_MS, MAX_BACKOFF_MS,
+        MAX_RETRIES as MAX_429_RETRIES,
+    };
+}
 mod rpc;
 mod schemas;
+#[path = "voyage_adapter.rs"]
 pub mod voyage;
 
 pub use catalog::non_embedding_model_reason;
@@ -41,15 +60,18 @@ pub(crate) use factory::model_supports_dimensions;
 // #002 FR-015: the memory-tree OpenAI-compat embedder reuses the same key
 // resolution the embeddings RPC uses, so there is one source of truth.
 pub use noop::NoopEmbedding;
-pub use ollama::{OllamaEmbedding, DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL};
+pub use ollama::OllamaEmbedding;
 pub use openai::OpenAiEmbedding;
-pub use provider_trait::{format_embedding_signature, EmbeddingProvider};
+pub use provider_trait::{
+    format_embedding_signature, EmbeddingProvider, TinyAgentsEmbeddingProvider,
+};
 pub use rpc::provider_from_config;
 pub(crate) use rpc::resolve_api_key;
 pub use schemas::{
     all_controller_schemas as all_embeddings_controller_schemas,
     all_registered_controllers as all_embeddings_registered_controllers,
 };
+pub use tinyagents::harness::embeddings::{DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL};
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]

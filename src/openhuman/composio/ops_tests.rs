@@ -762,6 +762,13 @@ async fn composio_delete_connection_clear_memory_cascades_live_sealed_tree_and_f
         token_sum: i64::from(chunk.token_count),
         oldest_at: Some(chunk.metadata.time_range.0),
     };
+    memory_tree_store::with_connection(&config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        tree_store::upsert_buffer_tx(&tx, &buf)?;
+        tx.commit()?;
+        Ok(())
+    })
+    .expect("persist buffer snapshot");
     let summary_id = seal_one_level(&config, &tree, &buf, &LabelStrategy::Empty, false)
         .await
         .expect("real seal produces a summary");
@@ -895,7 +902,8 @@ async fn notion_cleanup_targets_include_synced_page_sources() {
     let mut state = SyncState::new("notion", "conn-1");
     state.mark_synced("page-a@2026-01-01T00:00:00Z");
     state.mark_synced("page-b");
-    state.save(&memory).await.expect("sync state should save");
+    let adapter = crate::openhuman::tinycortex::HostSyncAdapter::new(memory);
+    state.save(&adapter).await.expect("sync state should save");
 
     let targets = composio_memory_targets_for_connection(&config, Some("notion"), "conn-1")
         .await
@@ -1099,13 +1107,11 @@ async fn composio_execute_via_mock_propagates_backend_error() {
 }
 
 #[tokio::test]
-async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
+async fn composio_sync_gmail_via_mock_stores_skill_document_and_updates_outcome() {
     let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
         .lock()
         .await;
     use crate::openhuman::config::TEST_ENV_LOCK;
-    use crate::openhuman::memory_store::content::raw::{raw_rel_path, RawKind};
-    use crate::openhuman::memory_tree::tree::rpc::{list_chunks_rpc, ListChunksRequest};
     let _cache_guard = cache_guard();
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -1193,63 +1199,36 @@ async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
         outcome.value.summary
     );
 
-    // Poll for the spawned ingest task to drain. The mock backend is
-    // local + in-memory, so this normally lands in well under a second.
-    let chunks = {
-        let mut chunks = Vec::new();
+    // Poll for the spawned ingest task to persist the TinyCortex skill
+    // document. The mock backend is local, so this normally lands quickly.
+    let documents = {
+        let mut documents = Vec::new();
         for _ in 0..50 {
-            chunks = list_chunks_rpc(
-                &config,
-                ListChunksRequest {
-                    source_kind: Some("email".to_string()),
-                    source_id: Some("gmail:pilot-at-example-dot-com".to_string()),
-                    limit: Some(10),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap()
-            .value
-            .chunks;
-            if !chunks.is_empty() {
+            documents = crate::openhuman::memory::global::client_if_ready()
+                .expect("memory client remains initialized")
+                .list_documents(Some("skill-gmail"))
+                .await
+                .unwrap()
+                .get("documents")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if !documents.is_empty() {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
-        chunks
+        documents
     };
     assert_eq!(
-        chunks.len(),
+        documents.len(),
         1,
-        "expected one ingested Gmail chunk after spawned task drains"
+        "expected one ingested Gmail document after spawned task drains"
     );
-    assert!(
-        chunks[0].content.contains("Phoenix launch canary"),
-        "chunk content missing mock email subject: {}",
-        chunks[0].content
-    );
-    assert!(
-        chunks[0].content.contains("mock sync coverage"),
-        "chunk content missing mock email body: {}",
-        chunks[0].content
-    );
-
-    let raw_path = config.memory_tree_content_root().join(raw_rel_path(
-        "gmail:pilot-at-example-dot-com",
-        RawKind::Email,
-        1_717_243_200_000,
-        "gmail-msg-1",
-    ));
-    let archived = std::fs::read_to_string(&raw_path)
-        .unwrap_or_else(|e| panic!("expected archived Gmail raw message at {raw_path:?}: {e}"));
-    assert!(
-        archived.contains("Phoenix launch canary"),
-        "archived email missing mock subject: {archived}"
-    );
-    assert!(
-        archived.contains("mock sync coverage"),
-        "archived email missing mock body: {archived}"
-    );
+    let document = &documents[0];
+    assert_eq!(document["documentId"], "gmail:gmail-msg-1");
+    assert_eq!(document["title"], "Phoenix launch canary");
+    assert_eq!(document["taint"], "external_sync");
 }
 
 #[tokio::test]

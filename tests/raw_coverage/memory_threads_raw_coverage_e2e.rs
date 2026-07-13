@@ -1876,8 +1876,8 @@ async fn memory_read_rpc_score_index_and_summary_helpers_cover_dashboard_paths()
         .value
         .expect("score breakdown");
     assert!(breakdown.kept);
-    assert!(breakdown.llm_consulted);
-    assert!(breakdown
+    assert!(!breakdown.llm_consulted);
+    assert!(!breakdown
         .signals
         .iter()
         .any(|signal| signal.name == "llm_importance" && signal.weight == 2.0));
@@ -2999,22 +2999,6 @@ impl ComposioProvider for RawCoverageProvider {
         }
     }
 
-    async fn sync(
-        &self,
-        _ctx: &ProviderContext,
-        reason: SyncReason,
-    ) -> Result<ComposioSyncOutcome, String> {
-        Ok(ComposioSyncOutcome {
-            toolkit: "raw_coverage".into(),
-            connection_id: Some("conn-1".into()),
-            reason: reason.as_str().into(),
-            items_ingested: 1,
-            started_at_ms: 10,
-            finished_at_ms: 25,
-            summary: "synced".into(),
-            details: json!({ "reason": reason.as_str() }),
-        })
-    }
 }
 
 struct EmptySlugProvider;
@@ -3032,22 +3016,6 @@ impl ComposioProvider for EmptySlugProvider {
         Ok(ProviderUserProfile::default())
     }
 
-    async fn sync(
-        &self,
-        _ctx: &ProviderContext,
-        reason: SyncReason,
-    ) -> Result<ComposioSyncOutcome, String> {
-        Ok(ComposioSyncOutcome {
-            toolkit: String::new(),
-            connection_id: None,
-            reason: reason.as_str().into(),
-            items_ingested: 0,
-            started_at_ms: 0,
-            finished_at_ms: 0,
-            summary: String::new(),
-            details: Value::Null,
-        })
-    }
 }
 
 #[tokio::test]
@@ -4767,7 +4735,8 @@ async fn memory_sources_types_registry_and_sync_state_cover_public_persistence_e
         MemoryClient::from_workspace_dir(tmp.path().join("memory-sync-state"))
             .expect("memory client"),
     );
-    let fresh = SyncState::load(&memory, "gmail", "conn-raw")
+    let adapter = openhuman_core::openhuman::tinycortex::HostSyncAdapter::new(memory.clone());
+    let fresh = SyncState::load(&adapter, "gmail", "conn-raw")
         .await
         .expect("fresh state");
     assert_eq!(fresh.toolkit, "gmail");
@@ -4778,9 +4747,9 @@ async fn memory_sources_types_registry_and_sync_state_cover_public_persistence_e
     saved.mark_synced("msg-1");
     saved.daily_budget.date = "2000-01-01".into();
     saved.daily_budget.requests_used = DEFAULT_DAILY_REQUEST_LIMIT;
-    saved.save(&memory).await.expect("save state");
+    saved.save(&adapter).await.expect("save state");
 
-    let loaded = SyncState::load(&memory, "gmail", "conn-raw")
+    let loaded = SyncState::load(&adapter, "gmail", "conn-raw")
         .await
         .expect("load saved state");
     assert_eq!(loaded.cursor.as_deref(), Some("cursor-raw"));
@@ -4790,16 +4759,18 @@ async fn memory_sources_types_registry_and_sync_state_cover_public_persistence_e
 
     memory
         .kv_set(
-            Some("composio-sync-state"),
-            "gmail:bad-json",
+            Some(openhuman_core::openhuman::tinycortex::HOST_SYNC_STATE_NAMESPACE),
+            "composio-sync-state:gmail:bad-json",
             &json!("not a sync state"),
         )
         .await
         .expect("write bad state");
-    assert!(SyncState::load(&memory, "gmail", "bad-json")
+    let recovered = SyncState::load(&adapter, "gmail", "bad-json")
         .await
-        .unwrap_err()
-        .contains("deserialize failed"));
+        .expect("malformed state recovers to defaults");
+    assert_eq!(recovered.toolkit, "gmail");
+    assert_eq!(recovered.connection_id, "bad-json");
+    assert!(recovered.cursor.is_none());
 }
 
 #[test]

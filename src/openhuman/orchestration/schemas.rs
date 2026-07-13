@@ -36,6 +36,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schema_for("orchestration_self_identity"),
         schema_for("orchestration_publish_identity"),
         schema_for("orchestration_relay_info"),
+        schema_for("orchestration_run"),
     ]
 }
 
@@ -80,6 +81,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("orchestration_relay_info"),
             handler: handle_relay_info,
+        },
+        RegisteredController {
+            schema: schema_for("orchestration_run"),
+            handler: handle_medulla_run,
         },
     ]
 }
@@ -177,6 +182,19 @@ fn schema_for(function: &str) -> ControllerSchema {
             description: "The tiny.place relay endpoint the core is talking to, plus a coarse network label (staging | prod) for the renderer's relay badge.",
             inputs: vec![],
             outputs: vec![json_output("result", "{ baseUrl, network }.")],
+        },
+        "orchestration_run" => ControllerSchema {
+            namespace: "orchestration",
+            function: "run",
+            description: "Run the paid hosted Medulla engine with OpenHuman's local contact/session/send tools. Tool calls execute on this device and are returned through the backend continuation loop until a final reply is available.",
+            inputs: vec![
+                required_str("input", "The task or prompt for Medulla to orchestrate."),
+                optional_str("sessionId", "Optional Medulla session id to continue."),
+            ],
+            outputs: vec![json_output(
+                "result",
+                "{ reply, passCount, compressedHistory, escalations, sessionId, cycleId }.",
+            )],
         },
         other => unreachable!("unknown orchestration schema: {other}"),
     }
@@ -1030,6 +1048,30 @@ fn handle_relay_info(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// Direct paid Medulla entry point. The backend remains the authority for both
+/// authentication and plan enforcement; `medulla::run` also performs a local
+/// plan preflight so free users receive an immediate actionable error.
+fn handle_medulla_run(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let input = required_param(&params, "input")?.trim().to_string();
+        let session_id = params
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let config = load_config("medulla_run").await?;
+        log::debug!(
+            target: LOG,
+            "[orchestration_rpc] medulla_run.entry input_bytes={} has_session={}",
+            input.len(),
+            session_id.is_some(),
+        );
+        let result = super::medulla::run(&config, &input, session_id.as_deref()).await?;
+        to_json(result)
+    })
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 async fn load_config(action: &str) -> Result<Config, String> {
@@ -1087,7 +1129,7 @@ mod tests {
     #[test]
     fn schemas_use_orchestration_namespace() {
         let schemas = all_controller_schemas();
-        assert_eq!(schemas.len(), 10);
+        assert_eq!(schemas.len(), 11);
         assert!(schemas.iter().all(|s| s.namespace == "orchestration"));
         assert_eq!(schema_for("orchestration_attention").function, "attention");
         assert_eq!(
@@ -1115,6 +1157,10 @@ mod tests {
             schema_for("orchestration_sessions_create").function,
             "sessions_create"
         );
+        assert_eq!(schema_for("orchestration_run").function, "run");
+        assert!(all_registered_controllers()
+            .iter()
+            .any(|controller| controller.schema.function == "run"));
     }
 
     #[test]

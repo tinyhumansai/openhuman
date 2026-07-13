@@ -2,7 +2,7 @@
 //!
 //! Spawned once at startup. The scheduler walks every active Composio
 //! connection on a fixed tick, looks up the matching native provider,
-//! and calls `provider.sync(ctx, SyncReason::Periodic)` if enough time
+//! and dispatches the matching tinycortex pipeline if enough time
 //! has elapsed since that connection's last sync (per the provider's
 //! `sync_interval_secs`).
 //!
@@ -58,7 +58,7 @@ use crate::openhuman::memory_sources::{
 use crate::openhuman::scheduler_gate::gate::{current_policy, resume_notify};
 use crate::openhuman::scheduler_gate::policy::PauseReason;
 
-use super::providers::{get_provider, ComposioUsage, ProviderContext, SyncReason};
+use super::providers::{get_provider, ComposioUsage};
 use crate::openhuman::composio::client::{
     create_composio_client, direct_list_connections, ComposioClientKind,
 };
@@ -550,19 +550,12 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
             "[composio:periodic] caps from registry"
         );
 
-        // Build a context tied to this specific connection and dispatch.
-        // `ProviderContext` no longer caches a pre-baked
-        // `ComposioClient` — provider methods resolve a fresh handle per
-        // call via `ctx.execute(...)` so a mid-session
-        // `composio.mode` toggle is honoured immediately (#1710).
-        let ctx = ProviderContext {
-            config: Arc::clone(&config),
-            toolkit: toolkit.clone(),
-            connection_id: Some(conn.id.clone()),
-            usage: Default::default(),
-            max_items: src_max_items,
-            sync_depth_days: src_sync_depth_days,
-        };
+        let mut source = composio_sources
+            .get(&conn.id)
+            .cloned()
+            .unwrap_or_else(|| periodic_source(&toolkit, &conn.id));
+        source.max_items = src_max_items;
+        source.sync_depth_days = src_sync_depth_days;
 
         tracing::debug!(
             toolkit = %conn.toolkit,
@@ -571,25 +564,19 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
             "[composio:periodic] firing sync"
         );
         let sync_started = Instant::now();
-        let result = provider.sync(&ctx, SyncReason::Periodic).await;
+        let result = crate::openhuman::tinycortex::run_source_pipeline(&source, &config).await;
         let duration_ms = sync_started.elapsed().as_millis() as u64;
-
-        // Read the Composio billable-action tally the sync accumulated at the
-        // `execute` chokepoint (#3111). Periodic is where most Composio cost
-        // accrues (this loop fires every 20 min per connection vs. rare manual
-        // syncs), but periodic ticks weren't recorded in the sync audit at all
-        // — so the audit under-counted real cost. Record each tick that ran a
-        // fetch, success or failure, so the Sync History panel reflects the
-        // background spend too (#3111 follow-up; raised in the #3138 review).
-        let usage = ctx.usage.lock().map(|u| u.clone()).unwrap_or_default();
 
         match result {
             Ok(outcome) => {
+                let usage = ComposioUsage {
+                    actions_called: outcome.actions_called,
+                    cost_usd: outcome.provider_cost_usd,
+                };
                 tracing::debug!(
                     toolkit = %conn.toolkit,
                     connection_id = %conn.id,
-                    items = outcome.items_ingested,
-                    elapsed_ms = outcome.elapsed_ms(),
+                    items = outcome.records_ingested,
                     composio_actions = usage.actions_called,
                     "[composio:periodic] sync ok"
                 );
@@ -597,7 +584,7 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
                     &toolkit,
                     &conn.id,
                     &usage,
-                    outcome.items_ingested,
+                    outcome.records_ingested as usize,
                     duration_ms,
                     None,
                 );
@@ -606,6 +593,10 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
                 fired += 1;
             }
             Err(e) => {
+                let usage = ComposioUsage {
+                    actions_called: e.actions_called,
+                    cost_usd: e.provider_cost_usd,
+                };
                 tracing::warn!(
                     toolkit = %conn.toolkit,
                     connection_id = %conn.id,
@@ -614,8 +605,14 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
                 );
                 // A failed tick may still have fired billable fetch actions
                 // before erroring — audit the partial cost so it isn't lost.
-                let entry =
-                    build_periodic_audit_entry(&toolkit, &conn.id, &usage, 0, duration_ms, Some(e));
+                let entry = build_periodic_audit_entry(
+                    &toolkit,
+                    &conn.id,
+                    &usage,
+                    0,
+                    duration_ms,
+                    Some(e.to_string()),
+                );
                 append_audit_entry(&config, &entry);
                 // Intentionally do NOT update last_sync_at on failure
                 // so the next tick retries immediately.
@@ -625,6 +622,32 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
 
     tracing::debug!(considered, fired, "[composio:periodic] tick complete");
     Ok(())
+}
+
+fn periodic_source(toolkit: &str, connection_id: &str) -> MemorySourceEntry {
+    MemorySourceEntry {
+        id: format!("composio:{connection_id}"),
+        kind: SourceKind::Composio,
+        label: toolkit.to_string(),
+        enabled: true,
+        toolkit: Some(toolkit.to_string()),
+        connection_id: Some(connection_id.to_string()),
+        path: None,
+        glob: None,
+        url: None,
+        branch: None,
+        paths: Vec::new(),
+        max_commits: None,
+        max_issues: None,
+        max_prs: None,
+        query: None,
+        since_days: None,
+        max_items: None,
+        selector: None,
+        max_tokens_per_sync: None,
+        max_cost_per_sync_usd: None,
+        sync_depth_days: None,
+    }
 }
 
 /// Build a [`SyncAuditEntry`] for one periodic Composio sync tick (#3111

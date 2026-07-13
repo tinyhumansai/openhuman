@@ -1,7 +1,7 @@
 //! Utility helpers used during agent construction.
 
 use crate::openhuman::memory::Memory;
-use crate::openhuman::memory_tools::{tool_memory_store, ToolMemoryRule, ToolMemoryStore};
+use crate::openhuman::memory_tools::{tool_memory_store, ToolMemoryRule};
 use std::sync::Arc;
 
 /// (#1400) Best-effort synchronous prefetch of eager tool-scoped rules.

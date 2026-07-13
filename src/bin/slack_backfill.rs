@@ -42,11 +42,7 @@ use clap::Parser;
 use openhuman_core::openhuman::composio::client::{
     create_composio_client, direct_execute, direct_list_connections, ComposioClientKind,
 };
-use openhuman_core::openhuman::composio::providers::registry::{
-    get_provider, init_default_providers,
-};
-use openhuman_core::openhuman::composio::providers::slack::run_backfill_via_search;
-use openhuman_core::openhuman::composio::providers::{ProviderContext, SyncReason};
+use openhuman_core::openhuman::composio::providers::registry::init_default_providers;
 use openhuman_core::openhuman::composio::types::{
     ComposioConnectionsResponse, ComposioExecuteResponse,
 };
@@ -193,10 +189,6 @@ async fn main() -> Result<()> {
     // Register the default Composio providers (gmail, notion, slack).
     // Idempotent — safe even if called twice.
     init_default_providers();
-
-    let provider = get_provider("slack").ok_or_else(|| {
-        anyhow::anyhow!("SlackProvider not registered after init_default_providers")
-    })?;
 
     // Resolve through the mode-aware factory so the backfill runs in
     // EITHER backend mode (legacy JWT-driven path) OR direct mode (BYO
@@ -442,27 +434,18 @@ async fn main() -> Result<()> {
         let started = Instant::now();
         let mut total_buckets = 0usize;
         for conn in &slack_conns {
-            // `ProviderContext` no longer caches a pre-baked client —
-            // `ctx.execute(...)` resolves via the mode-aware factory
-            // per call (#1710 / Wave 1). The local `client` handle is
-            // still used above for backend-only metadata probes.
-            let ctx = ProviderContext {
-                config: Arc::clone(&config),
-                toolkit: conn.toolkit.clone(),
-                connection_id: Some(conn.id.clone()),
-                usage: Default::default(),
-                max_items: None,
-                sync_depth_days: None,
-            };
-            match run_backfill_via_search(&ctx, cli.days).await {
+            match openhuman_core::openhuman::tinycortex::run_slack_search_backfill(
+                &conn.id,
+                cli.days,
+                config.as_ref(),
+            )
+            .await
+            {
                 Ok(outcome) => {
-                    total_buckets += outcome.items_ingested;
+                    total_buckets += outcome.records_ingested as usize;
                     println!(
-                        "connection={} buckets={} elapsed_ms={} summary={:?}",
-                        conn.id,
-                        outcome.items_ingested,
-                        outcome.elapsed_ms(),
-                        outcome.summary,
+                        "connection={} records={} summary={:?}",
+                        conn.id, outcome.records_ingested, outcome.note,
                     );
                 }
                 Err(err) => {
@@ -546,24 +529,19 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        let ctx = ProviderContext {
-            config: Arc::clone(&config),
-            toolkit: conn.toolkit.clone(),
-            connection_id: Some(conn.id.clone()),
-            usage: Default::default(),
-            max_items: None,
-            sync_depth_days: None,
-        };
-        match provider.sync(&ctx, SyncReason::Manual).await {
+        match openhuman_core::openhuman::tinycortex::run_composio_connection(
+            "slack",
+            &conn.id,
+            config.as_ref(),
+        )
+        .await
+        {
             Ok(outcome) => {
                 connections_ok += 1;
-                total_buckets += outcome.items_ingested;
+                total_buckets += outcome.records_ingested as usize;
                 println!(
-                    "connection={} buckets_flushed={} elapsed_ms={} summary={:?}",
-                    conn.id,
-                    outcome.items_ingested,
-                    outcome.elapsed_ms(),
-                    outcome.summary,
+                    "connection={} records_ingested={} summary={:?}",
+                    conn.id, outcome.records_ingested, outcome.note,
                 );
             }
             Err(err) => {

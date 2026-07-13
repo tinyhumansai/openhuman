@@ -6,7 +6,7 @@ use serde_json::json;
 
 use crate::openhuman::memory::ops::helpers::active_memory_client;
 use crate::openhuman::memory_tools::{
-    tool_memory_store, ToolMemoryPriority, ToolMemoryRule, ToolMemorySource, ToolMemoryStore,
+    tool_memory_store, ToolMemoryPriority, ToolMemoryRule, ToolMemorySource,
 };
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 

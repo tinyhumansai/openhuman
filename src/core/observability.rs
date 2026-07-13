@@ -151,6 +151,23 @@ pub enum ExpectedErrorKind {
     /// SQLite lock text, so unrelated DB lock errors in other domains still
     /// reach Sentry.
     WhatsAppDataSqliteBusy,
+    /// WhatsApp structured-ingest write hit a `SQLITE_CORRUPT` malformed on-disk
+    /// image ("database disk image is malformed" / "file is not a database").
+    ///
+    /// This is **defense-in-depth after** the store's own quarantine + rebuild
+    /// recovery (`whatsapp_data::store::WhatsAppDataStore::recover_corrupt_db`),
+    /// never instead of it: the store detects the corrupt image, reports it to
+    /// Sentry exactly once (process-wide latch), quarantines the damaged file,
+    /// and rebuilds an empty schema so ingest resumes. This classifier only
+    /// demotes the residual noise that can leak in the narrow window between
+    /// detection and a successful rebuild, or when a rebuild keeps failing on a
+    /// wedged host filesystem the app can't fix. Without both, one corrupt file
+    /// re-pages on every 2–30s scan tick (Sentry TAURI-RUST-KNH: 1,813
+    /// escalating events from a single host).
+    ///
+    /// Anchored to the whatsapp ingest failure envelope plus the malformed-image
+    /// text, so unrelated corruption in other domains still reaches Sentry.
+    WhatsAppDataSqliteCorrupt,
     /// Host disk is full — the filesystem returned `ENOSPC` to a write,
     /// `mkdir`, or `open` syscall. The user cannot recover from this without
     /// freeing space on their machine, and Sentry has no remediation path
@@ -588,6 +605,12 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_memory_store_breaker_open(&lower) {
         return Some(ExpectedErrorKind::MemoryStoreBreakerOpen);
     }
+    // Corruption is checked before the busy matcher: the two envelopes are
+    // mutually exclusive by their SQLite text (malformed-image vs locked), but
+    // ordering keeps the more-specific on-disk-damage signal unambiguous.
+    if is_whatsapp_data_sqlite_corrupt_message(&lower) {
+        return Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt);
+    }
     if is_whatsapp_data_sqlite_busy_message(&lower) {
         return Some(ExpectedErrorKind::WhatsAppDataSqliteBusy);
     }
@@ -791,6 +814,39 @@ fn is_whatsapp_data_sqlite_busy_message(lower: &str) -> bool {
         || lower.contains("error code 5")
 }
 
+/// Match whatsapp structured-ingest failures caused by a `SQLITE_CORRUPT`
+/// malformed on-disk image. Scoped to the whatsapp ingest envelope plus an
+/// upsert write frame, so unrelated malformed-image errors in other domains
+/// still reach Sentry.
+///
+/// This is defense-in-depth **after** the store's quarantine + rebuild recovery
+/// (see [`ExpectedErrorKind::WhatsAppDataSqliteCorrupt`]) — the store already
+/// reports the first hit once and rebuilds the DB; this only demotes residual
+/// noise. The `upsert wa_chat` / `upsert wa_message` frames are matched because
+/// the observed Sentry symptom (TAURI-RUST-KNH) fired on the
+/// `upsert wa_chat <jid>@lid` path; the `prune` frame is matched because the
+/// same ingest RPC also runs the 90-day auto-prune under the same corrupt-DB
+/// recovery wrapper, and a malformed image surfaced from the prune step (its
+/// error context carries the word `prune`, e.g. `prune old wa_messages`) would
+/// otherwise reach Sentry unfiltered. All three still require the
+/// `[whatsapp_data] ingest failed:` envelope so unrelated malformed-image
+/// errors in other domains keep paging.
+fn is_whatsapp_data_sqlite_corrupt_message(lower: &str) -> bool {
+    if !lower.contains("[whatsapp_data] ingest failed:") {
+        return false;
+    }
+    let has_write_frame = lower.contains("upsert wa_message")
+        || lower.contains("upsert wa_chat")
+        || lower.contains("prune");
+    if !has_write_frame {
+        return false;
+    }
+    lower.contains("disk image is malformed")
+        || lower.contains("file is not a database")
+        || lower.contains("error code 11")
+        || lower.contains("error code 26")
+}
+
 /// Match subconscious-engine SQLite schema-init failures caused by the host
 /// filesystem being unable to open the DB file (`SQLITE_CANTOPEN` /
 /// `SQLITE_IOERR_SHMMAP`). Anchored to the subconscious open/DDL envelope so it
@@ -840,7 +896,9 @@ fn is_embedding_backend_auth_failure(lower: &str) -> bool {
 /// `embeddings::rpc::update_settings` as the save-time hard-block signal so the
 /// two never drift.
 pub(crate) fn is_embedding_endpoint_absent(lower: &str) -> bool {
-    lower.contains("embedding api error") && (lower.contains("(404") || lower.contains("(405"))
+    (lower.contains("embedding api error") && (lower.contains("(404") || lower.contains("(405")))
+        || (lower.contains("embeddings returned http")
+            && (lower.contains("http 404") || lower.contains("http 405")))
 }
 
 /// Detect a custom/cloud embeddings endpoint that IS an embeddings API but
@@ -2095,6 +2153,14 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 kind = "whatsapp_data_sqlite_busy",
                 "[observability] {domain}.{operation} skipped expected whatsapp_data sqlite busy/locked error"
+            );
+        }
+        ExpectedErrorKind::WhatsAppDataSqliteCorrupt => {
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "whatsapp_data_sqlite_corrupt",
+                "[observability] {domain}.{operation} skipped expected whatsapp_data sqlite corrupt error (store quarantines + rebuilds the DB and reports once)"
             );
         }
         ExpectedErrorKind::FilesystemUserPathInvalid => {
@@ -4326,6 +4392,81 @@ mod tests {
                 expected_error_kind(raw),
                 Some(ExpectedErrorKind::WhatsAppDataSqliteBusy),
                 "should classify whatsapp_data sqlite busy/locked: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_whatsapp_data_sqlite_corrupt_errors() {
+        for raw in [
+            // The observed TAURI-RUST-KNH symptom: corruption on the wa_chat path.
+            r#"[whatsapp_data] ingest failed: upsert wa_chat 207897942335683@lid: database disk image is malformed: Error code 11: The database disk image is malformed"#,
+            // The wa_message path — same on-disk damage class.
+            r#"[whatsapp_data] ingest failed: upsert wa_message chat=120363402402350155@g.us msg=abc: file is not a database: Error code 26: File opened that is not a database file"#,
+            // Wrapped in outer RPC context — classifier runs on the full chain.
+            r#"rpc.invoke_method failed: [whatsapp_data] ingest failed: upsert wa_chat 207897942335683@lid: database disk image is malformed"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "should classify whatsapp_data sqlite corrupt: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_whatsapp_data_prune_path_sqlite_corrupt_errors() {
+        // The same ingest RPC runs the 90-day auto-prune under the store's
+        // corrupt-DB recovery wrapper. A malformed image surfaced from the prune
+        // step carries a `prune` frame (e.g. `prune old wa_messages`) instead of
+        // an `upsert` frame, and must still be demoted — otherwise a boot-time
+        // prune corruption re-floods Sentry on every scan tick (Finding 3).
+        for raw in [
+            r#"[whatsapp_data] ingest failed: prune old wa_messages: database disk image is malformed: Error code 11: The database disk image is malformed"#,
+            r#"[whatsapp_data] ingest failed: prune old wa_messages: scan affected chats: database disk image is malformed"#,
+            r#"[whatsapp_data] ingest failed: refresh chat stats after prune: chat@c.us: file is not a database: Error code 26"#,
+            r#"rpc.invoke_method failed: [whatsapp_data] ingest failed: prune old wa_messages: database disk image is malformed"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "should classify whatsapp_data prune-path sqlite corrupt: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_prune_errors_as_whatsapp_corrupt() {
+        for raw in [
+            // A `prune` word outside the whatsapp ingest envelope must still page.
+            "memory queue prune failed: database disk image is malformed",
+            // whatsapp prune-path lock contention is the *busy* bucket, not corrupt.
+            "[whatsapp_data] ingest failed: prune old wa_messages: database is locked",
+            // whatsapp prune-path constraint/logic error is a real bug, not on-disk damage.
+            "[whatsapp_data] ingest failed: prune old wa_messages: no such table: wa_messages",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "must not classify as whatsapp_data sqlite corrupt: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_corrupt_messages_as_whatsapp_corrupt() {
+        for raw in [
+            // Malformed image outside the whatsapp ingest envelope must still page.
+            "memory queue write failed: database disk image is malformed",
+            // Read-path whatsapp failure (no upsert frame) is not the ingest write.
+            "[whatsapp_data] list_messages failed: database disk image is malformed",
+            // whatsapp ingest lock contention is the *busy* bucket, not corrupt.
+            "[whatsapp_data] ingest failed: upsert wa_message chat=x msg=y: database is locked",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "must not classify as whatsapp_data sqlite corrupt: {raw}"
             );
         }
     }

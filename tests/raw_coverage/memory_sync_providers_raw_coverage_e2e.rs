@@ -20,32 +20,19 @@ use openhuman_core::openhuman::credentials::{
 };
 use openhuman_core::openhuman::memory::global as memory_global;
 use openhuman_core::openhuman::memory::jobs::drain_until_idle;
-use openhuman_core::openhuman::memory::tree_source::get_or_create_source_tree;
-use openhuman_core::openhuman::memory_store::chunks::store::{
-    count_chunks_by_lifecycle_status, get_chunk_raw_refs, list_chunks, ListChunksQuery,
-    CHUNK_STATUS_BUFFERED,
-};
-use openhuman_core::openhuman::memory_store::chunks::types::SourceKind;
-use openhuman_core::openhuman::memory_store::content::read::read_chunk_body;
-use openhuman_core::openhuman::memory_store::trees::store as tree_store;
 use openhuman_core::openhuman::memory_sync::composio::bus::{
     ComposioConfigChangedSubscriber, ComposioConnectionCreatedSubscriber, ComposioTriggerSubscriber,
 };
 use openhuman_core::openhuman::memory_sync::composio::providers::clickup::ClickUpProvider;
 use openhuman_core::openhuman::memory_sync::composio::providers::github::GitHubProvider;
-use openhuman_core::openhuman::memory_sync::composio::providers::gmail::ingest as gmail_ingest;
 use openhuman_core::openhuman::memory_sync::composio::providers::gmail::GmailProvider;
 use openhuman_core::openhuman::memory_sync::composio::providers::linear::LinearProvider;
 use openhuman_core::openhuman::memory_sync::composio::providers::notion::NotionProvider;
-use openhuman_core::openhuman::memory_sync::composio::providers::slack::ingest as slack_ingest;
-use openhuman_core::openhuman::memory_sync::composio::providers::slack::{
-    SlackMessage, SlackProvider,
-};
+use openhuman_core::openhuman::memory_sync::composio::providers::slack::SlackProvider;
 use openhuman_core::openhuman::memory_sync::composio::providers::sync_state::SyncState;
 use openhuman_core::openhuman::memory_sync::composio::providers::{
     ComposioProvider, ProviderContext, SyncReason, TaskFetchFilter,
 };
-use openhuman_core::openhuman::memory_tree::tree::bucket_seal::LabelStrategy;
 
 static ENV_LOCK: &OnceLock<Mutex<()>> = &crate::SHARED_ENV_LOCK;
 
@@ -321,329 +308,6 @@ async fn configured_loopback_context(
 }
 
 #[tokio::test]
-async fn gmail_ingest_archives_account_messages_and_legacy_participant_buckets() {
-    let _guard = env_lock();
-    let tmp = TempDir::new().expect("tempdir");
-    let config = config_in(&tmp);
-    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
-    let _home = EnvGuard::set_path("HOME", tmp.path());
-    let _backend = EnvGuard::unset("BACKEND_URL");
-    persist_config(&config).await;
-
-    let page = vec![
-        json!({
-            "id": "gmail-round17-a",
-            "from": "Ava <ava@example.test>",
-            "to": ["Ben <ben@example.test>", "Casey <casey@example.test>"],
-            "cc": "ignored@example.test",
-            "subject": "Re: Coverage thread",
-            "date": "2026-05-29T10:00:00Z",
-            "markdown": "First useful message body."
-        }),
-        json!({
-            "id": "gmail-round17-b",
-            "from": "ben@example.test",
-            "to": "ava@example.test, casey@example.test",
-            "subject": "Fwd: Coverage thread",
-            "internalDate": "1780052400000",
-            "markdown": "Second useful message body."
-        }),
-        json!({
-            "id": "gmail-round17-empty",
-            "from": "nobody@example.test",
-            "to": "ava@example.test",
-            "subject": "No archive body",
-            "date": "2026-05-29T12:00:00Z",
-            "markdown": "   "
-        }),
-        json!({
-            "from": "missing-id@example.test",
-            "to": "ava@example.test",
-            "subject": "No id",
-            "date": "2026-05-29T13:00:00Z",
-            "markdown": "missing id skips per-account ingest"
-        }),
-    ];
-
-    let chunks = gmail_ingest::ingest_page_into_memory_tree(
-        &config,
-        "owner-round17",
-        Some("round17@example.test"),
-        &page,
-    )
-    .await
-    .expect("per-account gmail ingest");
-    assert!(chunks >= 2, "expected useful account messages to chunk");
-
-    let raw_root = config.memory_tree_content_root().join("raw");
-    let archived: Vec<_> = walk_files(&raw_root)
-        .into_iter()
-        .filter(|p| {
-            p.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.contains("gmail-round17-a"))
-        })
-        .collect();
-    assert_eq!(archived.len(), 1, "raw archive should include message a");
-    let archived_body = std::fs::read_to_string(&archived[0]).expect("archived body");
-    assert!(archived_body.contains("**From:** Ava"));
-    assert!(archived_body.contains("First useful message body."));
-
-    let legacy = gmail_ingest::ingest_page_into_memory_tree(
-        &config,
-        "owner-round17",
-        None,
-        &[
-            json!({
-                "id": "legacy-orphan",
-                "from": "not an address",
-                "to": [],
-                "subject": "Fw: ",
-                "date": "2026-05-29T14:00:00Z",
-                "markdown": "orphan fallback body"
-            }),
-            json!({
-                "from": "",
-                "to": [],
-                "subject": "Skipped",
-                "date": "2026-05-29T15:00:00Z",
-                "markdown": "no id and no participants"
-            }),
-        ],
-    )
-    .await
-    .expect("legacy gmail ingest");
-    assert!(legacy >= 1, "orphan fallback bucket should ingest");
-}
-
-#[tokio::test]
-async fn gmail_raw_backed_messages_drain_into_source_tree_summary() {
-    let _guard = env_lock();
-    let tmp = TempDir::new().expect("tempdir");
-    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
-    let _home = EnvGuard::set_path("HOME", tmp.path());
-    let _backend = EnvGuard::unset("BACKEND_URL");
-    let config = config_in(&tmp);
-    persist_config(&config).await;
-
-    let page = vec![
-        json!({
-            "id": "gmail-tree-a",
-            "from": "Ava <ava@example.test>",
-            "to": ["Ben <ben@example.test>"],
-            "subject": "Phoenix launch plan",
-            "date": "2026-05-29T10:00:00Z",
-            "markdown": "Phoenix migration launches Friday. Ava owns rollout validation and Ben owns customer notices."
-        }),
-        json!({
-            "id": "gmail-tree-b",
-            "from": "Ben <ben@example.test>",
-            "to": ["Ava <ava@example.test>"],
-            "subject": "Re: Phoenix launch plan",
-            "date": "2026-05-29T10:05:00Z",
-            "markdown": "Confirmed. Customer notices go out after staging checks and the rollback doc is reviewed."
-        }),
-    ];
-
-    let outcome = gmail_ingest::ingest_page_into_memory_tree_with_outcome(
-        &config,
-        "owner-gmail-tree",
-        Some("flow@example.test"),
-        &page,
-    )
-    .await
-    .expect("gmail ingest outcome");
-
-    assert_eq!(
-        outcome.item_ids_ingested,
-        vec!["gmail-tree-a".to_string(), "gmail-tree-b".to_string()]
-    );
-    assert!(
-        outcome.chunks_written >= 2,
-        "expected one or more chunks per message"
-    );
-
-    let source_id = "gmail:flow-at-example-dot-test";
-    let chunks = list_chunks(
-        &config,
-        &ListChunksQuery {
-            source_kind: Some(SourceKind::Email),
-            source_id: Some(source_id.to_string()),
-            limit: Some(10),
-            ..Default::default()
-        },
-    )
-    .expect("list gmail chunks");
-    assert_eq!(chunks.len(), outcome.chunks_written);
-
-    for chunk in &chunks {
-        let refs = get_chunk_raw_refs(&config, &chunk.id)
-            .expect("raw refs lookup")
-            .expect("raw refs must be set before extract can run");
-        assert_eq!(refs.len(), 1);
-        assert!(
-            refs[0].path.contains("gmail-tree-"),
-            "raw ref should point at the source message file: {:?}",
-            refs[0].path
-        );
-        let full_body = read_chunk_body(&config, &chunk.id).expect("read raw-backed chunk body");
-        assert!(
-            full_body.contains("Phoenix") || full_body.contains("Customer notices"),
-            "chunk body should hydrate from raw archive, got: {full_body}"
-        );
-    }
-
-    drain_until_idle(&config)
-        .await
-        .expect("extract and append jobs should drain");
-    let buffered =
-        count_chunks_by_lifecycle_status(&config, CHUNK_STATUS_BUFFERED).expect("buffered count");
-    assert_eq!(buffered, outcome.chunks_written as u64);
-
-    let tree = get_or_create_source_tree(&config, source_id).expect("source tree");
-    let l0 = tree_store::get_buffer(&config, &tree.id, 0).expect("source L0 buffer");
-    assert_eq!(
-        l0.item_ids.len(),
-        outcome.chunks_written,
-        "all Gmail chunks should reach the source tree buffer"
-    );
-
-    let sealed = openhuman_core::openhuman::memory_tree::tree::flush::flush_stale_buffers(
-        &config,
-        chrono::Duration::zero(),
-        &LabelStrategy::Empty,
-    )
-    .await
-    .expect("force flush gmail source tree");
-    assert!(sealed > 0, "low-volume Gmail source should seal on flush");
-
-    let l1 =
-        tree_store::list_summaries_at_level(&config, &tree.id, 1).expect("list source summaries");
-    assert!(
-        !l1.is_empty(),
-        "Gmail source tree should have a sealed summary after flush"
-    );
-    let summary_body = openhuman_core::openhuman::memory_store::content::read::read_summary_body(
-        &config, &l1[0].id,
-    )
-    .expect("read gmail summary body");
-    assert!(
-        summary_body.contains("Phoenix") || summary_body.contains("Customer"),
-        "summary should preserve Gmail content, got: {summary_body}"
-    );
-}
-
-#[tokio::test]
-async fn slack_provider_profile_postprocess_trigger_and_ingest_use_loopback_composio() {
-    let _guard = env_lock();
-    let tmp = TempDir::new().expect("tempdir");
-    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
-    let _home = EnvGuard::set_path("HOME", tmp.path());
-    let _backend = EnvGuard::unset("BACKEND_URL");
-    let requests: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
-    let (config, ctx, server) =
-        configured_loopback_context(&tmp, "slack", "conn-slack-round17", Arc::clone(&requests))
-            .await;
-
-    let provider = SlackProvider::new();
-    let profile = provider
-        .fetch_user_profile(&ctx)
-        .await
-        .expect("slack profile");
-    assert_eq!(profile.username.as_deref(), Some("U17A"));
-    assert_eq!(profile.email.as_deref(), Some("round17@example.test"));
-
-    let mut channels = json!({
-        "data": {
-            "channels": [
-                { "id": "C17", "name": "coverage", "is_private": false },
-                { "id": "", "name": "dropped" }
-            ]
-        }
-    });
-    provider.post_process_action_result("SLACK_LIST_CONVERSATIONS", None, &mut channels);
-    assert_eq!(channels["channels"].as_array().unwrap().len(), 1);
-
-    let mut history = json!({
-        "data": {
-            "messages": [
-                {
-                    "ts": "1714003200.000100",
-                    "user": "U17A",
-                    "text": "shipping coverage with <@U17B>",
-                    "permalink": "https://coverage.slack.com/archives/C17/p1714003200000100"
-                },
-                { "ts": "1714003300.000200", "user": "U17B", "text": "   " }
-            ]
-        }
-    });
-    provider.post_process_action_result("SLACK_FETCH_CONVERSATION_HISTORY", None, &mut history);
-    assert_eq!(history["messages"].as_array().unwrap().len(), 1);
-
-    provider
-        .on_trigger(
-            &ctx,
-            "SLACK_CHANNEL_ARCHIVE",
-            &json!({ "event": "channel" }),
-        )
-        .await
-        .expect("slack non-message trigger");
-
-    let messages = vec![
-        SlackMessage {
-            channel_id: "C17".to_string(),
-            channel_name: "coverage".to_string(),
-            is_private: false,
-            author: "Ava".to_string(),
-            author_id: "U17A".to_string(),
-            text: "Slack raw archive body".to_string(),
-            timestamp: chrono::DateTime::parse_from_rfc3339("2026-05-29T10:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-            ts_raw: "1714003200.000100".to_string(),
-            thread_ts: Some("1714003200.000100".to_string()),
-            permalink: Some(
-                "https://coverage.slack.com/archives/C17/p1714003200000100".to_string(),
-            ),
-        },
-        SlackMessage {
-            channel_id: "G17".to_string(),
-            channel_name: "private-coverage".to_string(),
-            is_private: true,
-            author: String::new(),
-            author_id: String::new(),
-            text: "  ".to_string(),
-            timestamp: chrono::DateTime::parse_from_rfc3339("2026-05-29T10:01:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-            ts_raw: "1714003260.000200".to_string(),
-            thread_ts: None,
-            permalink: None,
-        },
-    ];
-    let chunks = slack_ingest::ingest_page_into_memory_tree(
-        &config,
-        "owner-round17",
-        "conn-slack-round17",
-        &messages,
-    )
-    .await
-    .expect("slack ingest");
-    assert!(chunks >= 1);
-
-    let called_tools: Vec<String> = requests
-        .lock()
-        .unwrap()
-        .iter()
-        .filter_map(|b| b.get("tool").and_then(Value::as_str).map(str::to_string))
-        .collect();
-    assert!(called_tools.contains(&"SLACK_TEST_AUTH".to_string()));
-    assert!(called_tools.contains(&"SLACK_RETRIEVE_DETAILED_USER_INFORMATION".to_string()));
-
-    server.abort();
-}
-
-#[tokio::test]
 async fn github_clickup_and_composio_bus_cover_provider_branches() {
     let _guard = env_lock();
     let tmp = TempDir::new().expect("tempdir");
@@ -902,7 +566,7 @@ async fn slack_sync_max_items_caps_ingest_to_exact_count() {
 /// Build M distinct, valid Gmail messages in the upstream (pre-post-process)
 /// Composio shape. Uses `messageId` / `sender` / `messageText` /
 /// `messageTimestamp` so `reshape_message` maps them correctly into the slim
-/// envelope that `ingest_page_into_memory_tree` expects.
+/// envelope consumed by the tinycortex Gmail sync pipeline.
 fn gmail_cap_messages(m: usize) -> Vec<Value> {
     (1..=m)
         .map(|i| {
@@ -1110,8 +774,10 @@ async fn gmail_sync_stops_after_an_all_already_synced_page() {
     for i in 1..=3 {
         state.mark_synced(format!("gmail-cap-msg-{i}"));
     }
+    let state_adapter =
+        openhuman_core::openhuman::tinycortex::HostSyncAdapter::new(memory.clone());
     state
-        .save(&memory)
+        .save(&state_adapter)
         .await
         .expect("save pre-seeded sync state");
 

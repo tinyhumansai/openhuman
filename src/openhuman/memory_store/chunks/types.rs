@@ -20,107 +20,10 @@
 //! would force `_` arms on the host's exhaustive matches of a now-foreign
 //! `#[non_exhaustive]` enum. It flips with the ingest module (W6).
 
-use serde::{Deserialize, Serialize};
-
 pub use tinycortex::memory::chunks::{
     approx_token_count, chunk_id, conservative_token_estimate, truncate_to_conservative_tokens,
-    Chunk, Metadata, SourceKind, SourceRef,
+    Chunk, DataSource, Metadata, SourceKind, SourceRef,
 };
-
-/// Concrete upstream provider the content came from.
-///
-/// Enumerates every provider listed in `m.excalidraw` Step 1 — Collect the
-/// Data. Each variant maps to exactly one [`SourceKind`] via [`Self::kind`].
-///
-/// Wire form is snake_case (see `as_str` / `parse`) so it is stable across
-/// DB rows, JSON-RPC payloads, and logs.
-///
-/// Marked `#[non_exhaustive]` so new providers can be added in later phases
-/// without breaking downstream pattern matches.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum DataSource {
-    // ── Chat transcripts (grouped by channel/group) ────────────────────
-    Discord,
-    Telegram,
-    Whatsapp,
-
-    // ── Agent conversations (stored as durable memory) ────────────────
-    Conversation,
-
-    // ── Email threads (grouped by thread) ──────────────────────────────
-    Gmail,
-    /// Catch-all for non-Gmail providers (Outlook, FastMail, generic IMAP, …).
-    OtherEmail,
-
-    // ── Documents (no grouping) ────────────────────────────────────────
-    Notion,
-    MeetingNotes,
-    DriveDocs,
-}
-
-impl DataSource {
-    /// Which [`SourceKind`] this provider feeds into.
-    pub fn kind(self) -> SourceKind {
-        match self {
-            Self::Discord | Self::Telegram | Self::Whatsapp | Self::Conversation => {
-                SourceKind::Chat
-            }
-            Self::Gmail | Self::OtherEmail => SourceKind::Email,
-            Self::Notion | Self::MeetingNotes | Self::DriveDocs => SourceKind::Document,
-        }
-    }
-
-    /// Stable snake_case identifier for DB storage, RPC payloads, and logs.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Discord => "discord",
-            Self::Telegram => "telegram",
-            Self::Whatsapp => "whatsapp",
-            Self::Conversation => "conversation",
-            Self::Gmail => "gmail",
-            Self::OtherEmail => "other_email",
-            Self::Notion => "notion",
-            Self::MeetingNotes => "meeting_notes",
-            Self::DriveDocs => "drive_docs",
-        }
-    }
-
-    /// Parse back from the on-wire / on-disk string form.
-    pub fn parse(s: &str) -> Result<Self, String> {
-        match s {
-            "discord" => Ok(Self::Discord),
-            "telegram" => Ok(Self::Telegram),
-            "whatsapp" => Ok(Self::Whatsapp),
-            "conversation" => Ok(Self::Conversation),
-            "gmail" => Ok(Self::Gmail),
-            "other_email" => Ok(Self::OtherEmail),
-            "notion" => Ok(Self::Notion),
-            "meeting_notes" => Ok(Self::MeetingNotes),
-            "drive_docs" => Ok(Self::DriveDocs),
-            other => Err(format!("unknown data source: {other}")),
-        }
-    }
-
-    /// Every known variant, in declaration order.
-    ///
-    /// Useful for tests, CLI completion, and enumerating supported providers
-    /// in diagnostic output.
-    pub fn all() -> &'static [DataSource] {
-        &[
-            Self::Discord,
-            Self::Telegram,
-            Self::Whatsapp,
-            Self::Conversation,
-            Self::Gmail,
-            Self::OtherEmail,
-            Self::Notion,
-            Self::MeetingNotes,
-            Self::DriveDocs,
-        ]
-    }
-}
 
 #[cfg(test)]
 mod tests {
