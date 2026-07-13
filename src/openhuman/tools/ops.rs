@@ -1051,7 +1051,148 @@ pub fn all_tools_with_runtime(
         );
     }
 
-    tools
+    // DomainSet post-filter (#4796): drop tools whose DomainGroup is disabled
+    // under the ambient CoreContext. With no active context, or under
+    // `DomainSet::full()`, every tool is kept (byte-identical). Under
+    // `harness()` the gate-family tools (web3/mcp/skills/flows/media/voice/meet)
+    // are dropped so agent turns can't call a domain that isn't live; only the
+    // memory + threads tools survive (the mapped harness families) — see
+    // `tool_group` for the classification and its Platform-default caveat.
+    let domains = crate::core::runtime::context::CoreContext::current().map(|c| c.domains());
+    if let Some(set) = domains {
+        let before = tools.len();
+        let filtered: Vec<Box<dyn Tool>> = tools
+            .into_iter()
+            .filter(|t| set.allows(tool_group(t.name())))
+            .collect();
+        log::debug!(
+            "[tools::ops][domain-filter] ambient DomainSet active — {} of {before} tools retained",
+            filtered.len()
+        );
+        filtered
+    } else {
+        // No ambient context (unit tests / pre-boot) ⇒ no filtering.
+        tools
+    }
+}
+
+/// Classify an agent tool into its [`DomainGroup`](crate::core::all::DomainGroup)
+/// by its `name()`, so [`all_tools_with_runtime`] can drop tools whose family is
+/// disabled under the ambient [`DomainSet`](crate::core::runtime::DomainSet).
+///
+/// Only the gate families (Web3/Mcp/Skills/Flows/Media/Voice/Meet) and the two
+/// mapped harness families (Memory/Threads) are matched; **everything else
+/// defaults to `Platform`**. Consequence under `harness()` (platform off): the
+/// gate-family tools drop AND the generic Platform tools (shell/file/grep/edit/
+/// screen/billing/team/cron/config/security/agent-orchestration/…) drop too —
+/// only memory + thread/todo tools remain. This is the strict #4796 harness
+/// surface; an embedder that wants a broader tool set can widen its DomainSet.
+/// (Names verified against each Tool impl's `fn name()` on 2026-07-13.)
+fn tool_group(name: &str) -> crate::core::all::DomainGroup {
+    use crate::core::all::DomainGroup;
+
+    // Exact tool names per family (grep of `fn name(&self)` on each Tool impl).
+    const WEB3: &[&str] = &[
+        "wallet_status",
+        "wallet_chain_status",
+        "wallet_prepare_transfer",
+        "wallet_tx_status",
+        "wallet_tx_receipt",
+        "wallet_lookup_tx",
+        "web3_swap_quote",
+        "web3_swap_routes",
+        "web3_swap_execute",
+        "web3_bridge_quote",
+        "web3_bridge_execute",
+        "web3_dapp_call",
+        "web3_dapp_execute",
+        "x402_request",
+    ];
+    const SKILLS: &[&str] = &[
+        "run_workflow",
+        "await_workflow",
+        "list_workflows",
+        "create_workflow",
+        "describe_workflow",
+        "read_workflow_resource",
+        "list_workflow_runs",
+        "read_workflow_run_log",
+        "install_workflow_from_url",
+        "uninstall_workflow",
+        "skill_registry_browse",
+        "skill_registry_search",
+        "skill_registry_install",
+        "skill_registry_sources",
+        "skill_registry_uninstall",
+        "skill_runtime_resolve_runtimes",
+    ];
+    const FLOWS: &[&str] = &[
+        "propose_workflow",
+        "revise_workflow",
+        "dry_run_workflow",
+        "save_workflow",
+        "suggest_workflows",
+        "run_flow",
+        "list_flows",
+        "get_flow",
+        "get_flow_run",
+        "list_flow_connections",
+        "search_tool_catalog",
+        "get_tool_contract",
+        "get_tool_output_sample",
+        "list_agent_profiles",
+    ];
+    const MEDIA: &[&str] = &[
+        "media_generate_image",
+        "media_generate_video",
+        "media_list_models",
+    ];
+    // Threads: thread_* / todo_* handled by prefix below; these are the extras.
+    const THREADS_EXTRA: &[&str] = &["transcript_search", "goal_get", "goal_set", "goal_complete"];
+    // Memory extras not covered by the `memory_`/`goals_` prefixes.
+    const MEMORY_EXTRA: &[&str] = &[
+        "remember_preference",
+        "save_preference",
+        "update_memory_md",
+        "tool_stats",
+    ];
+
+    // MCP: every MCP tool name is `mcp_` prefixed (mcp_registry_*, mcp_setup_*,
+    // mcp_call_tool, mcp_list_servers, mcp_list_tools).
+    if name.starts_with("mcp_") {
+        return DomainGroup::Mcp;
+    }
+    if WEB3.contains(&name) {
+        return DomainGroup::Web3;
+    }
+    if SKILLS.contains(&name) {
+        return DomainGroup::Skills;
+    }
+    if FLOWS.contains(&name) {
+        return DomainGroup::Flows;
+    }
+    if MEDIA.contains(&name) {
+        return DomainGroup::Media;
+    }
+    // Voice/Meet: no agent tools exist in the current surface, but map the
+    // prefixes defensively so a future voice/meet tool gates correctly.
+    if name.starts_with("voice_") || name.starts_with("tts_") || name.starts_with("stt_") {
+        return DomainGroup::Voice;
+    }
+    if name.starts_with("meet_") {
+        return DomainGroup::Meet;
+    }
+    // Memory family (harness-kept): memory_* store/search/etc + goals_* + extras.
+    if name.starts_with("memory_") || name.starts_with("goals_") || MEMORY_EXTRA.contains(&name) {
+        return DomainGroup::Memory;
+    }
+    // Threads family (harness-kept): thread_* + todo_* + per-thread goal + search.
+    if name.starts_with("thread_") || name.starts_with("todo_") || THREADS_EXTRA.contains(&name) {
+        return DomainGroup::Threads;
+    }
+    // Everything else — shell/file/screen/config/security/agent/billing/… — is
+    // Platform: present under full(), absent under harness()/none().
+    DomainGroup::Platform
 }
 
 #[cfg(test)]
