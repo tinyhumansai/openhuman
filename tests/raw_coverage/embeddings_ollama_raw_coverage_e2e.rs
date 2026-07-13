@@ -270,7 +270,7 @@ async fn openai_embed_reports_response_validation_and_http_errors() {
         .await
         .expect_err("missing embedding")
         .to_string()
-        .contains("missing 'embedding'"));
+        .contains("missing `embedding`"));
 
     let (dim_url, _) = serve_mock_openai(OpenAiMockBehavior::DimensionMismatch).await;
     let dim_provider = OpenAiEmbedding::new(&dim_url, "k", "m", 2);
@@ -288,7 +288,7 @@ async fn openai_embed_reports_response_validation_and_http_errors() {
         .await
         .expect_err("missing data")
         .to_string()
-        .contains("missing 'data'"));
+        .contains("missing `data`"));
 
     let (non_2xx_url, _) = serve_mock_openai(OpenAiMockBehavior::Non2xx).await;
     let non_2xx_provider = OpenAiEmbedding::new(&non_2xx_url, "k", "m", 2);
@@ -297,7 +297,7 @@ async fn openai_embed_reports_response_validation_and_http_errors() {
         .await
         .expect_err("http error")
         .to_string()
-        .contains("Embedding API error"));
+        .contains("returned HTTP"));
 }
 
 #[tokio::test]
@@ -716,14 +716,17 @@ async fn ollama_embed_preserves_positions_and_validates_request_and_response() {
     let base_url = serve_mock_ollama(app).await;
     let provider = OllamaEmbedding::try_new(&base_url, "mock-ollama", 2).expect("provider");
 
-    let vectors = provider
+    let mixed_error = provider
         .embed(&[" alpha ", "", "beta", "   "])
         .await
+        .expect_err("mixed blank batch should be rejected");
+    assert!(mixed_error.to_string().contains("must not mix blank"));
+
+    let vectors = provider
+        .embed(&[" alpha ", "beta"])
+        .await
         .expect("ollama embed");
-    assert_eq!(
-        vectors,
-        vec![vec![1.0, 2.0], vec![], vec![3.0, 4.0], vec![]]
-    );
+    assert_eq!(vectors, vec![vec![1.0, 2.0], vec![3.0, 4.0]]);
 
     let all_blank = provider.embed(&["", " \n\t "]).await.expect("blank embed");
     assert_eq!(all_blank, vec![Vec::<f32>::new(), Vec::<f32>::new()]);
@@ -811,12 +814,15 @@ async fn ollama_embed_recovers_nan_batch_with_per_text_fallback() {
     let base_url = serve_mock_ollama(app).await;
     let provider = OllamaEmbedding::try_new(&base_url, "mock-ollama", 2).expect("provider");
 
-    let vectors = provider
-        .embed(&["good", "bad", " "])
+    let batch_error = provider
+        .embed(&["good", "bad"])
         .await
-        .expect("nan batch recovery");
-    assert_eq!(vectors, vec![vec![9.0, 8.0], vec![], vec![]]);
+        .expect_err("a NaN-producing item should fail the recovered batch");
+    assert!(batch_error.to_string().contains("without NaN values"));
 
-    let single_nan = provider.embed(&["bad"]).await.expect("single nan recovery");
-    assert_eq!(single_nan, vec![Vec::<f32>::new()]);
+    let single_error = provider
+        .embed(&["bad"])
+        .await
+        .expect_err("single NaN-producing input should fail");
+    assert!(single_error.to_string().contains("without NaN values"));
 }

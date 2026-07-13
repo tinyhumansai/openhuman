@@ -18,13 +18,11 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::source::run_notion_sync;
 use super::sync;
-use crate::openhuman::memory_sync::composio::providers::sync_state::extract_item_id;
 use crate::openhuman::memory_sync::composio::providers::{
     first_array_str, merge_extra, pick_str, resolve_sync_interval_secs, ComposioProvider,
-    CuratedTool, NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
-    TaskContainer, TaskFetchFilter, TaskKind,
+    CuratedTool, NormalizedTask, ProviderContext, ProviderUserProfile, TaskContainer,
+    TaskFetchFilter, TaskKind,
 };
 
 pub(crate) const ACTION_GET_ABOUT_ME: &str = "NOTION_GET_ABOUT_ME";
@@ -133,10 +131,6 @@ impl ComposioProvider for NotionProvider {
     /// the per-item loop, dedup, `max_items` cap, `sync_depth_days` window, and
     /// cursor handling all live in `run_sync`; the Notion-specific primitives
     /// (page fetch, dedup key, body fetch, ingest) live in [`super::source`].
-    async fn sync(&self, ctx: &ProviderContext, reason: SyncReason) -> Result<SyncOutcome, String> {
-        run_notion_sync(ctx, reason).await
-    }
-
     async fn fetch_tasks(
         &self,
         ctx: &ProviderContext,
@@ -281,7 +275,16 @@ impl ComposioProvider for NotionProvider {
             trigger = %trigger,
             "[composio:notion] on_trigger"
         );
-        if let Err(e) = self.sync(ctx, SyncReason::Manual).await {
+        let Some(connection_id) = ctx.connection_id.as_deref() else {
+            return Err("[composio:notion] trigger missing connection_id".to_string());
+        };
+        if let Err(e) = crate::openhuman::tinycortex::run_composio_connection(
+            "notion",
+            connection_id,
+            ctx.config.as_ref(),
+        )
+        .await
+        {
             tracing::warn!(
                 error = %e,
                 "[composio:notion] trigger-driven sync failed (non-fatal)"
@@ -298,7 +301,7 @@ impl ComposioProvider for NotionProvider {
 /// `Due`). Anything unmatched is simply left `None` — the raw payload is
 /// preserved for enrichment.
 fn normalize_notion_page(page: &serde_json::Value) -> Option<NormalizedTask> {
-    let external_id = extract_item_id(page, PAGE_ID_PATHS)?;
+    let external_id = pick_str(page, PAGE_ID_PATHS)?;
     let title =
         sync::extract_page_title(page).unwrap_or_else(|| format!("Notion page {external_id}"));
     Some(NormalizedTask {
@@ -340,7 +343,7 @@ fn normalize_notion_page(page: &serde_json::Value) -> Option<NormalizedTask> {
                 "data.properties.Priority.select.name",
             ],
         ),
-        updated_at: extract_item_id(page, PAGE_EDITED_PATHS),
+        updated_at: pick_str(page, PAGE_EDITED_PATHS),
         raw: page.clone(),
     })
 }
@@ -368,7 +371,7 @@ pub(super) fn parse_database_results(data: &serde_json::Value) -> Vec<TaskContai
         if object.as_deref() == Some("page") {
             continue;
         }
-        let Some(id) = extract_item_id(item, PAGE_ID_PATHS) else {
+        let Some(id) = pick_str(item, PAGE_ID_PATHS) else {
             continue;
         };
         let title = extract_database_title(item).unwrap_or_else(|| format!("Notion database {id}"));

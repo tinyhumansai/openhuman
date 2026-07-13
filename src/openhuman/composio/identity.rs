@@ -116,8 +116,7 @@ pub async fn connection_identity(config: &Config, toolkit: &str) -> Option<Strin
 mod tests {
     use super::*;
     use crate::openhuman::memory_sync::composio::providers::{
-        register_provider, ComposioProvider, ProviderArc, ProviderUserProfile, SyncOutcome,
-        SyncReason,
+        register_provider, ComposioProvider, ProviderArc, ProviderUserProfile,
     };
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -168,18 +167,6 @@ mod tests {
             Ok(ProviderUserProfile {
                 toolkit: self.slug.to_string(),
                 username: self.username.map(|s| s.to_string()),
-                ..Default::default()
-            })
-        }
-
-        async fn sync(
-            &self,
-            _ctx: &ProviderContext,
-            reason: SyncReason,
-        ) -> Result<SyncOutcome, String> {
-            Ok(SyncOutcome {
-                toolkit: self.slug.to_string(),
-                reason: reason.as_str().to_string(),
                 ..Default::default()
             })
         }

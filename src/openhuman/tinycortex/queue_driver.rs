@@ -54,7 +54,7 @@ use crate::openhuman::memory_tree::health;
 use crate::openhuman::memory_tree::score;
 use crate::openhuman::memory_tree::score::embed::{build_write_embedder, pack_checked, Embedder};
 use crate::openhuman::memory_tree::score::store as score_store;
-use crate::openhuman::memory_tree::tree::{bucket_seal, TreeFactory};
+use crate::openhuman::memory_tree::tree::TreeFactory;
 
 // ── Pure scope helpers (ported verbatim from `memory_queue::handlers`) ────────
 // These pin the SAME source→tree mapping the append-buffer path uses, so reads
@@ -358,7 +358,7 @@ impl QueueDelegates for HostQueueDelegates {
         let body = content_read::read_chunk_body(config, &chunk.id)
             .with_context(|| format!("read full body for extract chunk_id={}", chunk.id))?;
         let preview = std::mem::replace(&mut chunk.content, body);
-        let scoring_cfg = score::ScoringConfig::from_config(config);
+        let scoring_cfg = score::scoring_config_from(config);
         let result = score::score_chunk(&chunk, &scoring_cfg).await?;
         chunk.content = preview;
 
@@ -493,7 +493,9 @@ impl QueueDelegates for HostQueueDelegates {
                 };
                 trees_store::upsert_buffer_tx(&tx, &buf)?;
             }
-            let should_seal = bucket_seal::should_seal(&buf);
+            let memory_config =
+                super::memory_config_from(&self.config, self.config.workspace_dir.clone());
+            let should_seal = tinycortex::memory::tree::should_seal(&memory_config, &buf);
             if is_source_target {
                 if let Some(cid) = lifecycle_chunk_id.as_deref() {
                     chunk_store::set_chunk_lifecycle_status_tx(
@@ -532,12 +534,15 @@ impl QueueDelegates for HostQueueDelegates {
         };
         let buf = trees_store::get_buffer(&self.config, &tree.id, payload.level)?;
         let forced = payload.force_now_ms.is_some();
-        if buf.is_empty() || (!forced && !bucket_seal::should_seal(&buf)) {
+        let memory_config =
+            super::memory_config_from(&self.config, self.config.workspace_dir.clone());
+        if buf.is_empty()
+            || (!forced && !tinycortex::memory::tree::should_seal(&memory_config, &buf))
+        {
             return Ok(None);
         }
         let strategy = TreeFactory::from_tree(&tree).label_strategy(&self.config);
-        let summary_id =
-            bucket_seal::seal_one_level(&self.config, &tree, &buf, &strategy, true).await?;
+        let summary_id = super::seal_tree_level(&self.config, &tree, &buf, &strategy, true).await?;
         // Best-effort: rewrite the sealed summary's on-disk obsidian tags. Entity
         // rows were committed inside seal_one_level, so they are visible here.
         if let Err(e) = content_store::update_summary_tags(&self.config, &summary_id) {
@@ -579,7 +584,7 @@ impl QueueDelegates for HostQueueDelegates {
         // One physical tree per connection scope (e.g. notion:{connection_id}).
         let tree = get_or_create_source_tree(&self.config, &payload.tree_scope)?;
         let strategy = TreeFactory::from_tree(&tree).label_strategy(&self.config);
-        bucket_seal::seal_document_subtree(
+        super::seal_document_subtree(
             &self.config,
             &tree,
             &payload.doc_id,

@@ -88,7 +88,7 @@ tinyagents = { version = "1.7", features = ["sqlite", "repl"] }
 # security gating, and the global singleton stay host-side. rusqlite/git2 are
 # aligned to the host pins (=0.40 / 0.21) so one bundled SQLite + one libgit2
 # link. Keep the version pin in lockstep with the submodule tag.
-tinycortex = "0.1"
+tinycortex = { version = "0.1", features = ["git-diff", "sync"] }
 tinychannels = { version = "0.1", features = ["relay-websocket"] }
 # TokenJuice code compressor — AST-aware signature extraction. Optional (C build)
 # behind the default `tokenjuice-treesitter` feature; disabling it falls back to
@@ -376,6 +376,12 @@ tinycortex = { path = "vendor/tinycortex" }
 tinyjuice = { path = "vendor/tinyjuice" }
 tinychannels = { path = "vendor/tinychannels" }
 tinyplace = { path = "vendor/tinyplace/sdk/rust" }
+
+# TinyCortex temporarily pins the embedding API port while tinyagents #58 is
+# pending. Resolve that git source to the same vendored crate so host adapters
+# and TinyCortex share one `EmbeddingModel` trait identity.
+[patch."https://github.com/senamakel/tinyagents"]
+tinyagents = { path = "vendor/tinyagents" }
 
 # Emit just enough DWARF in release builds for Sentry to symbolicate Rust
 # panics + render surrounding source lines. `line-tables-only` keeps the

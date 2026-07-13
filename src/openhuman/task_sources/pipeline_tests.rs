@@ -2,7 +2,7 @@ use super::*;
 use crate::openhuman::config::Config;
 use crate::openhuman::memory_sync::composio::providers::{
     register_provider, ComposioProvider, NormalizedTask, ProviderContext, ProviderUserProfile,
-    SyncOutcome, SyncReason, TaskFetchFilter,
+    TaskFetchFilter,
 };
 use crate::openhuman::task_sources::store;
 use crate::openhuman::task_sources::types::{FilterSpec, ProviderSlug, SourceTarget};
@@ -34,13 +34,6 @@ impl ComposioProvider for StubProvider {
         _ctx: &ProviderContext,
     ) -> Result<ProviderUserProfile, String> {
         Ok(ProviderUserProfile::default())
-    }
-    async fn sync(
-        &self,
-        _ctx: &ProviderContext,
-        _reason: SyncReason,
-    ) -> Result<SyncOutcome, String> {
-        Ok(SyncOutcome::default())
     }
     async fn fetch_tasks(
         &self,

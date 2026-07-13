@@ -301,7 +301,19 @@ pub fn render_subagent_system_prompt_with_format(
         inject_workspace_file_capped(&mut out, workspace_dir, "PROFILE.md", USER_FILE_MAX_CHARS);
     }
     if options.include_memory_md {
-        inject_workspace_file_capped(&mut out, workspace_dir, "MEMORY.md", USER_FILE_MAX_CHARS);
+        // Frame MEMORY.md as durable, cross-session background memory —
+        // byte-identical to `UserFilesSection::build` (GH-4745). Without the
+        // frame an Inline/File sub-agent on a brand-new thread reads the bare
+        // `### MEMORY.md` block as prior in-thread conversation and asserts
+        // continuity that isn't there. Buffer first so the note is emitted
+        // only when the file actually carries content — a dangling frame
+        // pointing at nothing would itself imply phantom history.
+        let mut mem = String::new();
+        inject_workspace_file_capped(&mut mem, workspace_dir, "MEMORY.md", USER_FILE_MAX_CHARS);
+        if !mem.trim().is_empty() {
+            out.push_str(MEMORY_MD_FRAMING);
+            out.push_str(&mem);
+        }
     }
 
     // 2. Filtered tool catalogue. Indices are taken in ascending order

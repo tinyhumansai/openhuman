@@ -6,55 +6,22 @@
 //! against Composio's action catalog (`SLACK_LIST_CONVERSATIONS`,
 //! `SLACK_FETCH_CONVERSATION_HISTORY`, `SLACK_FETCH_TEAM_INFO`, …).
 //!
-//! ## Per-sync lifecycle
-//!
-//! 1. Load [`SyncState`] for `(slack, connection_id)`. `state.cursor` is
-//!    a JSON-encoded [`sync::ChannelCursors`] map — Slack needs a cursor
-//!    per channel. Parse failures degrade to an empty map (full backfill),
-//!    which is safe because chunk IDs are deterministic.
-//! 2. Enumerate every channel the bot can read via
-//!    [`ACTION_LIST_CONVERSATIONS`] with pagination.
-//! 3. For each channel, pull messages since the per-channel cursor (or
-//!    `now - BACKFILL_DAYS` if no cursor yet) via
-//!    [`ACTION_FETCH_HISTORY`], paginated.
-//! 4. Post-process each response via [`super::post_process`], enrich via
-//!    [`super::sync::extract_messages`] to produce [`SlackMessage`]s with
-//!    channel context and resolved user names.
-//! 5. Ingest all collected messages via
-//!    [`super::ingest::ingest_page_into_memory_tree`] — one `ingest_chat`
-//!    call per message, no bucketing.
-//! 6. Advance per-channel cursor to the latest successfully-ingested
-//!    message's timestamp; save [`SyncState`].
+//! The product provider retains profile lookup, trigger handling, and response
+//! normalization. Channel enumeration, cursors, history paging, and memory
+//! ingestion execute in tinycortex's Slack sync pipeline.
 //!
 //! ## Idempotency
 //!
 //! Source id is `slack:{connection_id}` — stable per workspace. Chunk
-//! IDs are content-hashed, so re-ingest is an UPSERT.
+//! IDs are stable, so repeated synchronization updates the same documents.
 
-use async_trait::async_trait;
-use serde_json::{json, Value};
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::time::Duration;
-
-use super::ingest::ingest_page_into_memory_tree;
-use super::sync;
-use super::types::{SlackChannel, SlackMessage};
-use super::users::SlackUsers;
-// `ComposioClient` is no longer referenced directly — actions dispatch
-// through `ProviderContext::execute` which resolves the client via the
-// mode-aware factory per call (#1710).
-use crate::openhuman::composio::types::ComposioExecuteResponse;
-use crate::openhuman::memory_sync::composio::providers::sync_state::SyncState;
 use crate::openhuman::memory_sync::composio::providers::{
     pick_str, resolve_sync_interval_secs, ComposioProvider, CuratedTool, ProviderContext,
-    ProviderUserProfile, SyncOutcome, SyncReason,
+    ProviderUserProfile, SyncOutcome,
 };
+use async_trait::async_trait;
+use serde_json::{json, Value};
 
-/// Composio action slug for channel listing.
-const ACTION_LIST_CONVERSATIONS: &str = "SLACK_LIST_CONVERSATIONS";
-/// Composio action slug for message history.
-pub(super) const ACTION_FETCH_HISTORY: &str = "SLACK_FETCH_CONVERSATION_HISTORY";
 /// Composio action slug for team/workspace profile fetch.
 const ACTION_FETCH_TEAM_INFO: &str = "SLACK_FETCH_TEAM_INFO";
 /// Composio action slug for Slack `auth.test` — returns the authed
@@ -69,163 +36,8 @@ const ACTION_USERS_INFO: &str = "SLACK_RETRIEVE_DETAILED_USER_INFORMATION";
 /// cursor yet.
 pub const BACKFILL_DAYS: i64 = 6;
 
-/// Resolve the active backfill window in days. Reads
-/// `OPENHUMAN_SLACK_BACKFILL_DAYS` env var if set and parseable as a
-/// positive integer; falls back to [`BACKFILL_DAYS`] otherwise.
-pub(super) fn backfill_days() -> i64 {
-    match std::env::var("OPENHUMAN_SLACK_BACKFILL_DAYS") {
-        Ok(s) => match s.trim().parse::<i64>() {
-            Ok(n) if n >= 1 => n,
-            _ => {
-                log::warn!(
-                    "[composio:slack] OPENHUMAN_SLACK_BACKFILL_DAYS={s:?} not a positive integer; \
-                     falling back to default {BACKFILL_DAYS}"
-                );
-                BACKFILL_DAYS
-            }
-        },
-        Err(_) => BACKFILL_DAYS,
-    }
-}
-
-/// Max channels listed per `SLACK_LIST_CONVERSATIONS` page.
-const LIST_PAGE_SIZE: u32 = 200;
-
-/// Max messages per `SLACK_FETCH_CONVERSATION_HISTORY` page.
-pub(super) const HISTORY_PAGE_SIZE: u32 = 1000;
-
-/// Stop paginating any single channel's history after this many pages.
-pub(super) const MAX_HISTORY_PAGES_PER_CHANNEL: u32 = 20;
-
-/// Stop paginating channel listings after this many pages.
-const MAX_LIST_PAGES: u32 = 10;
-
-/// Sync cadence — matches Gmail (15 minutes).
+/// Sync cadence for provider catalog scheduling.
 const SYNC_INTERVAL_SECS: u64 = 15 * 60;
-
-/// Initial backoff for rate-limit retries.
-const RATELIMIT_INITIAL_BACKOFF: Duration = Duration::from_secs(2);
-
-/// Cap on per-retry backoff.
-const RATELIMIT_MAX_BACKOFF: Duration = Duration::from_secs(30);
-
-/// Total retries for a single rate-limited call before giving up.
-const RATELIMIT_MAX_ATTEMPTS: u32 = 6;
-
-/// Fixed inter-call sleep applied after every successful execute_tool.
-const INTER_CALL_PACING: Duration = Duration::from_secs(20);
-
-fn inter_call_pacing() -> Duration {
-    // Read per call so the slack sync e2e tests can control pacing at runtime
-    // via the env var. The only repeated-cost concern is the misconfiguration
-    // warning, which we emit at most once to avoid log spam on every
-    // `execute_tool`.
-    match std::env::var("OPENHUMAN_SLACK_INTER_CALL_PACING_MS") {
-        Ok(s) => match s.trim().parse::<u64>() {
-            Ok(ms) => Duration::from_millis(ms),
-            _ => {
-                static WARNED: std::sync::Once = std::sync::Once::new();
-                WARNED.call_once(|| {
-                    log::warn!(
-                        "[composio:slack] OPENHUMAN_SLACK_INTER_CALL_PACING_MS={s:?} not a \
-                         non-negative integer; falling back to default {INTER_CALL_PACING:?}"
-                    );
-                });
-                INTER_CALL_PACING
-            }
-        },
-        Err(_) => INTER_CALL_PACING,
-    }
-}
-
-/// Resolve the JSON dump directory from `OPENHUMAN_SLACK_DUMP_DIR`.
-fn dump_dir() -> Option<PathBuf> {
-    std::env::var_os("OPENHUMAN_SLACK_DUMP_DIR").map(PathBuf::from)
-}
-
-/// Write a Composio response payload to disk under the dump dir. Best
-/// effort — failures are logged at warn level and never fail the sync.
-pub(super) fn dump_response(scope: &str, kind: &str, idx: u32, data: &Value) {
-    let Some(base) = dump_dir() else {
-        return;
-    };
-    let path = base.join(scope).join(format!("{kind}-{idx:04}.json"));
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            tracing::warn!(
-                error = %e,
-                path = %parent.display(),
-                "[composio:slack] dump_response: create_dir_all failed (skipping dump)"
-            );
-            return;
-        }
-    }
-    match serde_json::to_string_pretty(data) {
-        Ok(json) => {
-            if let Err(e) = std::fs::write(&path, json) {
-                tracing::warn!(
-                    error = %e,
-                    path = %path.display(),
-                    "[composio:slack] dump_response: write failed"
-                );
-            } else {
-                tracing::debug!(path = %path.display(), "[composio:slack] dumped response");
-            }
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "[composio:slack] dump_response: serialize failed");
-        }
-    }
-}
-
-/// Dispatch a Composio action with rate-limit-aware retry + inter-call
-/// pacing.
-///
-/// Routes through [`ProviderContext::execute`] so the live
-/// `composio.mode` toggle is honoured per call (#1710). Pre-fix this
-/// took a pre-baked `&ComposioClient` resolved at sync entry, which
-/// silently bypassed the mode toggle.
-///
-/// Returns `(response, attempts_made)` on first success so callers can
-/// charge the daily quota meter for every attempt that hit Composio.
-pub(super) async fn execute_with_retry(
-    ctx: &ProviderContext,
-    slug: &str,
-    args: serde_json::Value,
-    description: &str,
-) -> Result<(ComposioExecuteResponse, u32), String> {
-    let mut delay = RATELIMIT_INITIAL_BACKOFF;
-    for attempt in 1..=RATELIMIT_MAX_ATTEMPTS {
-        let resp = ctx
-            .execute(slug, Some(args.clone()))
-            .await
-            .map_err(|e| format!("{description}: {e:#}"))?;
-        if resp.successful {
-            tokio::time::sleep(inter_call_pacing()).await;
-            return Ok((resp, attempt));
-        }
-        let err_str = resp.error.as_deref().unwrap_or("provider failure");
-        let is_ratelimit = err_str.contains("ratelimited")
-            || err_str.contains("rate_limit")
-            || err_str.contains("rate limit");
-        if is_ratelimit && attempt < RATELIMIT_MAX_ATTEMPTS {
-            tracing::warn!(
-                slug,
-                attempt,
-                max_attempts = RATELIMIT_MAX_ATTEMPTS,
-                sleep_ms = delay.as_millis() as u64,
-                "[composio:slack] rate-limited; backing off and retrying"
-            );
-            tokio::time::sleep(delay).await;
-            delay = (delay * 2).min(RATELIMIT_MAX_BACKOFF);
-            continue;
-        }
-        return Err(format!("{description}: {err_str}"));
-    }
-    Err(format!(
-        "{description}: rate-limited after {RATELIMIT_MAX_ATTEMPTS} retries"
-    ))
-}
 
 pub struct SlackProvider;
 
@@ -411,10 +223,6 @@ impl ComposioProvider for SlackProvider {
     /// watermark, dedup, the `max_items` cap, and per-channel error tolerance
     /// all live in `run_sync`. The Slack-specific primitives live in
     /// [`super::source`].
-    async fn sync(&self, ctx: &ProviderContext, reason: SyncReason) -> Result<SyncOutcome, String> {
-        super::source::run_slack_sync(ctx, reason).await
-    }
-
     async fn on_trigger(
         &self,
         ctx: &ProviderContext,
@@ -422,7 +230,16 @@ impl ComposioProvider for SlackProvider {
         _payload: &Value,
     ) -> Result<(), String> {
         if trigger.to_ascii_uppercase().contains("MESSAGE") {
-            if let Err(e) = self.sync(ctx, SyncReason::Manual).await {
+            let Some(connection_id) = ctx.connection_id.as_deref() else {
+                return Err("[composio:slack] trigger missing connection_id".to_string());
+            };
+            if let Err(e) = crate::openhuman::tinycortex::run_composio_connection(
+                "slack",
+                connection_id,
+                ctx.config.as_ref(),
+            )
+            .await
+            {
                 tracing::warn!(
                     error = %e,
                     "[composio:slack] trigger-driven sync failed (non-fatal)"
@@ -433,251 +250,49 @@ impl ComposioProvider for SlackProvider {
     }
 }
 
-/// Paginate through `SLACK_LIST_CONVERSATIONS` and flatten into a
-/// single `Vec<SlackChannel>`.
-pub(super) async fn list_all_channels(
-    ctx: &ProviderContext,
-    state: &mut SyncState,
-) -> Result<Vec<SlackChannel>, String> {
-    let mut out: Vec<SlackChannel> = Vec::new();
-    let mut cursor: Option<String> = None;
-
-    for page_num in 0..MAX_LIST_PAGES {
-        if state.budget_exhausted() {
-            tracing::warn!(
-                page = page_num,
-                "[composio:slack] budget exhausted during channel listing"
-            );
-            break;
-        }
-        let mut args = json!({
-            "types": "public_channel,private_channel",
-            "exclude_archived": true,
-            "limit": LIST_PAGE_SIZE,
-        });
-        if let Some(ref c) = cursor {
-            args["cursor"] = json!(c);
-        }
-
-        let (mut resp, attempts) = execute_with_retry(
-            ctx,
-            ACTION_LIST_CONVERSATIONS,
-            args,
-            &format!("{ACTION_LIST_CONVERSATIONS} page {page_num}"),
-        )
-        .await?;
-        state.record_requests(attempts);
-        dump_response("_meta", "channels", page_num, &resp.data);
-
-        // Post-process then enrich.
-        super::post_process::post_process(ACTION_LIST_CONVERSATIONS, None, &mut resp.data);
-        out.extend(sync::extract_channels(&resp.data));
-        cursor = sync::extract_next_cursor(&resp.data);
-        if cursor.is_none() {
-            break;
-        }
-    }
-    Ok(out)
-}
-
 // ── Search-based backfill (one-shot) ────────────────────────────────
 
-/// Composio action slug for workspace-wide message search.
-const ACTION_SEARCH_MESSAGES: &str = "SLACK_SEARCH_MESSAGES";
-
-/// Max matches per `SLACK_SEARCH_MESSAGES` page.
-const SEARCH_PAGE_SIZE: u32 = 100;
-
-/// Hard cap on pages walked per backfill run.
-const MAX_SEARCH_PAGES: u32 = 50;
-
-/// Run a one-shot historical backfill via `SLACK_SEARCH_MESSAGES` —
-/// workspace-wide paginated search instead of per-channel
-/// `conversations.history`. Each successful call returns matches across
-/// many channels, so partial progress translates to real coverage.
-///
-/// Designed for the `slack-backfill` bin specifically — the periodic
-/// `SlackProvider::sync()` keeps the per-channel incremental path.
-///
-/// Lifecycle:
-/// 1. Cache the channel directory and user directory.
-/// 2. Paginate `SLACK_SEARCH_MESSAGES` until exhausted or page cap.
-/// 3. Group messages by channel_id, ingest each group via
-///    `ingest_page_into_memory_tree`. No bucketing.
+/// Compatibility wrapper for the tinycortex workspace-wide search pipeline.
 pub async fn run_backfill_via_search(
     ctx: &ProviderContext,
     backfill_days: i64,
 ) -> Result<SyncOutcome, String> {
-    let started_at_ms = sync::now_ms();
     let connection_id = ctx
         .connection_id
-        .clone()
-        .unwrap_or_else(|| "default".to_string());
-
-    tracing::info!(
-        connection_id = %connection_id,
+        .as_deref()
+        .ok_or_else(|| "[composio:slack] search backfill missing connection_id".to_string())?;
+    let started_at_ms = now_ms();
+    let outcome = crate::openhuman::tinycortex::run_slack_search_backfill(
+        connection_id,
         backfill_days,
-        "[composio:slack] search-based backfill starting"
-    );
-
-    let memory = ctx
-        .memory_client()
-        .ok_or_else(|| "[composio:slack] memory client not ready".to_string())?;
-    let mut state = SyncState::load(&memory, "slack", &connection_id).await?;
-
-    if state.budget_exhausted() {
-        return Ok(SyncOutcome {
-            toolkit: "slack".to_string(),
-            connection_id: Some(connection_id),
-            reason: SyncReason::Manual.as_str().to_string(),
-            items_ingested: 0,
-            started_at_ms,
-            finished_at_ms: sync::now_ms(),
-            summary: "slack search-backfill skipped: daily budget exhausted".to_string(),
-            details: json!({ "budget_exhausted": true }),
-        });
-    }
-
-    // 1. Channel directory.
-    let channels = list_all_channels(ctx, &mut state)
-        .await
-        .map_err(|e| format!("[composio:slack] list_channels: {e:#}"))?;
-    let channel_map: HashMap<String, SlackChannel> =
-        channels.into_iter().map(|c| (c.id.clone(), c)).collect();
-
-    // 2. User directory.
-    let (users, user_call_count) = SlackUsers::fetch(ctx).await;
-    state.record_requests(user_call_count);
-    tracing::info!(
-        connection_id = %connection_id,
-        user_count = users.len(),
-        channel_count = channel_map.len(),
-        "[composio:slack] caches ready"
-    );
-    let _ = state.save(&memory).await;
-
-    // 3. Paginated workspace-wide search.
-    let now = chrono::Utc::now();
-    let after = (now - chrono::Duration::days(backfill_days))
-        .format("%Y-%m-%d")
-        .to_string();
-    let query = format!("after:{after}");
-    let mut all_messages: Vec<SlackMessage> = Vec::new();
-    let mut page: u32 = 1;
-    let mut total_pages: u32 = 1;
-
-    loop {
-        if state.budget_exhausted() {
-            tracing::warn!(
-                page,
-                "[composio:slack] budget exhausted mid-search, halting"
-            );
-            break;
-        }
-        let args = json!({
-            "query": query,
-            "count": SEARCH_PAGE_SIZE,
-            "sort": "timestamp",
-            "sort_dir": "asc",
-            "page": page,
-        });
-        let (mut resp, attempts) = execute_with_retry(
-            ctx,
-            ACTION_SEARCH_MESSAGES,
-            args,
-            &format!("{ACTION_SEARCH_MESSAGES} page {page}"),
-        )
-        .await?;
-        state.record_requests(attempts);
-        dump_response("_meta", "search", page, &resp.data);
-
-        // Post-process, then enrich with channel_map + users.
-        super::post_process::post_process(ACTION_SEARCH_MESSAGES, None, &mut resp.data);
-        let msgs = sync::extract_search_messages(&resp.data, &channel_map, &users);
-        if page == 1 {
-            total_pages = sync::extract_search_total_pages(&resp.data).min(MAX_SEARCH_PAGES);
-            tracing::info!(
-                connection_id = %connection_id,
-                total_pages,
-                first_page_msgs = msgs.len(),
-                "[composio:slack] search pagination plan"
-            );
-        }
-        let fetched = msgs.len();
-        all_messages.extend(msgs);
-        if fetched == 0 || page >= total_pages {
-            break;
-        }
-        page += 1;
-    }
-    let _ = state.save(&memory).await;
-
-    // 4. Group by channel_id and ingest each group.
-    let buckets = super::ingest::bucket_by_channel(&all_messages);
-    let channel_count = buckets.len();
-    tracing::info!(
-        connection_id = %connection_id,
-        channels = channel_count,
-        total_messages = all_messages.len(),
-        "[composio:slack] grouped messages by channel for ingest"
-    );
-
-    let mut channels_flushed = 0usize;
-    let mut channels_failed = 0usize;
-    let mut total_chunks = 0usize;
-
-    for (channel_id, msgs_for_channel) in &buckets {
-        let page: Vec<SlackMessage> = msgs_for_channel.iter().map(|m| (*m).clone()).collect();
-        match ingest_page_into_memory_tree(&ctx.config, "", &connection_id, &page).await {
-            Ok(chunks) => {
-                channels_flushed += 1;
-                total_chunks += chunks;
-                tracing::info!(
-                    channel = %channel_id,
-                    messages = page.len(),
-                    chunks,
-                    "[composio:slack] search-backfill channel ingested"
-                );
-            }
-            Err(err) => {
-                channels_failed += 1;
-                tracing::warn!(
-                    channel = %channel_id,
-                    error = %err,
-                    "[composio:slack] search-backfill ingest failed"
-                );
-            }
-        }
-    }
-
-    let finished_at_ms = sync::now_ms();
-    let summary = format!(
-        "slack search-backfill: pages={page} channels_flushed={channels_flushed} \
-         channels_failed={channels_failed} chunks={total_chunks}"
-    );
-    tracing::info!(
-        connection_id = %connection_id,
-        elapsed_ms = finished_at_ms.saturating_sub(started_at_ms),
-        "{summary}"
-    );
-
+        ctx.config.as_ref(),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(SyncOutcome {
-        toolkit: "slack".to_string(),
-        connection_id: Some(connection_id),
-        reason: SyncReason::Manual.as_str().to_string(),
-        items_ingested: total_chunks,
+        toolkit: "slack".into(),
+        connection_id: Some(connection_id.into()),
+        reason: "manual".into(),
+        items_ingested: outcome.records_ingested as usize,
         started_at_ms,
-        finished_at_ms,
-        summary,
-        details: json!({
-            "pages_walked": page,
-            "channels_flushed": channels_flushed,
-            "channels_failed": channels_failed,
-            "total_chunks": total_chunks,
+        finished_at_ms: now_ms(),
+        summary: outcome
+            .note
+            .unwrap_or_else(|| "slack search-backfill complete".into()),
+        details: serde_json::json!({
+            "more_pending": outcome.more_pending,
+            "actions_called": outcome.actions_called,
+            "provider_cost_usd": outcome.provider_cost_usd,
         }),
     })
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
 #[cfg(test)]
 mod tests {
     use super::*;

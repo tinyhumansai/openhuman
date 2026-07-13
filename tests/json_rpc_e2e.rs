@@ -12188,13 +12188,6 @@ mod task_sources_stub {
         ) -> Result<ProviderUserProfile, String> {
             Ok(ProviderUserProfile::default())
         }
-        async fn sync(
-            &self,
-            _ctx: &ProviderContext,
-            _reason: SyncReason,
-        ) -> Result<SyncOutcome, String> {
-            Ok(SyncOutcome::default())
-        }
         async fn fetch_tasks(
             &self,
             _ctx: &ProviderContext,

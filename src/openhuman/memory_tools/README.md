@@ -14,7 +14,7 @@ Each tool gets its own namespace `tool-{tool_name}`. Build the string via
 | --- | --- |
 | [`mod.rs`](mod.rs) | Module root + public re-exports. |
 | [`types.rs`](types.rs) | **Shim** — re-exports `ToolMemoryRule` / `ToolMemoryPriority` / `ToolMemorySource` / `tool_memory_namespace` from `tinycortex::memory::tool_memory::types` (W7). |
-| [`store.rs`](store.rs) | **Shim** — re-exports the crate `ToolMemoryStore` (`put_rule`, `get_rule`, `list_rules`, `delete_rule`, `rules_for_prompt`, `list_tool_names`, `record`, `list_rules_json`) + `tool_memory_store(Arc<dyn host::Memory>)`, which bridges the host `Memory` trait object to the crate `Memory` the store needs (host = crate + `sqlite_conn`, gap G1). |
+| [`store.rs`](store.rs) | **Shim** — re-exports the crate `ToolMemoryStore` (`put_rule`, `get_rule`, `list_rules`, `delete_rule`, `rules_for_prompt`, `list_tool_names`, `record`, `list_rules_json`) + `tool_memory_store(Arc<dyn Memory>)`. The trait and engine are both crate-owned. |
 | [`capture.rs`](capture.rs) | `ToolMemoryCaptureHook` — `PostTurnHook` impl that captures user edicts and repeated tool failures into the store (host-retained). |
 | [`prompt.rs`](prompt.rs) | **Shim** — re-exports the crate `ToolMemoryRulesSection` + `render_tool_memory_rules` + `TOOL_MEMORY_HEADING`, and keeps the host `PromptSection` impl that plugs the section into the system-prompt builder. |
 | [`tools/`](tools/) | Agent-facing read/write tools: `MemoryToolsListTool` (list rules for a tool), `MemoryToolsPutTool` (upsert a rule). |

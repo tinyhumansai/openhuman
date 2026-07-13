@@ -340,14 +340,16 @@ impl Agent {
             config,
             &config.memory.embedding_provider,
         );
-        let memory: Arc<dyn Memory> = Arc::from(memory_store::create_memory_with_local_ai(
+        let session_memory = memory_store::factories::create_session_memory_with_local_ai(
             &config.memory,
             local_embedding.as_deref(),
             &embedding_api_key,
             &config.embedding_routes,
             Some(&config.storage.provider.config),
             &config.workspace_dir,
-        )?);
+        )?;
+        let archivist_connection = session_memory.sqlite_connection;
+        let memory: Arc<dyn Memory> = Arc::from(session_memory.memory);
 
         // Per-profile skill (workflow) + MCP-server allowlists. `None` = all.
         let profile_skill_allowlist: Option<std::collections::HashSet<String>> = profile
@@ -758,33 +760,24 @@ impl Agent {
         // is the system-of-record for chat turns and must stay active even when
         // the inference stack (`reflection`, `stability_detector`) is disabled.
         // Gated only on `config.learning.episodic_capture_enabled` (default: true)
-        // and on the memory backend exposing a SQLite connection.
+        // using the explicit SQLite resource returned by the session factory.
         let archivist_hook_arc: Option<
             Arc<crate::openhuman::agent::harness::archivist::ArchivistHook>,
         > = if config.learning.episodic_capture_enabled {
-            match memory.sqlite_conn() {
-                Some(conn) => {
-                    let hook = Arc::new(
-                        crate::openhuman::agent::harness::archivist::ArchivistHook::new(conn, true)
-                            .with_config(config.clone()),
-                    );
-                    post_turn_hooks
-                        .push(Arc::clone(&hook)
-                            as Arc<dyn crate::openhuman::agent::hooks::PostTurnHook>);
-                    log::info!(
-                        "[archivist] episodic capture hook registered (learning.enabled={})",
-                        config.learning.enabled
-                    );
-                    Some(hook)
-                }
-                None => {
-                    log::warn!(
-                        "[archivist] no SQLite connection available from memory backend — \
-                         episodic capture disabled"
-                    );
-                    None
-                }
-            }
+            let hook = Arc::new(
+                crate::openhuman::agent::harness::archivist::ArchivistHook::new(
+                    archivist_connection,
+                    true,
+                )
+                .with_config(config.clone()),
+            );
+            post_turn_hooks
+                .push(Arc::clone(&hook) as Arc<dyn crate::openhuman::agent::hooks::PostTurnHook>);
+            log::info!(
+                "[archivist] episodic capture hook registered (learning.enabled={})",
+                config.learning.enabled
+            );
+            Some(hook)
         } else {
             log::info!(
                 "[archivist] episodic_capture_enabled=false — archivist hook not registered"

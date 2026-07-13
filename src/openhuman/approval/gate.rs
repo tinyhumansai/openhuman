@@ -331,6 +331,76 @@ impl ApprovalGate {
         action_summary: &str,
         args_redacted: serde_json::Value,
     ) -> (GateOutcome, Option<String>) {
+        // No caller-supplied park bound: identical behavior to before. With
+        // `park_bound = None` the inner never takes the caller-bound abandon
+        // path, so the out-flag stays `false` and is discarded here.
+        let mut _park_bound_elapsed = false;
+        self.intercept_audited_inner(
+            tool_name,
+            action_summary,
+            args_redacted,
+            None,
+            &mut _park_bound_elapsed,
+        )
+        .await
+    }
+
+    /// Like [`Self::intercept_audited`] but the caller may cap how long the
+    /// gate parks (issue #4756).
+    ///
+    /// When `park_bound` is `Some` and shorter than the gate's own effective
+    /// TTL and it elapses before a decision arrives, the gate abandons the park
+    /// in a **cancellation-safe** way — it evicts the in-memory waiter and
+    /// clears the thread/meeting routing mappings (so a later chat/voice reply
+    /// is not mis-routed to this now-abandoned request) but deliberately LEAVES
+    /// the `pending_approvals` row open, so a later human card-click can still
+    /// resolve it in the DB — and returns `None`. This is why callers must bound
+    /// the park through the gate rather than racing an outer
+    /// `tokio::time::timeout` against [`Self::intercept_audited`]: dropping the
+    /// parked future would skip that cleanup and orphan the waiter + routing
+    /// mappings (chatgpt-codex review on #4756).
+    ///
+    /// A `None` bound (or one `>=` the effective TTL) behaves exactly like
+    /// [`Self::intercept_audited`] and always returns `Some`.
+    pub async fn intercept_audited_bounded(
+        &self,
+        tool_name: &str,
+        action_summary: &str,
+        args_redacted: serde_json::Value,
+        park_bound: Option<Duration>,
+    ) -> Option<(GateOutcome, Option<String>)> {
+        let mut park_bound_elapsed = false;
+        let resolved = self
+            .intercept_audited_inner(
+                tool_name,
+                action_summary,
+                args_redacted,
+                park_bound,
+                &mut park_bound_elapsed,
+            )
+            .await;
+        if park_bound_elapsed {
+            None
+        } else {
+            Some(resolved)
+        }
+    }
+
+    /// Shared core of [`Self::intercept_audited`] and
+    /// [`Self::intercept_audited_bounded`]. When `park_bound` is `Some` and
+    /// shorter than the effective TTL, the park is capped at it; on that bound
+    /// elapsing the park is abandoned cancellation-safely (waiter evicted,
+    /// thread/meeting routing cleared, `pending_approvals` row left open) and
+    /// `*park_bound_elapsed` is set so the bounded caller can render its own
+    /// fast-path result instead of a `Deny`.
+    async fn intercept_audited_inner(
+        &self,
+        tool_name: &str,
+        action_summary: &str,
+        args_redacted: serde_json::Value,
+        park_bound: Option<Duration>,
+        park_bound_elapsed: &mut bool,
+    ) -> (GateOutcome, Option<String>) {
         // Origin tells us who scheduled this turn. Entry points (web channel,
         // channel runtime, subconscious, cron, CLI) scope a typed
         // `AgentTurnOrigin` around `run_turn`. Unlabelled callers map to
@@ -734,7 +804,19 @@ impl ApprovalGate {
             self.effective_ttl()
         };
 
-        let outcome = match tokio::time::timeout(effective_ttl, rx).await {
+        // Optional caller-supplied park bound (issue #4756). A caller
+        // (`composio_connect`) can cap how long the gate parks so a turn
+        // degrades to a fast prompt instead of blocking to the full TTL.
+        // Bounding must never *extend* the park, so we wait `min(bound, ttl)`;
+        // the caller-bound abandon path fires only when the bound is what
+        // elapses (`park_bound_active`).
+        let park_bound_active = matches!(park_bound, Some(b) if b < effective_ttl);
+        let wait = match park_bound {
+            Some(b) => b.min(effective_ttl),
+            None => effective_ttl,
+        };
+
+        let outcome = match tokio::time::timeout(wait, rx).await {
             Ok(Ok(decision)) => {
                 tracing::info!(
                     request_id = %request_id,
@@ -771,6 +853,39 @@ impl ApprovalGate {
                         reason: format!(
                             "{POLICY_DENIED_MARKER} Approval channel for '{tool_name}' closed \
                              before a decision was made."
+                        ),
+                    },
+                    None,
+                )
+            }
+            Err(_elapsed) if park_bound_active => {
+                // Caller park bound elapsed (#4756) — NOT the gate's own TTL.
+                // Abandon the park cancellation-safely: evict the in-memory
+                // waiter and (via `clear_thread`/`clear_meeting` below, on every
+                // exit) drop the routing mappings so a later chat/voice reply is
+                // not mis-routed to this now-abandoned request. Deliberately do
+                // NOT `store::decide(Deny)` — the `pending_approvals` row stays
+                // open so a later human card-click still resolves it in the DB
+                // and a re-ask sees it already-connected. Signal the elapse so
+                // the bounded caller renders its own fast-path result rather than
+                // a `Deny`.
+                self.evict_waiter(&request_id);
+                *park_bound_elapsed = true;
+                tracing::info!(
+                    request_id = %request_id,
+                    tool = tool_name,
+                    bound_secs = wait.as_secs(),
+                    "[approval::gate] caller park bound elapsed — abandoning park (row left \
+                     pending for a later card-click; waiter + routing cleared) (#4756)"
+                );
+                // Placeholder outcome; the bounded caller discards it once
+                // `*park_bound_elapsed` is set (returns `None`).
+                (
+                    GateOutcome::Deny {
+                        reason: format!(
+                            "{POLICY_DENIED_MARKER} Approval for '{tool_name}' exceeded the caller \
+                             park bound ({}s).",
+                            wait.as_secs()
                         ),
                     },
                     None,
@@ -1493,6 +1608,83 @@ mod tests {
 
         // Mapping is cleared once intercept returns.
         assert!(gate.pending_for_thread("thread-42").is_none());
+    }
+
+    // ── caller park bound (issue #4756) ──────────────────────────────
+    //
+    // A caller (composio_connect) can cap the park via
+    // `intercept_audited_bounded`. When the bound elapses before the gate's own
+    // TTL the gate must abandon the park cancellation-safely: return `None`,
+    // clear the thread→request routing so a later reply is not mis-routed (the
+    // codex concern), yet LEAVE the `pending_approvals` row open so a later
+    // card-click still resolves it in the DB.
+    #[tokio::test]
+    async fn intercept_audited_bounded_abandons_park_and_leaves_row_pending() {
+        let (gate, _dir) = test_gate(); // boot-time TTL = 2s
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let ctx = ApprovalChatContext {
+            thread_id: "thread-bound".into(),
+            client_id: "client-1".into(),
+        };
+        let origin = AgentTurnOrigin::WebChat {
+            thread_id: "thread-bound".into(),
+            client_id: "client-1".into(),
+            request_id: Some("req-bound".into()),
+        };
+        // 100ms caller bound — far below the 2s gate TTL — so the bound is what
+        // elapses, not the gate's own timeout.
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                origin,
+                APPROVAL_CHAT_CONTEXT.scope(
+                    ctx,
+                    g.intercept_audited_bounded(
+                        "shell",
+                        "run ls",
+                        serde_json::json!({}),
+                        Some(Duration::from_millis(100)),
+                    ),
+                ),
+            )
+            .await
+        });
+
+        // While parked, the thread → request mapping is queryable.
+        let mut tries = 0;
+        let request_id = loop {
+            if let Some(r) = gate.pending_for_thread("thread-bound") {
+                break r;
+            }
+            tries += 1;
+            assert!(tries < 50, "thread mapping never appeared");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        };
+
+        // The bound elapses → `None`, so the caller renders its own fast path
+        // instead of the park resolving to a Deny.
+        let resolved = handle.await.unwrap();
+        assert!(
+            resolved.is_none(),
+            "caller park bound must surface as None, not a resolved outcome"
+        );
+
+        // Routing is cleared so a later reply is not mis-routed to the abandoned
+        // request (the codex #4756 concern).
+        assert!(
+            gate.pending_for_thread("thread-bound").is_none(),
+            "thread → request mapping must be cleared on caller-bound abandon"
+        );
+
+        // The row is LEFT open — a later human card-click still resolves it.
+        let decided = gate
+            .decide(&request_id, ApprovalDecision::ApproveOnce)
+            .unwrap();
+        assert!(
+            decided.is_some(),
+            "pending row must survive the abandon so a later card-click resolves it"
+        );
     }
 
     /// Tests for `effective_ttl` env-override parsing.

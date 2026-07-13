@@ -367,7 +367,10 @@ async fn memory_read_rpc_filters_graphs_scores_reset_and_wipe_seeded_rows() {
         .value
         .unwrap();
     assert!(score.kept);
-    assert!(score.llm_consulted);
+    assert!(
+        !score.llm_consulted,
+        "TinyCortex does not persist admission-time LLM importance"
+    );
 
     let tree_graph = read_rpc::graph_export_rpc(&cfg, GraphMode::Tree)
         .await

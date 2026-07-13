@@ -19,6 +19,7 @@ pub mod cloud;
 pub mod effect_executor;
 pub mod exec_gate;
 pub mod ingest;
+pub mod medulla;
 pub mod migrate_history;
 pub mod ops;
 pub mod presence;

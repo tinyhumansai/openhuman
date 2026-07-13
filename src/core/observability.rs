@@ -840,7 +840,9 @@ fn is_embedding_backend_auth_failure(lower: &str) -> bool {
 /// `embeddings::rpc::update_settings` as the save-time hard-block signal so the
 /// two never drift.
 pub(crate) fn is_embedding_endpoint_absent(lower: &str) -> bool {
-    lower.contains("embedding api error") && (lower.contains("(404") || lower.contains("(405"))
+    (lower.contains("embedding api error") && (lower.contains("(404") || lower.contains("(405")))
+        || (lower.contains("embeddings returned http")
+            && (lower.contains("http 404") || lower.contains("http 405")))
 }
 
 /// Detect a custom/cloud embeddings endpoint that IS an embeddings API but
