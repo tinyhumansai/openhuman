@@ -292,11 +292,48 @@ impl CoreContext {
 /// client not ready" error rather than reading/writing the wrong workspace. The
 /// server still comes up; the operator sees the loud error and fixes their
 /// config or sets `OPENHUMAN_WORKSPACE` to a writable path, then restarts.
+/// Per-`DomainGroup` gating decision for each workspace-bound store that
+/// [`init_stores`] initializes. Extracted as a pure value so the store-gating
+/// mapping (which store is owned by which `DomainGroup`) has a single source of
+/// truth that `init_stores` consumes and tests assert directly — without
+/// touching process-global store state or booting a runtime (#4796 DoD item 3).
+///
+/// The keyring-path log and the credentials Sentry bind in `init_stores` are
+/// intentionally *not* represented here: they are unguarded core infra every
+/// `DomainSet` needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoreInitPlan {
+    /// `memory::global` — gated on [`DomainGroup::Memory`].
+    pub memory: bool,
+    /// `agent::multimodal` attachments sidecar dir — gated on [`DomainGroup::Agent`].
+    pub agent_attachments: bool,
+    /// `whatsapp_data::global` — gated on [`DomainGroup::Channels`].
+    pub whatsapp_data: bool,
+    /// `people::store` — gated on [`DomainGroup::Platform`].
+    pub people: bool,
+    /// legacy-workflow prune under `skills::registry` — gated on [`DomainGroup::Skills`].
+    pub skills_prune: bool,
+}
+
+impl StoreInitPlan {
+    /// The store-init plan for `domains`. Pure: no side effects, no globals.
+    pub fn for_domains(domains: crate::core::runtime::DomainSet) -> Self {
+        use crate::core::all::DomainGroup;
+        Self {
+            memory: domains.allows(DomainGroup::Memory),
+            agent_attachments: domains.allows(DomainGroup::Agent),
+            whatsapp_data: domains.allows(DomainGroup::Channels),
+            people: domains.allows(DomainGroup::Platform),
+            skills_prune: domains.allows(DomainGroup::Skills),
+        }
+    }
+}
+
 pub async fn init_stores(
     cfg: &crate::openhuman::config::Config,
     domains: crate::core::runtime::DomainSet,
 ) {
-    use crate::core::all::DomainGroup;
+    let plan = StoreInitPlan::for_domains(domains);
 
     let keyring_dir = crate::openhuman::keyring::store::workspace_dir_for_file_backend();
     // Keyring path log + credentials Sentry bind (below) are unguarded — they
@@ -311,7 +348,7 @@ pub async fn init_stores(
         crate::openhuman::keyring::backend_name(),
         domains,
     );
-    if domains.allows(DomainGroup::Memory) {
+    if plan.memory {
         match crate::openhuman::memory::global::init(cfg.workspace_dir.clone()) {
             Ok(_) => log::info!(
                 "[boot] memory::global initialized (workspace={})",
@@ -326,7 +363,7 @@ pub async fn init_stores(
     // image markers persist under <workspace>/attachments/ instead
     // of an in-memory FIFO (survives restarts + delegation hops).
     // Also fires a best-effort stale-file sweep.
-    if domains.allows(DomainGroup::Agent) {
+    if plan.agent_attachments {
         crate::openhuman::agent::multimodal::init_attachments_dir(
             cfg.workspace_dir.join("attachments"),
         );
@@ -339,7 +376,7 @@ pub async fn init_stores(
     }
     // Initialize the WhatsApp data store so scanner ingest calls
     // can write data without requiring a lazy-init fallback.
-    if domains.allows(DomainGroup::Channels) {
+    if plan.whatsapp_data {
         match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
             Ok(_) => log::info!(
                 "[boot] whatsapp_data::global initialized (workspace={})",
@@ -356,7 +393,7 @@ pub async fn init_stores(
     // initialised" (Sentry TAURI-RUST-8NM). Sits inside this
     // Ok(cfg) arm so it inherits the wrong-workspace guard above
     // (never seed against a Config::default fallback).
-    if domains.allows(DomainGroup::Platform) {
+    if plan.people {
         match crate::openhuman::people::store::init_from_workspace(&cfg.workspace_dir) {
             Ok(_) => log::info!(
                 "[boot] people::store initialized (workspace={})",
@@ -371,7 +408,7 @@ pub async fn init_stores(
     // / pr-review-shepherd) that older builds seeded into
     // <workspace>/skills/. OpenHuman no longer ships bundled defaults;
     // this removes the stale dirs on upgrade. Idempotent.
-    if domains.allows(DomainGroup::Skills) {
+    if plan.skills_prune {
         crate::openhuman::skills::registry::prune_legacy_default_workflows(&cfg.workspace_dir);
     } else {
         log::debug!("[boot] skills legacy-workflow prune SKIPPED — Skills domain disabled");
@@ -412,6 +449,63 @@ mod tests {
     // not the process default or another tenant's. These assert the primitive
     // directly (independent of the process DEFAULT_CONTEXT global, since
     // `current()` inside a scope resolves the scoped value).
+
+    // ---- store-init gating (#4796 DoD item 3) --------------------------------
+    // `init_stores` side-effects on process globals with no init-state probe, so
+    // the gating is proven via the pure `StoreInitPlan` the registrar consumes.
+
+    #[test]
+    fn store_init_plan_full_initializes_every_store() {
+        let plan = StoreInitPlan::for_domains(crate::core::runtime::DomainSet::full());
+        assert_eq!(
+            plan,
+            StoreInitPlan {
+                memory: true,
+                agent_attachments: true,
+                whatsapp_data: true,
+                people: true,
+                skills_prune: true,
+            },
+            "full() must initialize every workspace-bound store"
+        );
+    }
+
+    #[test]
+    fn store_init_plan_none_initializes_nothing() {
+        let plan = StoreInitPlan::for_domains(crate::core::runtime::DomainSet::none());
+        assert_eq!(
+            plan,
+            StoreInitPlan {
+                memory: false,
+                agent_attachments: false,
+                whatsapp_data: false,
+                people: false,
+                skills_prune: false,
+            },
+            "none() must leave every workspace-bound store uninitialized"
+        );
+    }
+
+    #[test]
+    fn store_init_plan_harness_gates_by_owning_group() {
+        let plan = StoreInitPlan::for_domains(crate::core::runtime::DomainSet::harness());
+        // harness() = agent + memory + threads + config + security.
+        assert!(plan.memory, "harness keeps memory::global (Memory)");
+        assert!(
+            plan.agent_attachments,
+            "harness keeps agent attachments sidecar (Agent)"
+        );
+        // Channels / Platform / Skills are NOT in harness → their stores stay off.
+        assert!(
+            !plan.whatsapp_data,
+            "harness must skip whatsapp_data::global (Channels)"
+        );
+        assert!(!plan.people, "harness must skip people::store (Platform)");
+        assert!(
+            !plan.skills_prune,
+            "harness must skip skills legacy-prune (Skills)"
+        );
+    }
 
     #[tokio::test]
     async fn scope_sets_current_context() {
