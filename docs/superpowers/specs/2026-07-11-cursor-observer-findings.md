@@ -23,8 +23,20 @@ prove the observe→stream half end-to-end:
 
 All prototype artifacts (the hooks file, the observer scripts, the throwaway
 `cursorbridge`/`cursoragent` wallets, the `~/.tinyplace-cursorbridge` store) were
-removed after the demo. The shippable outputs are the recognition slice
-(PR #4775) and the slash-free identity fix (PR #4779).
+removed after the demo. The shippable output is the recognition slice (PR #4775).
+
+> **Correction (2026-07-13).** A first attempt to "fix" a bundle 404 by minting
+> a slash-free tiny.place identity (PR #4779) was **closed as wrong** on review.
+> The `/keys/:cryptoId/*` relay routes are keyed on the **base58** cryptoId (no
+> `/`) and the backend already resolves both encodings, so the 404 only occurs
+> when a *client* puts the base64 `identityKey` in the URL path. Every current
+> send path already fetches by base58 (TS SDK ≥2.0.2 `deriveCryptoId`; OpenHuman
+> `resolve_recipient_to_agent_id` → `crypto_id`). The observer's 404 was a stale
+> `@tinyhumansai/tinyplace@1.0.1` build in the prototype, not a product defect —
+> and remapping the identity would have broken the payment/wallet coupling
+> (`signer.agent_id()` is the x402 `from` / registry `crypto_id`). Identity must
+> stay `== funded Solana wallet`; the real follow-up is bumping the plugin's SDK
+> dependency to ≥2.0.2 (see `tiny.place#213`).
 
 ## Result: observe → render works ✅
 
@@ -52,11 +64,13 @@ the committed `adapters/cursor.mjs` already does with its `env` sentinel.)
 ### Gap 1 — reply address is base58↔base64 mismatched
 
 When OpenHuman tries to **reply** into the runtime session, the send fails with
-`No agent found for <id>`. Root cause: OpenHuman addresses the peer by the
-**base58** `agentId` it recorded, but the reply path resolves against the
-**base64** `identityKey`. These are the *same* Ed25519 key in two encodings, so
-the fix is an encoding-unification at the reply boundary, not new crypto. This is
-the natural **next PR** (tracked as the base58↔base64 reply-address unification).
+`No agent found for <id>`. This is the same base58/base64 encoding family as the
+correction above: the peer must be addressed and resolved by its **base58**
+`crypto_id`, not the **base64** `identityKey`. No new crypto is needed — the fix
+is base58 discipline on the reply/resolve boundary, and it is likely already
+closed once the prototype/plugin is on SDK ≥2.0.2 (whose send path fetches by
+`deriveCryptoId`). **Next step: re-test the reply path against a current-SDK
+plugin build before assuming any OpenHuman-side change is required.**
 
 ### Gap 2 — no Cursor GUI-chat injection API
 
