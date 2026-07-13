@@ -772,13 +772,6 @@ pub fn create_chat_provider_from_string(
         return create_chat_provider_from_string(role, &resolved, config);
     }
 
-    // Egress spine (privacy epic S2, #4436): `p` is now a concrete provider
-    // string (sentinels resolved / BYOK bailed above), so this is the single
-    // point where an inference destination is committed. Emit the descriptor
-    // BEFORE constructing any provider below. Local runtimes are disclosed as
-    // non-external and never fire the pending event (see `emit_external_transfer`).
-    emit_inference_egress(role, p);
-
     if p == PROVIDER_OPENHUMAN {
         return make_openhuman_backend(role, config);
     }
@@ -797,6 +790,15 @@ pub fn create_chat_provider_from_string(
     {
         verify_session_active(config)?;
     }
+
+    // Egress spine (privacy epic S2, #4436): `p` is a concrete external provider
+    // string (sentinels resolved / BYOK bailed / `PROVIDER_OPENHUMAN` returned
+    // above, and it self-emits via `resolve_managed_backend`). Emit the descriptor
+    // only after the session gate has passed — an external provider that fails
+    // `verify_session_active` never sends, so disclosing it would be a false
+    // transfer (coderabbit, PR #4812). Local runtimes are disclosed as
+    // non-external and never fire the pending event (see `emit_external_transfer`).
+    emit_inference_egress(role, p);
 
     if let Some(model_with_temp) =
         p.strip_prefix(crate::openhuman::inference::provider::claude_code::PROVIDER_PREFIX)
