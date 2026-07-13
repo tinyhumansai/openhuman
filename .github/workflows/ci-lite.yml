@@ -351,6 +351,40 @@ jobs:
       - name: Run clippy (core crate)
         run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman
 
+  # Feature-gate smoke: proves the core still compiles with a domain gate turned
+  # OFF. The disabled build is the ONLY thing that catches stub-facade signature
+  # drift (see AGENTS.md "Compile-time domain gates"), so it must run in CI, not
+  # just locally. Pathfinder lane for #4803 (voice); extend the --features list
+  # as sibling gates (#4797–#4802, #4804) land.
+  rust-feature-gate-smoke:
+    name: Rust Feature-Gate Smoke (gates off)
+    needs: [changes]
+    if: needs.changes.outputs['rust-core'] == 'true' || needs.changes.outputs['rust-tauri'] == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+          cache-on-failure: true
+          shared-key: pr-rust-feature-gate-smoke
+
+      - name: Check core builds with the voice gate disabled
+        run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tokenjuice-treesitter
+
   rust-core-coverage:
     name: Rust Core Coverage (cargo-llvm-cov)
     needs: [changes, rust-quality]
