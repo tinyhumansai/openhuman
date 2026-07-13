@@ -16,6 +16,7 @@
 //! A missed flag means sensitive data leaves the machine unnoticed, so the
 //! detector is tuned to over-flag rather than under-flag.
 
+mod rules;
 mod types;
 
 pub use types::{CategoryHit, PiiCategory, PiiScanResult, RiskLevel};
