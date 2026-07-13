@@ -472,12 +472,17 @@ fn open_conn_configures_busy_timeout_and_wal() {
 fn upsert_recovers_from_corrupt_database() {
     use std::sync::atomic::Ordering;
 
+    // Serialize against the other latch-touching recovery tests: the report
+    // latch + integrity-fail seam are process-wide statics.
+    let _guard = super::CORRUPT_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
     let (store, tmp) = make_store();
     let workspace = tmp.path().to_path_buf();
     let db_path = db_path_for(&tmp);
 
-    // Reset the process-wide latch so this test observes a clean episode. This
-    // test is the only owner of `super::CORRUPT_REPORTED`, so no cross-test race.
+    // Reset the process-wide latch so this test observes a clean episode.
     super::CORRUPT_REPORTED.store(false, Ordering::Relaxed);
 
     // Corrupt the freshly-created DB: drop any WAL side-files, then overwrite the
@@ -545,6 +550,64 @@ fn upsert_recovers_from_corrupt_database() {
     assert!(
         !super::CORRUPT_REPORTED.load(Ordering::Relaxed),
         "report latch must reset after a successful recovery"
+    );
+}
+
+/// Finding 1 regression: when the quarantine + rebuild leaves a DB that STILL
+/// fails its integrity check, `recover_corrupt_db` must return `Err` (not
+/// swallow it as `Ok(true)`). Consequently `report_and_recover` must NOT reset
+/// the process-wide report latch — preserving the report-once-per-episode
+/// guarantee (a spurious reset would re-arm Sentry to page on the next scan
+/// tick against a DB that never actually recovered).
+#[test]
+fn recover_corrupt_db_errors_and_keeps_latch_when_rebuild_fails_integrity() {
+    use std::sync::atomic::Ordering;
+
+    let _guard = super::CORRUPT_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    let (store, tmp) = make_store();
+    let db_path = db_path_for(&tmp);
+
+    // Force the post-rebuild integrity_check to report failure via the test seam.
+    super::FORCE_INTEGRITY_CHECK_FAIL.store(true, Ordering::Relaxed);
+
+    let corrupt = |path: &std::path::Path| {
+        for suffix in ["-wal", "-shm"] {
+            let side = path.with_file_name(format!("whatsapp_data.db{suffix}"));
+            let _ = std::fs::remove_file(&side);
+        }
+        std::fs::write(path, b"not a sqlite database, just garbage bytes").unwrap();
+    };
+
+    // (a) Direct call: recovery quarantines + rebuilds, but the forced
+    //     integrity_check failure makes it return Err instead of Ok(true).
+    corrupt(&db_path);
+    let direct = store.recover_corrupt_db();
+
+    // (b) report_and_recover path: on that recovery failure the report latch,
+    //     set by the initial report, must remain set (not reset to false).
+    corrupt(&db_path);
+    super::CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+    let err = anyhow::anyhow!(
+        "[whatsapp_data] ingest failed: upsert wa_chat 1@lid: database disk image is malformed"
+    );
+    store.report_and_recover("upsert_chats", &err);
+    let latch_after = super::CORRUPT_REPORTED.load(Ordering::Relaxed);
+
+    // Clear the seam + latch BEFORE asserting so a failing assert cannot leak
+    // the forced-fail state into other tests.
+    super::FORCE_INTEGRITY_CHECK_FAIL.store(false, Ordering::Relaxed);
+    super::CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+
+    assert!(
+        direct.is_err(),
+        "recover_corrupt_db must return Err when the rebuilt DB still fails integrity_check"
+    );
+    assert!(
+        latch_after,
+        "report latch must stay set when recovery fails (report-once-per-episode must hold)"
     );
 }
 

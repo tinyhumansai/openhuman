@@ -30,6 +30,20 @@ use crate::openhuman::whatsapp_data::types::{
 /// a genuinely-new, later corruption can still page exactly once.
 static CORRUPT_REPORTED: AtomicBool = AtomicBool::new(false);
 
+/// Test-only override: when set, [`WhatsAppDataStore::integrity_check_ok`]
+/// reports the (rebuilt) DB as failing its integrity check. This is the seam
+/// that lets tests drive the "rebuild still fails integrity_check" branch of
+/// [`WhatsAppDataStore::recover_corrupt_db`] without forging a file that both
+/// survives quarantine and yet fails `PRAGMA integrity_check`.
+#[cfg(test)]
+static FORCE_INTEGRITY_CHECK_FAIL: AtomicBool = AtomicBool::new(false);
+
+/// Test-only serialization guard for the recovery-episode tests. `CORRUPT_REPORTED`
+/// and `FORCE_INTEGRITY_CHECK_FAIL` are process-wide, so tests that mutate them
+/// must not run concurrently or they clobber each other's latch observations.
+#[cfg(test)]
+static CORRUPT_TEST_GUARD: Mutex<()> = Mutex::new(());
+
 /// SQLite-backed store for WhatsApp chats and messages.
 pub struct WhatsAppDataStore {
     db_path: std::path::PathBuf,
@@ -283,22 +297,35 @@ impl WhatsAppDataStore {
         self.init_schema()
             .context("rebuild whatsapp_data schema after quarantining corrupt DB")?;
 
-        // 4. Confirm the rebuilt image is structurally sound.
+        // 4. Confirm the rebuilt image is structurally sound. This result is
+        //    load-bearing: `report_and_recover` only resets the process-wide
+        //    `CORRUPT_REPORTED` latch (and logs "ingest will resume") on
+        //    `Ok(true)`. If the rebuild still fails integrity_check — or the
+        //    check itself can't run — we MUST surface `Err`, otherwise the
+        //    latch resets, re-arming Sentry to page on the next scan tick and
+        //    breaking the report-once-per-episode guarantee this recovery
+        //    exists to protect.
         match self.integrity_check_ok() {
-            Ok(true) => log::warn!(
-                "[whatsapp_data] corruption recovery complete: quarantined {quarantined} file(s), \
-                 rebuilt empty schema, integrity_check=ok at {}",
-                self.db_path.display()
-            ),
-            Ok(false) => log::error!(
-                "[whatsapp_data] rebuilt DB still fails integrity_check at {}",
-                self.db_path.display()
-            ),
-            Err(e) => {
-                log::error!("[whatsapp_data] integrity_check after rebuild could not run: {e:#}")
+            Ok(true) => {
+                log::warn!(
+                    "[whatsapp_data] corruption recovery complete: quarantined {quarantined} file(s), \
+                     rebuilt empty schema, integrity_check=ok at {}",
+                    self.db_path.display()
+                );
+                Ok(true)
             }
+            Ok(false) => {
+                log::error!(
+                    "[whatsapp_data] rebuilt DB still fails integrity_check at {}",
+                    self.db_path.display()
+                );
+                Err(anyhow::anyhow!(
+                    "rebuilt whatsapp_data db still fails integrity_check at {}",
+                    self.db_path.display()
+                ))
+            }
+            Err(e) => Err(e.context("integrity_check after rebuild could not run")),
         }
-        Ok(true)
     }
 
     /// Run `PRAGMA quick_check(1)` on a fresh, short-lived connection. Returns
@@ -319,6 +346,10 @@ impl WhatsAppDataStore {
     /// Run `PRAGMA integrity_check(1)` against the (rebuilt) DB to confirm it is
     /// structurally sound. Returns `Ok(true)` when it reports `"ok"`.
     fn integrity_check_ok(&self) -> Result<bool> {
+        #[cfg(test)]
+        if FORCE_INTEGRITY_CHECK_FAIL.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
         let conn = self.open_conn()?;
         let result: String = conn
             .query_row("PRAGMA integrity_check(1)", [], |row| row.get(0))
