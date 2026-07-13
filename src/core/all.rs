@@ -64,7 +64,7 @@ impl RegisteredController {
 /// per-feature axes the child issues (#4797–#4804) additionally narrow at
 /// compile time. `Platform` is the catch-all for everything not in a named
 /// family — always on in `full()`, off in `harness()`/`none()`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DomainGroup {
     // Harness families — on under `DomainSet::harness()`.
     Agent,
@@ -1061,13 +1061,18 @@ pub fn rpc_method_from_parts(namespace: &str, function: &str) -> Option<String> 
 /// Checks both the agent-facing registry and the internal registry so that
 /// parameter validation still applies to internal-only methods (e.g. ingest).
 pub fn schema_for_rpc_method(method: &str) -> Option<ControllerSchema> {
-    // Searches the FULL (unfiltered) registry — parameter validation of an
-    // about-to-be-rejected gated method is harmless and avoids a
-    // validate/dispatch split; the DomainSet gate is enforced at dispatch.
+    // DomainSet gate (#4796): a method whose group is disabled under the ambient
+    // context must be indistinguishable from a genuinely-unregistered method at
+    // EVERY public lookup, not just at dispatch. Filtering here (identically to
+    // `try_invoke_registered_rpc`) means `invoke_method_inner` never runs param
+    // validation against a gated method — otherwise a gated `openhuman.flows_*`
+    // call with bad params would return the controller's validation error
+    // instead of method-not-found, leaking the hidden RPC surface. No ambient
+    // context ⇒ `group_allowed` is `true` ⇒ unfiltered, identical to pre-#4796.
     registry()
         .iter()
         .chain(internal_registry().iter())
-        .find(|g| g.controller.rpc_method_name() == method)
+        .find(|g| g.controller.rpc_method_name() == method && group_allowed(g.group))
         .map(|g| g.controller.schema.clone())
 }
 

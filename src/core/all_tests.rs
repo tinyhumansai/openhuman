@@ -660,27 +660,39 @@ fn group_for_namespace(ns: &str) -> Option<DomainGroup> {
 #[test]
 fn full_registration_is_byte_identical() {
     // With no ambient CoreContext (⇒ full, no filter), the public
-    // `all_registered_controllers()` must equal the raw grouped registry set:
-    // same length and same rpc-method-name set. This is the DoD (1) proof that
-    // `full()` registration is unchanged by the group-tagged registry.
-    let filtered = all_registered_controllers();
-    let raw_len = registry().len();
-    assert_eq!(
-        filtered.len(),
-        raw_len,
-        "unfiltered all_registered_controllers() must equal raw registry length"
-    );
-
-    let mut filtered_methods: Vec<String> = filtered.iter().map(|c| c.rpc_method_name()).collect();
-    let mut raw_methods: Vec<String> = registry()
+    // `all_registered_controllers()` must equal the raw grouped registry — same
+    // length AND same rpc-method-name sequence IN ORDER. This is the DoD (1)
+    // proof that wrapping every entry in a `GroupedController` + filtering by the
+    // ambient DomainSet changes neither the membership nor the ordering of the
+    // full() surface.
+    //
+    // The baseline is the raw `registry()` view rather than a checked-in method
+    // snapshot (a #4808 review suggestion): `all_registered_controllers()` and
+    // `registry()` are DIFFERENT code paths — the former exercises the ambient
+    // filter (`group_allowed`) and re-collects, the latter is the unfiltered
+    // source — so this asserts the filter is an order-preserving identity under
+    // full(). A frozen snapshot would instead ossify the controller list and
+    // force churn on every legitimate new controller; git history is the
+    // authoritative pre-#4796 baseline for "did the raw list itself change".
+    let filtered_methods: Vec<String> = all_registered_controllers()
+        .iter()
+        .map(|c| c.rpc_method_name())
+        .collect();
+    let raw_methods: Vec<String> = registry()
         .iter()
         .map(|g| g.controller.rpc_method_name())
         .collect();
-    filtered_methods.sort();
-    raw_methods.sort();
+
+    assert_eq!(
+        filtered_methods.len(),
+        raw_methods.len(),
+        "unfiltered all_registered_controllers() must equal raw registry length"
+    );
+    // Ordered comparison — NOT sorted. A reordering (or a drop/add) under full()
+    // would change dispatch/schema iteration order and must fail here.
     assert_eq!(
         filtered_methods, raw_methods,
-        "unfiltered rpc-method set must be byte-identical to the raw registry"
+        "unfiltered rpc-method sequence must be byte-identical (order + membership) to the raw registry"
     );
 }
 
@@ -760,6 +772,47 @@ async fn dispatch_returns_none_for_gated_method() {
     assert!(
         out.is_some(),
         "harness-family security.policy_info must still route under harness()"
+    );
+}
+
+#[tokio::test]
+async fn schema_lookup_is_gated_in_lockstep_with_dispatch() {
+    // #4808 review: `schema_for_rpc_method` must gate identically to
+    // `try_invoke_registered_rpc`, otherwise `invoke_method_inner` validates a
+    // gated method's params BEFORE the dispatch gate fires — returning the
+    // controller's validation error instead of method-not-found and leaking the
+    // hidden RPC surface. Prove the schema lookup returns None for a gated
+    // method under harness() (so no validation runs) while a harness-family
+    // method still resolves.
+    let gated_method = all_registered_controllers()
+        .into_iter()
+        .find(|c| c.schema.namespace == "flows")
+        .map(|c| c.rpc_method_name())
+        .expect("a flows.* method exists in the full registry");
+
+    // Full (no scope): the gated method's schema IS visible — proves the None
+    // below is the gate, not a missing method.
+    assert!(
+        schema_for_rpc_method(&gated_method).is_some(),
+        "under full() the schema for `{gated_method}` must resolve"
+    );
+
+    let ctx = CoreContext::for_test(DomainSet::harness(), None);
+    let gated_schema =
+        CoreContext::scope(ctx, async { schema_for_rpc_method(&gated_method) }).await;
+    assert!(
+        gated_schema.is_none(),
+        "schema lookup for gated `{gated_method}` must be None under harness() (no param validation, no surface leak)"
+    );
+
+    let ctx = CoreContext::for_test(DomainSet::harness(), None);
+    let kept_schema = CoreContext::scope(ctx, async {
+        schema_for_rpc_method("openhuman.security_policy_info")
+    })
+    .await;
+    assert!(
+        kept_schema.is_some(),
+        "harness-family security.policy_info schema must still resolve under harness()"
     );
 }
 
