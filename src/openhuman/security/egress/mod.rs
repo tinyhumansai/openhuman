@@ -10,5 +10,5 @@
 pub mod emit;
 pub mod types;
 
-pub use emit::emit_external_transfer;
+pub use emit::{dedup_turn_scope, emit_external_transfer};
 pub use types::{DataKind, EgressDescriptor, EgressReason, IdentificationRisk};

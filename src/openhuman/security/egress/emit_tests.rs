@@ -106,6 +106,97 @@ async fn attaches_ambient_chat_context() {
     assert_eq!(client_id.as_deref(), Some("client-abc"));
 }
 
+/// Inside a [`dedup_turn_scope`], repeated disclosures of the *same* destination
+/// (provider/service/reason) collapse to a single event, while a distinct
+/// destination still publishes — the managed-turn fan-out fix (codex P2, #4812).
+#[tokio::test]
+async fn dedup_turn_scope_collapses_repeat_destination() {
+    init_global(DEFAULT_CAPACITY);
+    let mut rx = crate::core::event_bus::global().unwrap().raw_receiver();
+
+    let dup = "svc-dedup-dup-test";
+    let distinct = "svc-dedup-distinct-test";
+    let sentinel = "svc-dedup-sentinel-test";
+    dedup_turn_scope(|| {
+        emit_external_transfer(EgressDescriptor::inference("openhuman", dup, true));
+        // Same destination again — must be suppressed within the turn.
+        emit_external_transfer(EgressDescriptor::inference("openhuman", dup, true));
+        // A distinct destination (different service) still discloses.
+        emit_external_transfer(EgressDescriptor::inference("openhuman", distinct, true));
+        // Sentinel closes the drain window.
+        emit_external_transfer(EgressDescriptor::network_fetch(sentinel));
+    });
+
+    let mut dup_count = 0;
+    let mut distinct_seen = false;
+    loop {
+        match rx.recv().await {
+            Ok(DomainEvent::ExternalTransferPending { descriptor, .. }) => {
+                if descriptor.service == dup {
+                    dup_count += 1;
+                }
+                if descriptor.service == distinct {
+                    distinct_seen = true;
+                }
+                if descriptor.service == sentinel {
+                    break;
+                }
+            }
+            Ok(_) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                panic!("bus closed before sentinel arrived")
+            }
+        }
+    }
+    assert_eq!(
+        dup_count, 1,
+        "a repeated destination must disclose exactly once per turn"
+    );
+    assert!(
+        distinct_seen,
+        "a distinct destination must still disclose within the same turn"
+    );
+}
+
+/// Outside any [`dedup_turn_scope`] (CLI / cron / a single egress site) there is
+/// no ledger, so every `emit_external_transfer` publishes — dedup never leaks
+/// across unrelated calls.
+#[tokio::test]
+async fn dedup_absent_outside_scope_publishes_each_time() {
+    init_global(DEFAULT_CAPACITY);
+    let mut rx = crate::core::event_bus::global().unwrap().raw_receiver();
+
+    let marker = "svc-nodedup-test";
+    let sentinel = "svc-nodedup-sentinel-test";
+    emit_external_transfer(EgressDescriptor::inference("openhuman", marker, true));
+    emit_external_transfer(EgressDescriptor::inference("openhuman", marker, true));
+    emit_external_transfer(EgressDescriptor::network_fetch(sentinel));
+
+    let mut count = 0;
+    loop {
+        match rx.recv().await {
+            Ok(DomainEvent::ExternalTransferPending { descriptor, .. }) => {
+                if descriptor.service == marker {
+                    count += 1;
+                }
+                if descriptor.service == sentinel {
+                    break;
+                }
+            }
+            Ok(_) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                panic!("bus closed before sentinel arrived")
+            }
+        }
+    }
+    assert_eq!(
+        count, 2,
+        "without a dedup scope each identical transfer must publish"
+    );
+}
+
 /// The event carries the S5 risk fields verbatim so a future detector arm can
 /// attach a risk level without reshaping the event.
 #[tokio::test]
