@@ -120,7 +120,8 @@ impl ServiceSet {
 /// [`DomainSet::full`] (every family — today's behavior, the default),
 /// [`DomainSet::harness`] (agent + memory + threads + config + security only —
 /// the embeddable agent core used by `examples/embed_headless.rs`), and
-/// [`DomainSet::none`] (nothing).
+/// [`DomainSet::none`] (all domain families disabled; transport built-ins and
+/// always-on core infrastructure still run).
 ///
 /// `full()` is byte-identical to pre-#4796 registration, so the desktop shell
 /// and standalone CLI are unchanged. Per-gate Cargo `[features]` (children
@@ -288,7 +289,8 @@ impl CoreBuilder {
     }
 
     /// Choose which domain families exist at runtime (default [`DomainSet::full`]).
-    /// `harness()` builds the embeddable agent core; `none()` disables everything.
+    /// `harness()` builds the embeddable agent core; `none()` disables every
+    /// domain family while retaining transport built-ins and core infrastructure.
     pub fn domains(mut self, domains: DomainSet) -> Self {
         self.domains = domains;
         self
