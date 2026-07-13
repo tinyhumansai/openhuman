@@ -1147,6 +1147,14 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         "media_generate_video",
         "media_list_models",
     ];
+    // Voice family agent tools (audio_toolkit) — no `voice_`/`tts_`/`stt_`
+    // prefix, so they must be listed explicitly or they fall through to
+    // Platform and stay callable when Voice is gated off (#4808 review).
+    const VOICE: &[&str] = &[
+        "audio_generate_podcast",
+        "audio_email_podcast",
+        "audio_generate_and_email_podcast",
+    ];
     // Threads: thread_* / todo_* handled by prefix below; these are the extras.
     const THREADS_EXTRA: &[&str] = &["transcript_search", "goal_get", "goal_set", "goal_complete"];
     // Memory extras not covered by the `memory_`/`goals_` prefixes.
@@ -1174,9 +1182,20 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
     if MEDIA.contains(&name) {
         return DomainGroup::Media;
     }
-    // Voice/Meet: no agent tools exist in the current surface, but map the
-    // prefixes defensively so a future voice/meet tool gates correctly.
-    if name.starts_with("voice_") || name.starts_with("tts_") || name.starts_with("stt_") {
+    // Channels family agent tools: read-only WhatsApp data surface. Gated with
+    // the other channel/webview domains; without this they fall to Platform and
+    // stay callable when Channels is gated off (#4808 review).
+    if name.starts_with("whatsapp_data_") {
+        return DomainGroup::Channels;
+    }
+    // Voice family: explicit audio_* podcast tools plus the defensive
+    // voice_/tts_/stt_ prefixes for any future tool. Meet has no agent tools in
+    // the current surface, but the `meet_` prefix is mapped defensively.
+    if VOICE.contains(&name)
+        || name.starts_with("voice_")
+        || name.starts_with("tts_")
+        || name.starts_with("stt_")
+    {
         return DomainGroup::Voice;
     }
     if name.starts_with("meet_") {

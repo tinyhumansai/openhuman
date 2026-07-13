@@ -2193,6 +2193,23 @@ fn tool_group_classifies_gate_and_harness_families() {
     assert_eq!(tool_group("propose_workflow"), DomainGroup::Flows);
     assert_eq!(tool_group("list_flows"), DomainGroup::Flows);
     assert_eq!(tool_group("media_generate_image"), DomainGroup::Media);
+    // Voice audio_* tools have no voice_/tts_/stt_ prefix — must be classified
+    // explicitly, not fall through to Platform (#4808 review).
+    assert_eq!(tool_group("audio_generate_podcast"), DomainGroup::Voice);
+    assert_eq!(tool_group("audio_email_podcast"), DomainGroup::Voice);
+    assert_eq!(
+        tool_group("audio_generate_and_email_podcast"),
+        DomainGroup::Voice
+    );
+    // Channels read-only WhatsApp data tools.
+    assert_eq!(
+        tool_group("whatsapp_data_list_chats"),
+        DomainGroup::Channels
+    );
+    assert_eq!(
+        tool_group("whatsapp_data_search_messages"),
+        DomainGroup::Channels
+    );
 
     // Harness-mapped families → kept under harness().
     assert_eq!(tool_group("memory_store"), DomainGroup::Memory);
@@ -2225,4 +2242,7 @@ fn tool_group_gate_families_dropped_under_harness_not_full() {
     assert!(!harness.allows(tool_group("wallet_status")));
     assert!(!harness.allows(tool_group("run_workflow")));
     assert!(!harness.allows(tool_group("shell")));
+    // The previously-misclassified gate-family tools now drop under harness.
+    assert!(!harness.allows(tool_group("audio_generate_podcast")));
+    assert!(!harness.allows(tool_group("whatsapp_data_list_chats")));
 }
