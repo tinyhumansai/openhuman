@@ -153,7 +153,12 @@ pub struct DomainSet {
     pub web3: bool,
     /// Speech-to-text / text-to-speech, audio toolkit.
     pub voice: bool,
-    /// Image/video media generation.
+    /// Image/video media generation. NOTE: today this gates only the
+    /// `media_generate_*` **agent tools** — no controller/store/subscriber is
+    /// tagged `Media` (there is no `media` RPC namespace yet), so a custom set
+    /// with `media: false, platform: true` drops the media tools while any
+    /// future backing controller would stay live. Fold the media-generation
+    /// controller into this group when it lands.
     pub media: bool,
     /// Everything not in a named family — always on in `full()`.
     pub platform: bool,

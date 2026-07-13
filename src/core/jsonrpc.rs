@@ -1802,10 +1802,6 @@ async fn run_server_with_services(
     runtime.serve(ready_tx, shutdown_token).await
 }
 
-/// Registers all long-lived domain event-bus subscribers exactly once.
-///
-/// Guarded by `std::sync::Once` so repeated calls to `bootstrap_core_runtime`
-/// are safe and idempotent.
 /// Per-`DomainGroup` gating decision for each event-bus subscriber that
 /// [`register_domain_subscribers`] conditionally registers. Extracted as a
 /// pure value so the subscriber→group mapping has a single source of truth
@@ -1849,6 +1845,14 @@ impl DomainSubscriberPlan {
     }
 }
 
+/// Registers all long-lived domain event-bus subscribers, each group at most
+/// once per process.
+///
+/// Ungated core/platform infra runs exactly once behind `INFRA: Once`; each
+/// gated [`DomainGroup`](crate::core::all::DomainGroup) installs the first time
+/// it is enabled (tracked by `group_first_time`), so widening the ambient
+/// `DomainSet` on a later call (`harness()` → `full()`) still installs the
+/// newly-enabled groups without double-subscribing the ones already registered.
 fn register_domain_subscribers(
     workspace_dir: std::path::PathBuf,
     config: crate::openhuman::config::Config,
@@ -2134,9 +2138,11 @@ pub async fn bootstrap_core_runtime(
     // Ensure the global event bus is initialized (no-op if already done by start_channels).
     crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
     crate::openhuman::file_state::init_global();
-    // Register domain subscribers for cross-module event handling.
-    // Uses a Once guard so repeated calls to bootstrap_core_runtime()
-    // cannot double-subscribe.
+    // Register domain subscribers for cross-module event handling. Ungated infra
+    // runs once (INFRA: Once) and each DomainGroup installs at most once via the
+    // per-group `group_first_time` set, so repeated calls to
+    // bootstrap_core_runtime() cannot double-subscribe (and a later, wider
+    // DomainSet still installs its newly-enabled groups).
     register_domain_subscribers(workspace_dir.clone(), cfg.clone(), embedded_core, domains);
 
     // --- Turn-state recovery -------------------------------------------
