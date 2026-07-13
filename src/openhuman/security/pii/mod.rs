@@ -14,9 +14,20 @@
 //!
 //! ## Recall over precision
 //! A missed flag means sensitive data leaves the machine unnoticed, so the
-//! detector is tuned to over-flag rather than under-flag.
+//! detector is tuned to over-flag rather than under-flag. See [`detector::scan`]
+//! for the scoring model.
+//!
+//! ```
+//! use openhuman::openhuman::security::pii::{scan, PiiCategory, RiskLevel};
+//!
+//! let result = scan("patient John was diagnosed; SSN 123-45-6789");
+//! assert_eq!(result.level, RiskLevel::High);
+//! assert!(result.has_category(PiiCategory::NationalId));
+//! ```
 
+mod detector;
 mod rules;
 mod types;
 
+pub use detector::scan;
 pub use types::{CategoryHit, PiiCategory, PiiScanResult, RiskLevel};

@@ -53,4 +53,4 @@ pub use schemas::{
 };
 
 #[allow(unused_imports)]
-pub use pii::{CategoryHit, PiiCategory, PiiScanResult, RiskLevel};
+pub use pii::{scan as scan_pii, CategoryHit, PiiCategory, PiiScanResult, RiskLevel};
