@@ -3,8 +3,8 @@
 //! transfers do not, and ambient chat context is attached (privacy epic S2,
 //! #4436).
 
-use super::*;
 use super::super::{DataKind, EgressDescriptor, EgressReason, IdentificationRisk};
+use super::*;
 use crate::core::event_bus::{init_global, publish_global, DomainEvent, DEFAULT_CAPACITY};
 use crate::openhuman::approval::{ApprovalChatContext, APPROVAL_CHAT_CONTEXT};
 
