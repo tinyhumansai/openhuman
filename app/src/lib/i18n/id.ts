@@ -7067,26 +7067,25 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Hapus',
   'flows.delete.deleting': 'Menghapus…',
   'flows.canvas.renameLabel': 'Ganti nama alur kerja',
-  'settings.ai.openaiOauthTitle': 'Sign in with ChatGPT',
+  'settings.ai.openaiOauthTitle': 'Masuk dengan ChatGPT',
   'settings.ai.openaiOauthDescription':
-    'Sign in with your ChatGPT account to use OpenAI models without an API key.',
-  'settings.ai.openaiOauthConnect': 'Sign in with ChatGPT',
-  'settings.ai.openaiOauthConnected': 'Connected with ChatGPT',
-  'settings.ai.openaiOauthOpening': 'Opening sign-in…',
+    'Masuk dengan akun ChatGPT untuk menggunakan model OpenAI tanpa kunci API.',
+  'settings.ai.openaiOauthConnect': 'Masuk dengan ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Terhubung ke ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Membuka proses masuk…',
   'settings.ai.openaiOauthCallbackHint':
-    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+    'Setelah masuk, tempel URL pengalihan lengkap dari browser Anda (diawali dengan http://127.0.0.1:1455/).',
   'settings.ai.openaiOauthCallbackPlaceholder':
     'http://127.0.0.1:1455/auth/callback?code=...&state=...',
-  'settings.ai.openaiOauthFinish': 'Finish ChatGPT sign-in',
-  'settings.ai.openaiOauthDisconnect': 'Disconnect ChatGPT',
-  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
+  'settings.ai.openaiOauthFinish': 'Selesaikan proses masuk ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'Putuskan ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly': 'Masuk dengan ChatGPT hanya tersedia di aplikasi desktop.',
   'settings.ai.openaiOauthStartError':
-    'Could not start ChatGPT sign-in. Try again or use an API key.',
+    'Tidak dapat memulai proses masuk ChatGPT. Coba lagi atau gunakan kunci API.',
   'settings.ai.openaiOauthCompleteError':
-    'ChatGPT sign-in did not complete. Check the redirect URL and try again.',
-  'settings.ai.openaiOauthCallbackRequired':
-    'Paste the redirect URL from your browser after signing in.',
-  'settings.ai.openaiOauthDisconnectError': 'Could not disconnect ChatGPT. Please try again.',
+    'Proses masuk ChatGPT tidak selesai. Periksa URL pengalihan lalu coba lagi.',
+  'settings.ai.openaiOauthCallbackRequired': 'Tempel URL pengalihan dari browser setelah masuk.',
+  'settings.ai.openaiOauthDisconnectError': 'Tidak dapat memutuskan ChatGPT. Silakan coba lagi.',
 };
 
 export default messages;

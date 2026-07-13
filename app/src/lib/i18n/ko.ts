@@ -6961,26 +6961,25 @@ const messages: TranslationMap = {
   'flows.delete.confirm': '삭제',
   'flows.delete.deleting': '삭제 중…',
   'flows.canvas.renameLabel': '워크플로 이름 바꾸기',
-  'settings.ai.openaiOauthTitle': 'Sign in with ChatGPT',
+  'settings.ai.openaiOauthTitle': 'ChatGPT로 로그인',
   'settings.ai.openaiOauthDescription':
-    'Sign in with your ChatGPT account to use OpenAI models without an API key.',
-  'settings.ai.openaiOauthConnect': 'Sign in with ChatGPT',
-  'settings.ai.openaiOauthConnected': 'Connected with ChatGPT',
-  'settings.ai.openaiOauthOpening': 'Opening sign-in…',
+    'API 키 없이 OpenAI 모델을 사용하려면 ChatGPT 계정으로 로그인하세요.',
+  'settings.ai.openaiOauthConnect': 'ChatGPT로 로그인',
+  'settings.ai.openaiOauthConnected': 'ChatGPT에 연결됨',
+  'settings.ai.openaiOauthOpening': '로그인 페이지를 여는 중…',
   'settings.ai.openaiOauthCallbackHint':
-    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+    '로그인 후 브라우저의 전체 리디렉션 URL을 붙여넣으세요(http://127.0.0.1:1455/ 로 시작).',
   'settings.ai.openaiOauthCallbackPlaceholder':
     'http://127.0.0.1:1455/auth/callback?code=...&state=...',
-  'settings.ai.openaiOauthFinish': 'Finish ChatGPT sign-in',
-  'settings.ai.openaiOauthDisconnect': 'Disconnect ChatGPT',
-  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
+  'settings.ai.openaiOauthFinish': 'ChatGPT 로그인 완료',
+  'settings.ai.openaiOauthDisconnect': 'ChatGPT 연결 해제',
+  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT 로그인은 데스크톱 앱에서만 사용할 수 있습니다.',
   'settings.ai.openaiOauthStartError':
-    'Could not start ChatGPT sign-in. Try again or use an API key.',
+    'ChatGPT 로그인을 시작할 수 없습니다. 다시 시도하거나 API 키를 사용하세요.',
   'settings.ai.openaiOauthCompleteError':
-    'ChatGPT sign-in did not complete. Check the redirect URL and try again.',
-  'settings.ai.openaiOauthCallbackRequired':
-    'Paste the redirect URL from your browser after signing in.',
-  'settings.ai.openaiOauthDisconnectError': 'Could not disconnect ChatGPT. Please try again.',
+    'ChatGPT 로그인이 완료되지 않았습니다. 리디렉션 URL을 확인하고 다시 시도하세요.',
+  'settings.ai.openaiOauthCallbackRequired': '로그인 후 브라우저의 리디렉션 URL을 붙여넣으세요.',
+  'settings.ai.openaiOauthDisconnectError': 'ChatGPT 연결을 해제할 수 없습니다. 다시 시도하세요.',
 };
 
 export default messages;

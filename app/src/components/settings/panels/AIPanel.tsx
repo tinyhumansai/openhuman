@@ -706,6 +706,13 @@ const ProviderKeyDialog = ({
   const [phase, setPhase] = useState<'idle' | 'saving' | 'oauth'>('idle');
   const [error, setError] = useState<string | null>(null);
   const busy = phase !== 'idle';
+  const openAiOAuthOnConnected = openAiOAuth?.onConnected;
+  const handleOpenAiConnectedChange = useCallback(
+    (isConnected: boolean) => {
+      if (isConnected) openAiOAuthOnConnected?.();
+    },
+    [openAiOAuthOnConnected]
+  );
 
   const placeholder = isLocalRuntime
     ? defaultEndpointFor(slug) || t('settings.ai.defaultLocalEndpoint')
@@ -880,9 +887,7 @@ const ProviderKeyDialog = ({
             <OpenAiOAuthConnect
               testIdPrefix="settings-openai-oauth"
               allowDisconnect
-              onConnectedChange={isConnected => {
-                if (isConnected) openAiOAuth.onConnected();
-              }}
+              onConnectedChange={handleOpenAiConnectedChange}
             />
           </div>
         ) : null}
@@ -3115,6 +3120,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
     }
   }, [connectProvider, t]);
 
+  const handleOpenAiOAuthConnected = useCallback(() => {
+    void connectProvider({ slug: 'openai', value: 'oauth', credentialMode: 'codex_oauth' });
+  }, [connectProvider]);
+
   // applyPreset removed alongside the Cloud / Local / Mixed preset pills —
   // the new Default/Custom binary toggle handles routing per workload.
 
@@ -3732,7 +3741,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           }
           openAiOAuth={
             keyDialogFor === 'openai' && !pendingLocalLabel
-              ? { onConnected: () => void reload() }
+              ? { onConnected: handleOpenAiOAuthConnected }
               : null
           }
           onCancel={() => {

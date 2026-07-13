@@ -7118,26 +7118,27 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Удалить',
   'flows.delete.deleting': 'Удаление…',
   'flows.canvas.renameLabel': 'Переименовать рабочий процесс',
-  'settings.ai.openaiOauthTitle': 'Sign in with ChatGPT',
+  'settings.ai.openaiOauthTitle': 'Войти через ChatGPT',
   'settings.ai.openaiOauthDescription':
-    'Sign in with your ChatGPT account to use OpenAI models without an API key.',
-  'settings.ai.openaiOauthConnect': 'Sign in with ChatGPT',
-  'settings.ai.openaiOauthConnected': 'Connected with ChatGPT',
-  'settings.ai.openaiOauthOpening': 'Opening sign-in…',
+    'Войдите в аккаунт ChatGPT, чтобы использовать модели OpenAI без ключа API.',
+  'settings.ai.openaiOauthConnect': 'Войти через ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Подключено к ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Открываем вход…',
   'settings.ai.openaiOauthCallbackHint':
-    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+    'После входа вставьте полный URL перенаправления из браузера (начинается с http://127.0.0.1:1455/).',
   'settings.ai.openaiOauthCallbackPlaceholder':
     'http://127.0.0.1:1455/auth/callback?code=...&state=...',
-  'settings.ai.openaiOauthFinish': 'Finish ChatGPT sign-in',
-  'settings.ai.openaiOauthDisconnect': 'Disconnect ChatGPT',
-  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
+  'settings.ai.openaiOauthFinish': 'Завершить вход в ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'Отключить ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly':
+    'Вход через ChatGPT доступен только в настольном приложении.',
   'settings.ai.openaiOauthStartError':
-    'Could not start ChatGPT sign-in. Try again or use an API key.',
+    'Не удалось начать вход в ChatGPT. Повторите попытку или используйте ключ API.',
   'settings.ai.openaiOauthCompleteError':
-    'ChatGPT sign-in did not complete. Check the redirect URL and try again.',
+    'Вход в ChatGPT не завершён. Проверьте URL перенаправления и повторите попытку.',
   'settings.ai.openaiOauthCallbackRequired':
-    'Paste the redirect URL from your browser after signing in.',
-  'settings.ai.openaiOauthDisconnectError': 'Could not disconnect ChatGPT. Please try again.',
+    'После входа вставьте URL перенаправления из браузера.',
+  'settings.ai.openaiOauthDisconnectError': 'Не удалось отключить ChatGPT. Повторите попытку.',
 };
 
 export default messages;

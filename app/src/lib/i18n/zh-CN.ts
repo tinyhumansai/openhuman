@@ -6661,26 +6661,23 @@ const messages: TranslationMap = {
   'flows.delete.confirm': '删除',
   'flows.delete.deleting': '正在删除…',
   'flows.canvas.renameLabel': '重命名工作流',
-  'settings.ai.openaiOauthTitle': 'Sign in with ChatGPT',
+  'settings.ai.openaiOauthTitle': '使用 ChatGPT 登录',
   'settings.ai.openaiOauthDescription':
-    'Sign in with your ChatGPT account to use OpenAI models without an API key.',
-  'settings.ai.openaiOauthConnect': 'Sign in with ChatGPT',
-  'settings.ai.openaiOauthConnected': 'Connected with ChatGPT',
-  'settings.ai.openaiOauthOpening': 'Opening sign-in…',
+    '使用 ChatGPT 账户登录，无需 API 密钥即可使用 OpenAI 模型。',
+  'settings.ai.openaiOauthConnect': '使用 ChatGPT 登录',
+  'settings.ai.openaiOauthConnected': '已连接 ChatGPT',
+  'settings.ai.openaiOauthOpening': '正在打开登录页面…',
   'settings.ai.openaiOauthCallbackHint':
-    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+    '登录后，请粘贴浏览器中的完整重定向 URL（以 http://127.0.0.1:1455/ 开头）。',
   'settings.ai.openaiOauthCallbackPlaceholder':
     'http://127.0.0.1:1455/auth/callback?code=...&state=...',
-  'settings.ai.openaiOauthFinish': 'Finish ChatGPT sign-in',
-  'settings.ai.openaiOauthDisconnect': 'Disconnect ChatGPT',
-  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
-  'settings.ai.openaiOauthStartError':
-    'Could not start ChatGPT sign-in. Try again or use an API key.',
-  'settings.ai.openaiOauthCompleteError':
-    'ChatGPT sign-in did not complete. Check the redirect URL and try again.',
-  'settings.ai.openaiOauthCallbackRequired':
-    'Paste the redirect URL from your browser after signing in.',
-  'settings.ai.openaiOauthDisconnectError': 'Could not disconnect ChatGPT. Please try again.',
+  'settings.ai.openaiOauthFinish': '完成 ChatGPT 登录',
+  'settings.ai.openaiOauthDisconnect': '断开 ChatGPT 连接',
+  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT 登录仅在桌面应用中可用。',
+  'settings.ai.openaiOauthStartError': '无法开始 ChatGPT 登录。请重试或使用 API 密钥。',
+  'settings.ai.openaiOauthCompleteError': 'ChatGPT 登录未完成。请检查重定向 URL 后重试。',
+  'settings.ai.openaiOauthCallbackRequired': '登录后，请粘贴浏览器中的重定向 URL。',
+  'settings.ai.openaiOauthDisconnectError': '无法断开 ChatGPT 连接，请重试。',
 };
 
 export default messages;

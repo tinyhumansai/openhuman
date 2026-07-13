@@ -7205,26 +7205,28 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Supprimer',
   'flows.delete.deleting': 'Suppression…',
   'flows.canvas.renameLabel': 'Renommer le workflow',
-  'settings.ai.openaiOauthTitle': 'Sign in with ChatGPT',
+  'settings.ai.openaiOauthTitle': 'Se connecter avec ChatGPT',
   'settings.ai.openaiOauthDescription':
-    'Sign in with your ChatGPT account to use OpenAI models without an API key.',
-  'settings.ai.openaiOauthConnect': 'Sign in with ChatGPT',
-  'settings.ai.openaiOauthConnected': 'Connected with ChatGPT',
-  'settings.ai.openaiOauthOpening': 'Opening sign-in…',
+    'Connectez-vous avec votre compte ChatGPT pour utiliser les modèles OpenAI sans clé API.',
+  'settings.ai.openaiOauthConnect': 'Se connecter avec ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Connecté à ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Ouverture de la connexion…',
   'settings.ai.openaiOauthCallbackHint':
-    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+    'Après la connexion, collez l’URL de redirection complète de votre navigateur (elle commence par http://127.0.0.1:1455/).',
   'settings.ai.openaiOauthCallbackPlaceholder':
     'http://127.0.0.1:1455/auth/callback?code=...&state=...',
-  'settings.ai.openaiOauthFinish': 'Finish ChatGPT sign-in',
-  'settings.ai.openaiOauthDisconnect': 'Disconnect ChatGPT',
-  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
+  'settings.ai.openaiOauthFinish': 'Terminer la connexion à ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'Déconnecter ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly':
+    'La connexion à ChatGPT est disponible uniquement dans l’application de bureau.',
   'settings.ai.openaiOauthStartError':
-    'Could not start ChatGPT sign-in. Try again or use an API key.',
+    'Impossible de démarrer la connexion à ChatGPT. Réessayez ou utilisez une clé API.',
   'settings.ai.openaiOauthCompleteError':
-    'ChatGPT sign-in did not complete. Check the redirect URL and try again.',
+    'La connexion à ChatGPT n’a pas abouti. Vérifiez l’URL de redirection et réessayez.',
   'settings.ai.openaiOauthCallbackRequired':
-    'Paste the redirect URL from your browser after signing in.',
-  'settings.ai.openaiOauthDisconnectError': 'Could not disconnect ChatGPT. Please try again.',
+    'Collez l’URL de redirection de votre navigateur après la connexion.',
+  'settings.ai.openaiOauthDisconnectError':
+    'Impossible de déconnecter ChatGPT. Veuillez réessayer.',
 };
 
 export default messages;

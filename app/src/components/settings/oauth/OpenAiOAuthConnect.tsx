@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
@@ -37,14 +37,16 @@ const OpenAiOAuthConnect = ({
   const [awaitingCallback, setAwaitingCallback] = useState(false);
   const [callbackUrl, setCallbackUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const connectedRef = useRef(false);
+  const onConnectedChangeRef = useRef(onConnectedChange);
+  onConnectedChangeRef.current = onConnectedChange;
 
-  const applyConnected = useCallback(
-    (next: boolean) => {
-      setConnected(next);
-      onConnectedChange?.(next);
-    },
-    [onConnectedChange]
-  );
+  const applyConnected = useCallback((next: boolean) => {
+    if (connectedRef.current === next) return;
+    connectedRef.current = next;
+    setConnected(next);
+    onConnectedChangeRef.current?.(next);
+  }, []);
 
   const refreshStatus = useCallback(async () => {
     if (!isTauri()) {
@@ -54,6 +56,9 @@ const OpenAiOAuthConnect = ({
       const res = await callCoreRpc<{ result: OpenAiOAuthStatus }>({
         method: 'openhuman.inference_openai_oauth_status',
         params: {},
+      });
+      console.debug('[ai-settings:openai-oauth] status check succeeded', {
+        connected: Boolean(res?.result?.connected),
       });
       applyConnected(Boolean(res?.result?.connected));
     } catch (err) {
@@ -82,8 +87,9 @@ const OpenAiOAuthConnect = ({
       if (!authUrl) {
         throw new Error('missing authUrl');
       }
-      setAwaitingCallback(true);
       await openUrl(authUrl);
+      console.debug('[ai-settings:openai-oauth] browser opened');
+      setAwaitingCallback(true);
     } catch (err) {
       console.warn('[ai-settings:openai-oauth] start failed', err);
       setError(t('settings.ai.openaiOauthStartError'));
@@ -105,6 +111,7 @@ const OpenAiOAuthConnect = ({
         method: 'openhuman.inference_openai_oauth_complete',
         params: { callback_url: callback },
       });
+      console.debug('[ai-settings:openai-oauth] completion succeeded');
       setCallbackUrl('');
       setAwaitingCallback(false);
       applyConnected(true);
@@ -121,6 +128,7 @@ const OpenAiOAuthConnect = ({
     setError(null);
     try {
       await callCoreRpc({ method: 'openhuman.inference_openai_oauth_disconnect', params: {} });
+      console.debug('[ai-settings:openai-oauth] disconnect succeeded');
       setAwaitingCallback(false);
       setCallbackUrl('');
       applyConnected(false);
@@ -179,6 +187,7 @@ const OpenAiOAuthConnect = ({
                 {t('settings.ai.openaiOauthCallbackHint')}
               </p>
               <input
+                aria-label={t('settings.ai.openaiOauthCallbackPlaceholder')}
                 data-testid={`${testIdPrefix}-callback-input`}
                 type="text"
                 autoComplete="off"

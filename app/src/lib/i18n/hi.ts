@@ -7038,26 +7038,26 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'हटाएं',
   'flows.delete.deleting': 'हटाया जा रहा है…',
   'flows.canvas.renameLabel': 'वर्कफ़्लो का नाम बदलें',
-  'settings.ai.openaiOauthTitle': 'Sign in with ChatGPT',
+  'settings.ai.openaiOauthTitle': 'ChatGPT से साइन इन करें',
   'settings.ai.openaiOauthDescription':
-    'Sign in with your ChatGPT account to use OpenAI models without an API key.',
-  'settings.ai.openaiOauthConnect': 'Sign in with ChatGPT',
-  'settings.ai.openaiOauthConnected': 'Connected with ChatGPT',
-  'settings.ai.openaiOauthOpening': 'Opening sign-in…',
+    'API कुंजी के बिना OpenAI मॉडल उपयोग करने के लिए अपने ChatGPT खाते से साइन इन करें।',
+  'settings.ai.openaiOauthConnect': 'ChatGPT से साइन इन करें',
+  'settings.ai.openaiOauthConnected': 'ChatGPT से कनेक्टेड',
+  'settings.ai.openaiOauthOpening': 'साइन-इन खोला जा रहा है…',
   'settings.ai.openaiOauthCallbackHint':
-    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+    'साइन इन करने के बाद अपने ब्राउज़र से पूरा रीडायरेक्ट URL चिपकाएँ (http://127.0.0.1:1455/ से शुरू होता है)।',
   'settings.ai.openaiOauthCallbackPlaceholder':
     'http://127.0.0.1:1455/auth/callback?code=...&state=...',
-  'settings.ai.openaiOauthFinish': 'Finish ChatGPT sign-in',
-  'settings.ai.openaiOauthDisconnect': 'Disconnect ChatGPT',
-  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
+  'settings.ai.openaiOauthFinish': 'ChatGPT साइन-इन पूरा करें',
+  'settings.ai.openaiOauthDisconnect': 'ChatGPT डिस्कनेक्ट करें',
+  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT साइन-इन केवल डेस्कटॉप ऐप में उपलब्ध है।',
   'settings.ai.openaiOauthStartError':
-    'Could not start ChatGPT sign-in. Try again or use an API key.',
+    'ChatGPT साइन-इन शुरू नहीं हो सका। फिर कोशिश करें या API कुंजी का उपयोग करें।',
   'settings.ai.openaiOauthCompleteError':
-    'ChatGPT sign-in did not complete. Check the redirect URL and try again.',
+    'ChatGPT साइन-इन पूरा नहीं हुआ। रीडायरेक्ट URL जाँचें और फिर कोशिश करें।',
   'settings.ai.openaiOauthCallbackRequired':
-    'Paste the redirect URL from your browser after signing in.',
-  'settings.ai.openaiOauthDisconnectError': 'Could not disconnect ChatGPT. Please try again.',
+    'साइन इन करने के बाद अपने ब्राउज़र से रीडायरेक्ट URL चिपकाएँ।',
+  'settings.ai.openaiOauthDisconnectError': 'ChatGPT डिस्कनेक्ट नहीं हो सका। कृपया फिर कोशिश करें।',
 };
 
 export default messages;

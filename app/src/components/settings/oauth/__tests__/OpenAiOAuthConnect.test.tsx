@@ -47,6 +47,22 @@ describe('OpenAiOAuthConnect', () => {
     await waitFor(() => expect(onConnectedChange).toHaveBeenCalledWith(true));
   });
 
+  it('does not repeat the connected callback when the parent callback identity changes', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValue({ result: { connected: true } });
+    const first = vi.fn();
+    const second = vi.fn();
+
+    const { rerender } = renderWithProviders(
+      <OpenAiOAuthConnect testIdPrefix={TID} onConnectedChange={first} />
+    );
+    await waitFor(() => expect(first).toHaveBeenCalledTimes(1));
+
+    rerender(<OpenAiOAuthConnect testIdPrefix={TID} onConnectedChange={second} />);
+
+    await waitFor(() => expect(callCoreRpc).toHaveBeenCalledTimes(1));
+    expect(second).not.toHaveBeenCalled();
+  });
+
   it('hides disconnect when not connected even if allowDisconnect is set', async () => {
     vi.mocked(callCoreRpc).mockResolvedValueOnce({ result: { connected: false } });
 
@@ -150,6 +166,21 @@ describe('OpenAiOAuthConnect', () => {
     expect(await screen.findByTestId(`${TID}-error`)).toHaveTextContent(
       'Could not start ChatGPT sign-in.'
     );
+  });
+
+  it('does not show the callback form when opening the browser fails', async () => {
+    vi.mocked(callCoreRpc)
+      .mockResolvedValueOnce({ result: { connected: false } })
+      .mockResolvedValueOnce({ result: { authUrl: 'https://auth.openai.com/oauth?x=1' } });
+    vi.mocked(openUrl).mockRejectedValueOnce(new Error('shell open failed'));
+
+    renderWithProviders(<OpenAiOAuthConnect testIdPrefix={TID} />);
+    fireEvent.click(await screen.findByTestId(`${TID}-connect`));
+
+    expect(await screen.findByTestId(`${TID}-error`)).toHaveTextContent(
+      'Could not start ChatGPT sign-in.'
+    );
+    expect(screen.queryByTestId(`${TID}-callback-input`)).not.toBeInTheDocument();
   });
 
   it('surfaces a completion error when the RPC fails', async () => {

@@ -6885,26 +6885,25 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'حذف',
   'flows.delete.deleting': 'جارٍ الحذف…',
   'flows.canvas.renameLabel': 'إعادة تسمية سير العمل',
-  'settings.ai.openaiOauthTitle': 'Sign in with ChatGPT',
+  'settings.ai.openaiOauthTitle': 'تسجيل الدخول باستخدام ChatGPT',
   'settings.ai.openaiOauthDescription':
-    'Sign in with your ChatGPT account to use OpenAI models without an API key.',
-  'settings.ai.openaiOauthConnect': 'Sign in with ChatGPT',
-  'settings.ai.openaiOauthConnected': 'Connected with ChatGPT',
-  'settings.ai.openaiOauthOpening': 'Opening sign-in…',
+    'سجّل الدخول بحساب ChatGPT لاستخدام نماذج OpenAI من دون مفتاح API.',
+  'settings.ai.openaiOauthConnect': 'تسجيل الدخول باستخدام ChatGPT',
+  'settings.ai.openaiOauthConnected': 'متصل بـ ChatGPT',
+  'settings.ai.openaiOauthOpening': 'جارٍ فتح تسجيل الدخول…',
   'settings.ai.openaiOauthCallbackHint':
-    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+    'بعد تسجيل الدخول، الصق عنوان URL الكامل لإعادة التوجيه من متصفحك (يبدأ بـ http://127.0.0.1:1455/).',
   'settings.ai.openaiOauthCallbackPlaceholder':
     'http://127.0.0.1:1455/auth/callback?code=...&state=...',
-  'settings.ai.openaiOauthFinish': 'Finish ChatGPT sign-in',
-  'settings.ai.openaiOauthDisconnect': 'Disconnect ChatGPT',
-  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
+  'settings.ai.openaiOauthFinish': 'إكمال تسجيل الدخول إلى ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'قطع الاتصال بـ ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly': 'تسجيل الدخول إلى ChatGPT متاح فقط في تطبيق سطح المكتب.',
   'settings.ai.openaiOauthStartError':
-    'Could not start ChatGPT sign-in. Try again or use an API key.',
+    'تعذّر بدء تسجيل الدخول إلى ChatGPT. حاول مجددًا أو استخدم مفتاح API.',
   'settings.ai.openaiOauthCompleteError':
-    'ChatGPT sign-in did not complete. Check the redirect URL and try again.',
-  'settings.ai.openaiOauthCallbackRequired':
-    'Paste the redirect URL from your browser after signing in.',
-  'settings.ai.openaiOauthDisconnectError': 'Could not disconnect ChatGPT. Please try again.',
+    'لم يكتمل تسجيل الدخول إلى ChatGPT. تحقّق من عنوان إعادة التوجيه وحاول مجددًا.',
+  'settings.ai.openaiOauthCallbackRequired': 'الصق عنوان إعادة التوجيه من متصفحك بعد تسجيل الدخول.',
+  'settings.ai.openaiOauthDisconnectError': 'تعذّر قطع الاتصال بـ ChatGPT. يُرجى المحاولة مجددًا.',
 };
 
 export default messages;
