@@ -822,14 +822,23 @@ fn is_whatsapp_data_sqlite_busy_message(lower: &str) -> bool {
 /// This is defense-in-depth **after** the store's quarantine + rebuild recovery
 /// (see [`ExpectedErrorKind::WhatsAppDataSqliteCorrupt`]) — the store already
 /// reports the first hit once and rebuilds the DB; this only demotes residual
-/// noise. Both `upsert wa_chat` and `upsert wa_message` frames are matched
-/// because the observed Sentry symptom (TAURI-RUST-KNH) fired on the
-/// `upsert wa_chat <jid>@lid` path.
+/// noise. The `upsert wa_chat` / `upsert wa_message` frames are matched because
+/// the observed Sentry symptom (TAURI-RUST-KNH) fired on the
+/// `upsert wa_chat <jid>@lid` path; the `prune` frame is matched because the
+/// same ingest RPC also runs the 90-day auto-prune under the same corrupt-DB
+/// recovery wrapper, and a malformed image surfaced from the prune step (its
+/// error context carries the word `prune`, e.g. `prune old wa_messages`) would
+/// otherwise reach Sentry unfiltered. All three still require the
+/// `[whatsapp_data] ingest failed:` envelope so unrelated malformed-image
+/// errors in other domains keep paging.
 fn is_whatsapp_data_sqlite_corrupt_message(lower: &str) -> bool {
     if !lower.contains("[whatsapp_data] ingest failed:") {
         return false;
     }
-    if !(lower.contains("upsert wa_message") || lower.contains("upsert wa_chat")) {
+    let has_write_frame = lower.contains("upsert wa_message")
+        || lower.contains("upsert wa_chat")
+        || lower.contains("prune");
+    if !has_write_frame {
         return false;
     }
     lower.contains("disk image is malformed")
@@ -4399,6 +4408,45 @@ mod tests {
                 expected_error_kind(raw),
                 Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
                 "should classify whatsapp_data sqlite corrupt: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_whatsapp_data_prune_path_sqlite_corrupt_errors() {
+        // The same ingest RPC runs the 90-day auto-prune under the store's
+        // corrupt-DB recovery wrapper. A malformed image surfaced from the prune
+        // step carries a `prune` frame (e.g. `prune old wa_messages`) instead of
+        // an `upsert` frame, and must still be demoted — otherwise a boot-time
+        // prune corruption re-floods Sentry on every scan tick (Finding 3).
+        for raw in [
+            r#"[whatsapp_data] ingest failed: prune old wa_messages: database disk image is malformed: Error code 11: The database disk image is malformed"#,
+            r#"[whatsapp_data] ingest failed: prune old wa_messages: scan affected chats: database disk image is malformed"#,
+            r#"[whatsapp_data] ingest failed: refresh chat stats after prune: chat@c.us: file is not a database: Error code 26"#,
+            r#"rpc.invoke_method failed: [whatsapp_data] ingest failed: prune old wa_messages: database disk image is malformed"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "should classify whatsapp_data prune-path sqlite corrupt: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_prune_errors_as_whatsapp_corrupt() {
+        for raw in [
+            // A `prune` word outside the whatsapp ingest envelope must still page.
+            "memory queue prune failed: database disk image is malformed",
+            // whatsapp prune-path lock contention is the *busy* bucket, not corrupt.
+            "[whatsapp_data] ingest failed: prune old wa_messages: database is locked",
+            // whatsapp prune-path constraint/logic error is a real bug, not on-disk damage.
+            "[whatsapp_data] ingest failed: prune old wa_messages: no such table: wa_messages",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "must not classify as whatsapp_data sqlite corrupt: {raw}"
             );
         }
     }

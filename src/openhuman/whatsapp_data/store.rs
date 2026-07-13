@@ -556,10 +556,17 @@ impl WhatsAppDataStore {
         let now = Self::now_secs();
 
         // Collect affected (account_id, chat_id) pairs before deleting.
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT account_id, chat_id FROM wa_messages
-             WHERE timestamp > 0 AND timestamp < ?1",
-        )?;
+        // Contextualized so a `SQLITE_CORRUPT` surfaced while compiling this
+        // scan still carries a `prune` frame marker the observability
+        // classifier keys on (otherwise a boot-time prune corruption would
+        // reach Sentry unfiltered — the prepare of a plain SELECT still reads
+        // the schema/root page where damage commonly lives).
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT account_id, chat_id FROM wa_messages
+                 WHERE timestamp > 0 AND timestamp < ?1",
+            )
+            .context("prune old wa_messages: scan affected chats")?;
         let affected: Vec<(String, String)> = stmt
             .query_map(params![cutoff_ts], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<rusqlite::Result<_>>()
