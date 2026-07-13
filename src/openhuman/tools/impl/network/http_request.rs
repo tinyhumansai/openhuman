@@ -358,6 +358,23 @@ impl Tool for HttpRequestTool {
             Err(e) => return Ok(ToolResult::error(e.to_string())),
         };
 
+        // Egress spine (privacy epic S2, #4436): an agent-driven HTTP request to
+        // an allowlisted host leaves the device — disclose the destination (and
+        // that a body may accompany it) before the round-trip.
+        {
+            let host = reqwest::Url::parse(&url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "unknown".to_string());
+            let mut desc =
+                crate::openhuman::security::egress::EgressDescriptor::network_fetch(host);
+            if body.is_some() {
+                desc = desc
+                    .with_data_kind(crate::openhuman::security::egress::DataKind::ToolArguments);
+            }
+            crate::openhuman::security::egress::emit_external_transfer(desc);
+        }
+
         let method = match self.validate_method(method_str) {
             Ok(m) => m,
             Err(e) => return Ok(ToolResult::error(e.to_string())),
