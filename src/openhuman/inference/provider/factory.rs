@@ -666,6 +666,35 @@ fn enforce_local_only_inference(role: &str, provider: &str) -> anyhow::Result<()
     }
 }
 
+/// Egress spine (privacy epic S2, #4436): emit an [`EgressDescriptor`] for a
+/// concrete inference provider string. `provider` is expected to be already
+/// resolved (no `""` / `"cloud"` / BYOK sentinels — those are handled before
+/// this is called). Local runtimes are marked non-external, so
+/// [`emit_external_transfer`](crate::openhuman::security::egress::emit_external_transfer)
+/// discloses them without firing the external-transfer event.
+fn emit_inference_egress(role: &str, provider: &str) {
+    let p = provider.trim();
+    if p.is_empty() || p == "cloud" {
+        // Defensive: a sentinel would re-resolve on recursion; don't emit here.
+        return;
+    }
+    let is_local = crate::openhuman::inference::local::profile::is_local_provider_string(p);
+    let (slug, model) = match p.split_once(':') {
+        Some((s, m)) if !s.trim().is_empty() => (s.trim().to_string(), m.trim().to_string()),
+        _ => (p.to_string(), String::new()),
+    };
+    // Fall back to the workload role when the provider string carries no model
+    // component (e.g. a bare `"openhuman"` / `"ollama"` slug).
+    let service = if model.is_empty() {
+        role.to_string()
+    } else {
+        model
+    };
+    crate::openhuman::security::egress::emit_external_transfer(
+        crate::openhuman::security::egress::EgressDescriptor::inference(slug, service, !is_local),
+    );
+}
+
 /// Build a `(Provider, model)` for the given workload role.
 pub fn create_chat_provider(
     role: &str,
@@ -735,6 +764,13 @@ pub fn create_chat_provider_from_string(
         let resolved = resolve_primary_cloud_provider_string(config);
         return create_chat_provider_from_string(role, &resolved, config);
     }
+
+    // Egress spine (privacy epic S2, #4436): `p` is now a concrete provider
+    // string (sentinels resolved / BYOK bailed above), so this is the single
+    // point where an inference destination is committed. Emit the descriptor
+    // BEFORE constructing any provider below. Local runtimes are disclosed as
+    // non-external and never fire the pending event (see `emit_external_transfer`).
+    emit_inference_egress(role, p);
 
     if p == PROVIDER_OPENHUMAN {
         return make_openhuman_backend(role, config);

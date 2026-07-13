@@ -134,6 +134,11 @@ impl EmbeddingProvider for OpenHumanCloudEmbedding {
                 self.model,
             );
         }
+        // Egress spine (privacy epic S2, #4436): the input texts leave the
+        // device for the cloud embedding backend — disclose before the request.
+        crate::openhuman::security::egress::emit_external_transfer(
+            crate::openhuman::security::egress::EgressDescriptor::embedding("cloud", &self.model),
+        );
         let token = self.resolve_bearer()?;
         let inner = OpenAiEmbedding::new(&self.base_url(), &token, &self.model, self.dims);
         inner.embed(texts).await
