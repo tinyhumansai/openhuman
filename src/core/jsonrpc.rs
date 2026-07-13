@@ -2194,6 +2194,11 @@ pub async fn bootstrap_core_runtime(
     // unguarded standalone/CLI/Docker core would park a plan review that never
     // reaches the UI and dies at the gate TTL. Idempotent (Once-guarded).
     crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
+    // Egress-surface bridge (privacy epic S2, #4436) — registered
+    // unconditionally alongside the approval surface so external-transfer
+    // disclosures reach the UI even on cores that skip `start_channels` or run
+    // with the approval gate disabled. Idempotent (OnceLock-guarded).
+    crate::openhuman::channels::providers::web::register_egress_surface_subscriber();
 
     if decision.install_gate {
         // Per-launch correlation token for the approval gate. This is

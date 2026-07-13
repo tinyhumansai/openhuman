@@ -171,6 +171,10 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // ArtifactFailed) as `artifact_ready` / `artifact_failed` web-channel
     // events so the frontend ArtifactCard can render in chat (#2779).
     crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
+    // Surface external-egress disclosure events (ExternalTransferPending) as
+    // `external_transfer_pending` web-channel events so the frontend can show a
+    // per-action "what leaves, to where, why" card (privacy epic S2, #4436).
+    crate::openhuman::channels::providers::web::register_egress_surface_subscriber();
     // Spawn the per-toolkit provider periodic sync scheduler. This is
     // a thin tokio task that ticks every minute and dispatches into
     // any provider whose `sync_interval_secs` has elapsed for an
