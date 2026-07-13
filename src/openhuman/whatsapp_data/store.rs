@@ -66,8 +66,47 @@ impl WhatsAppDataStore {
             db_path,
             write_lock: Mutex::new(()),
         };
-        store.init_schema()?;
+        store.init_schema_or_recover()?;
         Ok(store)
+    }
+
+    /// Initialize the schema, self-healing a DB that is already corrupt **at
+    /// process startup**.
+    ///
+    /// Without this, a `whatsapp_data.db` that is malformed before the first
+    /// write RPC arrives makes `init_schema()` fail, `global::init` leaves the
+    /// store singleton unset, and every subsequent ingest RPC fails with
+    /// "store accessed before init" — the corruption never reaches the
+    /// quarantine + rebuild path (which only guards the *write* wrapper), so it
+    /// survives restarts and re-pages Sentry on every scanner tick. Recovering
+    /// here makes a boot-time corrupt DB heal exactly as a mid-run one does.
+    ///
+    /// The `CORRUPT_REPORTED` latch semantics are reused verbatim via
+    /// [`Self::report_and_recover`] (report once per episode, reset only on a
+    /// confirmed-healthy rebuild), so a boot-time corruption pages at most once.
+    fn init_schema_or_recover(&self) -> Result<()> {
+        match self.init_schema() {
+            Ok(()) => Ok(()),
+            Err(e) if is_sqlite_corrupt(&e) => {
+                log::error!(
+                    "[whatsapp_data] init_schema hit SQLITE_CORRUPT at startup for {} — \
+                     driving quarantine + rebuild before ingest can begin: {e:#}",
+                    self.db_path.display()
+                );
+                // Reports once (latch), quarantines the malformed image, and
+                // rebuilds the schema. `recover_corrupt_db` is safe to call on
+                // the just-constructed store: it only needs `db_path` +
+                // `init_schema`, both available before the store is published.
+                self.report_and_recover("init_schema", &e);
+                // Confirm the store is now usable. If recovery failed, this
+                // re-init returns Err and `global::init` correctly leaves the
+                // singleton unset — but now only when the DB is genuinely
+                // unrecoverable, not merely corrupt-on-boot.
+                self.init_schema()
+                    .context("re-init whatsapp_data schema after boot-time corrupt-DB recovery")
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Initialize the schema. Idempotent — safe to call on every startup.

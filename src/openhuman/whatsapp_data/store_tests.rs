@@ -611,6 +611,72 @@ fn recover_corrupt_db_errors_and_keeps_latch_when_rebuild_fails_integrity() {
     );
 }
 
+/// Finding 2 regression: a `whatsapp_data.db` that is already malformed at
+/// process startup must self-heal during store construction. Before the fix,
+/// `WhatsAppDataStore::new()` propagated the `init_schema` corruption error, the
+/// store singleton was never set, and every ingest RPC failed forever — the
+/// corruption survived restarts and re-paged Sentry on every scanner tick.
+#[test]
+fn new_recovers_from_corruption_at_startup() {
+    use std::sync::atomic::Ordering;
+
+    let _guard = super::CORRUPT_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    super::CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+
+    // Pre-create the whatsapp_data dir and plant a malformed DB file BEFORE any
+    // store exists, simulating a corrupt image left behind by a prior run.
+    let tmp = tempdir().expect("tempdir");
+    let workspace = tmp.path().to_path_buf();
+    let db_path = db_path_for(&tmp);
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &db_path,
+        b"this is not a sqlite database, just garbage bytes",
+    )
+    .unwrap();
+
+    // Construction must succeed by quarantining + rebuilding, not error out.
+    let store = WhatsAppDataStore::new(&workspace)
+        .expect("new() must self-heal a boot-time corrupt DB, not propagate the error");
+
+    // The corrupt bytes are preserved alongside, never silently dropped.
+    let quarantined = std::fs::read_dir(db_path.parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .contains("whatsapp_data.db.corrupt-")
+        })
+        .count();
+    assert_eq!(
+        quarantined, 1,
+        "boot-time corrupt image must be quarantined once"
+    );
+
+    // The rebuilt DB is fully usable — a subsequent upsert lands and reads back.
+    let mut chats = HashMap::new();
+    chats.insert("chat@c.us".to_string(), chat_meta("Alice"));
+    let count = store
+        .upsert_chats("acct1", &chats)
+        .expect("upsert must succeed against the rebuilt DB");
+    assert_eq!(count, 1);
+
+    let rows = store
+        .list_chats(&ListChatsRequest {
+            account_id: Some("acct1".to_string()),
+            limit: None,
+            offset: None,
+        })
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].chat_id, "chat@c.us");
+
+    super::CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+}
+
 /// A *healthy* DB must never be quarantined even if `recover_corrupt_db` is
 /// invoked — `quick_check` passes, so good data is preserved and recovery is a
 /// no-op returning `Ok(false)`.
