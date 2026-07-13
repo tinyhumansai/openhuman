@@ -1806,14 +1806,58 @@ async fn run_server_with_services(
 ///
 /// Guarded by `std::sync::Once` so repeated calls to `bootstrap_core_runtime`
 /// are safe and idempotent.
+/// Per-`DomainGroup` gating decision for each event-bus subscriber that
+/// [`register_domain_subscribers`] conditionally registers. Extracted as a
+/// pure value so the subscriber→group mapping has a single source of truth
+/// that the registrar consumes and tests assert directly — without registering
+/// real subscribers or touching the process-global event bus (#4796 DoD item 3).
+///
+/// Unlisted subscribers (health, scheduler-gate, TokenJuice content-router,
+/// session-token seeding, `SessionExpired`, service restart/shutdown) are
+/// always registered as core/platform infra and intentionally absent here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DomainSubscriberPlan {
+    /// webhook + notification-bridge + composio trigger + task-sources + device-tunnel.
+    pub platform: bool,
+    /// channel-inbound + web-only proactive.
+    pub channels: bool,
+    /// flows trigger dispatch.
+    pub flows: bool,
+    /// memory conversation-persistence + sync-stage bridge.
+    pub memory: bool,
+    /// agent_meetings calendar + meeting-event subscribers.
+    pub meet: bool,
+    /// agent handlers + background delivery + run-ledger finalizer + orchestration ingest.
+    pub agent: bool,
+    /// mcp_registry lifecycle bus init.
+    pub mcp: bool,
+}
+
+impl DomainSubscriberPlan {
+    /// The subscriber-registration plan for `domains`. Pure: no side effects.
+    pub fn for_domains(domains: crate::core::runtime::DomainSet) -> Self {
+        use crate::core::all::DomainGroup;
+        Self {
+            platform: domains.allows(DomainGroup::Platform),
+            channels: domains.allows(DomainGroup::Channels),
+            flows: domains.allows(DomainGroup::Flows),
+            memory: domains.allows(DomainGroup::Memory),
+            meet: domains.allows(DomainGroup::Meet),
+            agent: domains.allows(DomainGroup::Agent),
+            mcp: domains.allows(DomainGroup::Mcp),
+        }
+    }
+}
+
 fn register_domain_subscribers(
     workspace_dir: std::path::PathBuf,
     config: crate::openhuman::config::Config,
     embedded_core: bool,
     domains: crate::core::runtime::DomainSet,
 ) {
-    use crate::core::all::DomainGroup;
     use std::sync::{Arc, Once};
+
+    let plan = DomainSubscriberPlan::for_domains(domains);
 
     static REGISTERED: Once = Once::new();
     REGISTERED.call_once(|| {
@@ -1825,7 +1869,7 @@ fn register_domain_subscribers(
         log::debug!("[event_bus] register_domain_subscribers: domains={domains:?}");
         // Leak the SubscriptionHandle so the background tasks live for the
         // entire process — SubscriptionHandle::drop aborts the task.
-        if domains.allows(DomainGroup::Platform) {
+        if plan.platform {
             if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
                 crate::openhuman::webhooks::bus::WebhookRequestSubscriber::new(),
             )) {
@@ -1839,7 +1883,7 @@ fn register_domain_subscribers(
             log::debug!("[event_bus] webhook subscriber SKIPPED — Platform domain disabled");
         }
 
-        if domains.allows(DomainGroup::Channels) {
+        if plan.channels {
             if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
                 crate::openhuman::channels::bus::ChannelInboundSubscriber::new(),
             )) {
@@ -1859,7 +1903,7 @@ fn register_domain_subscribers(
         // Once-guarded) rather than under channel startup, so schedule/app-event
         // workflows still dispatch when no realtime channel is configured or
         // `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` short-circuits `start_channels`.
-        if domains.allows(DomainGroup::Flows) {
+        if plan.flows {
             if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
                 crate::openhuman::flows::bus::FlowTriggerSubscriber::new(Arc::new(config.clone())),
             )) {
@@ -1873,12 +1917,12 @@ fn register_domain_subscribers(
 
         // Health / scheduler-gate / session-token seeding are core infra — always on.
         crate::openhuman::health::bus::register_health_subscriber();
-        if domains.allows(DomainGroup::Platform) {
+        if plan.platform {
             crate::openhuman::notifications::register_notification_bridge_subscriber(config.clone());
         } else {
             log::debug!("[event_bus] notification bridge SKIPPED — Platform domain disabled");
         }
-        if domains.allows(DomainGroup::Memory) {
+        if plan.memory {
             crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
                 workspace_dir.clone(),
             );
@@ -1888,7 +1932,7 @@ fn register_domain_subscribers(
                 "[event_bus] memory conversation-persistence + sync bridge SKIPPED — Memory domain disabled"
             );
         }
-        if domains.allows(DomainGroup::Platform) {
+        if plan.platform {
             if let Err(error) =
                 crate::openhuman::composio::init_composio_trigger_history(workspace_dir.clone())
             {
@@ -1898,20 +1942,20 @@ fn register_domain_subscribers(
         } else {
             log::debug!("[event_bus] composio trigger subscriber SKIPPED — Platform domain disabled");
         }
-        if domains.allows(DomainGroup::Meet) {
+        if plan.meet {
             crate::openhuman::agent_meetings::calendar::register_meet_calendar_subscriber();
             crate::openhuman::agent_meetings::bus::register_meeting_event_subscriber();
         } else {
             log::debug!("[event_bus] agent_meetings subscribers SKIPPED — Meet domain disabled");
         }
         // Orchestration: ingest tiny.place harness session DMs off the stream bus.
-        if domains.allows(DomainGroup::Agent) {
+        if plan.agent {
             crate::openhuman::orchestration::register_orchestration_ingest_subscriber();
         } else {
             log::debug!("[event_bus] orchestration ingest subscriber SKIPPED — Agent domain disabled");
         }
         // Task-sources proactive ingestion: connection-created hook + poll.
-        if domains.allows(DomainGroup::Platform) {
+        if plan.platform {
             crate::openhuman::task_sources::bus::register_task_sources_subscriber();
         } else {
             log::debug!("[event_bus] task_sources subscriber SKIPPED — Platform domain disabled");
@@ -1985,7 +2029,7 @@ fn register_domain_subscribers(
         // Proactive message subscriber (web-only in the desktop runtime —
         // no external channel instances are registered here). Uses a
         // Once-guarded registrar so domain-level startup can't duplicate it.
-        if domains.allows(DomainGroup::Channels) {
+        if plan.channels {
             crate::openhuman::channels::proactive::register_web_only_proactive_subscriber();
         } else {
             log::debug!("[event_bus] web-only proactive subscriber SKIPPED — Channels domain disabled");
@@ -1994,7 +2038,7 @@ fn register_domain_subscribers(
         // Device tunnel subscriber: handles tunnel:frame handshakes, peer-status
         // events, and register acks. Must be registered before any tunnel:frame
         // events can arrive.
-        if domains.allows(DomainGroup::Platform) {
+        if plan.platform {
             crate::openhuman::devices::bus::register_device_tunnel_subscriber();
         } else {
             log::debug!("[event_bus] device tunnel subscriber SKIPPED — Platform domain disabled");
@@ -2003,7 +2047,7 @@ fn register_domain_subscribers(
         // Native request handlers — typed in-process request/response.
         // The agent `agent.run_turn` handler is what channel dispatch
         // calls instead of importing `run_tool_call_loop` directly.
-        if domains.allows(DomainGroup::Agent) {
+        if plan.agent {
             crate::openhuman::agent::bus::register_agent_handlers();
 
             // Background-completion delivery: when a detached sub-agent
@@ -2029,7 +2073,7 @@ fn register_domain_subscribers(
         // spawn of installed servers (boot::spawn_installed_servers) runs later
         // in bootstrap_core_runtime; this subscriber must be live before then so
         // those connect events are observed (issue #3039 gap A1).
-        if domains.allows(DomainGroup::Mcp) {
+        if plan.mcp {
             crate::openhuman::mcp_registry::bus::init();
         } else {
             log::debug!("[event_bus] mcp_registry bus init SKIPPED — Mcp domain disabled");
