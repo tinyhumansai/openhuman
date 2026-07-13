@@ -18,7 +18,7 @@
 //! for the scoring model.
 //!
 //! ```
-//! use openhuman::openhuman::security::pii::{scan, PiiCategory, RiskLevel};
+//! use openhuman_core::openhuman::security::pii::{scan, PiiCategory, RiskLevel};
 //!
 //! let result = scan("patient John was diagnosed; SSN 123-45-6789");
 //! assert_eq!(result.level, RiskLevel::High);
@@ -28,6 +28,9 @@
 mod detector;
 mod rules;
 mod types;
+
+#[cfg(test)]
+mod tests;
 
 pub use detector::scan;
 pub use types::{CategoryHit, PiiCategory, PiiScanResult, RiskLevel};
