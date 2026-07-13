@@ -32,12 +32,14 @@ describe('OpenAiOAuthConnect', () => {
   it('reflects an already-connected status and surfaces disconnect when allowed', async () => {
     vi.mocked(callCoreRpc).mockResolvedValueOnce({ result: { connected: true } });
     const onConnectedChange = vi.fn();
+    const onCompleted = vi.fn();
 
     renderWithProviders(
       <OpenAiOAuthConnect
         testIdPrefix={TID}
         allowDisconnect
         onConnectedChange={onConnectedChange}
+        onCompleted={onCompleted}
       />
     );
 
@@ -45,6 +47,7 @@ describe('OpenAiOAuthConnect', () => {
     expect(screen.getByText('Connected with ChatGPT')).toBeInTheDocument();
     expect(screen.getByTestId(`${TID}-disconnect`)).toBeInTheDocument();
     await waitFor(() => expect(onConnectedChange).toHaveBeenCalledWith(true));
+    expect(onCompleted).not.toHaveBeenCalled();
   });
 
   it('does not repeat the connected callback when the parent callback identity changes', async () => {
@@ -78,9 +81,14 @@ describe('OpenAiOAuthConnect', () => {
       .mockResolvedValueOnce({ result: { authUrl: 'https://auth.openai.com/oauth?x=1' } }) // start
       .mockResolvedValueOnce({ result: {} }); // complete
     const onConnectedChange = vi.fn();
+    const onCompleted = vi.fn();
 
     renderWithProviders(
-      <OpenAiOAuthConnect testIdPrefix={TID} onConnectedChange={onConnectedChange} />
+      <OpenAiOAuthConnect
+        testIdPrefix={TID}
+        onConnectedChange={onConnectedChange}
+        onCompleted={onCompleted}
+      />
     );
 
     fireEvent.click(await screen.findByTestId(`${TID}-connect`));
@@ -95,6 +103,7 @@ describe('OpenAiOAuthConnect', () => {
 
     expect(await screen.findByTestId(`${TID}-connected`)).toBeInTheDocument();
     await waitFor(() => expect(onConnectedChange).toHaveBeenCalledWith(true));
+    expect(onCompleted).toHaveBeenCalledTimes(1);
     expect(callCoreRpc).toHaveBeenLastCalledWith({
       method: 'openhuman.inference_openai_oauth_complete',
       params: { callback_url: 'http://127.0.0.1:1455/auth/callback?code=abc&state=xyz' },
@@ -106,12 +115,14 @@ describe('OpenAiOAuthConnect', () => {
       .mockResolvedValueOnce({ result: { connected: true } }) // status
       .mockResolvedValueOnce({ result: { removed: true } }); // disconnect
     const onConnectedChange = vi.fn();
+    const onDisconnected = vi.fn();
 
     renderWithProviders(
       <OpenAiOAuthConnect
         testIdPrefix={TID}
         allowDisconnect
         onConnectedChange={onConnectedChange}
+        onDisconnected={onDisconnected}
       />
     );
 
@@ -119,6 +130,7 @@ describe('OpenAiOAuthConnect', () => {
 
     expect(await screen.findByTestId(`${TID}-connect`)).toBeInTheDocument();
     await waitFor(() => expect(onConnectedChange).toHaveBeenLastCalledWith(false));
+    expect(onDisconnected).toHaveBeenCalledTimes(1);
     expect(callCoreRpc).toHaveBeenLastCalledWith({
       method: 'openhuman.inference_openai_oauth_disconnect',
       params: {},

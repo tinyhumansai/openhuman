@@ -689,7 +689,10 @@ const ProviderKeyDialog = ({
   oauthAction?: { label: string; description?: string; onClick: () => Promise<void> | void } | null;
   /** When set, render the OpenAI "Sign in with ChatGPT" surface; `onConnected`
    *  fires once the OAuth round-trip succeeds so the parent can refresh + close. */
-  openAiOAuth?: { onConnected: () => void } | null;
+  openAiOAuth?: {
+    onCompleted: () => Promise<void> | void;
+    onDisconnected: () => Promise<void> | void;
+  } | null;
   onCancel: () => void;
   /** Returns the entered value(s). For plain local runtimes this is the
    *  endpoint URL; for cloud providers it's the API key. In `endpointKeyMode`
@@ -706,13 +709,6 @@ const ProviderKeyDialog = ({
   const [phase, setPhase] = useState<'idle' | 'saving' | 'oauth'>('idle');
   const [error, setError] = useState<string | null>(null);
   const busy = phase !== 'idle';
-  const openAiOAuthOnConnected = openAiOAuth?.onConnected;
-  const handleOpenAiConnectedChange = useCallback(
-    (isConnected: boolean) => {
-      if (isConnected) openAiOAuthOnConnected?.();
-    },
-    [openAiOAuthOnConnected]
-  );
 
   const placeholder = isLocalRuntime
     ? defaultEndpointFor(slug) || t('settings.ai.defaultLocalEndpoint')
@@ -887,7 +883,8 @@ const ProviderKeyDialog = ({
             <OpenAiOAuthConnect
               testIdPrefix="settings-openai-oauth"
               allowDisconnect
-              onConnectedChange={handleOpenAiConnectedChange}
+              onCompleted={openAiOAuth.onCompleted}
+              onDisconnected={openAiOAuth.onDisconnected}
             />
           </div>
         ) : null}
@@ -3120,9 +3117,33 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
     }
   }, [connectProvider, t]);
 
-  const handleOpenAiOAuthConnected = useCallback(() => {
-    void connectProvider({ slug: 'openai', value: 'oauth', credentialMode: 'codex_oauth' });
-  }, [connectProvider]);
+  const handleOpenAiOAuthCompleted = useCallback(async () => {
+    try {
+      await connectProvider({ slug: 'openai', value: 'oauth', credentialMode: 'codex_oauth' });
+      console.debug('[ai-settings:openai-oauth] provider registration succeeded', {
+        provider: 'openai',
+      });
+    } catch (err) {
+      console.warn('[ai-settings:openai-oauth] provider registration failed', {
+        provider: 'openai',
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await reload();
+      throw err;
+    }
+  }, [connectProvider, reload]);
+
+  const handleOpenAiOAuthDisconnected = useCallback(async () => {
+    const existing = draft.cloudProviders.find(cp => cp.slug === 'openai');
+    if (!existing) return;
+    const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
+    const nextRouting = routingWithProviderRemoved(
+      draft.routing,
+      { slug: existing.slug, isLocalRuntime: false },
+      remaining
+    );
+    await persist({ ...draft, cloudProviders: remaining, routing: nextRouting });
+  }, [draft, persist]);
 
   // applyPreset removed alongside the Cloud / Local / Mixed preset pills —
   // the new Default/Custom binary toggle handles routing per workload.
@@ -3741,7 +3762,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           }
           openAiOAuth={
             keyDialogFor === 'openai' && !pendingLocalLabel
-              ? { onConnected: handleOpenAiOAuthConnected }
+              ? {
+                  onCompleted: handleOpenAiOAuthCompleted,
+                  onDisconnected: handleOpenAiOAuthDisconnected,
+                }
               : null
           }
           onCancel={() => {

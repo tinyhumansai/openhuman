@@ -22,6 +22,10 @@ interface OpenAiOAuthConnectProps {
   testIdPrefix?: string;
   /** Notified whenever the connected state is established or cleared. */
   onConnectedChange?: (connected: boolean) => void;
+  /** Runs only after the user explicitly completes the OAuth round-trip. */
+  onCompleted?: () => Promise<void> | void;
+  /** Runs after OAuth credentials are explicitly disconnected. */
+  onDisconnected?: () => Promise<void> | void;
   /** When true, expose a "Disconnect" control once connected. */
   allowDisconnect?: boolean;
 }
@@ -29,6 +33,8 @@ interface OpenAiOAuthConnectProps {
 const OpenAiOAuthConnect = ({
   testIdPrefix = 'openai-oauth',
   onConnectedChange,
+  onCompleted,
+  onDisconnected,
   allowDisconnect = false,
 }: OpenAiOAuthConnectProps) => {
   const { t } = useT();
@@ -112,6 +118,7 @@ const OpenAiOAuthConnect = ({
         params: { callback_url: callback },
       });
       console.debug('[ai-settings:openai-oauth] completion succeeded');
+      await onCompleted?.();
       setCallbackUrl('');
       setAwaitingCallback(false);
       applyConnected(true);
@@ -129,6 +136,7 @@ const OpenAiOAuthConnect = ({
     try {
       await callCoreRpc({ method: 'openhuman.inference_openai_oauth_disconnect', params: {} });
       console.debug('[ai-settings:openai-oauth] disconnect succeeded');
+      await onDisconnected?.();
       setAwaitingCallback(false);
       setCallbackUrl('');
       applyConnected(false);
