@@ -7076,7 +7076,7 @@ const messages: TranslationMap = {
   'privacy.disclosure.body': 'سيؤدي هذا إلى إرسال {kinds} إلى {destination} لأن {reason}.',
   'privacy.disclosure.dismiss': 'حسنًا',
   'privacy.disclosure.ariaLabel': 'إفصاح عن البيانات الخارجية',
-  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kindSeparator': '، ',
   'privacy.disclosure.kind.prompt': 'رسالتك',
   'privacy.disclosure.kind.toolArguments': 'مدخلات الأداة',
   'privacy.disclosure.kind.embeddingInput': 'نص للفهرسة',

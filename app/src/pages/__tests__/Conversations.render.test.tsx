@@ -2771,9 +2771,15 @@ describe('Conversations — external-transfer disclosure surface (#4437 / S3)', 
 
   it('falls back to firstActiveThreadId when no thread is selected', async () => {
     const thread = makeThread({ id: 't-act' });
-    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    // Keep thread loading pending so the mount flow's auto-select can't fire. With a
+    // resolved load the sole thread `t-act` would be auto-selected, and the assertion
+    // would then pass through the normal selected-thread path instead of the intended
+    // `selectedThreadId ?? firstActiveThreadId` fallback (CR #4849). A pending load
+    // leaves `selectedThreadId` null, so the fallback is the ONLY way the card shows.
+    mockGetThreads.mockReturnValue(new Promise(() => {}));
+    let store: Awaited<ReturnType<typeof renderConversations>>;
     await act(async () => {
-      await renderConversations({
+      store = await renderConversations({
         // No selectedThreadId — only an active thread present.
         thread: { ...emptyThreadState, threads: [thread], activeThreadIds: { 't-act': true } },
         socket: socketState('connected'),
@@ -2784,6 +2790,9 @@ describe('Conversations — external-transfer disclosure surface (#4437 / S3)', 
       });
     });
 
+    // Auto-selection must NOT have fired — the fallback branch is what surfaces the
+    // card, not the normal selected-thread path.
+    expect(store!.getState().thread.selectedThreadId).toBeNull();
     const title = await screen.findByText('Leaving your device');
     expect(title.closest('[role="status"]')).toHaveTextContent('Anthropic');
   });
