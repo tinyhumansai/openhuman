@@ -1370,6 +1370,12 @@ fn parse_nonce_value(value: &Value) -> Option<u64> {
     }
 }
 
-#[cfg(test)]
+// These tests seed a real wallet (`wallet::setup` + `WalletAccount` with
+// `derivation_path`) to exercise wallet-signed Polymarket CLOB writes, so they
+// require the `web3` feature. With web3 off the wallet is compiled out and the
+// Polymarket write path degrades to a "wallet disabled" error (via the wallet
+// stub), so there is nothing here to test. The tool itself still compiles in
+// both configs against the stub — only these signing tests are gated.
+#[cfg(all(test, feature = "web3"))]
 #[path = "polymarket_tests.rs"]
 mod tests;

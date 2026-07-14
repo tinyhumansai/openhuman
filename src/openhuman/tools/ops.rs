@@ -328,11 +328,19 @@ pub fn all_tools_with_runtime(
         Box::new(SuggestWorkflowsTool::new(config.clone())),
         // Wallet tools — expose wallet operations to the agent tool-call pipeline
         // so the crypto sub-agent can prepare transfers, check status, etc.
+        // Gated with the `web3` feature (the wallet domain is compiled out when
+        // web3 is disabled; the concrete tool types live under `wallet::tools`).
+        #[cfg(feature = "web3")]
         Box::new(WalletStatusTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletChainStatusTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletPrepareTransferTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletTxStatusTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletTxReceiptTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletLookupTxTool::new()),
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
@@ -747,7 +755,9 @@ pub fn all_tools_with_runtime(
 
     // x402 — dedicated tool for making paid HTTP requests to x402-enabled
     // APIs (Base USDC / Solana USDC). Handles the 402 challenge, EIP-3009
-    // or SPL payment signing, and ledger recording.
+    // or SPL payment signing, and ledger recording. Gated with the `web3`
+    // feature (the x402 domain is compiled out when web3 is disabled).
+    #[cfg(feature = "web3")]
     tools.push(Box::new(
         crate::openhuman::x402::tools::X402RequestTool::new(),
     ));
