@@ -55,6 +55,7 @@ use tinyflows::model::WorkflowGraph;
 use crate::openhuman::config::Config;
 use crate::openhuman::flows::ops;
 use crate::openhuman::flows::ops::validate_and_migrate_graph;
+use crate::openhuman::flows::tools;
 use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 
@@ -212,6 +213,24 @@ impl Tool for ReviseWorkflowTool {
             return Ok(ToolResult::error(format!(
                 "{}\n\nFix these tool_call nodes and call revise_workflow again.",
                 contract_errors.join("\n\n")
+            )));
+        }
+
+        // Required-arg resolvability gate (issue B18): reject outright — not
+        // just warn — a REQUIRED outbound arg that LOOKS wired but resolves
+        // to `null` in a sandboxed test run. See
+        // `ops::validate_required_arg_resolvability`.
+        let null_arg_errors = ops::validate_required_arg_resolvability(&graph).await;
+        if !null_arg_errors.is_empty() {
+            tracing::debug!(
+                target: "flows",
+                %name,
+                error_count = null_arg_errors.len(),
+                "[flows] revise_workflow: required-arg resolvability check rejected the revised graph"
+            );
+            return Ok(ToolResult::error(format!(
+                "{}\n\nFix these bindings and call revise_workflow again.",
+                null_arg_errors.join("\n\n")
             )));
         }
 
@@ -1604,8 +1623,12 @@ fn tool_call_error_message(output: &Value, node_id: &str) -> Option<String> {
 /// traced during that node's config resolution) — so [`DryRunWorkflowTool`]
 /// can inspect them once the sandbox run settles. See the struct's "Null-
 /// resolution check" doc for why this exists.
+/// `pub(crate)` (not private) so [`crate::openhuman::flows::ops::validate_required_arg_resolvability`]
+/// (issue B18 — escalating a null-resolved REQUIRED outbound arg to a hard
+/// authoring-time reject) can run the identical sandbox-capture shape without
+/// duplicating this struct.
 #[derive(Default)]
-struct CapturingObserver {
+pub(crate) struct CapturingObserver {
     steps: std::sync::Mutex<Vec<tinyflows::observability::ExecutionStep>>,
 }
 
@@ -1622,7 +1645,7 @@ impl CapturingObserver {
     /// A snapshot of every step recorded so far (steps are pushed
     /// synchronously from `on_step_finish`, so once the run's future resolves
     /// every step it will ever record is already present).
-    fn steps(&self) -> Vec<tinyflows::observability::ExecutionStep> {
+    pub(crate) fn steps(&self) -> Vec<tinyflows::observability::ExecutionStep> {
         self.steps
             .lock()
             .expect("CapturingObserver steps mutex poisoned")
@@ -1784,6 +1807,23 @@ impl Tool for SaveWorkflowTool {
                 contract_errors.join("\n\n")
             )));
         }
+        // Required-arg resolvability gate (issue B18): reject outright — not
+        // just warn — a REQUIRED outbound arg that LOOKS wired but resolves
+        // to `null` in a sandboxed test run, before the graph is ever
+        // persisted. See `ops::validate_required_arg_resolvability`.
+        let null_arg_errors = ops::validate_required_arg_resolvability(&graph).await;
+        if !null_arg_errors.is_empty() {
+            tracing::debug!(
+                target: "flows",
+                %flow_id,
+                error_count = null_arg_errors.len(),
+                "[flows] save_workflow: required-arg resolvability check rejected the graph"
+            );
+            return Ok(ToolResult::error(format!(
+                "{}\n\nFix these bindings and call save_workflow again.",
+                null_arg_errors.join("\n\n")
+            )));
+        }
         // Author-time warnings (unfired trigger kinds + unwired REQUIRED
         // Composio args) were previously computed by propose/revise but never
         // surfaced again at save time — add them here so the agent sees any
@@ -1808,6 +1848,34 @@ impl Tool for SaveWorkflowTool {
                     enabled = flow.enabled,
                     "[flows] save_workflow: persisted"
                 );
+                // Issue B29 (save/enable safety), Rule 3: `flows_create` only
+                // gates the FIRST creation of a flow — an agent `save_workflow`
+                // targets an EXISTING flow via `flows_update`, which preserves
+                // whatever `enabled` state the flow already had. If the user
+                // already armed this flow (enabled it) and it has an automatic
+                // trigger, saving a new graph onto it re-arms it live with no
+                // further confirmation. Surface that loudly so the copilot
+                // relays it to the user instead of staying silent.
+                if flow.enabled && ops::trigger_is_automatic(&flow.graph) {
+                    let trigger_desc = flow
+                        .graph
+                        .trigger()
+                        .map(tools::describe_trigger)
+                        .unwrap_or_else(|| "automatic".to_string());
+                    let warning = format!(
+                        "WARNING: this flow is ENABLED with an automatic trigger \
+                         ({trigger_desc}). It is now LIVE and will fire on its own — tell the \
+                         user, and offer to disable it (flows_set_enabled) if that's not what \
+                         they intended."
+                    );
+                    tracing::warn!(
+                        target: "flows",
+                        %flow_id,
+                        trigger = %trigger_desc,
+                        "[flows] save_workflow: saved onto an enabled auto-trigger flow — now LIVE"
+                    );
+                    warnings.push(warning);
+                }
                 Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
                     "type": "workflow_saved",
                     "flow_id": flow.id,

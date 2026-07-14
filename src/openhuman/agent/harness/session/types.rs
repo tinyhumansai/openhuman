@@ -16,8 +16,9 @@ use crate::openhuman::agent_memory::memory_loader::MemoryLoader;
 use crate::openhuman::agent_tool_policy::ToolPolicySession;
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::context::ContextManager;
-use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, Provider};
+use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage};
 use crate::openhuman::memory::Memory;
+use crate::openhuman::tinyagents::TurnModelSource;
 use crate::openhuman::tools::{Tool, ToolSpec};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,7 +29,10 @@ use std::sync::Arc;
 /// executes tools based on model requests, and interacts with the memory
 /// system to maintain context across turns.
 pub struct Agent {
-    pub(super) provider: Arc<dyn Provider>,
+    /// The turn's model source — builds this agent's tiered crate `ChatModel`
+    /// set per turn (issue #4249, Phase 3 / Motion A). Replaces the raw
+    /// `Arc<dyn Provider>`; the harness names crate model types only.
+    pub(super) turn_model_source: TurnModelSource,
     /// Full tool registry. Sub-agents pull from this via
     /// [`ParentExecutionContext::all_tools`].
     pub(super) tools: Arc<Vec<Box<dyn Tool>>>,
@@ -310,7 +314,7 @@ pub struct Agent {
 
 /// A builder for creating `Agent` instances with custom configuration.
 pub struct AgentBuilder {
-    pub(super) provider: Option<Arc<dyn Provider>>,
+    pub(super) turn_model_source: Option<TurnModelSource>,
     pub(super) tools: Option<Vec<Box<dyn Tool>>>,
     /// When set, restricts which tools the main agent sees/calls.
     pub(super) visible_tool_names: Option<std::collections::HashSet<String>>,
@@ -386,7 +390,7 @@ mod tests {
 
         assert_eq!(builder.learning_enabled, default_builder.learning_enabled);
         assert_eq!(builder.auto_save, default_builder.auto_save);
-        assert!(builder.provider.is_none());
+        assert!(builder.turn_model_source.is_none());
         assert!(builder.tools.is_none());
         assert!(builder.memory.is_none());
         assert!(builder.event_session_id.is_none());

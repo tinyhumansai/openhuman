@@ -23,7 +23,11 @@ import SuggestedWorkflows from '../components/flows/SuggestedWorkflows';
 import { useCreateFlow } from '../components/flows/useCreateFlow';
 import WorkflowPromptBar from '../components/flows/WorkflowPromptBar';
 import { ToastContainer } from '../components/intelligence/Toast';
+import PageSectionHeader from '../components/layout/PageSectionHeader';
+import PageWelcome from '../components/layout/PageWelcome';
 import PanelPage from '../components/layout/PanelPage';
+import { usePageWelcomeView } from '../components/layout/usePageWelcomeView';
+import BetaBanner from '../components/ui/BetaBanner';
 import Button from '../components/ui/Button';
 import { CenteredLoadingState, ErrorBanner } from '../components/ui/LoadingState';
 import { ModalShell } from '../components/ui/ModalShell';
@@ -308,160 +312,222 @@ export default function FlowsPage() {
     [emptyCreate, t]
   );
 
+  const { view, setView, nav } = usePageWelcomeView({
+    ariaLabel: t('nav.flows'),
+    welcomeLabel: t('flows.welcome.nav'),
+    mainLabel: t('flows.welcome.main'),
+    mainIconPath:
+      'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
+  });
+
+  if (view === 'welcome') {
+    return (
+      <>
+        {nav}
+        <PageWelcome
+          testId="flows-welcome"
+          accent="sage"
+          icon="⚡"
+          eyebrow={t('flows.welcome.eyebrow')}
+          title={t('flows.welcome.title')}
+          description={t('flows.welcome.body')}
+          ctas={[
+            {
+              label: t('flows.welcome.ctaNew'),
+              icon: '✨',
+              onClick: handleNewWorkflow,
+              testId: 'flows-welcome-cta-new',
+            },
+            { label: t('flows.welcome.ctaBrowse'), icon: '📂', onClick: () => setView('main') },
+          ]}
+          featuresHeading={t('flows.welcome.featsLabel')}
+          features={[
+            {
+              icon: '✍️',
+              title: t('flows.welcome.feat1Title'),
+              description: t('flows.welcome.feat1Body'),
+            },
+            {
+              icon: '⏱️',
+              title: t('flows.welcome.feat2Title'),
+              description: t('flows.welcome.feat2Body'),
+            },
+            {
+              icon: '🧑‍⚖️',
+              title: t('flows.welcome.feat3Title'),
+              description: t('flows.welcome.feat3Body'),
+            },
+          ]}
+        />
+        {chooserOpen && <NewWorkflowModal onClose={() => setChooserOpen(false)} />}
+      </>
+    );
+  }
+
   return (
-    <PanelPage
-      testId="flows-page"
-      title={t('flows.page.title')}
-      description={t('flows.page.description')}
-      action={
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            data-testid="flows-import"
-            onClick={handleImportClick}>
-            {t('flows.page.import')}
-          </Button>
-          <Button
-            type="button"
-            variant="primary"
-            size="sm"
-            data-testid="flows-new-workflow"
-            onClick={handleNewWorkflow}>
-            {t('flows.page.newWorkflow')}
-          </Button>
-        </div>
-      }>
-      <input
-        ref={importInputRef}
-        type="file"
-        accept="application/json,.json"
-        className="hidden"
-        data-testid="flows-import-input"
-        onChange={e => void handleImportFile(e)}
-      />
-      <div className="mx-auto w-full max-w-3xl space-y-4">
-        {/* Prompt-first authoring (Phase 5c): describe a workflow and let the
+    <>
+      {nav}
+      <PanelPage testId="flows-page" contentClassName="p-4">
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          data-testid="flows-import-input"
+          onChange={e => void handleImportFile(e)}
+        />
+        <div className="mx-auto w-full max-w-3xl space-y-4">
+          <PageSectionHeader
+            title={t('flows.page.title')}
+            description={t('flows.page.description')}
+            action={
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="flows-import"
+                  onClick={handleImportClick}>
+                  {t('flows.page.import')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  data-testid="flows-new-workflow"
+                  onClick={handleNewWorkflow}>
+                  {t('flows.page.newWorkflow')}
+                </Button>
+              </div>
+            }
+          />
+          <div data-testid="flows-beta-banner">
+            <BetaBanner />
+          </div>
+
+          {/* Prompt-first authoring (Phase 5c): describe a workflow and let the
             builder agent propose it. Hero presentation when the list is empty,
             compact otherwise. Always visible, so it's the single "describe a
             workflow" entry point (the chooser modal no longer duplicates it). */}
-        <WorkflowPromptBar variant={!loading && flows.length === 0 ? 'hero' : 'compact'} />
+          <WorkflowPromptBar variant={!loading && flows.length === 0 ? 'hero' : 'compact'} />
 
-        {/* Flow Scout discovery: proactive, buildable workflow suggestions
+          {/* Flow Scout discovery: proactive, buildable workflow suggestions
             grounded in how the user works. Read-only until they click "Build
             this" (→ workflow_builder) and save. */}
-        <SuggestedWorkflows />
+          <SuggestedWorkflows />
 
-        {error && (
-          <div data-testid="flows-error">
-            <ErrorBanner message={error} />
-          </div>
-        )}
+          {error && (
+            <div data-testid="flows-error">
+              <ErrorBanner message={error} />
+            </div>
+          )}
 
-        {loading && <CenteredLoadingState label={t('flows.page.loading')} />}
+          {loading && <CenteredLoadingState label={t('flows.page.loading')} />}
 
-        {!loading && flows.length === 0 && !error && (
-          <div className="space-y-4">
-            <EmptyStateCard
-              icon={
-                <svg
-                  className="h-7 w-7 text-primary-500"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={1.5}>
-                  <circle cx="5" cy="6" r="2" />
-                  <circle cx="5" cy="18" r="2" />
-                  <circle cx="19" cy="12" r="2" />
-                  <path strokeLinecap="round" d="M7 6h4a4 4 0 014 4M7 18h4a4 4 0 004-4" />
-                </svg>
-              }
-              title={t('flows.page.emptyTitle')}
-              description={t('flows.page.emptyDescription')}
-              actionLabel={t('flows.page.newWorkflow')}
-              actionTestId="flows-empty-new-workflow"
-              onAction={handleNewWorkflow}
-            />
-
-            <section className="space-y-3" data-testid="flows-empty-templates">
-              <div>
-                <h3 className="text-sm font-semibold text-content">{t('flows.templates.title')}</h3>
-                <p className="text-xs text-content-muted">{t('flows.templates.subtitle')}</p>
-              </div>
-              {emptyCreate.error && (
-                <div data-testid="flows-empty-template-error">
-                  <ErrorBanner message={emptyCreate.error} />
-                </div>
-              )}
-              <FlowTemplateGallery onSelect={handleEmptyTemplate} busyId={emptyCreate.busyKey} />
-            </section>
-          </div>
-        )}
-
-        {!loading && flows.length > 0 && (
-          <div
-            data-testid="flows-list"
-            className="overflow-hidden rounded-2xl border border-line bg-surface">
-            {flows.map(flow => (
-              <FlowListRow
-                key={flow.id}
-                flow={flow}
-                busy={busyFor(flow)}
-                onToggle={f => void handleToggle(f)}
-                onRun={f => void handleRun(f)}
-                onViewRuns={handleViewRuns}
-                onView={handleView}
-                onExport={handleExport}
-                onDuplicate={f => void handleDuplicate(f)}
-                onDelete={setDeleteTarget}
+          {!loading && flows.length === 0 && !error && (
+            <div className="space-y-4">
+              <EmptyStateCard
+                icon={
+                  <svg
+                    className="h-7 w-7 text-primary-500"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={1.5}>
+                    <circle cx="5" cy="6" r="2" />
+                    <circle cx="5" cy="18" r="2" />
+                    <circle cx="19" cy="12" r="2" />
+                    <path strokeLinecap="round" d="M7 6h4a4 4 0 014 4M7 18h4a4 4 0 004-4" />
+                  </svg>
+                }
+                title={t('flows.page.emptyTitle')}
+                description={t('flows.page.emptyDescription')}
+                actionLabel={t('flows.page.newWorkflow')}
+                actionTestId="flows-empty-new-workflow"
+                onAction={handleNewWorkflow}
               />
-            ))}
-          </div>
+
+              <section className="space-y-3" data-testid="flows-empty-templates">
+                <div>
+                  <h3 className="text-sm font-semibold text-content">
+                    {t('flows.templates.title')}
+                  </h3>
+                  <p className="text-xs text-content-muted">{t('flows.templates.subtitle')}</p>
+                </div>
+                {emptyCreate.error && (
+                  <div data-testid="flows-empty-template-error">
+                    <ErrorBanner message={emptyCreate.error} />
+                  </div>
+                )}
+                <FlowTemplateGallery onSelect={handleEmptyTemplate} busyId={emptyCreate.busyKey} />
+              </section>
+            </div>
+          )}
+
+          {!loading && flows.length > 0 && (
+            <div
+              data-testid="flows-list"
+              className="overflow-hidden rounded-2xl border border-line bg-surface">
+              {flows.map(flow => (
+                <FlowListRow
+                  key={flow.id}
+                  flow={flow}
+                  busy={busyFor(flow)}
+                  onToggle={f => void handleToggle(f)}
+                  onRun={f => void handleRun(f)}
+                  onViewRuns={handleViewRuns}
+                  onView={handleView}
+                  onExport={handleExport}
+                  onDuplicate={f => void handleDuplicate(f)}
+                  onDelete={setDeleteTarget}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <FlowRunsDrawer
+          flowId={selectedFlowId}
+          flowName={selectedFlow?.name}
+          onClose={() => setSelectedFlowId(null)}
+          onFixWithAgent={handleFixWithAgent}
+        />
+
+        {chooserOpen && <NewWorkflowModal onClose={() => setChooserOpen(false)} />}
+
+        {deleteTarget && (
+          <ModalShell
+            onClose={() => (deleting ? undefined : setDeleteTarget(null))}
+            title={t('flows.delete.title')}
+            subtitle={t('flows.delete.body').replace('{name}', deleteTarget.name)}
+            titleId="flow-delete-modal-title"
+            maxWidthClassName="max-w-sm">
+            <div className="flex justify-end gap-2" data-testid="flow-delete-confirm">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={deleting}
+                data-testid="flow-delete-cancel"
+                onClick={() => setDeleteTarget(null)}>
+                {t('flows.delete.cancel')}
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                tone="danger"
+                size="sm"
+                disabled={deleting}
+                data-testid="flow-delete-confirm-button"
+                onClick={() => void handleConfirmDelete()}>
+                {deleting ? t('flows.delete.deleting') : t('flows.delete.confirm')}
+              </Button>
+            </div>
+          </ModalShell>
         )}
-      </div>
 
-      <FlowRunsDrawer
-        flowId={selectedFlowId}
-        flowName={selectedFlow?.name}
-        onClose={() => setSelectedFlowId(null)}
-        onFixWithAgent={handleFixWithAgent}
-      />
-
-      {chooserOpen && <NewWorkflowModal onClose={() => setChooserOpen(false)} />}
-
-      {deleteTarget && (
-        <ModalShell
-          onClose={() => (deleting ? undefined : setDeleteTarget(null))}
-          title={t('flows.delete.title')}
-          subtitle={t('flows.delete.body').replace('{name}', deleteTarget.name)}
-          titleId="flow-delete-modal-title"
-          maxWidthClassName="max-w-sm">
-          <div className="flex justify-end gap-2" data-testid="flow-delete-confirm">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={deleting}
-              data-testid="flow-delete-cancel"
-              onClick={() => setDeleteTarget(null)}>
-              {t('flows.delete.cancel')}
-            </Button>
-            <Button
-              type="button"
-              variant="primary"
-              tone="danger"
-              size="sm"
-              disabled={deleting}
-              data-testid="flow-delete-confirm-button"
-              onClick={() => void handleConfirmDelete()}>
-              {deleting ? t('flows.delete.deleting') : t('flows.delete.confirm')}
-            </Button>
-          </div>
-        </ModalShell>
-      )}
-
-      <ToastContainer notifications={toasts} onRemove={removeToast} />
-    </PanelPage>
+        <ToastContainer notifications={toasts} onRemove={removeToast} />
+      </PanelPage>
+    </>
   );
 }

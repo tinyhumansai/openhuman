@@ -309,40 +309,13 @@ async fn write_profile_md(
 /// Ask the backend LLM to distil the raw LinkedIn Markdown into a
 /// concise, high-signal profile document suitable for agent context.
 pub async fn summarise_profile_with_llm(config: &Config, raw_md: &str) -> anyhow::Result<String> {
-    use crate::openhuman::inference::provider::ops::{
-        create_backend_inference_provider, ProviderRuntimeOptions,
-    };
-
-    // Point `AuthService` at the same state dir the rest of the app uses
-    // (the openhuman_dir derived from `config.config_path`), otherwise
-    // `OpenHumanBackendProvider::resolve_bearer` looks in `~/.openhuman`
-    // and fails with "No backend session" even when the JWT is present
-    // under a custom `OPENHUMAN_WORKSPACE`.
-    let options = ProviderRuntimeOptions {
-        auth_profile_override: None,
-        openhuman_dir: config
-            .config_path
-            .parent()
-            .map(std::path::PathBuf::from)
-            .or_else(|| Some(config.workspace_dir.clone())),
-        secrets_encrypt: config.secrets.encrypt,
-        reasoning_enabled: config.runtime.reasoning_enabled,
-    };
-    let provider = create_backend_inference_provider(
-        config.inference_url.as_deref(),
-        config.api_url.as_deref(),
-        config.api_key.as_deref(),
-        &options,
-    )?;
-    // This path deliberately forces the managed backend (not role routing), so
-    // wrap the built provider directly rather than resolving via
-    // `create_chat_model`. Behaviour-preserving; only the call surface moves to
-    // the crate `ChatModel`.
-    let model_chat = crate::openhuman::inference::provider::chat_model_from_provider(
-        provider,
-        "summarization-v1".to_string(),
-        0.3,
-    );
+    let (model_chat, _) =
+        crate::openhuman::inference::provider::create_chat_model_from_string_with_model_id(
+            "summarization",
+            "openhuman",
+            config,
+            0.3,
+        )?;
 
     let system = "\
 You are a profile analyst. You will receive a user's LinkedIn profile in Markdown format. \
@@ -369,7 +342,7 @@ Rules:\n\
     );
 
     use tinyagents::harness::message::Message;
-    use tinyagents::harness::model::{ChatModel, ModelRequest};
+    use tinyagents::harness::model::ModelRequest;
     let summary = model_chat
         .invoke(
             &(),

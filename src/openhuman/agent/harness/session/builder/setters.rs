@@ -19,7 +19,7 @@ impl AgentBuilder {
     /// Creates a new `AgentBuilder` with default values.
     pub fn new() -> Self {
         Self {
-            provider: None,
+            turn_model_source: None,
             tools: None,
             visible_tool_names: None,
             memory: None,
@@ -54,14 +54,17 @@ impl AgentBuilder {
 
     /// Sets the AI provider for the agent.
     ///
-    /// Accepts a `Box<dyn Provider>` for backward compatibility but stores
-    /// the provider as an `Arc` internally so sub-agents spawned from this
-    /// agent (via `spawn_subagent`) can share the same instance.
+    /// Accepts a `Box<dyn Provider>` for backward compatibility but wraps it in
+    /// the seam [`TurnModelSource`](crate::openhuman::tinyagents::TurnModelSource)
+    /// internally (issue #4249, Phase 3 / Motion A) so the agent + sub-agents
+    /// spawned from it share the same source.
     pub fn provider(
         mut self,
         provider: Box<dyn crate::openhuman::inference::provider::Provider>,
     ) -> Self {
-        self.provider = Some(Arc::from(provider));
+        self.turn_model_source = Some(crate::openhuman::tinyagents::TurnModelSource::new(
+            Arc::from(provider),
+        ));
         self
     }
 
@@ -71,7 +74,24 @@ impl AgentBuilder {
         mut self,
         provider: Arc<dyn crate::openhuman::inference::provider::Provider>,
     ) -> Self {
-        self.provider = Some(provider);
+        self.turn_model_source = Some(crate::openhuman::tinyagents::TurnModelSource::new(provider));
+        self
+    }
+
+    /// Sets the AI provider as a **crate-native** turn-model source (Phase 3 P3-B):
+    /// `build`/`build_summarizer` construct crate `ChatModel`s from `(role, config)`
+    /// via `create_turn_chat_model` (managed → `OpenHumanBackendModel`, local/cloud →
+    /// crate `OpenAiModel`) instead of wrapping `provider` in `ProviderModel`s.
+    /// Used by the production session factory; the plain
+    /// [`provider`](Self::provider) setter (Provider path) stays for tests that
+    /// inject a mock they observe.
+    pub fn crate_native_provider(
+        mut self,
+        role: impl Into<String>,
+        config: Arc<crate::openhuman::config::Config>,
+    ) -> Self {
+        self.turn_model_source =
+            Some(crate::openhuman::tinyagents::TurnModelSource::new_crate_native(role, config));
         self
     }
 
@@ -416,12 +436,10 @@ impl AgentBuilder {
             visible_names_list.join(", ")
         );
 
-        // Pull the provider out of the builder once. We store it on
-        // the Agent (for normal turn chat calls) and also clone the
-        // Arc into the ProviderSummarizer so the context manager can
-        // dispatch autocompaction through the same provider.
-        let provider = self
-            .provider
+        // Pull the model source out of the builder once; the Agent holds it and
+        // builds a fresh tiered crate `ChatModel` set from it per turn.
+        let turn_model_source = self
+            .turn_model_source
             .ok_or_else(|| anyhow::anyhow!("provider is required"))?;
 
         let prompt_builder = self
@@ -451,7 +469,7 @@ impl AgentBuilder {
         let action_dir = self.action_dir.unwrap_or_else(|| workspace_dir.clone());
 
         Ok(Agent {
-            provider,
+            turn_model_source,
             tools: Arc::new(tools),
             tool_specs: Arc::new(tool_specs),
             visible_tool_specs: Arc::new(visible_tool_specs),

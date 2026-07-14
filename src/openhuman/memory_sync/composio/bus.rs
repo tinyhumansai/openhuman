@@ -667,11 +667,34 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                         error = %e,
                         "[composio:bus] provider on_connection_created failed"
                     );
-                } else {
-                    // Successful connection-created sync — record the
-                    // timestamp so the periodic scheduler doesn't
-                    // immediately re-fire for this connection.
-                    super::periodic::record_sync_success(&toolkit, &connection_id);
+                }
+
+                match crate::openhuman::tinycortex::run_composio_connection(
+                    &toolkit,
+                    &connection_id,
+                    ctx.config.as_ref(),
+                )
+                .await
+                {
+                    Ok(outcome) => {
+                        tracing::info!(
+                            toolkit = %toolkit,
+                            connection_id = %connection_id,
+                            items_ingested = outcome.records_ingested,
+                            actions_called = outcome.actions_called,
+                            "[composio:bus] tinycortex initial sync complete"
+                        );
+                        // Avoid immediately re-firing from the periodic scheduler.
+                        super::periodic::record_sync_success(&toolkit, &connection_id);
+                    }
+                    Err(error) => tracing::warn!(
+                        toolkit = %toolkit,
+                        connection_id = %connection_id,
+                        error = %error,
+                        actions_called = error.actions_called,
+                        provider_cost_usd = error.provider_cost_usd,
+                        "[composio:bus] tinycortex initial sync failed"
+                    ),
                 }
             }
 

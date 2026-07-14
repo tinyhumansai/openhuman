@@ -121,7 +121,7 @@ node "$REPO_ROOT/scripts/mock-api-server.mjs" --port "$E2E_MOCK_PORT" >"$OPENHUM
 MOCK_PID=$!
 wait_for_http "http://127.0.0.1:${E2E_MOCK_PORT}/__admin/health" "mock backend"
 
-OPENHUMAN_CORE_BIN="$E2E_WEB_CORE_TARGET_DIR/debug/openhuman-core"
+export OPENHUMAN_CORE_BIN="$E2E_WEB_CORE_TARGET_DIR/debug/openhuman-core"
 if [ ! -x "$OPENHUMAN_CORE_BIN" ]; then
   echo "ERROR: standalone core binary is missing at $OPENHUMAN_CORE_BIN. Run pnpm test:e2e:web:build first." >&2
   exit 1

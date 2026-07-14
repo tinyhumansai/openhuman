@@ -12,7 +12,7 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::ParsedToolCall;
 use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::agent_tool_policy::ToolPolicyEngine;
-use crate::openhuman::inference::provider::{self, ConversationMessage, Provider, ToolCall};
+use crate::openhuman::inference::provider::{self, ConversationMessage, ToolCall};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
@@ -57,12 +57,12 @@ impl Agent {
         AgentBuilder::new()
     }
 
-    /// Borrow the agent's provider as an `Arc`. Used by the sub-agent
-    /// runner to share the parent's provider instance with spawned
-    /// sub-agents (so they share connection pools, retry budgets, and
-    /// rate-limit state).
-    pub fn provider_arc(&self) -> Arc<dyn Provider> {
-        Arc::clone(&self.provider)
+    /// Clone the agent's model source. Used by the sub-agent runner /
+    /// parent-context builder to share the parent's provider instance with
+    /// spawned sub-agents (so they share connection pools, retry budgets, and
+    /// rate-limit state) — issue #4249, Phase 3 / Motion A.
+    pub fn turn_model_source(&self) -> crate::openhuman::tinyagents::TurnModelSource {
+        self.turn_model_source.clone()
     }
 
     /// Borrow the agent's tools as a slice. Used by the sub-agent runner

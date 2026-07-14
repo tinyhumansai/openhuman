@@ -11,16 +11,24 @@ import {
 } from '../components/composio/toolkitMeta';
 import EmptyStateCard from '../components/EmptyStateCard';
 import { ToastContainer } from '../components/intelligence/Toast';
+import PageSectionHeader from '../components/layout/PageSectionHeader';
+import PageWelcome from '../components/layout/PageWelcome';
 import PanelPage from '../components/layout/PanelPage';
 import { SidebarContent } from '../components/layout/shell/SidebarSlot';
 import TwoPaneNav from '../components/layout/TwoPaneNav';
 import MeetingsPage from '../components/meetings/MeetingsPage';
 import { SettingsLayoutProvider } from '../components/settings/layout/SettingsLayoutContext';
-import AIPanel from '../components/settings/panels/AIPanel';
+import CompanionPanel from '../components/settings/panels/CompanionPanel';
 import ComposioPanel from '../components/settings/panels/ComposioPanel';
+import DesktopAgentPanel from '../components/settings/panels/DesktopAgentPanel';
 import EmbeddingsPanel from '../components/settings/panels/EmbeddingsPanel';
+import LlmConnectionsPanel from '../components/settings/panels/LlmConnectionsPanel';
+import MeetingSettingsPanel from '../components/settings/panels/MeetingSettingsPanel';
+import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelligencePanel';
 import SearchPanel from '../components/settings/panels/SearchPanel';
+import UsagePanel from '../components/settings/panels/UsagePanel';
 import VoicePanel from '../components/settings/panels/VoicePanel';
+import WalletPanel from '../components/settings/panels/WalletPanel';
 import AutocompleteSetupModal from '../components/skills/AutocompleteSetupModal';
 import ScreenIntelligenceSetupModal from '../components/skills/ScreenIntelligenceSetupModal';
 import UnifiedSkillCard from '../components/skills/SkillCard';
@@ -437,6 +445,7 @@ interface SkillItem {
  * normalised to the new values so existing deep links continue to work.
  */
 type ConnectionsTab =
+  | 'welcome'
   | 'composio'
   | 'channels'
   | 'mcp'
@@ -446,15 +455,71 @@ type ConnectionsTab =
   | 'voice'
   | 'embeddings'
   | 'search'
-  | 'composio-key';
+  | 'usage'
+  | 'composio-key'
+  | 'wallet'
+  | 'screen-intelligence'
+  | 'desktop-agent'
+  | 'companion';
 
-/** Tabs that render a relocated settings panel (the "API keys" group). */
+/**
+ * Tabs that render a relocated settings panel inside the shared card surface.
+ * Covers the "API keys" group plus the Desktop capability panels and the wallet
+ * balances panel relocated from Settings.
+ */
+/** Canonical text header (title + one-line description) per functional tab. */
+const CONNECTIONS_HEADERS: Partial<Record<ConnectionsTab, { titleKey: string; descKey: string }>> =
+  {
+    composio: { titleKey: 'connections.tabs.oauth', descKey: 'connections.header.composio' },
+    channels: { titleKey: 'connections.tabs.channels', descKey: 'connections.header.channels' },
+    mcp: { titleKey: 'connections.tabs.mcp', descKey: 'connections.header.mcp' },
+    skills: { titleKey: 'connections.tabs.skills', descKey: 'connections.header.skills' },
+    meetings: { titleKey: 'connections.tabs.meetings', descKey: 'connections.header.meetings' },
+  };
+
+/** Canonical header (title + description) for each relocated settings panel. */
+const INTELLIGENCE_HEADERS: Partial<Record<ConnectionsTab, { titleKey: string; descKey: string }>> =
+  {
+    'composio-key': {
+      titleKey: 'connections.tabs.composioKey',
+      descKey: 'connections.header.composioKey',
+    },
+    voice: { titleKey: 'pages.settings.ai.voice', descKey: 'voice.providers.desc' },
+    embeddings: {
+      titleKey: 'pages.settings.ai.embeddings',
+      descKey: 'connections.header.embeddings',
+    },
+    search: { titleKey: 'settings.search.title', descKey: 'connections.header.search' },
+    usage: { titleKey: 'settings.usage.title', descKey: 'settings.usage.menuDesc' },
+    'screen-intelligence': {
+      titleKey: 'pages.settings.features.screenAwareness',
+      descKey: 'connections.header.screen',
+    },
+    'desktop-agent': {
+      titleKey: 'settings.desktopAgent.title',
+      descKey: 'connections.header.desktopAgent',
+    },
+    companion: {
+      titleKey: 'pages.settings.features.desktopCompanion',
+      descKey: 'connections.header.companion',
+    },
+  };
+
+/** Intelligence tabs whose panel renders its own header card (with chip tabs in
+ *  it), so the Connections pane skips the shared header + card wrapper. */
+const SELF_HEADER_TABS: ReadonlySet<ConnectionsTab> = new Set<ConnectionsTab>(['llm', 'wallet']);
+
 const INTELLIGENCE_TABS: ReadonlySet<ConnectionsTab> = new Set<ConnectionsTab>([
   'llm',
   'voice',
   'embeddings',
   'search',
+  'usage',
   'composio-key',
+  'wallet',
+  'screen-intelligence',
+  'desktop-agent',
+  'companion',
 ]);
 
 export default function Skills() {
@@ -471,6 +536,7 @@ export default function Skills() {
     const raw = params.get('tab');
     // New canonical values
     if (
+      raw === 'welcome' ||
       raw === 'composio' ||
       raw === 'channels' ||
       raw === 'mcp' ||
@@ -480,7 +546,12 @@ export default function Skills() {
       raw === 'voice' ||
       raw === 'embeddings' ||
       raw === 'search' ||
-      raw === 'composio-key'
+      raw === 'usage' ||
+      raw === 'composio-key' ||
+      raw === 'wallet' ||
+      raw === 'screen-intelligence' ||
+      raw === 'desktop-agent' ||
+      raw === 'companion'
     )
       return raw;
     // Legacy back-compat aliases
@@ -489,7 +560,8 @@ export default function Skills() {
     if (raw === 'tools') return 'mcp';
     if (raw === 'talents') return 'meetings';
     if (raw === 'explorer') return 'skills';
-    return 'composio';
+    // Default landing is the Welcome overview for the Connections page.
+    return 'welcome';
   }, [location.search]);
 
   const handleTabChange = useCallback(
@@ -929,6 +1001,15 @@ export default function Skills() {
             onSelect={value => handleTabChange(value as ConnectionsTab)}
             groups={[
               {
+                items: [
+                  {
+                    value: 'welcome',
+                    label: t('connections.welcome.nav'),
+                    icon: navIcon('M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z'),
+                  },
+                ],
+              },
+              {
                 label: t('connections.groups.integrations'),
                 items: [
                   {
@@ -962,6 +1043,39 @@ export default function Skills() {
                     label: t('connections.tabs.meetings'),
                     icon: navIcon(
                       'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z'
+                    ),
+                  },
+                  {
+                    // Wallet balances relocated from Settings → Data.
+                    value: 'wallet',
+                    label: t('pages.settings.account.walletBalances'),
+                    icon: navIcon(
+                      'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z'
+                    ),
+                  },
+                ],
+              },
+              {
+                // Desktop capabilities relocated from Settings → Connections.
+                label: t('connections.groups.desktop'),
+                items: [
+                  {
+                    value: 'screen-intelligence',
+                    label: t('pages.settings.features.screenAwareness'),
+                    icon: navIcon('M3 5h18v12H3zM8 21h8m-4-4v4'),
+                  },
+                  {
+                    value: 'desktop-agent',
+                    label: t('settings.desktopAgent.title'),
+                    icon: navIcon(
+                      'M9 17v2m6-2v2M5 5h14a1 1 0 011 1v8a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1zm4 4l-2 2 2 2m6-4l2 2-2 2'
+                    ),
+                  },
+                  {
+                    value: 'companion',
+                    label: t('pages.settings.features.desktopCompanion'),
+                    icon: navIcon(
+                      'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'
                     ),
                   },
                 ],
@@ -1002,36 +1116,119 @@ export default function Skills() {
                     label: t('settings.search.title'),
                     icon: navIcon('M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z'),
                   },
+                  {
+                    // Usage & limits (cost dashboard, token savings, background
+                    // loops) relocated from Settings.
+                    value: 'usage',
+                    label: t('settings.usage.title'),
+                    icon: navIcon(
+                      'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z'
+                    ),
+                  },
                 ],
               },
             ]}
           />
         </div>
       </SidebarContent>
-      <div className="mx-auto h-full w-full max-w-5xl">
-        {/* Intelligence panels relocated from Settings are themselves PanelPage
+      <div className="mx-auto h-full w-full max-w-3xl">
+        {/* Welcome landing — the first destination; pitches the page and offers
+            a few immediate actions into the functional views. */}
+        {activeTab === 'welcome' ? (
+          <PageWelcome
+            testId="connections-welcome"
+            accent="ocean"
+            icon="🔗"
+            eyebrow={t('connections.welcome.eyebrow')}
+            title={t('connections.welcome.title')}
+            description={t('connections.welcome.body')}
+            ctas={[
+              {
+                label: t('connections.welcome.ctaChannel'),
+                icon: '🔌',
+                onClick: () => handleTabChange('channels'),
+                testId: 'connections-welcome-cta-channel',
+              },
+              {
+                label: t('connections.welcome.ctaApps'),
+                icon: '🧩',
+                onClick: () => handleTabChange('composio'),
+              },
+              {
+                label: t('connections.welcome.ctaSkills'),
+                icon: '✨',
+                onClick: () => handleTabChange('skills'),
+              },
+            ]}
+            featuresHeading={t('connections.welcome.featsLabel')}
+            features={[
+              {
+                icon: '📥',
+                title: t('connections.welcome.feat1Title'),
+                description: t('connections.welcome.feat1Body'),
+              },
+              {
+                icon: '🤖',
+                title: t('connections.welcome.feat2Title'),
+                description: t('connections.welcome.feat2Body'),
+              },
+              {
+                icon: '🔒',
+                title: t('connections.welcome.feat3Title'),
+                description: t('connections.welcome.feat3Body'),
+              },
+            ]}
+          />
+        ) : /* Intelligence panels relocated from Settings are themselves PanelPage
             panels (description, no title; the back button hides because the
             Connections sidebar owns navigation), so they fill the content pane
-            and own their scroll directly. */}
-        {INTELLIGENCE_TABS.has(activeTab) ? (
+            and own their scroll directly. */
+        INTELLIGENCE_TABS.has(activeTab) ? (
           // API-keys / provider panels were orphaned flush on the shell — give
           // them a card surface (the integrations/skills grids below already
           // have their own card layouts, so they stay flush).
-          <div className="h-full p-4">
-            <div className="h-full overflow-hidden rounded-2xl border border-line bg-surface shadow-soft">
-              <SettingsLayoutProvider value={{ inTwoPaneShell: true }}>
-                {activeTab === 'llm' && <AIPanel />}
-                {activeTab === 'voice' && <VoicePanel />}
-                {activeTab === 'embeddings' && <EmbeddingsPanel />}
-                {activeTab === 'search' && <SearchPanel />}
-                {activeTab === 'composio-key' && <ComposioPanel />}
+          <div className="flex h-full flex-col gap-4 p-4">
+            {/* Panels render headerless (the header card owns the title +
+                description) to avoid a doubled header in the Connections pane.
+                LLM and Wallet render their OWN header card (with chip tabs in
+                it), so they skip the Connections-level header + card wrapper. */}
+            {SELF_HEADER_TABS.has(activeTab) ? (
+              <SettingsLayoutProvider value={{ inTwoPaneShell: true, headerless: true }}>
+                {activeTab === 'llm' && <LlmConnectionsPanel />}
+                {activeTab === 'wallet' && <WalletPanel />}
               </SettingsLayoutProvider>
-            </div>
+            ) : (
+              <>
+                {INTELLIGENCE_HEADERS[activeTab] && (
+                  <PageSectionHeader
+                    title={t(INTELLIGENCE_HEADERS[activeTab]!.titleKey)}
+                    description={t(INTELLIGENCE_HEADERS[activeTab]!.descKey)}
+                  />
+                )}
+                <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-line bg-surface shadow-soft">
+                  <SettingsLayoutProvider value={{ inTwoPaneShell: true, headerless: true }}>
+                    {activeTab === 'voice' && <VoicePanel />}
+                    {activeTab === 'embeddings' && <EmbeddingsPanel />}
+                    {activeTab === 'search' && <SearchPanel />}
+                    {activeTab === 'usage' && <UsagePanel />}
+                    {activeTab === 'composio-key' && <ComposioPanel />}
+                    {activeTab === 'screen-intelligence' && <ScreenIntelligencePanel />}
+                    {activeTab === 'desktop-agent' && <DesktopAgentPanel />}
+                    {activeTab === 'companion' && <CompanionPanel />}
+                  </SettingsLayoutProvider>
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <PanelPage contentClassName="p-4">
-            <div
-              className={`mx-auto w-full space-y-4 ${activeTab !== 'meetings' ? 'max-w-3xl' : ''}`}>
+            <div className={'mx-auto w-full max-w-3xl space-y-4'}>
+              {CONNECTIONS_HEADERS[activeTab] && (
+                <PageSectionHeader
+                  title={t(CONNECTIONS_HEADERS[activeTab]!.titleKey)}
+                  description={t(CONNECTIONS_HEADERS[activeTab]!.descKey)}
+                />
+              )}
               {/* <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <h1 className="text-base font-semibold text-content">
@@ -1260,7 +1457,15 @@ export default function Skills() {
                     </div>
                   )}
 
-                  {activeTab === 'meetings' && <MeetingsPage onToast={addToast} />}
+                  {activeTab === 'meetings' && (
+                    <div className="space-y-4">
+                      <MeetingsPage onToast={addToast} />
+                      {/* Meeting connection settings (auto-join, summary,
+                          listen-only, transcript ingestion) relocated from
+                          Settings → Meetings. */}
+                      <MeetingSettingsPanel embedded />
+                    </div>
+                  )}
                 </>
               }
             </div>

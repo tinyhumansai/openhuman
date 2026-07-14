@@ -64,6 +64,14 @@ impl ProviderEmbeddingModel {
 
 #[async_trait]
 impl TaEmbeddingModel for ProviderEmbeddingModel {
+    fn name(&self) -> &str {
+        self.provider.name()
+    }
+
+    fn model_id(&self) -> &str {
+        self.provider.model_id()
+    }
+
     async fn embed(&self, texts: &[String]) -> TaResult<Vec<Vec<f32>>> {
         tracing::debug!(
             provider = self.provider.name(),
@@ -158,6 +166,8 @@ mod tests {
         let adapter = ProviderEmbeddingModel::new(provider);
 
         // dimensions() is forwarded from the underlying provider.
+        assert_eq!(TaEmbeddingModel::name(&adapter), "stub");
+        assert_eq!(TaEmbeddingModel::model_id(&adapter), "stub-model");
         assert_eq!(TaEmbeddingModel::dimensions(&adapter), 4);
 
         // embed() bridges `&[String]` -> `&[&str]` and returns one vector per

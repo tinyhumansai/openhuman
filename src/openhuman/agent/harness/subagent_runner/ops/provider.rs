@@ -7,6 +7,86 @@ use std::sync::Arc;
 
 use crate::openhuman::inference::provider::Provider;
 
+pub(crate) fn resolve_subagent_source(
+    spec: &crate::openhuman::agent::harness::definition::ModelSpec,
+    agent_id: &str,
+    config: Option<&crate::openhuman::config::Config>,
+    parent_source: crate::openhuman::tinyagents::TurnModelSource,
+    parent_model: String,
+    is_team_lead: bool,
+    model_override: Option<&str>,
+    temperature: f64,
+) -> (crate::openhuman::tinyagents::TurnModelSource, String) {
+    use crate::openhuman::agent::harness::definition::ModelSpec;
+    if let Some(model) = model_override
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        tracing::debug!(
+            agent_id,
+            model,
+            "[subagent_runner] using inline model override"
+        );
+        return (parent_source, model.to_string());
+    }
+    if let Some(model) = config.and_then(|cfg| cfg.configured_agent_model(agent_id, is_team_lead)) {
+        tracing::debug!(
+            agent_id,
+            model,
+            "[subagent_runner] using config-level model pin"
+        );
+        return (parent_source, model.to_string());
+    }
+    match spec {
+        ModelSpec::Hint(workload) => match config {
+            Some(config) => {
+                match crate::openhuman::inference::provider::create_chat_model_with_model_id(
+                    workload,
+                    config,
+                    temperature,
+                ) {
+                    Ok((_model, model_id)) => {
+                        tracing::info!(
+                            agent_id,
+                            role = workload,
+                            model = %model_id,
+                            "[subagent_runner] resolved crate-native workload source"
+                        );
+                        (
+                            crate::openhuman::tinyagents::TurnModelSource::new_crate_native(
+                                workload.clone(),
+                                Arc::new(config.clone()),
+                            ),
+                            model_id,
+                        )
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            agent_id,
+                            role = workload,
+                            %error,
+                            parent_model,
+                            "[subagent_runner] workload model build failed; inheriting parent source"
+                        );
+                        (parent_source, parent_model)
+                    }
+                }
+            }
+            None => {
+                tracing::warn!(
+                    agent_id,
+                    role = workload,
+                    parent_model,
+                    "[subagent_runner] config unavailable; inheriting parent source"
+                );
+                (parent_source, parent_model)
+            }
+        },
+        ModelSpec::Inherit => (parent_source, parent_model),
+        ModelSpec::Exact(model) => (parent_source, model.clone()),
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Provider / model resolution
 // ─────────────────────────────────────────────────────────────────────────────

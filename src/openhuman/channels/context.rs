@@ -29,7 +29,7 @@ pub(crate) type RouteSelectionMap = Arc<Mutex<HashMap<String, ChannelRouteSelect
 #[derive(Clone)]
 pub(crate) struct ChannelRuntimeContext {
     pub(crate) channels_by_name: Arc<HashMap<String, Arc<dyn super::Channel>>>,
-    pub(crate) provider: Arc<dyn Provider>,
+    pub(crate) provider: Option<Arc<dyn Provider>>,
     pub(crate) default_provider: Arc<String>,
     pub(crate) memory: Arc<dyn Memory>,
     pub(crate) tools_registry: Arc<Vec<Box<dyn Tool>>>,
@@ -51,6 +51,9 @@ pub(crate) struct ChannelRuntimeContext {
     pub(crate) message_timeout_secs: u64,
     pub(crate) multimodal: crate::openhuman::config::MultimodalConfig,
     pub(crate) multimodal_files: crate::openhuman::config::MultimodalFileConfig,
+    /// Full config for building crate-native turn models (Phase 3 P3-B). `Some` in
+    /// production; `None` in tests keeps the channel turn on the `Provider` path.
+    pub(crate) config: Option<Arc<crate::openhuman::config::Config>>,
 }
 
 pub(crate) fn conversation_memory_key(msg: &super::traits::ChannelMessage) -> String {
@@ -281,7 +284,7 @@ mod tests {
     fn runtime_context() -> ChannelRuntimeContext {
         ChannelRuntimeContext {
             channels_by_name: Arc::new(HashMap::new()),
-            provider: Arc::new(DummyProvider),
+            provider: Some(Arc::new(DummyProvider)),
             default_provider: Arc::new("default".into()),
             memory: Arc::new(MockMemory {
                 entries: Vec::new(),
@@ -305,6 +308,7 @@ mod tests {
             message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             multimodal: crate::openhuman::config::MultimodalConfig::default(),
             multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+            config: None,
         }
     }
 

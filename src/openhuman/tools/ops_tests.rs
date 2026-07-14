@@ -2174,3 +2174,98 @@ fn desktop_default_off_tools_retained_when_opted_in() {
         );
     }
 }
+
+// --- DomainSet tool classifier (#4796) ----------------------------------
+
+#[test]
+fn tool_group_classifies_gate_and_harness_families() {
+    use crate::core::all::DomainGroup;
+
+    // Gate families → their gate group (dropped under harness()).
+    assert_eq!(tool_group("wallet_status"), DomainGroup::Web3);
+    assert_eq!(tool_group("web3_swap_quote"), DomainGroup::Web3);
+    assert_eq!(tool_group("x402_request"), DomainGroup::Web3);
+    assert_eq!(tool_group("mcp_registry_search"), DomainGroup::Mcp);
+    assert_eq!(tool_group("mcp_call_tool"), DomainGroup::Mcp);
+    assert_eq!(tool_group("run_workflow"), DomainGroup::Skills);
+    assert_eq!(tool_group("skill_registry_browse"), DomainGroup::Skills);
+    assert_eq!(tool_group("list_workflows"), DomainGroup::Skills);
+    assert_eq!(tool_group("propose_workflow"), DomainGroup::Flows);
+    assert_eq!(tool_group("list_flows"), DomainGroup::Flows);
+    assert_eq!(tool_group("media_generate_image"), DomainGroup::Media);
+    // Voice audio_* tools have no voice_/tts_/stt_ prefix — must be classified
+    // explicitly, not fall through to Platform (#4808 review).
+    assert_eq!(tool_group("audio_generate_podcast"), DomainGroup::Voice);
+    assert_eq!(tool_group("audio_email_podcast"), DomainGroup::Voice);
+    assert_eq!(
+        tool_group("audio_generate_and_email_podcast"),
+        DomainGroup::Voice
+    );
+    // Channels read-only WhatsApp data tools.
+    assert_eq!(
+        tool_group("whatsapp_data_list_chats"),
+        DomainGroup::Channels
+    );
+    assert_eq!(
+        tool_group("whatsapp_data_search_messages"),
+        DomainGroup::Channels
+    );
+
+    // Harness-mapped families → kept under harness().
+    assert_eq!(tool_group("memory_store"), DomainGroup::Memory);
+    assert_eq!(tool_group("goals_add"), DomainGroup::Memory);
+    assert_eq!(tool_group("update_memory_md"), DomainGroup::Memory);
+    assert_eq!(tool_group("thread_list"), DomainGroup::Threads);
+    assert_eq!(tool_group("todo_add"), DomainGroup::Threads);
+    assert_eq!(tool_group("goal_get"), DomainGroup::Threads);
+
+    // Everything else → Platform (dropped under harness()).
+    assert_eq!(tool_group("shell"), DomainGroup::Platform);
+    assert_eq!(tool_group("file_read"), DomainGroup::Platform);
+    assert_eq!(tool_group("config_snapshot"), DomainGroup::Platform);
+    assert_eq!(tool_group("spawn_subagent"), DomainGroup::Platform);
+}
+
+#[test]
+fn tool_group_gate_families_dropped_under_harness_not_full() {
+    use crate::core::runtime::DomainSet;
+
+    let full = DomainSet::full();
+    let harness = DomainSet::harness();
+    // Full keeps every family.
+    for name in ["wallet_status", "run_workflow", "memory_store", "shell"] {
+        assert!(full.allows(tool_group(name)), "full() keeps {name}");
+    }
+    // Harness keeps memory/threads, drops gate families AND platform.
+    assert!(harness.allows(tool_group("memory_store")));
+    assert!(harness.allows(tool_group("thread_list")));
+    assert!(!harness.allows(tool_group("wallet_status")));
+    assert!(!harness.allows(tool_group("run_workflow")));
+    assert!(!harness.allows(tool_group("shell")));
+    // The previously-misclassified gate-family tools now drop under harness.
+    assert!(!harness.allows(tool_group("audio_generate_podcast")));
+    assert!(!harness.allows(tool_group("whatsapp_data_list_chats")));
+}
+
+#[test]
+fn no_gate_family_tool_silently_defaults_to_platform() {
+    use crate::core::all::DomainGroup;
+    // #4808 maintainer review: a future tool in a prefix-gated family must NOT
+    // fall through to Platform — otherwise it would stay callable under a custom
+    // `DomainSet { platform: true, <family>: false }`, leaking the gated surface.
+    // These synthetic names match no exact list, only the family prefix.
+    for name in [
+        "wallet_new_thing",
+        "web3_new_thing",
+        "x402_new_thing",
+        "mcp_new_thing",
+        "media_new_thing",
+        "whatsapp_data_new_thing",
+    ] {
+        assert_ne!(
+            tool_group(name),
+            DomainGroup::Platform,
+            "gate-family tool `{name}` must not silently default to Platform"
+        );
+    }
+}

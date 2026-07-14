@@ -23,7 +23,7 @@ async fn process_channel_message_executes_tool_calls_instead_of_sending_raw_json
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(ToolCallingProvider),
+        provider: Some(Arc::new(ToolCallingProvider)),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
@@ -44,6 +44,7 @@ async fn process_channel_message_executes_tool_calls_instead_of_sending_raw_json
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(
@@ -79,7 +80,7 @@ async fn process_channel_message_executes_tool_calls_with_alias_tags() {
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(ToolCallingAliasProvider),
+        provider: Some(Arc::new(ToolCallingAliasProvider)),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
@@ -100,6 +101,7 @@ async fn process_channel_message_executes_tool_calls_with_alias_tags() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(
@@ -144,7 +146,7 @@ async fn process_channel_message_handles_models_command_without_llm_call() {
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::clone(&default_provider),
+        provider: Some(Arc::clone(&default_provider)),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -165,6 +167,7 @@ async fn process_channel_message_handles_models_command_without_llm_call() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     let cmd_msg = traits::ChannelMessage {
@@ -236,7 +239,7 @@ async fn process_channel_message_uses_route_override_provider_and_model() {
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::clone(&default_provider),
+        provider: Some(Arc::clone(&default_provider)),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -257,6 +260,7 @@ async fn process_channel_message_uses_route_override_provider_and_model() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(runtime_ctx, routed_msg).await;
@@ -284,9 +288,9 @@ async fn process_channel_message_respects_configured_max_tool_iterations_above_d
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(IterativeToolProvider {
+        provider: Some(Arc::new(IterativeToolProvider {
             required_tool_iterations: 11,
-        }),
+        })),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
@@ -307,6 +311,7 @@ async fn process_channel_message_respects_configured_max_tool_iterations_above_d
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(
@@ -341,9 +346,9 @@ async fn process_channel_message_reports_configured_max_tool_iterations_limit() 
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(IterativeToolProvider {
+        provider: Some(Arc::new(IterativeToolProvider {
             required_tool_iterations: 20,
-        }),
+        })),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
@@ -364,6 +369,7 @@ async fn process_channel_message_reports_configured_max_tool_iterations_limit() 
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(

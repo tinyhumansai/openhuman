@@ -108,8 +108,8 @@ describe('AgentChatPanel', () => {
 
   it('sends a master message from the composer', async () => {
     render(<AgentChatPanel />);
-    fireEvent.change(screen.getByTestId('orch-agent-composer-input'), { target: { value: 'go' } });
-    fireEvent.click(screen.getByTestId('orch-agent-composer-send'));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'go' } });
+    fireEvent.click(screen.getByTestId('send-message-button'));
     await waitFor(() =>
       expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 'master' }), 'go')
     );
@@ -122,22 +122,20 @@ describe('AgentChatPanel', () => {
       selected: { id: 'subconscious', title: 'Subconscious', messages: [] },
     };
     render(<AgentChatPanel />);
-    expect(screen.getByTestId('orch-agent-steering-header')).toBeInTheDocument();
+    expect(screen.getByTestId('orch-agent-steering')).toBeInTheDocument();
     fireEvent.click(screen.getByText('tinyplaceOrchestration.steeringHeader.runReview'));
-    expect(subconsciousTrigger).toHaveBeenCalledWith('tinyplace');
+    expect(subconsciousTrigger).toHaveBeenCalledWith('all');
   });
 
-  it('opens a session side-tab from a View-session card and replies (no auto-open)', async () => {
+  it('opens a session subpage from a View-session card and replies', async () => {
     contactSessions.current = [pinged];
     render(<AgentChatPanel />);
-    expect(screen.queryByTestId('orch-agent-session-drawer')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('orch-session-header')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('orch-agent-view-session-s-auth'));
-    expect(screen.getByTestId('orch-agent-session-drawer')).toBeInTheDocument();
+    expect(screen.getByTestId('orch-session-header')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByTestId('orch-agent-drawer-reply'), { target: { value: 'hi' } });
-    fireEvent.click(
-      screen.getByTestId('orch-agent-session-drawer').querySelector('button[type="submit"]')!
-    );
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hi' } });
+    fireEvent.click(screen.getByTestId('send-message-button'));
     await waitFor(() =>
       expect(sendMasterMessage).toHaveBeenCalledWith({
         body: 'hi',
@@ -145,21 +143,16 @@ describe('AgentChatPanel', () => {
         sessionId: 's-auth',
       })
     );
-
-    fireEvent.click(screen.getByTestId('orch-agent-drawer-close'));
-    expect(screen.queryByTestId('orch-agent-session-drawer')).not.toBeInTheDocument();
   });
 
-  it('surfaces a drawer reply failure', async () => {
+  it('surfaces a session reply failure', async () => {
     contactSessions.current = [pinged];
     sendMasterMessage.mockRejectedValueOnce(new Error('boom'));
     render(<AgentChatPanel />);
     fireEvent.click(screen.getByTestId('orch-agent-view-session-s-auth'));
-    fireEvent.change(screen.getByTestId('orch-agent-drawer-reply'), { target: { value: 'hi' } });
-    fireEvent.click(
-      screen.getByTestId('orch-agent-session-drawer').querySelector('button[type="submit"]')!
-    );
-    expect(await screen.findByTestId('orch-agent-drawer-reply-error')).toHaveTextContent('boom');
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hi' } });
+    fireEvent.click(screen.getByTestId('send-message-button'));
+    expect(await screen.findByTestId('orch-session-reply-error')).toHaveTextContent('boom');
   });
 
   it('shows an error state when the transcript fails to load', () => {
@@ -169,5 +162,77 @@ describe('AgentChatPanel', () => {
     };
     render(<AgentChatPanel />);
     expect(screen.getByText(/load failed/)).toBeInTheDocument();
+  });
+
+  // ── Autoscroll (regression: new master message snapped to the TOP) ─────────
+  const msg = (id: string) => ({
+    id,
+    from: 'you',
+    body: id,
+    timestamp: '2026-07-08T00:00:00Z',
+    encrypted: false,
+  });
+
+  // jsdom does no layout, so `scrollTop`/`scrollHeight`/`clientHeight` are inert.
+  // Back them with a stored value so the stick-to-bottom snap is observable.
+  const fakeMetrics = (el: HTMLElement, scrollHeight: number, clientHeight: number) => {
+    let top = 0;
+    Object.defineProperty(el, 'scrollHeight', { value: scrollHeight, configurable: true });
+    Object.defineProperty(el, 'clientHeight', { value: clientHeight, configurable: true });
+    Object.defineProperty(el, 'scrollTop', {
+      get: () => top,
+      set: v => {
+        top = v;
+      },
+      configurable: true,
+    });
+  };
+
+  it('pins the newest master message to the bottom on a new message (not the top)', () => {
+    chatsApi.current = {
+      ...chatsApi.current,
+      selectedId: 'master',
+      selected: { id: 'master', title: 'Master', messages: [msg('m1')] },
+    };
+    const { rerender } = render(<AgentChatPanel />);
+    const scroll = screen.getByTestId('orch-chat-scroll') as HTMLDivElement;
+    fakeMetrics(scroll, 1000, 400);
+    scroll.scrollTop = 0; // as if reset to the top by the loading-spinner swap
+
+    chatsApi.current = {
+      ...chatsApi.current,
+      selected: { id: 'master', title: 'Master', messages: [msg('m1'), msg('m2')] },
+    };
+    rerender(<AgentChatPanel />);
+
+    expect(scroll.scrollTop).toBe(1000); // snapped to the bottom, not left at 0
+  });
+
+  it('does not yank the master chat down when the user has scrolled up', () => {
+    chatsApi.current = {
+      ...chatsApi.current,
+      selectedId: 'master',
+      selected: { id: 'master', title: 'Master', messages: [msg('m1')] },
+    };
+    const { rerender } = render(<AgentChatPanel />);
+    const scroll = screen.getByTestId('orch-chat-scroll') as HTMLDivElement;
+    fakeMetrics(scroll, 1000, 400);
+    scroll.scrollTop = 0; // 600px from the bottom, past the 80px threshold
+    fireEvent.scroll(scroll); // disengages stickiness
+
+    chatsApi.current = {
+      ...chatsApi.current,
+      selected: { id: 'master', title: 'Master', messages: [msg('m1'), msg('m2')] },
+    };
+    rerender(<AgentChatPanel />);
+
+    expect(scroll.scrollTop).toBe(0); // left where the user parked it
+  });
+
+  it('renders with no selected chat (covers the empty-messages fallback)', () => {
+    chatsApi.current = { ...chatsApi.current, selected: undefined as never };
+    render(<AgentChatPanel />);
+    // Exercises `selected?.messages ?? EMPTY_MESSAGES`; the panel still renders.
+    expect(screen.getByTestId('orch-agent-tab-master')).toBeInTheDocument();
   });
 });

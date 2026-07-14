@@ -52,15 +52,6 @@ vi.mock('../store/chatRuntimeSlice', () => ({
   }),
 }));
 
-// The hook reads the live store directly (not the stale closed-over selector
-// value) to dedup against a message the streamed `chat_done` path may have
-// already appended for this exact turn — see the `assistantText` fallback
-// branch. Controllable per test via `rawStoreState.thread.messagesByThreadId`.
-const rawStoreState = vi.hoisted(() => ({
-  thread: { messagesByThreadId: {} as Record<string, { sender: string; content: string }[]> },
-}));
-vi.mock('../store', () => ({ store: { getState: () => rawStoreState } }));
-
 const okResult = (over: Partial<BuilderTurnResult> = {}): BuilderTurnResult => ({
   proposal: null,
   assistantText: 'done',
@@ -76,7 +67,6 @@ describe('useWorkflowBuilderChat', () => {
     selectorState.messagesByThreadId = {};
     selectorState.toolTimelineByThread = {};
     selectorState.streamingAssistantByThread = {};
-    rawStoreState.thread.messagesByThreadId = {};
     dispatch.mockReset().mockImplementation((action: { type: string }) => {
       if (action.type === 'createNewThread') {
         return { unwrap: () => Promise.resolve({ id: 'builder-1' }) };
@@ -139,13 +129,7 @@ describe('useWorkflowBuilderChat', () => {
     );
   });
 
-  it('appends the user turn locally — the runtime normally owns the agent reply', async () => {
-    // Simulate the streamed path already having delivered this exact text via
-    // `chat_done` (the normal case when streaming is wired) so the fallback
-    // branch below can prove it does NOT double the bubble.
-    rawStoreState.thread.messagesByThreadId = {
-      'builder-1': [{ sender: 'agent', content: 'Here is your workflow.' }],
-    };
+  it('appends the user turn locally but never the agent reply — onDone is the single authoritative path (B26)', async () => {
     buildWorkflow.mockResolvedValue(okResult({ assistantText: 'Here is your workflow.' }));
     const { result } = renderHook(() => useWorkflowBuilderChat());
     await act(async () => {
@@ -160,12 +144,13 @@ describe('useWorkflowBuilderChat', () => {
     // The web channel never persists user messages, so the hook appends the
     // user turn itself...
     expect(appended.some(a => a.p?.message?.sender === 'user')).toBe(true);
-    // ...but NOT the agent reply when it was already streamed — appending
-    // here too would double it.
+    // ...but NEVER the agent reply — `ChatRuntimeProvider.onDone` is the sole
+    // path that persists it (B26: the local fallback append that used to race
+    // it, doubling the bubble on tool-calling turns, is gone entirely).
     expect(appended.some(a => a.p?.message?.sender === 'agent')).toBe(false);
   });
 
-  it('surfaces a clarifying question as an assistant message when the builder returns plain text with no proposal (fallback)', async () => {
+  it('never locally appends an assistant message, even for a clarifying-question-shaped reply with no proposal (B26)', async () => {
     buildWorkflow.mockResolvedValue(
       okResult({
         proposal: null,
@@ -184,12 +169,10 @@ describe('useWorkflowBuilderChat', () => {
     const appendedAgentMessages = dispatch.mock.calls
       .map(([a]) => a as { type: string; p?: { threadId?: string; message?: ThreadMessage } })
       .filter(a => a.type === 'addMessageLocal' && a.p?.message?.sender === 'agent');
-    expect(appendedAgentMessages).toHaveLength(1);
-    expect(appendedAgentMessages[0]?.p?.message?.content).toBe(
-      'Which Slack channel — #eng or #sales?'
-    );
-    expect(appendedAgentMessages[0]?.p?.threadId).toBe('builder-1');
-    // No proposal was surfaced for this turn.
+    // No local fallback append — the assistant's reply (if any) arrives only
+    // via the streamed `chat_done` -> `ChatRuntimeProvider.onDone` path.
+    expect(appendedAgentMessages).toHaveLength(0);
+    // No proposal was surfaced for this turn either.
     expect(dispatch.mock.calls.some(([a]) => (a as { type: string }).type === 'setProposal')).toBe(
       false
     );
@@ -354,10 +337,9 @@ describe('useWorkflowBuilderChat', () => {
             content: 'Now let me build the workflow.',
             extraMetadata: { isInterim: true, requestId: 'r1' },
           },
-          // The #4630-style clarifying question is appended via
-          // `addMessageLocal` (the `send` fallback branch), never through
-          // `onInterim` — so it carries no `isInterim` tag and must still
-          // render as a bubble.
+          // The #4630-style clarifying question is persisted by
+          // `ChatRuntimeProvider.onDone` on the turn's `chat_done` event —
+          // it carries no `isInterim` tag and must still render as a bubble.
           {
             id: 'm4',
             sender: 'agent',
@@ -369,6 +351,44 @@ describe('useWorkflowBuilderChat', () => {
       const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
       expect(result.current.messages).toHaveLength(4);
       expect(result.current.displayMessages.map(m => m.id)).toEqual(['m1', 'm4']);
+    });
+
+    it('dedupes consecutive agent messages with identical content (B26 defense-in-depth)', () => {
+      // Simulates a doubled persistence (e.g. a socket reconnect replaying
+      // `chat_done`): two consecutive agent messages with the exact same
+      // content must collapse to a single rendered bubble.
+      selectorState.messagesByThreadId = {
+        'builder-1': [
+          { id: 'm1', sender: 'user', content: 'build me a digest', extraMetadata: {} },
+          {
+            id: 'm2',
+            sender: 'agent',
+            content: "I've built this — review below.",
+            extraMetadata: {},
+          },
+          {
+            id: 'm3',
+            sender: 'agent',
+            content: "I've built this — review below.",
+            extraMetadata: {},
+          },
+        ] as ThreadMessage[],
+      };
+      const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+      expect(result.current.messages).toHaveLength(3);
+      expect(result.current.displayMessages.map(m => m.id)).toEqual(['m1', 'm2']);
+    });
+
+    it('keeps consecutive agent messages with DIFFERENT content (no over-collapsing)', () => {
+      selectorState.messagesByThreadId = {
+        'builder-1': [
+          { id: 'm1', sender: 'user', content: 'build me a digest', extraMetadata: {} },
+          { id: 'm2', sender: 'agent', content: 'First reply.', extraMetadata: {} },
+          { id: 'm3', sender: 'agent', content: 'Second, different reply.', extraMetadata: {} },
+        ] as ThreadMessage[],
+      };
+      const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+      expect(result.current.displayMessages.map(m => m.id)).toEqual(['m1', 'm2', 'm3']);
     });
   });
 

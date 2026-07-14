@@ -7,6 +7,23 @@
 use crate::openhuman::config::{Config, LocalAiConfig};
 use serde::{Deserialize, Serialize};
 
+fn strip_think_tags(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut rest = input;
+    loop {
+        let Some(start) = rest.find("<think>") else {
+            result.push_str(rest);
+            break;
+        };
+        result.push_str(&rest[..start]);
+        let Some(end) = rest[start..].find("</think>") else {
+            break;
+        };
+        rest = &rest[start + end + "</think>".len()..];
+    }
+    result.trim().to_string()
+}
+
 pub(crate) const DEFAULT_LM_STUDIO_BASE_URL: &str = "http://localhost:1234/v1";
 
 pub(crate) fn lm_studio_base_url(config: &Config) -> String {
@@ -198,7 +215,7 @@ impl LmStudioChatResponseMessage {
         let content = self
             .content
             .as_deref()
-            .map(crate::openhuman::inference::provider::compatible_parse::strip_think_tags)
+            .map(strip_think_tags)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .unwrap_or_default();
@@ -214,7 +231,7 @@ impl LmStudioChatResponseMessage {
         let reasoning = self
             .reasoning_content
             .as_deref()
-            .map(crate::openhuman::inference::provider::compatible_parse::strip_think_tags)
+            .map(strip_think_tags)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .unwrap_or_default();

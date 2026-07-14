@@ -16,8 +16,10 @@
  * `pendingWorkflowProposalsByThread` for this thread as the turn runs. This hook
  * only appends the local USER turn (the web channel never persists user
  * messages) and reads the streamed state back out; the blocking
- * `{proposal, error}` return is a fallback for when streaming isn't wired
- * (CLI / tests / a missed socket event).
+ * `{proposal, error}` return is used for the proposal/error signal only —
+ * `ChatRuntimeProvider.onDone` is the SINGLE authoritative path for
+ * persisting the assistant's reply (B26: a local fallback append here used
+ * to race it and double the bubble on tool-calling turns).
  *
  * Invariant: `create`/`revise`/`repair` never persist; only a `build` turn (with
  * a real flow id) may save onto an existing flow. Nothing here enables a flow.
@@ -26,7 +28,6 @@ import createDebug from 'debug';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { type BuilderTurnRequest, buildWorkflow } from '../services/api/flowsApi';
-import { store } from '../store';
 import {
   clearWorkflowProposalForThread,
   fetchAndHydrateTurnHistory,
@@ -110,8 +111,8 @@ export interface UseWorkflowBuilderChat {
    * that narration already renders live via `toolTimeline`/`liveResponse`
    * below — showing it again as a bubble double-renders it. User messages and
    * any non-interim agent message (the turn's terminal answer, including a
-   * clarifying question appended via the `assistantText` fallback in `send`)
-   * are always kept.
+   * clarifying question) are kept, with consecutive identical-content agent
+   * messages collapsed to one (B26 dedup guard).
    */
   displayMessages: ThreadMessage[];
   /**
@@ -204,10 +205,20 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
   // non-interim agent turn (the terminal answer for a round, including a
   // clarifying question with no `isInterim` tag). `messages` itself stays the
   // full set — rehydration (below) and any future persistence need it intact.
-  const displayMessages = useMemo(
-    () => messages.filter(m => m.sender === 'user' || !m.extraMetadata?.isInterim),
-    [messages]
-  );
+  //
+  // Also dedupes consecutive agent messages with identical content (B26
+  // defense-in-depth): the fallback append in `send()` that used to race
+  // `ChatRuntimeProvider.onDone` is gone, but this guards against any future
+  // regression (e.g. a socket reconnect replaying `chat_done`) producing a
+  // doubled bubble.
+  const displayMessages = useMemo(() => {
+    const filtered = messages.filter(m => m.sender === 'user' || !m.extraMetadata?.isInterim);
+    return filtered.filter((m, i) => {
+      if (m.sender !== 'agent' || i === 0) return true;
+      const prev = filtered[i - 1];
+      return !(prev.sender === 'agent' && prev.content === m.content);
+    });
+  }, [messages]);
 
   const toolTimeline = useMemo(
     () => (threadId ? (toolTimelineByThread[threadId] ?? EMPTY_TIMELINE) : EMPTY_TIMELINE),
@@ -314,10 +325,9 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
         // text/thinking/tool events + a terminal `chat_done` keyed by it. The
         // GLOBAL `ChatRuntimeProvider` owns that transcript — it appends the
         // final assistant message on `chat_done` and fills the streaming/tool
-        // slices as the turn runs, so in the normal (streaming-wired) case this
-        // hook must NOT also append the agent reply (doing so would double
-        // it) — see the dedup check below. We still await the blocking result
-        // for its `proposal`/`error`/`assistantText` fallback.
+        // slices as the turn runs, so this hook must NOT also append the agent
+        // reply (doing so would double it — B26). We still await the blocking
+        // result for its `proposal`/`error` signal.
         log('send: running flows_build thread=%s mode=%s', targetThreadId, request.mode);
         const result = await buildWorkflow(request, targetThreadId);
 
@@ -333,39 +343,18 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
           );
         } else if (result.error) {
           setError(result.error);
-        } else if (result.assistantText?.trim()) {
-          // Neither a proposal nor an error: the agent replied with plain
-          // text instead of proposing this turn — most commonly a clarifying
-          // question (the "ask" branch of the clarify/verify posture). When
-          // streaming is wired (the normal case) `ChatRuntimeProvider` already
-          // appended this exact text on the turn's `chat_done` — the Rust
-          // side (`finalize_flow_stream`) delivers it unconditionally,
-          // independent of whether a proposal was made — so re-appending here
-          // would double the bubble. Read the live store (not the stale
-          // closed-over `messages`) to check whether that already landed;
-          // only append when it hasn't, which is the actual fallback case
-          // (streaming not wired: CLI / tests / a missed socket event).
-          const latest = store.getState().thread.messagesByThreadId[targetThreadId] ?? [];
-          const lastMessage = latest[latest.length - 1];
-          const alreadyStreamed =
-            lastMessage?.sender === 'agent' && lastMessage.content === result.assistantText;
-          log(
-            'send: assistantText fallback thread=%s alreadyStreamed=%s',
-            targetThreadId,
-            alreadyStreamed
-          );
-          if (!alreadyStreamed) {
-            const assistantMessage: ThreadMessage = {
-              id: `msg_${globalThis.crypto.randomUUID()}`,
-              content: result.assistantText,
-              type: 'text',
-              extraMetadata: {},
-              sender: 'agent',
-              createdAt: new Date().toISOString(),
-            };
-            dispatch(addMessageLocal({ threadId: targetThreadId, message: assistantMessage }));
-          }
         }
+        // Note: no local fallback append for `result.assistantText` here (B26).
+        // `ChatRuntimeProvider.onDone` is the SINGLE authoritative path that
+        // persists the assistant's reply on the turn's `chat_done` event — the
+        // Rust side (`finalize_flow_stream`) delivers it unconditionally,
+        // independent of whether a proposal was made. A local fallback here
+        // raced that streamed append (the socket event isn't guaranteed to have
+        // landed by the time this blocking call resolves) and produced a
+        // doubled bubble on tool-calling turns, which take longer and widen the
+        // race window. If streaming is ever not wired (CLI / tests), the
+        // assistant's reply simply won't appear in the thread transcript — the
+        // `proposal` still surfaces via the Redux slice above.
         return { outcome: 'dispatched', proposed };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

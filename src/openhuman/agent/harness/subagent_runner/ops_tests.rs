@@ -340,7 +340,7 @@ fn make_parent(provider: Arc<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Parent
         allowed_subagent_ids: ["test".to_string(), "child".to_string(), "inner".to_string()]
             .into_iter()
             .collect(),
-        provider,
+        turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(provider),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
         visible_tool_names: std::collections::HashSet::new(),

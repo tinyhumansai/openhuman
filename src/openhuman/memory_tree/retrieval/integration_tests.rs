@@ -139,7 +139,22 @@ async fn ingest_populates_chunk_embeddings() {
         out.chunks_written >= 1,
         "expected at least one persisted chunk"
     );
-    drain_until_idle(&cfg).await.unwrap();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        drain_until_idle(&cfg).await.unwrap();
+        let all_embedded = out
+            .chunk_ids
+            .iter()
+            .all(|id| get_chunk_embedding(&cfg, id).ok().flatten().is_some());
+        if all_embedded {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "chunk embeddings were not persisted before timeout"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
     for id in &out.chunk_ids {
         let emb = get_chunk_embedding(&cfg, id).unwrap();
         let v = emb.unwrap_or_else(|| panic!("embedding missing for chunk_id={id}"));

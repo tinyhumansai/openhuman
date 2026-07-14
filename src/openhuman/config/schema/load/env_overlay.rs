@@ -102,20 +102,6 @@ impl Config {
             }
         }
 
-        if let Some(raw) = env.get("OPENHUMAN_ORCH_REVIEW_INTERVAL_MINUTES") {
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() {
-                match trimmed.parse::<u32>() {
-                    Ok(mins) => self.orchestration.review_interval_minutes = Some(mins),
-                    Err(_) => tracing::warn!(
-                        env = "OPENHUMAN_ORCH_REVIEW_INTERVAL_MINUTES",
-                        value = %raw,
-                        "invalid tinyplace review interval ignored; expected an unsigned integer (minutes)"
-                    ),
-                }
-            }
-        }
-
         if let Some(language) = env.get("OPENHUMAN_OUTPUT_LANGUAGE") {
             let language = language.trim();
             if !language.is_empty() {
@@ -954,8 +940,8 @@ impl Config {
             }
         }
         // "Super context" — harness-driven first-turn context collection.
-        // On by default; `OPENHUMAN_SUPER_CONTEXT=0` opts out. Accepts
-        // the canonical short name and the namespaced form.
+        // Off by default (expensive); `OPENHUMAN_SUPER_CONTEXT=1` opts in.
+        // Accepts the canonical short name and the namespaced form.
         if let Some(flag) = env
             .get("OPENHUMAN_SUPER_CONTEXT")
             .or_else(|| env.get("OPENHUMAN_CONTEXT_SUPER_CONTEXT_ENABLED"))

@@ -1,8 +1,15 @@
 # TinyCortex Memory Migration — Plan & Audit
 
-**Status:** draft plan — no code changes yet.
+**Status:** W1–W2 landed; W3 partial (chunks sub-store flipped). Amended 2026-07-09 (see §8) to a **sync-inclusive** scope.
 **Anchor precedent:** the TinyAgents harness migration (#4249 / #4399 / #4473 and follow-ups).
 **Target:** migrate large portions of the OpenHuman memory subsystem onto the `tinycortex` crate, vendored as a git submodule at **`vendor/tinycortex`** (`https://github.com/tinyhumansai/tinycortex`).
+
+> **Amendment 2026-07-09 (§8 — W-SYNC + W-EMB).** The original seam contract kept live sync
+> (`memory_sync/`) host-side and TinyCortex strictly network-free. That boundary is **revised**:
+> TinyCortex becomes all-encompassing of the sync modules (Composio toolkit sync included) behind an
+> optional `sync` cargo feature, and embeddings are inherited from `tinyagents::harness::embeddings`.
+> Sections §1/§3 below are the original contract, kept for history; where they conflict with §8,
+> **§8 wins**.
 
 ---
 
@@ -63,7 +70,7 @@ TinyCortex lives at **`vendor/tinycortex`** as a git submodule. Any change to en
 
 - **All RPC surfaces**: `memory/ops/`, `memory/schemas/`, `memory/schema/`, `memory/read_rpc/`, `rpc_models.rs` (controller framework types `ControllerSchema`/`RpcOutcome` are host-only). JSON-RPC method names and payload shapes must not change.
 - **Agent tools**: `memory/tools/` and `memory/query/` (`Tool`/`ToolResult` impls, `SecurityPolicy` gating) — they become thin wrappers over crate retrieval primitives.
-- **Live sync**: all of `memory_sync/` (Composio/MCP/OAuth/pollers), `memory/sync.rs` lifecycle + event-bus stage events.
+- **Live sync**: all of `memory_sync/` (Composio/MCP/OAuth/pollers), `memory/sync.rs` lifecycle + event-bus stage events. *(Superseded by §8: the sync engine moves to the crate; only schedulers, credentials/OAuth, bus bridges, and RPC wrappers stay host.)*
 - **Process glue**: `memory/global.rs` singleton + background queue worker; `memory/source_scope.rs` tokio task-locals; `memory/chat.rs` (LLM adapter over `openhuman::inference`); embeddings provider wiring.
 - **Policy/UX**: `preferences.rs`, `remember.rs`, `tree_policy.rs`, `util/redact.rs`, config mapping (`Config` → `tinycortex::MemoryConfig`).
 - **Namespace document/graph store** (until/unless deliberately upstreamed — TinyCortex explicitly excludes it today).
@@ -116,7 +123,7 @@ Per the tinyagents rules: **adapter first → prove parity → flip ownership �
 
 **W6 — Ingest.** `memory/ingest_pipeline.rs` + `memory/ingestion/` re-pointed to `tinycortex::ingest` + `score::extract` (LLM extraction via the seam's `ChatProvider`). The namespace document/graph store path stays host-side unless deliberately upstreamed (explicit decision in this workstream). `ingest_chat`/`ingest_document_with_scope` keep their signatures — 11 call sites (learning, agent harness, archivist) unchanged.
 
-**W7 — Long tail.** `memory_diff`→`diff`, `memory_entities`→`entities`, `memory_graph`→`graph`, `memory_goals`→`goals`, `memory_archivist`→`archivist`, `memory_sources` registry/local readers→`sources`, tool-memory engine→`tool_memory`, conversation storage→`conversations`. Each is small and independent; each deletes its legacy module on flip. `memory_sync` explicitly **does not move** — it keeps writing through the crate's ingest/source contracts.
+**W7 — Long tail.** `memory_diff`→`diff`, `memory_entities`→`entities`, `memory_graph`→`graph`, `memory_goals`→`goals`, `memory_archivist`→`archivist`, `memory_sources` registry/local readers→`sources`, tool-memory engine→`tool_memory`, conversation storage→`conversations`. Each is small and independent; each deletes its legacy module on flip. `memory_sync` engine parts **move via W-SYNC (§8)** — the original "does not move" rule is superseded.
 
 **W8 — Test port + parity sweep + deletion-ledger close-out.** See §5. Ends with: deletion ledger fully executed, `gitbooks/developing/architecture.md` + a new `architecture/memory.md` seam doc written (the durable post-plan documentation, as `agent-harness.md` was for tinyagents), `AGENTS.md`/`CLAUDE.md` module tables updated, and the spec doc archived.
 
@@ -173,3 +180,86 @@ Ordering rule for this migration: **within each workstream, the implementation (
 - All engine logic served by `tinycortex` at a tagged, crates.io-published version, submodule pinned in lockstep.
 - JSON-RPC method names/payloads unchanged; existing user workspaces open and recall identically (golden-workspace parity green).
 - Full suites green on both CI lanes; gitbooks/AGENTS.md updated; spec + ledgers archived.
+- **(Amended)** `memory_sync/` engine deleted from the host per §8 (W-SYNC); host retains only
+  schedulers, credentials/OAuth, event-bus bridges, and RPC wrappers. `src/openhuman/embeddings/`
+  provider impls deleted per §8 (W-EMB); embeddings served by `tinyagents::harness::embeddings`.
+
+---
+
+## 8. Amendment (2026-07-09) — sync-inclusive scope + embeddings inheritance
+
+Decisions (confirmed with the maintainer): TinyCortex becomes **all-encompassing of the sync
+modules**; "Composio-related skills syncing" = the per-toolkit memory-sync providers
+(`memory_sync/composio/providers/{gmail,slack,github,notion,linear,clickup}`); **full network in
+crate** behind a cargo feature; Composio API key via env var + config field (host still resolves
+from the `composio-direct` keychain slot in production); a **mocked + live test pair** gates the
+Composio sync port; embeddings **fully inherited from TinyAgents**.
+
+### 8.1 Revised seam contract — W-SYNC
+
+**Moves into TinyCortex** (new cargo feature `sync`, off by default so the default build stays a
+pure, network-free library):
+
+| Host source | Crate destination |
+| --- | --- |
+| `memory_sync/traits.rs` (`SyncPipeline`/`SyncOutcome`/`SyncPipelineKind`) | `src/memory/sync/traits.rs` (init/tick take `&MemoryConfig` + a `SyncContext`) |
+| `memory_sync/composio/providers/*` (all 6 toolkits + registry, orchestrator, sync_state, catalogs, user_scopes) | `src/memory/sync/composio/providers/*` |
+| New Composio HTTP client (modeled on `src/openhuman/composio/client.rs`, minus keychain) | `src/memory/sync/composio/client.rs` — **direct** (BYO key → backend.composio.dev) and **proxied** (base_url + bearer; OpenHuman-backend default) modes |
+| `memory_sync/canonicalize/` | merged into the crate's existing `ingest/canonicalize` |
+| `memory_sync/workspace/` scan logic (not the timers) | `src/memory/sync/workspace.rs` |
+| `memory_sync/sources/{audit,rebuild}.rs` | `src/memory/sync/{audit,rebuild}.rs` |
+| `memory_sync/sync_status/` SQL | `src/memory/sync/status.rs` (chunk schema lives in the crate) |
+| `memory_sources/sync.rs::sync_source` dispatcher + `reconcile.rs::ensure_composio_sources` | `src/memory/sync/dispatch.rs` |
+
+**Stays host-side:** scheduler loops (`composio/periodic.rs`, `workspace/periodic.rs`, file
+watcher — crate exposes `sync::tick_all`/`tick_pipeline(id)`, host owns tokio timers, same pattern
+as `queue::run_once`); credentials/OAuth (keychain slot `composio-direct`, RPC
+`composio.{get_mode,set_api_key,clear_api_key}`, connection lifecycle); event bus (new
+**`SyncEventSink`** trait in the crate, host adapter `src/openhuman/tinycortex/sync_sink.rs`
+translates to `MemorySyncStage` bus events); RPC wrappers (`memory/ops/sync.rs`,
+`memory/schemas/sync.rs`, `memory_sources/rpc.rs` — JSON-RPC names/payloads unchanged); the
+UnifiedMemory writeback path via a new **`SkillDocSink`** trait (providers call
+`MemoryClient::store_skill_sync`, which writes the host-retained namespace-document tier — the
+crate must not depend on that tier); MCP transport (MCP pipeline stays host through W-SYNC.3).
+
+**Config/key:** crate gains `SyncConfig { budget, composio: Option<ComposioSyncConfig> }` with
+`ComposioSyncConfig { mode: Direct|Proxied, base_url, api_key: Option<SecretString>, bearer_token,
+entity_id }`; `api_key` falls back to the `COMPOSIO_API_KEY` env var (tests only — the app resolves
+from keychain and injects). `SecretString` redacts `Debug`/`Display` and skips serialization.
+
+**Tests (gate):** (a) `vendor/tinycortex/tests/composio_sync_mock.rs` — wiremock-backed gmail
+pipeline test, always-on in crate CI (pagination, cursor advance, taint = `external_sync`,
+idempotent second tick, `SkillDocSink` capture, 401 without key leakage); (b)
+`vendor/tinycortex/tests/composio_sync_live.rs` — `#[ignore]`, runs when `COMPOSIO_API_KEY` is set,
+direct-mode gmail sync with structural assertions, budget-capped (~5 records).
+
+**Ordering:** W-SYNC slots **after W6, before W7** (providers write through crate ingest; queue
+jobs through crate queue). Phases: **W-SYNC.1** scaffolding (feature + config + client + traits +
+gmail provider) → **W-SYNC.2** remaining providers + workspace/audit/rebuild/status → **W-SYNC.3**
+host flip (delete `memory_sync` bodies; wire adapters/schedulers/RPC wrappers) → **W-SYNC.4**
+cleanup (dedupe the agent-tools Composio client, remove `composio/{bus,periodic,providers}.rs`
+shims, decide MCP).
+
+**Drift:** the HOST-OWNED "live sync" classification in the drift ledger is superseded — see the
+ledger's **D4** entry.
+
+### 8.2 Embeddings inherited from TinyAgents — W-EMB
+
+`tinyagents::harness::embeddings` becomes the canonical embeddings module:
+
+- **W-EMB.1 (tinyagents PR):** extend `EmbeddingModel` with `name()`/`model_id()`/`signature()`
+  (default **byte-identical** to the host format `provider={name};model={model_id};dims={dims}` —
+  parity P10 / #1574); port host providers (`ollama`, `cohere`, `voyage`, `cloud`, `noop`) +
+  `rate_limit.rs`/`retry_after.rs` into `harness::embeddings::providers/*`; merge host `openai.rs`
+  into the existing `OpenAiEmbeddingModel`.
+- **W-EMB.2 (tinycortex PR):** add a `tinyagents` dependency; bridge/replace `EmbeddingBackend`
+  with `tinyagents::harness::embeddings::EmbeddingModel` (re-export or blanket impl).
+- **W-EMB.3 (host PR):** dual submodule bump; `src/openhuman/tinycortex/embeddings.rs` constructs
+  tinyagents providers from `Config`; delete `src/openhuman/embeddings/` provider impls; keep
+  `factory.rs` (thin), `rpc.rs`, `schemas.rs`, catalog + config wiring host-side; signature-parity
+  seam tests in the same PR.
+
+W-EMB is independent of W-SYNC and may run in parallel; land W-EMB.2 **before** the W-SYNC.3 flip
+so `SyncContext` is defined against the tinyagents trait once. New risk: `tinycortex → tinyagents`
+crate coupling — version bumps move in lockstep in both `[patch.crates-io]` blocks (root +
+`app/src-tauri`).

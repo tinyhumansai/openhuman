@@ -48,7 +48,7 @@ impl Agent {
         harness::ParentExecutionContext {
             agent_definition_id: self.agent_definition_id.clone(),
             allowed_subagent_ids,
-            provider: Arc::clone(&self.provider),
+            turn_model_source: self.turn_model_source.clone(),
             all_tools: Arc::clone(&self.tools),
             all_tool_specs: Arc::clone(&self.tool_specs),
             // Names of the tools the parent actually advertises this turn —

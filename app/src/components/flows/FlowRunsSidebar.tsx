@@ -11,6 +11,7 @@
  */
 import createDebug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { type FlowRun, listFlowRuns } from '../../services/api/flowsApi';
@@ -19,6 +20,7 @@ import {
   FLOW_RUN_STATUS_ACCENT,
   FLOW_RUN_STATUS_DOT,
   FLOW_RUN_STATUS_KEY,
+  type FlowRepairRequest,
   FlowRunInspectorDrawer,
 } from './FlowRunInspectorDrawer';
 
@@ -44,10 +46,37 @@ export interface FlowRunsSidebarProps {
 
 export default function FlowRunsSidebar({ flowId }: FlowRunsSidebarProps) {
   const { t } = useT();
+  const navigate = useNavigate();
   const [runs, setRuns] = useState<FlowRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+
+  // "Fix with agent" (issue B22) — this sidebar is only ever mounted while
+  // already on the failed run's own `/flows/:id` canvas (`FlowCanvasPage`
+  // projects it into the shell sidebar), so re-navigating to the SAME route
+  // with a fresh `copilotRepair` state is enough to open the canvas copilot
+  // preloaded with the failure — same mechanism `FlowsPage`'s run-history
+  // drawer uses to reach this page from elsewhere. `replace: true` avoids
+  // stacking a new history entry per click on top of the page the user is
+  // already viewing.
+  const handleFixWithAgent = useCallback(
+    (request: FlowRepairRequest) => {
+      log('fix with agent: flow=%s run=%s', request.flowId, request.runId);
+      setSelectedRunId(null);
+      navigate(`/flows/${request.flowId}`, {
+        replace: true,
+        state: {
+          copilotRepair: {
+            runId: request.runId,
+            error: request.error,
+            failingNodeIds: request.failingNodeIds,
+          },
+        },
+      });
+    },
+    [navigate]
+  );
 
   const load = useCallback(async () => {
     log('loading runs for flow=%s', flowId);
@@ -145,7 +174,11 @@ export default function FlowRunsSidebar({ flowId }: FlowRunsSidebarProps) {
         </ul>
       </div>
 
-      <FlowRunInspectorDrawer runId={selectedRunId} onClose={() => setSelectedRunId(null)} />
+      <FlowRunInspectorDrawer
+        runId={selectedRunId}
+        onClose={() => setSelectedRunId(null)}
+        onFixWithAgent={handleFixWithAgent}
+      />
     </div>
   );
 }

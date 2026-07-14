@@ -272,13 +272,27 @@ async fn multi_batch_volume_builds_full_tree() {
     });
     assert!(canonicalized >= 20);
 
-    // Drain all jobs.
-    drain_until_idle(&cfg).await.unwrap();
+    // A parallel test can briefly hold the process-global LLM gate, causing
+    // the seal job to defer. Keep draining until that deferred work becomes
+    // claimable and the durable tree state reflects the completed seal.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    let source_tree = loop {
+        drain_until_idle(&cfg).await.unwrap();
+        if let Some(tree) = tree_store::list_trees_by_kind(&cfg, TreeKind::Source)
+            .unwrap()
+            .into_iter()
+            .find(|tree| tree.scope == source_id && tree.max_level >= 1)
+        {
+            break tree;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "source tree did not seal before timeout"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
 
     // Source tree should have sealed to L1+.
-    let source_trees = tree_store::list_trees_by_kind(&cfg, TreeKind::Source).unwrap();
-    assert!(!source_trees.is_empty());
-    let source_tree = &source_trees[0];
     assert!(
         source_tree.max_level >= 1,
         "should seal to L1+, got max_level={}",

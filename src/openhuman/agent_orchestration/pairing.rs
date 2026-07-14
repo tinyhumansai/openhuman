@@ -243,12 +243,36 @@ pub async fn block_request(config: &Config, agent_id: &str) -> Result<PairingAct
 
 async fn contact_status(agent_id: &str) -> Result<String, String> {
     let client = tinyplace_state().client().await?;
-    let remote: Value = client
+    match client
         .http()
         .get_agent_auth::<Value>(&contact_path(agent_id, Some("status")), &[])
         .await
-        .map_err(map_err)?;
-    Ok(remote_status(&remote).unwrap_or_else(|| "none".to_string()))
+    {
+        Ok(remote) => Ok(remote_status(&remote).unwrap_or_else(|| "none".to_string())),
+        // A 404 from /contacts/{id}/status means "no contact relationship yet" —
+        // the normal state before you've ever linked this agent. Treat it as
+        // `none` (not an error) so `link_session` proceeds to send the request
+        // instead of surfacing a false "not found" and aborting the first link.
+        Err(e) if e.status() == Some(404) => {
+            log::debug!(
+                target: LOG_TARGET,
+                "[orchestration_pairing] contact_status.none agent_id={agent_id} (404 = no relationship yet)"
+            );
+            Ok("none".to_string())
+        }
+        Err(e) => Err(map_err(e)),
+    }
+}
+
+/// Whether the peer is an accepted tiny.place contact.
+///
+/// This is intentionally a live relay check rather than a read of the local
+/// orchestration pairing store. An accepted contact is already a
+/// user-consented recipient for an outbound message, even when it has not been
+/// linked as an inbound orchestration session in the current workspace.
+pub(crate) async fn is_accepted_contact(agent_id: &str) -> Result<bool, String> {
+    let agent_id = normalize_agent_id(agent_id)?;
+    Ok(contact_status(&agent_id).await? == "accepted")
 }
 
 fn remote_status(value: &Value) -> Option<String> {

@@ -5911,11 +5911,13 @@ async fn json_rpc_subconscious_status_exposes_instances_and_trigger_takes_kind()
     );
 
     // ── subconscious.trigger: optional kind echoes back ─────────────────────
+    // `memory` is the sole remaining world after the hosted-brain migration
+    // (#4738 retired the `tinyplace` local-world subconscious).
     let trig = post_json_rpc(
         &rpc_base,
         1102,
         "openhuman.subconscious_trigger",
-        json!({ "kind": "tinyplace" }),
+        json!({ "kind": "memory" }),
     )
     .await;
     let trig_result = assert_no_jsonrpc_error(&trig, "subconscious_trigger");
@@ -5927,7 +5929,7 @@ async fn json_rpc_subconscious_status_exposes_instances_and_trigger_takes_kind()
     );
     assert_eq!(
         trig_body.get("kind").and_then(Value::as_str),
-        Some("tinyplace"),
+        Some("memory"),
         "trigger echoes the requested kind: {trig_body}"
     );
 
@@ -5936,7 +5938,7 @@ async fn json_rpc_subconscious_status_exposes_instances_and_trigger_takes_kind()
         &rpc_base,
         1103,
         "openhuman.subconscious_trigger",
-        json!({ "kind": "nope" }),
+        json!({ "kind": "tinyplace" }),
     )
     .await;
     assert!(
@@ -12269,13 +12271,6 @@ mod task_sources_stub {
             _ctx: &ProviderContext,
         ) -> Result<ProviderUserProfile, String> {
             Ok(ProviderUserProfile::default())
-        }
-        async fn sync(
-            &self,
-            _ctx: &ProviderContext,
-            _reason: SyncReason,
-        ) -> Result<SyncOutcome, String> {
-            Ok(SyncOutcome::default())
         }
         async fn fetch_tasks(
             &self,

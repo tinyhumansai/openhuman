@@ -134,6 +134,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::memory_store::trees::types::{TreeKind, TreeStatus};
     use chrono::TimeZone;
     use tempfile::TempDir;
 

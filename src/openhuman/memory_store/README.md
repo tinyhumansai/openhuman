@@ -43,7 +43,7 @@ unified/   [staging for removal] UnifiedMemory's remaining SQLite surface
 | [`vectors/`](vectors/) | Standalone vector store. `VectorStore` over SQLite, byte-codec for f32 vectors, cosine similarity. |
 | [`kv.rs`](kv.rs) | Global + namespace key-value (`kv_global`, `kv_namespace` tables). |
 | `contacts/` | Removed. Contact access now lives outside `memory_store` via `people::store`. |
-| [`unified/`](unified/) | **Staging for removal.** Shrinking SQLite surface that still backs the `Memory` trait while callers migrate to per-kind modules. Active pieces today: `documents`, `query`, `segments`, `events`, `profile`. The `fts5` episodic surface is replaced by [`memory_archivist`](../memory_archivist/) and `graph` by [`memory_graph`](../memory_graph/). See [`unified/README.md`](unified/README.md). |
+| [`unified/`](unified/) | **Staging for removal.** Shrinking SQLite surface that still backs the `Memory` trait while callers migrate to per-kind modules. Active pieces today: `documents`, `query`, `segments`, `events`, `profile`. The `fts5` episodic surface is replaced by [`memory_archivist`](../memory_archivist/) and `graph` by the crate's `tinycortex::memory::graph` (the host `memory_graph` placeholder was deleted in the W7 migration). See [`unified/README.md`](unified/README.md). |
 
 ## Layer rules
 

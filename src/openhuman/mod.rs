@@ -28,6 +28,7 @@ pub mod announcements;
 pub mod app_state;
 pub mod approval;
 pub mod artifacts;
+#[cfg(feature = "voice")]
 pub mod audio_toolkit;
 pub mod autocomplete;
 pub mod billing;
@@ -75,9 +76,7 @@ pub mod memory;
 pub mod memory_archivist;
 pub mod memory_conversations;
 pub mod memory_diff;
-pub mod memory_entities;
 pub mod memory_goals;
-pub mod memory_graph;
 pub mod memory_queue;
 pub mod memory_search;
 pub mod memory_sources;

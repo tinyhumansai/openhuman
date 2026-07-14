@@ -49,6 +49,7 @@ import {
   levelColor,
   nodeColor,
   nodeRadius,
+  type SimTuning,
   SOURCE_COLOR,
   VIEWPORT_H,
   VIEWPORT_W,
@@ -114,6 +115,13 @@ interface MemoryGraphProps {
   fitToBounds?: boolean;
   /** Draw an always-on text label under each node. */
   showLabels?: boolean;
+  /**
+   * Optional force-simulation tuning applied on the WebGL (Pixi) path. Every
+   * field defaults to identity, so omitting it preserves the standard layout;
+   * the orchestration scale showcase passes higher repulsion / link length for
+   * a wide fan-out.
+   */
+  tuning?: SimTuning;
   /**
    * Fired exactly once when the graph's force layout first settles (SVG
    * worker `end`, the synchronous relax fallback, or the Pixi sim cooling).
@@ -215,6 +223,7 @@ export function MemoryGraph({
   fitScale,
   fitToBounds,
   showLabels,
+  tuning,
   onReady,
 }: MemoryGraphProps) {
   const { t } = useT();
@@ -664,6 +673,7 @@ export function MemoryGraph({
           fitScale={fitScale}
           fitToBounds={fitToBounds}
           showLabels={showLabels}
+          tuning={tuning}
           dark={
             typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
           }

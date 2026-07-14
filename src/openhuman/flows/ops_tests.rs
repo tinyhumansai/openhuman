@@ -362,15 +362,21 @@ async fn flows_run_populates_error_when_a_continue_policy_node_errors() {
     assert_eq!(reloaded.value.last_status.as_deref(), Some("failed"));
 }
 
-// ── automatic-dispatch binding (issue B2 finding #1) ─────────────────────
+// ── automatic-dispatch binding (issue B2 finding #1, revised by B29) ──────
 //
 // Live testing found that `flows_create` persisted a freshly-created,
 // `enabled = true` schedule flow WITHOUT registering its cron job — only
 // `flows_set_enabled` bound it. So a brand-new enabled schedule flow would
 // silently never fire until an app restart (boot reconcile) or a manual
-// disable→enable toggle. These tests exercise the fix directly against the
-// real `cron` store (not a mock), the same way `bind_schedule_trigger`
-// itself does.
+// disable→enable toggle.
+//
+// Issue B29 (save/enable safety) then found the OTHER half of that same bug:
+// `flows_create` used to default a schedule flow straight to `enabled: true`
+// on create, arming it live before the user ever saw a toggle. Rule 1 now
+// creates an automatic-trigger flow DISABLED — so these tests explicitly
+// enable via `flows_set_enabled` (the real caller-facing arming path) before
+// exercising the cron-binding behavior below, against the real `cron` store
+// (not a mock), the same way `bind_schedule_trigger` itself does.
 
 fn schedule_trigger_graph(cron_expr: &str) -> Value {
     json!({
@@ -400,13 +406,27 @@ async fn flows_create_binds_schedule_cron_job_for_an_enabled_flow() {
     )
     .await
     .unwrap();
-    assert!(created.value.enabled, "flows_create defaults to enabled");
+    assert!(
+        !created.value.enabled,
+        "issue B29: a schedule-trigger flow must create DISABLED, not armed"
+    );
+    assert!(
+        crate::openhuman::cron::find_flow_schedule_job(&config, &created.value.id)
+            .unwrap()
+            .is_none(),
+        "a disabled-on-create schedule flow must not have its cron job bound yet"
+    );
+
+    // The user arms it explicitly — this is where the cron job binds.
+    let enabled = flows_set_enabled(&config, &created.value.id, true)
+        .await
+        .unwrap();
+    assert!(enabled.value.enabled);
 
     let job = crate::openhuman::cron::find_flow_schedule_job(&config, &created.value.id).unwrap();
     assert!(
         job.is_some(),
-        "an enabled schedule flow must have its cron job bound immediately on create, not only \
-         after a set_enabled toggle"
+        "an enabled schedule flow must have its cron job bound immediately on enable"
     );
     assert_eq!(job.unwrap().expression, "0 9 * * *");
 }
@@ -423,11 +443,14 @@ async fn flows_delete_unbinds_schedule_cron_job() {
     )
     .await
     .unwrap();
+    flows_set_enabled(&config, &created.value.id, true)
+        .await
+        .unwrap();
     assert!(
         crate::openhuman::cron::find_flow_schedule_job(&config, &created.value.id)
             .unwrap()
             .is_some(),
-        "precondition: cron job bound on create"
+        "precondition: cron job bound on enable"
     );
 
     flows_delete(&config, &created.value.id).await.unwrap();
@@ -453,9 +476,12 @@ async fn flows_update_rebinds_schedule_cron_job_when_trigger_schedule_changes() 
     )
     .await
     .unwrap();
+    flows_set_enabled(&config, &created.value.id, true)
+        .await
+        .unwrap();
     let old_job = crate::openhuman::cron::find_flow_schedule_job(&config, &created.value.id)
         .unwrap()
-        .expect("cron job bound on create");
+        .expect("cron job bound on enable");
     assert_eq!(old_job.expression, "0 9 * * *");
 
     flows_update(
@@ -497,9 +523,12 @@ async fn flows_update_does_not_rebind_when_graph_is_not_supplied() {
     )
     .await
     .unwrap();
+    flows_set_enabled(&config, &created.value.id, true)
+        .await
+        .unwrap();
     let old_job = crate::openhuman::cron::find_flow_schedule_job(&config, &created.value.id)
         .unwrap()
-        .expect("cron job bound on create");
+        .expect("cron job bound on enable");
 
     // Name-only update: no graph_json supplied, so the trigger cannot have
     // changed — the existing binding must be left untouched.
@@ -1446,7 +1475,9 @@ async fn flows_set_enabled_surfaces_unfired_trigger_warning_at_enable() {
     .await
     .unwrap();
 
-    // Re-enable (create already enables) to exercise the enable path's warning.
+    // A webhook trigger is automatic (B29 Rule 1) so `flows_create` leaves it
+    // disabled — enable it explicitly here to exercise the enable path's
+    // warning.
     let enabled = flows_set_enabled(&config, &created.value.id, true)
         .await
         .unwrap();
@@ -1914,6 +1945,137 @@ async fn validate_tool_contracts_passes_a_fully_wired_real_slug() {
     }));
     let errors = validate_tool_contracts(&config, &g).await;
     assert!(errors.is_empty(), "{errors:?}");
+}
+
+// ── validate_required_arg_resolvability (issue B18) ─────────────────────────
+//
+// `validate_tool_contracts`'s `missing_required_args` only proves an arg is
+// PRESENT (absent/literal-null) — it says nothing about whether an arg wired
+// to a real-looking `=`-expression actually RESOLVES to a value at runtime,
+// nor about an arg the schema doesn't individually mark `required` even
+// though the provider enforces it as a business rule (the real B18 bug:
+// `GMAIL_SEND_EMAIL.subject`/`.body` are each optional in the schema, but
+// Gmail rejects a send where both are empty). These tests sandbox-run the
+// graph the same way `dry_run_workflow` does and prove ANY tool_call arg
+// that resolves `null` (because it's bound to a field that doesn't exist
+// upstream) is a hard reject, while a fully-resolved graph passes clean. No
+// live-catalog seeding needed — this check doesn't consult the Composio
+// schema at all, only the sandbox's own traced diagnostics.
+
+#[tokio::test]
+async fn validate_required_arg_resolvability_rejects_a_null_resolved_arg() {
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "prep", "kind": "code", "name": "Prep",
+              "config": { "language": "javascript", "source": "return {};" } },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "GMAIL_SEND_EMAIL",
+                "args": { "recipient_email": "a@b.com", "subject": "=item.nonexistent_field" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "prep" },
+            { "from_node": "prep", "to_node": "post" }
+        ]
+    }));
+    let errors = validate_required_arg_resolvability(&g).await;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("post"), "{}", errors[0]);
+    assert!(errors[0].contains("`subject`"), "{}", errors[0]);
+    assert!(errors[0].contains("GMAIL_SEND_EMAIL"), "{}", errors[0]);
+}
+
+#[tokio::test]
+async fn validate_required_arg_resolvability_accepts_a_fully_resolved_graph() {
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "GMAIL_SEND_EMAIL",
+                "args": { "recipient_email": "a@b.com", "subject": "hello", "body": "hi there" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_required_arg_resolvability(&g).await;
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+#[tokio::test]
+async fn validate_required_arg_resolvability_ignores_native_and_dynamic_slugs() {
+    // `oh:` native tools and `=`-derived slugs have no external-provider
+    // rejection mode this gate should be checking.
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "prep", "kind": "code", "name": "Prep",
+              "config": { "language": "javascript", "source": "return {};" } },
+            { "id": "native", "kind": "tool_call", "name": "Native",
+              "config": { "slug": "oh:web_search",
+                "args": { "query": "=item.nonexistent_field" } } },
+            { "id": "dynamic", "kind": "tool_call", "name": "Dynamic",
+              "config": { "slug": "=item.nonexistent_field",
+                "args": { "x": "=item.nonexistent_field" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "prep" },
+            { "from_node": "prep", "to_node": "native" },
+            { "from_node": "native", "to_node": "dynamic" }
+        ]
+    }));
+    let errors = validate_required_arg_resolvability(&g).await;
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// (Codex feedback on PR #4826) This gate sandbox-runs every graph against
+/// `json!({})` as the trigger payload, so a `tool_call` arg wired straight to
+/// the trigger's own data — `"to": "=item.email"` on a node whose only
+/// predecessor is the trigger — always resolves `null` here, even though a
+/// real webhook/app-event/manual trigger fires with a real payload. Hard-
+/// rejecting that blocked every ordinary trigger-bound workflow. Contrast
+/// with `validate_required_arg_resolvability_rejects_a_null_resolved_arg`
+/// above, where the same `=item.<field>` shorthand addresses a real
+/// (non-trigger) upstream node and stays a hard reject.
+#[tokio::test]
+async fn validate_required_arg_resolvability_allows_a_trigger_scoped_null_arg() {
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Webhook" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "GMAIL_SEND_EMAIL",
+                "args": { "recipient_email": "a@b.com", "subject": "hi", "body": "=item.email" } } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    let errors = validate_required_arg_resolvability(&g).await;
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// The `nodes.<id>...` explicit-addressing form of the real B18 bug: an arg
+/// wired to a specific upstream (non-trigger) node's output path that never
+/// exists there. Unlike the trigger-scoped case above, this stays broken
+/// regardless of what the trigger payload looks like at runtime, so it must
+/// still hard-reject.
+#[tokio::test]
+async fn validate_required_arg_resolvability_rejects_an_explicit_nodes_reference() {
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "build_body", "kind": "code", "name": "Build Body",
+              "config": { "language": "javascript", "source": "return {};" } },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "GMAIL_SEND_EMAIL",
+                "args": { "recipient_email": "a@b.com",
+                  "subject": "=nodes.build_body.item.subject" } } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "build_body" },
+            { "from_node": "build_body", "to_node": "post" }
+        ]
+    }));
+    let errors = validate_required_arg_resolvability(&g).await;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("`subject`"), "{}", errors[0]);
+    assert!(errors[0].contains("nodes.build_body"), "{}", errors[0]);
 }
 
 /// (Codex feedback on this PR) `notion` ships a static curated catalog
@@ -2992,4 +3154,428 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
             "authoring tool `{keep}` must remain visible after restriction; visible = {visible:?}"
         );
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// B23/B24 — condition node branch label must be on `from_port`, not `to_port`
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn condition_graph(
+    true_from_port: &str,
+    true_to_port: &str,
+    false_from_port: &str,
+    false_to_port: &str,
+) -> Value {
+    json!({
+        "name": "condition-routing",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger" },
+            { "id": "gate", "kind": "condition", "name": "Gate", "config": { "field": "has_important" } },
+            { "id": "send_summary", "kind": "output_parser", "name": "Send" },
+            { "id": "done", "kind": "output_parser", "name": "Done" }
+        ],
+        "edges": [
+            { "from_node": "t", "from_port": "main", "to_node": "gate", "to_port": "main" },
+            { "from_node": "gate", "from_port": true_from_port, "to_node": "send_summary", "to_port": true_to_port },
+            { "from_node": "gate", "from_port": false_from_port, "to_node": "done", "to_port": false_to_port }
+        ]
+    })
+}
+
+#[test]
+fn validate_and_migrate_graph_rejects_condition_edges_with_branch_label_on_to_port() {
+    // The exact malformed shape the workflow_builder agent produced live
+    // (see issue B23): both edges share `from_port: "main"` with the branch
+    // label on `to_port` instead. The engine routes exclusively on
+    // `from_port` (B24, `tinyflows::validate`), so this must be a hard
+    // reject here — never persisted as a silently-broken no-op condition.
+    let bad_graph = condition_graph("main", "true", "main", "false");
+
+    let err = validate_and_migrate_graph(bad_graph)
+        .expect_err("condition edges with the branch label on to_port must be rejected");
+    assert!(
+        err.contains("condition") && err.contains("from_port"),
+        "expected an InvalidConditionRouting-style error naming from_port, got: {err}"
+    );
+}
+
+#[test]
+fn validate_and_migrate_graph_accepts_condition_edges_with_branch_label_on_from_port() {
+    // The correct shape: `from_port` carries "true"/"false", `to_port` stays
+    // "main".
+    let good_graph = condition_graph("true", "main", "false", "main");
+
+    validate_and_migrate_graph(good_graph)
+        .expect("correctly-routed condition graph (branch label on from_port) must validate");
+}
+
+#[tokio::test]
+async fn flows_create_rejects_condition_edges_with_branch_label_on_to_port() {
+    // The same hard gate applies at the actual persistence path
+    // (`flows_create`), not just the standalone validate helper — a graph
+    // with this shape must never reach the store.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let bad_graph = condition_graph("main", "true", "main", "false");
+    let err = flows_create(&config, "bad-condition".to_string(), bad_graph, false)
+        .await
+        .expect_err("flows_create must reject a condition graph routed on to_port");
+    assert!(
+        err.contains("condition") && err.contains("from_port"),
+        "expected an InvalidConditionRouting-style error, got: {err}"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue B29 — save/enable safety: `flows_create` gating (Rule 1 + Rule 2)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Saving a scheduled/automatic flow used to silently arm it live and
+// unattended: `store::create_flow` hardcoded `enabled: true`, and
+// `require_approval` defaulted to `false` on most creation paths. These
+// tests exercise the two server-side rules `flows_create` now enforces,
+// regardless of what the caller passed.
+
+fn app_event_trigger_graph() -> Value {
+    json!({
+        "name": "app-event",
+        "nodes": [
+            {
+                "id": "t",
+                "kind": "trigger",
+                "name": "Trigger",
+                "config": { "trigger_kind": "app_event", "toolkit": "gmail", "event": "GMAIL_NEW_GMAIL_MESSAGE" }
+            }
+        ],
+        "edges": []
+    })
+}
+
+fn manual_trigger_graph() -> Value {
+    json!({
+        "name": "manual",
+        "nodes": [
+            {
+                "id": "t",
+                "kind": "trigger",
+                "name": "Trigger",
+                "config": { "trigger_kind": "manual" }
+            }
+        ],
+        "edges": []
+    })
+}
+
+fn tool_call_graph() -> Value {
+    json!({
+        "name": "with-tool-call",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger" },
+            {
+                "id": "post",
+                "kind": "tool_call",
+                "name": "Post",
+                "config": { "slug": "SLACK_SEND_MESSAGE", "args": { "channel": "general" } }
+            }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    })
+}
+
+fn http_request_graph() -> Value {
+    json!({
+        "name": "with-http",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger" },
+            {
+                "id": "call",
+                "kind": "http_request",
+                "name": "Call",
+                "config": { "method": "GET", "url": "https://example.com" }
+            }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "call" } ]
+    })
+}
+
+fn code_graph() -> Value {
+    json!({
+        "name": "with-code",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger" },
+            {
+                "id": "run",
+                "kind": "code",
+                "name": "Run",
+                "config": { "language": "javascript", "source": "return {};" }
+            }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "run" } ]
+    })
+}
+
+fn readonly_graph() -> Value {
+    json!({
+        "name": "readonly",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger" },
+            { "id": "a", "kind": "agent", "name": "Summarize", "config": { "prompt": "hi" } },
+            { "id": "x", "kind": "transform", "name": "Reshape", "config": { "expression": "=item" } }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "a" },
+            { "from_node": "a", "to_node": "x" }
+        ]
+    })
+}
+
+#[tokio::test]
+async fn flows_create_schedule_trigger_creates_disabled() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let created = flows_create(
+        &config,
+        "scheduled".to_string(),
+        schedule_trigger_graph("30 7 * * 1-5"),
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !created.value.enabled,
+        "a schedule-trigger flow must create disabled"
+    );
+    assert!(
+        crate::openhuman::cron::find_flow_schedule_job(&config, &created.value.id)
+            .unwrap()
+            .is_none(),
+        "no cron job may be bound for a disabled-on-create schedule flow"
+    );
+    assert!(
+        created
+            .logs
+            .iter()
+            .any(|l| l.starts_with("Flow created DISABLED")),
+        "flows_create must loudly log the disabled-on-create decision: {:?}",
+        created.logs
+    );
+}
+
+#[tokio::test]
+async fn flows_create_app_event_trigger_creates_disabled() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let created = flows_create(
+        &config,
+        "app-event".to_string(),
+        app_event_trigger_graph(),
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !created.value.enabled,
+        "an app_event-trigger flow must create disabled"
+    );
+}
+
+#[tokio::test]
+async fn flows_create_manual_trigger_creates_enabled() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let created = flows_create(&config, "manual".to_string(), manual_trigger_graph(), false)
+        .await
+        .unwrap();
+
+    assert!(
+        created.value.enabled,
+        "a manual-trigger flow only ever fires via explicit flows_run — it must create enabled"
+    );
+}
+
+#[tokio::test]
+async fn flows_create_no_trigger_kind_creates_enabled() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let created = flows_create(&config, "legacy".to_string(), trigger_only_graph(), false)
+        .await
+        .unwrap();
+
+    assert!(
+        created.value.enabled,
+        "a trigger with no trigger_kind discriminator never self-fires — not a surprise, must \
+         create enabled"
+    );
+}
+
+#[tokio::test]
+async fn flows_create_outbound_node_forces_require_approval() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let created = flows_create(&config, "tool-flow".to_string(), tool_call_graph(), false)
+        .await
+        .unwrap();
+
+    assert!(
+        created.value.require_approval,
+        "a graph with a tool_call node must force require_approval, even though the caller \
+         passed false"
+    );
+    assert!(
+        created
+            .logs
+            .iter()
+            .any(|l| l.contains("require_approval forced to true")),
+        "flows_create must loudly log the forced require_approval: {:?}",
+        created.logs
+    );
+}
+
+#[tokio::test]
+async fn flows_create_outbound_http_forces_require_approval() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let created = flows_create(
+        &config,
+        "http-flow".to_string(),
+        http_request_graph(),
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        created.value.require_approval,
+        "a graph with an http_request node must force require_approval"
+    );
+}
+
+#[tokio::test]
+async fn flows_create_outbound_code_forces_require_approval() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let created = flows_create(&config, "code-flow".to_string(), code_graph(), false)
+        .await
+        .unwrap();
+
+    assert!(
+        created.value.require_approval,
+        "a graph with a code node must force require_approval"
+    );
+}
+
+#[tokio::test]
+async fn flows_create_readonly_graph_respects_caller_require_approval() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let created = flows_create(
+        &config,
+        "readonly-flow".to_string(),
+        readonly_graph(),
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !created.value.require_approval,
+        "a read-only graph (no tool_call/http_request/code) must not have require_approval \
+         forced — the caller's choice stands"
+    );
+}
+
+#[tokio::test]
+async fn flows_create_schedule_outbound_creates_disabled_and_approval() {
+    // The exact bug scenario from the ticket: a scheduled flow that posts to
+    // Slack, saved with `require_approval: false` — it must come back BOTH
+    // disabled AND with require_approval forced true.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let graph = json!({
+        "name": "scheduled-slack-post",
+        "nodes": [
+            {
+                "id": "t",
+                "kind": "trigger",
+                "name": "Trigger",
+                "config": { "trigger_kind": "schedule", "schedule": "30 7 * * 1-5" }
+            },
+            {
+                "id": "post",
+                "kind": "tool_call",
+                "name": "Post",
+                "config": { "slug": "SLACK_SEND_MESSAGE", "args": { "channel": "general" } }
+            }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    });
+
+    let created = flows_create(&config, "scheduled-slack".to_string(), graph, false)
+        .await
+        .unwrap();
+
+    assert!(
+        !created.value.enabled,
+        "a scheduled flow with an outbound node must still create disabled (Rule 1)"
+    );
+    assert!(
+        created.value.require_approval,
+        "a scheduled flow with an outbound node must force require_approval (Rule 2)"
+    );
+}
+
+// ── graph_has_outbound_side_effect / trigger_is_automatic helper tests ────
+
+#[test]
+fn graph_has_outbound_side_effect_detects_tool_call() {
+    let g = graph(tool_call_graph());
+    assert!(graph_has_outbound_side_effect(&g));
+}
+
+#[test]
+fn graph_has_outbound_side_effect_detects_http_request() {
+    let g = graph(http_request_graph());
+    assert!(graph_has_outbound_side_effect(&g));
+}
+
+#[test]
+fn graph_has_outbound_side_effect_detects_code() {
+    let g = graph(code_graph());
+    assert!(graph_has_outbound_side_effect(&g));
+}
+
+#[test]
+fn graph_has_outbound_side_effect_false_for_agent_only() {
+    let g = graph(readonly_graph());
+    assert!(!graph_has_outbound_side_effect(&g));
+}
+
+#[test]
+fn trigger_is_automatic_schedule() {
+    let g = graph(schedule_trigger_graph("0 9 * * *"));
+    assert!(trigger_is_automatic(&g));
+}
+
+#[test]
+fn trigger_is_automatic_manual() {
+    let g = graph(manual_trigger_graph());
+    assert!(!trigger_is_automatic(&g));
+}
+
+#[test]
+fn trigger_is_automatic_no_trigger_kind() {
+    let g = graph(trigger_only_graph());
+    assert!(!trigger_is_automatic(&g));
 }

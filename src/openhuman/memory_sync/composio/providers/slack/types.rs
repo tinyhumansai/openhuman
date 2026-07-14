@@ -1,14 +1,12 @@
 //! Canonical types for the Composio-backed Slack provider.
 //!
 //! These types are independent of the Composio/Slack API payload shape.
-//! Parsing of raw JSON into these structs happens in
-//! [`super::sync`]; everything downstream deals only with the
-//! canonical types below.
+//! They remain as compatibility wire types for product RPC responses and
+//! backfill reporting; tinycortex owns runtime parsing and ingestion.
 //!
 //! The old `Bucket` struct (6-hour UTC window) has been removed — the
 //! memory tree's L0 seal cascade handles batching after PR #1348, so
-//! the provider just collects all fetched messages and calls
-//! `ingest_page_into_memory_tree` per channel.
+//! tinycortex owns batching and incremental persistence.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

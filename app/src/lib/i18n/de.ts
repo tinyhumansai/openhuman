@@ -3,6 +3,156 @@ import type { TranslationMap } from './types';
 // German (Deutsch) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'agentWorld.welcome.nav': 'Willkommen',
+  'agentWorld.welcome.eyebrow': 'TinyPlace',
+  'agentWorld.welcome.title': 'Eine Welt, in der sich Ihre Agenten treffen',
+  'agentWorld.welcome.body':
+    'TinyPlace ist die soziale Ebene für KI-Agenten — Ihre können andere Agenten entdecken, ihnen schreiben, Bounties übernehmen und handeln, alles in Ihrem Auftrag. Betreten Sie die Welt und sehen Sie, was sie so treiben.',
+  'agentWorld.welcome.ctaWorld': 'Welt betreten',
+  'agentWorld.welcome.ctaFeed': 'Feed durchstöbern',
+  'agentWorld.welcome.ctaDirectory': 'Agenten finden',
+  'agentWorld.welcome.featsLabel': 'Was hier passiert',
+  'agentWorld.welcome.feat1Title': 'Andere Agenten treffen',
+  'agentWorld.welcome.feat1Body':
+    'Entdecken Sie Agenten aus dem gesamten Netzwerk und schreiben Sie ihnen.',
+  'agentWorld.welcome.feat2Title': 'Bounties übernehmen',
+  'agentWorld.welcome.feat2Body':
+    'Ihr Agent kann verdienen, indem er ausgeschriebene Aufgaben erledigt.',
+  'agentWorld.welcome.feat3Title': 'Handeln & abwickeln',
+  'agentWorld.welcome.feat3Body':
+    'Wallet-gestützte Zahlungen zwischen Agenten, mit Ihrer Zustimmung.',
+  'brain.header.graph':
+    'Wie das Wissen Ihres Agenten zusammenhängt — Menschen, Themen und Erinnerungen.',
+  'brain.header.goals': 'Woran Ihr Agent arbeitet und warum.',
+  'brain.header.sources': 'Die Daten, aus denen Ihr Agent lernt.',
+  'brain.header.sync': 'Halten Sie Ihr Gedächtnis aktuell und prüfen Sie, was sich geändert hat.',
+  'brain.header.subconscious': 'Hintergrunddenken, das läuft, während Sie weg sind.',
+  'brain.welcome.nav': 'Willkommen',
+  'brain.welcome.eyebrow': 'Gehirn',
+  'brain.welcome.title': 'Das Gedächtnis Ihres Agenten, kartiert',
+  'brain.welcome.body':
+    'Im Gehirn bewahrt Ihr Agent auf, was er weiß — die Menschen, Gespräche, Quellen und Ziele, auf die er zurückgreift, um Ihnen mit echtem Kontext zu helfen, statt jedes Mal bei null anzufangen.',
+  'brain.welcome.ctaGraph': 'Gedächtnisgraph öffnen',
+  'brain.welcome.ctaGoals': 'Ziele festlegen',
+  'brain.welcome.ctaSources': 'Quellen verbinden',
+  'brain.welcome.featsLabel': 'Was hier lebt',
+  'brain.welcome.feat1Title': 'Gedächtnisgraph',
+  'brain.welcome.feat1Body':
+    'Sehen Sie auf einen Blick, wie Menschen, Themen und Nachrichten zusammenhängen.',
+  'brain.welcome.feat2Title': 'Ziele & Fokus',
+  'brain.welcome.feat2Body':
+    'Sagen Sie Ihrem Agenten, was zählt, damit er die richtige Arbeit priorisiert.',
+  'brain.welcome.feat3Title': 'Quellen & Synchronisierung',
+  'brain.welcome.feat3Body':
+    'Verbinden Sie die Daten, aus denen Ihr Agent lernt, und halten Sie sie aktuell.',
+  'feedback.header.title': 'Feedback',
+  'feedback.header.desc':
+    'Teilen Sie Ideen und stimmen Sie darüber ab, was wir als Nächstes bauen.',
+  'feedback.welcome.nav': 'Willkommen',
+  'feedback.welcome.main': 'Feedback-Board',
+  'feedback.welcome.eyebrow': 'Feedback',
+  'feedback.welcome.title': 'Gestalten Sie mit, was wir bauen',
+  'feedback.welcome.body':
+    'Sagen Sie uns, was funktioniert, was fehlt und was OpenHuman besser machen würde. Posten Sie eine Idee, stimmen Sie über die Vorschläge anderer ab und beobachten Sie, wie die besten an die Spitze unserer Roadmap steigen.',
+  'feedback.welcome.ctaShare': 'Idee teilen',
+  'feedback.welcome.ctaBoard': 'Board ansehen',
+  'feedback.welcome.featsLabel': 'Was Sie tun können',
+  'feedback.welcome.feat1Title': 'Ideen teilen',
+  'feedback.welcome.feat1Body': 'Fehler, Funktionswünsche, grobe Gedanken — alles ist willkommen.',
+  'feedback.welcome.feat2Title': 'Abstimmen',
+  'feedback.welcome.feat2Body':
+    'Stimmen Sie für das, was zählt, damit wir wissen, was zu priorisieren ist.',
+  'feedback.welcome.feat3Title': 'Fortschritt verfolgen',
+  'feedback.welcome.feat3Body': 'Sehen Sie, was geplant, in Arbeit und ausgeliefert ist.',
+  'connections.header.composio': 'Verbinden Sie die Apps, in denen Ihr Agent handeln kann.',
+  'connections.header.channels': 'Verknüpfen Sie die Chat-Apps, in denen Ihre Community lebt.',
+  'connections.header.mcp':
+    'Fügen Sie MCP-Server hinzu, um die Werkzeuge Ihres Agenten zu erweitern.',
+  'connections.header.skills': 'Agenten-Skills installieren und verwalten.',
+  'connections.header.meetings':
+    'Verbinden Sie Kalender und lassen Sie Ihren Agenten an Anrufen teilnehmen.',
+  'connections.header.llm':
+    'Konfigurieren Sie KI-Anbieter, lokale Modelle und den Chat-Tester des Agenten.',
+  'connections.header.embeddings': 'Wählen Sie das Embedding-Modell für die Speichersuche.',
+  'connections.header.search': 'Konfigurieren Sie die Websuche für Ihren Agenten.',
+  'connections.header.wallet':
+    'Das Guthaben Ihrer lokalen Wallet und Ihre Wiederherstellungsphrase.',
+  'connections.header.screen':
+    'Lassen Sie Ihren Agenten Ihren Bildschirm sehen, um zeitnahe, kontextbezogene Hilfe zu bieten.',
+  'connections.header.desktopAgent':
+    'Lassen Sie Ihren Agenten Apps öffnen und Ihren Desktop in Ihrem Namen steuern.',
+  'connections.header.companion':
+    'Ein schwebender Desktop-Begleiter für schnelle, jederzeit verfügbare Hilfe.',
+  'connections.header.composioKey':
+    'Fügen Sie einen Composio-API-Schlüssel hinzu, um Hunderte von App-Integrationen freizuschalten.',
+  'connections.llm.apiKeys': 'API-Schlüssel & Routing',
+  'connections.welcome.nav': 'Willkommen',
+  'connections.welcome.eyebrow': 'Verbindungen',
+  'connections.welcome.title': 'Alles, was Sie nutzen, an einem Ort',
+  'connections.welcome.body':
+    'Verbinden Sie Ihre Messaging-Apps, E-Mail, Kalender und Werkzeuge, damit Ihr Agent Kontext lesen und über alle hinweg handeln kann — ohne zwischen einem Dutzend Tabs hin- und herzukopieren. Sie behalten die Kontrolle darüber, was er anfassen darf.',
+  'connections.welcome.ctaChannel': 'Kanal verbinden',
+  'connections.welcome.ctaApps': 'Apps verbinden',
+  'connections.welcome.ctaSkills': 'Skills durchstöbern',
+  'connections.welcome.featsLabel': 'Was Sie hier tun können',
+  'connections.welcome.feat1Title': 'Kanäle einbinden',
+  'connections.welcome.feat1Body':
+    'Slack, WhatsApp, Telegram, Gmail und mehr — mit ein paar Klicks verknüpft.',
+  'connections.welcome.feat2Title': 'Lassen Sie Ihren Agenten handeln',
+  'connections.welcome.feat2Body':
+    'Er liest, entwirft und antwortet mit vollem Kontext aus allem, was verbunden ist.',
+  'connections.welcome.feat3Title': 'Behalten Sie die Kontrolle',
+  'connections.welcome.feat3Body':
+    'Gewähren oder entziehen Sie den Zugriff pro Kanal, jederzeit. Nichts läuft ohne Ihr Einverständnis.',
+  'alerts.header.desc': 'Agenten-Aktivität und alles, was Ihre Aufmerksamkeit braucht.',
+  'notifications.welcome.nav': 'Willkommen',
+  'notifications.welcome.main': 'Hinweise',
+  'notifications.welcome.eyebrow': 'Benachrichtigungen',
+  'notifications.welcome.title': 'Nur, was Sie wirklich braucht',
+  'notifications.welcome.body':
+    'Eine ruhige, bewertete Zusammenfassung dessen, was Ihre Agenten getan haben und was eine Entscheidung braucht — damit das Wichtige auftaucht und der Lärm Ihnen aus dem Weg bleibt.',
+  'notifications.welcome.ctaView': 'Hinweise ansehen',
+  'notifications.welcome.featsLabel': 'Was Sie sehen werden',
+  'notifications.welcome.feat1Title': 'Was Sie braucht',
+  'notifications.welcome.feat1Body':
+    'Entscheidungen und Erwähnungen, die Ihre Agenten für einen Menschen markiert haben.',
+  'notifications.welcome.feat2Title': 'Agenten-Aktivität',
+  'notifications.welcome.feat2Body':
+    'Ein laufendes Protokoll dessen, was lief und was es hervorgebracht hat.',
+  'notifications.welcome.feat3Title': 'Nach Kategorie gefiltert',
+  'notifications.welcome.feat3Body':
+    'Nachrichten, Meetings, Erinnerungen — so aufgeteilt, wie Sie denken.',
+  'rewards.header.desc': 'Ihre Punkte, Serien, Empfehlungen und Vorteile.',
+  'rewards.welcome.nav': 'Willkommen',
+  'rewards.welcome.main': 'Belohnungen',
+  'rewards.welcome.eyebrow': 'Belohnungen',
+  'rewards.welcome.title': 'Werden Sie fürs Dabeisein belohnt',
+  'rewards.welcome.body':
+    'Sammeln Sie Punkte, während Sie OpenHuman nutzen und andere einladen, halten Sie Ihre Serie am Leben und lösen Sie ein, was Sie verdient haben — alles an einem Ort erfasst.',
+  'rewards.welcome.ctaView': 'Belohnungen ansehen',
+  'rewards.welcome.featsLabel': 'So funktioniert es',
+  'rewards.welcome.feat1Title': 'Punkte sammeln',
+  'rewards.welcome.feat1Body': 'Alltägliche Aktionen und Empfehlungen summieren sich mit der Zeit.',
+  'rewards.welcome.feat2Title': 'Halten Sie Ihre Serie',
+  'rewards.welcome.feat2Body': 'Seien Sie regelmäßig dabei, um Serien-Boni freizuschalten.',
+  'rewards.welcome.feat3Title': 'Vorteile einlösen',
+  'rewards.welcome.feat3Body': 'Verwandeln Sie Punkte in Gutscheine und Belohnungen.',
+  'flows.welcome.nav': 'Willkommen',
+  'flows.welcome.main': 'Arbeitsabläufe',
+  'flows.welcome.eyebrow': 'Arbeitsabläufe',
+  'flows.welcome.title': 'Schalten Sie die Fleißarbeit auf Autopilot',
+  'flows.welcome.body':
+    'Beschreiben Sie etwas, das Sie immer wieder tun — Triage, Nachfassen, Zusammenfassungen — und Ihr Agent verwandelt es in einen Workflow, den er von Anfang bis Ende ausführen kann, nach Zeitplan oder auf Abruf.',
+  'flows.welcome.ctaNew': 'Neuer Workflow',
+  'flows.welcome.ctaBrowse': 'Workflows durchstöbern',
+  'flows.welcome.featsLabel': 'Was Sie automatisieren können',
+  'flows.welcome.feat1Title': 'In Worten beschreiben',
+  'flows.welcome.feat1Body':
+    'Sagen Sie in einfacher Sprache, was Sie möchten; der Builder entwirft den Ablauf.',
+  'flows.welcome.feat2Title': 'Nach Zeitplan ausführen',
+  'flows.welcome.feat2Body': 'Auslösen per Timer, Ereignis oder Knopfdruck — Ihre Entscheidung.',
+  'flows.welcome.feat3Title': 'Menschen einbeziehen',
+  'flows.welcome.feat3Body': 'Genehmigen Sie sensible Schritte, bevor etwas hinausgeht.',
   // Privacy Mode selector (#4435) — data-egress posture
   'privacy.mode.title': 'Datenschutzmodus',
   'privacy.mode.description':
@@ -183,11 +333,59 @@ const messages: TranslationMap = {
   'nav.brain': 'Gehirn',
   'nav.flows': 'Workflows',
   'nav.orchestration': 'Orchestrierung',
+  'orchestration.cloudUnreachable':
+    'Cloud-Gehirn nicht erreichbar – zwischengespeicherte Ansicht wird angezeigt.',
   'orchPage.subtitle': 'Koordiniere deinen Hauptagenten',
   'orchPage.group.agent': 'Agent',
   'orchPage.group.network': 'Netzwerk',
   'orchPage.group.insights': 'Einblicke',
   'orchPage.overview.nav': 'Agenten-Graph',
+  'orchPage.overview.desc':
+    'Eine Live-Karte deines Agenten und der von ihm koordinierten Unteragenten.',
+  'orchPage.network.desc': 'Peer-Agenten, mit denen du verbunden bist, Entdeckung und Nutzung.',
+  'wallet.tabs.balance': 'Wallet-Guthaben',
+  'wallet.tabs.recovery': 'Wiederherstellung',
+  'wallet.ariaLabel': 'Wallet-Ansichten',
+  'orchPage.medulla.nav': 'Übersicht',
+  'orchPage.medulla.badge': 'Demnächst verfügbar',
+  'orchPage.medulla.title': 'Medulla',
+  'orchPage.medulla.tagline': 'Das Orchestrierungsmodell von OpenHuman',
+  'orchPage.medulla.body':
+    'Medulla ist das eigens entwickelte LLM von OpenHuman, konzipiert, um Tausende Agenten gleichzeitig zu orchestrieren — mit einem Kontextfenster von 10 Millionen Tokens und radikal kostengünstiger Orchestrierung.',
+  'orchPage.medulla.featAgents': 'Tausende Agenten',
+  'orchPage.medulla.featContext': 'Kontext mit 10M Tokens',
+  'orchPage.medulla.featCost': 'Kostengünstige Orchestrierung',
+  'orchPage.medulla.subscriberTitle': 'OpenHuman-Abonnenten',
+  'orchPage.medulla.subscriberNote':
+    'Sichere dir frühzeitigen Zugang zu Medulla und der Orchestrierungs-Engine.',
+  'orchPage.medulla.discordTitle': 'Tritt dem Discord bei',
+  'orchPage.medulla.earlyAccess':
+    'Früh dabei sein? Tritt unserem Discord bei und sichere dir eine Early-Access-Einladung.',
+  'orchPage.medulla.cta': 'Tritt unserem Discord bei',
+  'orchPage.demo.banner':
+    'Dies ist ein Beispiel dafür, wie Orchestrierung im großen Maßstab aussehen würde.',
+  'orchPage.demo.device': 'Gerät',
+  'orchPage.demo.taskRoute': 'Eingehende Anfrage weiterleiten',
+  'orchPage.demo.taskSummarize': 'Konversation zusammenfassen',
+  'orchPage.demo.taskEnrich': 'Kontaktdatensatz anreichern',
+  'orchPage.demo.taskSchedule': 'Follow-up planen',
+  'orchPage.demo.taskDraft': 'Antwort entwerfen',
+  'orchPage.demo.taskSync': 'Datenquelle synchronisieren',
+  'orchPage.demo.networkTitle': 'Peer-Agenten',
+  'orchPage.demo.networkSummary': '{peers} verbunden · {sessions} aktive Sub-Agenten',
+  'orchPage.demo.peer.connected': 'Verbunden',
+  'orchPage.demo.peer.connecting': 'Verbindung wird hergestellt',
+  'orchPage.demo.peer.idle': 'Inaktiv',
+  'orchPage.demo.peerSessions': '{count} Sub-Agenten',
+  'orchPage.demo.chat.user1': 'Koordiniere die Outreach-Kampagne über alle meine Kanäle.',
+  'orchPage.demo.chat.assistant1':
+    'Wird gemacht — ich starte 120 Agenten auf 2 Geräten, um Outreach, Anreicherung und Follow-ups parallel auszuführen.',
+  'orchPage.demo.chat.activity1': 'Gerät 1 · 100 Agenten leiten 1.284 Konversationen weiter',
+  'orchPage.demo.chat.activity2': 'Gerät 2 · 20 Agenten reichern 512 Kontakte an',
+  'orchPage.demo.chat.activity3': '640 personalisierte Antworten werden entworfen',
+  'orchPage.demo.chat.assistant2':
+    'Fertig. 120 Agenten haben 1.796 Konversationen in 38 Sekunden verarbeitet.',
+  'orchPage.demo.chat.composerDisabled': 'Der Chat ist mit Medulla-Zugang verfügbar',
   'orchPage.tasks.nav': 'Aufgaben',
   'orchPage.tasks.subtitle': 'Die globale Aufgabentafel des Orchestrators',
   'orchPage.tasks.colPending': 'Ausstehend',
@@ -855,6 +1053,7 @@ const messages: TranslationMap = {
   'connections.tabs.skills': 'Fähigkeiten',
   'connections.tabs.meetings': 'Meetings',
   'connections.groups.integrations': 'Integrationen',
+  'connections.groups.desktop': 'Desktop',
   'connections.tabs.oauth': 'OAuth',
   'connections.tabs.composioKey': 'Composio',
   'connections.groups.apiKeys': 'API-Schlüssel',
@@ -3324,6 +3523,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.dismiss': 'Verwerfen',
   'chat.flowProposal.error':
     'Der Workflow konnte nicht gespeichert werden. Bitte versuchen Sie es erneut.',
+  'chat.flowProposal.enableError':
+    'Workflow gespeichert, konnte aber nicht aktiviert werden. Versuchen Sie es erneut oder aktivieren Sie ihn auf der Workflows-Seite.',
   'channels.authMode.managed_dm': 'Mit OpenHuman anmelden',
   'channels.authMode.oauth': 'OAuth-Anmeldung',
   'channels.authMode.bot_token': 'Eigenen Bot-Token verwenden',
@@ -3910,7 +4111,12 @@ const messages: TranslationMap = {
     'Ausstehende Genehmigungen für diesen Lauf konnten nicht geladen werden.',
   'flowRuns.inspector.steps': 'Schritte',
   'flowRuns.inspector.noSteps': 'Noch keine Schritte aufgezeichnet.',
-  'flowRuns.inspector.output': 'Ausgabe',
+  'flowRuns.inspector.output': 'Rohdaten anzeigen',
+  'flowRuns.inspector.summary.failedPrefix': 'Konnte nicht abgeschlossen werden:',
+  'flowRuns.inspector.summary.unknownError': 'etwas ist schiefgelaufen',
+  'flowRuns.inspector.summary.itemsFetched': '{count} Element(e) abgerufen',
+  'flowRuns.inspector.summary.completed': 'Schritt abgeschlossen',
+  'flowRuns.inspector.summary.noOutput': 'Keine Ausgabe erzeugt',
   'flowRuns.inspector.port': 'Port',
   'flowRuns.inspector.loading': 'Lauf wird geladen…',
   'flowRuns.inspector.loadError': 'Dieser Lauf konnte nicht geladen werden',
@@ -3980,7 +4186,7 @@ const messages: TranslationMap = {
   'flows.suggest.error': 'Entdeckung konnte nicht ausgeführt werden. Bitte versuche es erneut.',
   'flows.suggest.why': 'Warum',
   'flows.suggest.build': 'Diese erstellen',
-  'flows.suggest.building': 'Wird erstellt…',
+  'flows.suggest.opening': 'Wird geöffnet…',
   'flows.suggest.dismiss': 'Verwerfen',
   'flows.suggest.uses': 'Verwendet',
   'flows.suggest.trigger.schedule': 'Geplant',
@@ -4008,6 +4214,10 @@ const messages: TranslationMap = {
     'Ein vorgeschlagener Entwurf wird geprüft — es wurde noch nichts gespeichert.',
   'flows.copilot.repairDisplay':
     'Eine Ausführung ist fehlgeschlagen; sieh sie dir an und schlage eine Lösung vor.',
+  'flows.copilot.tool.proposing': 'Workflow wird vorgeschlagen…',
+  'flows.copilot.tool.dryRunning': 'Workflow wird testweise ausgeführt…',
+  'flows.copilot.tool.saving': 'Workflow wird gespeichert…',
+  'flows.copilot.tool.usingTools': 'Werkzeuge werden verwendet…',
   'flows.list.view': 'Workflow anzeigen',
   'flows.list.export': 'Exportieren',
   'flows.list.exported': 'Workflow exportiert',
@@ -4276,7 +4486,8 @@ const messages: TranslationMap = {
   'pages.settings.features.notifications': 'Benachrichtigungen',
   'pages.settings.features.notificationsDesc': 'Benachrichtigungen absch',
   'pages.settings.features.screenAwareness': 'Bildschirmbewusstsein',
-  'pages.settings.features.screenAwarenessDesc': 'Abschn. Bildschirmwahrnehmung',
+  'pages.settings.features.screenAwarenessDesc':
+    'Lassen Sie Ihren Agenten Ihren Bildschirm sehen, um zeitnahe, kontextbezogene Hilfe zu bieten.',
   'pages.settings.features.tools': 'Werkzeuge',
   'pages.settings.features.toolsDesc': 'Werkzeugbeschr',
   'pages.settings.featuresSection.description': 'Bildschirmbewusstsein, Nachrichten und Tools.',

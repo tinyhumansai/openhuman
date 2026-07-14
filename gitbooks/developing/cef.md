@@ -41,6 +41,8 @@ Every connected provider that runs as a hosted web app gets its own child CEF we
 * LinkedIn
 * Gmail
 * Zoom
+* WeChat
+* Google Messages
 * browserscan
 
 Per-account storage is isolated to `{app_local_data_dir}/webview_accounts/{id}/`. Two Slack workspaces, two browser profiles. Code: [`app/src-tauri/src/webview_accounts/mod.rs`](../../app/src-tauri/src/webview_accounts/mod.rs).
@@ -56,6 +58,8 @@ Each provider has a **scanner module** in [`app/src-tauri/src/`](https://github.
 | `slack_scanner`    | 30s IDB walk                    | Pure IDB - no DOM scrape needed                                      |
 | `discord_scanner`  | Periodic                        | Channel + DM state via CDP                                           |
 | `meet_scanner`     | Periodic                        | Live captions + participant state during calls                       |
+| `wechat_scanner`   | Periodic                        | WeChat Web chat list + active conversation DOM scrape via CDP        |
+| `gmessages_scanner`| Periodic                        | Google Messages Web read-only IndexedDB walk                         |
 | `imessage_scanner` | Periodic                        | **No webview.** Reads `~/Library/Messages/chat.db` directly on macOS |
 
 Each scan emits `webview:event` payloads and POSTs `openhuman.memory_doc_ingest` straight to the core RPC, so memory grows whether the UI window is open or backgrounded.

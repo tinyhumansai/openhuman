@@ -138,15 +138,6 @@ pub enum DomainEvent {
         source: String,
     },
 
-    /// A tiny.place harness session DM was ingested and persisted. Metadata only
-    /// — bodies stay in the workspace-internal orchestration store. Consumed by
-    /// later stages (graph run, UI socket push).
-    OrchestrationSessionMessage {
-        agent_id: String,
-        session_id: String,
-        chat_kind: String,
-    },
-
     // ── Subconscious orchestrator ───────────────────────────────────────
     /// A subconscious trigger finished gate evaluation (promote or drop).
     /// Observability only — lets dashboards see ingestion volume and the
@@ -591,6 +582,35 @@ pub enum DomainEvent {
         /// Short human-readable summary of the action (redacted, same as
         /// `ApprovalRequested::action_summary`).
         summary: String,
+    },
+
+    // ── Egress (privacy spine) ──────────────────────────────────────────
+    /// An external data transfer is about to leave the device. Published by
+    /// [`crate::openhuman::security::egress::emit_external_transfer`] from every
+    /// external-egress point (LLM inference, Composio tool calls, backend
+    /// integrations, network-fetch tools, cloud embeddings) *before* the
+    /// transfer, carrying an [`EgressDescriptor`](crate::openhuman::security::egress::EgressDescriptor)
+    /// that answers "what leaves, to where, why". Privacy epic S2 (#4436).
+    ///
+    /// Bridged to the `external_transfer_pending` web-channel socket event by
+    /// `EgressSurfaceSubscriber` (defined in
+    /// `src/openhuman/channels/providers/web/event_bus.rs`) when the emitting
+    /// turn carries chat routing. `thread_id` / `client_id` come from the
+    /// ambient `APPROVAL_CHAT_CONTEXT` and are `None` for CLI / cron /
+    /// background transfers (no chat surface to route to).
+    ///
+    /// Only external transfers fire this event — local-only inference
+    /// (Ollama / LM Studio / …) never leaves the device and is not published.
+    ExternalTransferPending {
+        /// What leaves, to where, and why (plus S5 identification-risk fields,
+        /// default-empty until the detector lands).
+        descriptor: crate::openhuman::security::egress::EgressDescriptor,
+        /// Chat thread the transfer belongs to, when the turn originated from a
+        /// chat channel. `None` for non-chat callers.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the disclosure to, when known.
+        /// `None` for non-chat callers.
+        client_id: Option<String>,
     },
 
     // ── Plan review (interactive plan-mode gate) ────────────────────────
@@ -1340,7 +1360,6 @@ impl DomainEvent {
             | Self::AgentOrchestrationFailed { .. }
             | Self::AgentOrchestrationClosed { .. }
             | Self::OrchestrationPairingChanged { .. }
-            | Self::OrchestrationSessionMessage { .. }
             | Self::RunQueueMessageQueued { .. }
             | Self::RunQueueFollowupDispatched { .. }
             | Self::RunQueueInterrupted { .. }
@@ -1461,6 +1480,8 @@ impl DomainEvent {
 
             Self::PlanReviewRequested { .. } | Self::PlanReviewDecided { .. } => "plan_review",
 
+            Self::ExternalTransferPending { .. } => "egress",
+
             Self::ArtifactReady { .. }
             | Self::ArtifactFailed { .. }
             | Self::ArtifactPending { .. } => "artifact",
@@ -1508,7 +1529,6 @@ impl DomainEvent {
             Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
             Self::AgentOrchestrationClosed { .. } => "AgentOrchestrationClosed",
             Self::OrchestrationPairingChanged { .. } => "OrchestrationPairingChanged",
-            Self::OrchestrationSessionMessage { .. } => "OrchestrationSessionMessage",
             Self::SubconsciousTriggerProcessed { .. } => "SubconsciousTriggerProcessed",
             Self::RunQueueMessageQueued { .. } => "RunQueueMessageQueued",
             Self::RunQueueFollowupDispatched { .. } => "RunQueueFollowupDispatched",
@@ -1599,6 +1619,7 @@ impl DomainEvent {
             Self::FlowApprovalRequested { .. } => "FlowApprovalRequested",
             Self::PlanReviewRequested { .. } => "PlanReviewRequested",
             Self::PlanReviewDecided { .. } => "PlanReviewDecided",
+            Self::ExternalTransferPending { .. } => "ExternalTransferPending",
             Self::ApprovalGateOverrideIgnored { .. } => "ApprovalGateOverrideIgnored",
             Self::ApprovalGateDisabled { .. } => "ApprovalGateDisabled",
             Self::ArtifactReady { .. } => "ArtifactReady",

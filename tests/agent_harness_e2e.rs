@@ -152,25 +152,23 @@ async fn scripted_chat_completions(
     uri: Uri,
     _headers: HeaderMap,
     Json(body): Json<Value>,
-) -> (StatusCode, Json<Value>) {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     with_captured(|reqs| {
         reqs.push(json!({
             "path": uri.path(),
             "model": body.get("model").and_then(Value::as_str),
-            "stream": body.get("stream").and_then(Value::as_bool),
+            "stream": streaming,
             "body": body.clone(),
         }))
     });
 
     let next = with_scripted(|q| q.pop_front());
     let Some(entry) = next else {
-        return (
-            StatusCode::OK,
-            Json(json!({ "choices": [{ "message": {
-                "role": "assistant",
-                "content": "default scripted completion"
-            }}]})),
-        );
+        let message = json!({ "role": "assistant", "content": "default scripted completion" });
+        return completion_response(streaming, message);
     };
 
     if let Some(status) = entry.get("status").and_then(Value::as_u64) {
@@ -178,10 +176,13 @@ async fn scripted_chat_completions(
             .get("error")
             .and_then(Value::as_str)
             .unwrap_or("scripted upstream error");
+        // Non-2xx short-circuits before any SSE parsing on both the old and crate
+        // clients, so an error entry is a plain JSON body regardless of `stream`.
         return (
             StatusCode::from_u16(status as u16).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             Json(json!({ "error": { "message": message, "type": "server_error" } })),
-        );
+        )
+            .into_response();
     }
 
     let content = entry.get("content").and_then(Value::as_str).unwrap_or("");
@@ -206,10 +207,57 @@ async fn scripted_chat_completions(
             .collect();
         message["tool_calls"] = json!(calls);
     }
+    completion_response(streaming, message)
+}
+
+/// Serve a scripted completion as either a non-streaming Chat Completions JSON body
+/// or a Server-Sent-Events stream (`stream: true`). The SSE shape matches what the
+/// crate `OpenAiModel::stream` parser expects — `data:` lines carrying
+/// `choices[].delta.{content,tool_calls}`, a terminal `finish_reason` chunk, and
+/// `data: [DONE]` — so both the legacy host client and the crate-native path parse it.
+fn completion_response(streaming: bool, message: Value) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    if !streaming {
+        return Json(json!({ "choices": [{ "message": message }] })).into_response();
+    }
+
+    let mut delta = json!({ "role": "assistant" });
+    if let Some(content) = message.get("content").and_then(Value::as_str) {
+        if !content.is_empty() {
+            delta["content"] = json!(content);
+        }
+    }
+    if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+        // Streaming tool-call fragments carry a positional `index`.
+        let indexed: Vec<Value> = tool_calls
+            .iter()
+            .enumerate()
+            .map(|(i, tc)| {
+                let mut c = tc.clone();
+                c["index"] = json!(i);
+                c
+            })
+            .collect();
+        delta["tool_calls"] = json!(indexed);
+    }
+
+    let mut body = String::new();
+    body.push_str(&format!(
+        "data: {}\n\n",
+        json!({ "choices": [{ "index": 0, "delta": delta }] })
+    ));
+    body.push_str(&format!(
+        "data: {}\n\n",
+        json!({ "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }] })
+    ));
+    body.push_str("data: [DONE]\n\n");
+
     (
-        StatusCode::OK,
-        Json(json!({ "choices": [{ "message": message }] })),
+        [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+        body,
     )
+        .into_response()
 }
 
 async fn current_user(_headers: HeaderMap) -> Json<Value> {

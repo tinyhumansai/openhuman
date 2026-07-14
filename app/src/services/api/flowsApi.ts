@@ -64,6 +64,14 @@ export interface FlowRunStep {
   /** Output port the node routed on, if any (branching/switch nodes). Omitted when absent. */
   port?: string;
   /**
+   * Live step outcome as observed by `FlowRunObserver::on_step_finish` — `undefined`
+   * for a step reconstructed post-hoc (e.g. the trigger node) rather than
+   * observed live, not "unknown/neutral" in the UI sense.
+   */
+  status?: 'success' | 'error';
+  /** Wall-clock duration of this step, if the observer recorded one. */
+  duration_ms?: number;
+  /**
    * Config `=`-expressions that resolved to `null` while running this step
    * (`location` is the config path, e.g. `args.to`). Empty/absent when clean.
    */
@@ -245,6 +253,18 @@ function unwrapCliEnvelope<T>(payload: unknown): T {
  * `false` when omitted, but the B4 proposal flow always passes it explicitly
  * (defaulting to `true` on the Rust tool side) so a saved agent-proposed flow
  * starts with its outbound-action approval gate on.
+ *
+ * B29 (save/enable safety) Rule 1: when `graph`'s trigger fires without a
+ * human in the loop (`schedule` / `app_event` / `webhook`), the server
+ * ALWAYS persists the flow `enabled: false`, regardless of what the caller
+ * intended — no creation path may silently hand back an armed, unattended
+ * automation. The returned {@link Flow}'s `enabled` field reflects this, so
+ * every caller MUST check it: if the caller represents an explicit
+ * user-arming action (e.g. `WorkflowProposalCard`'s "Save & enable" click),
+ * follow up with {@link setFlowEnabled} to actually arm it — that is a
+ * legitimate explicit enable, not the silent copilot auto-arm Rule 1 guards
+ * against. A caller with no such explicit intent (e.g. a background/copilot
+ * save) should leave it disabled and let the user arm it later.
  */
 export async function createFlow(
   name: string,

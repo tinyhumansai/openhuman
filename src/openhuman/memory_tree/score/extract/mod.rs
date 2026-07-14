@@ -1,63 +1,67 @@
-//! Entity extraction (Phase 2 / #708).
-//!
-//! Exposes [`EntityExtractor`] as a pluggable interface and a default
-//! [`CompositeExtractor`] that runs a chain of extractors and merges their
-//! output. Phase 2 ships with the mechanical regex extractor only; semantic
-//! NER (GLiNER / LLM) plugs in later without changing any call sites.
-
-mod extractor;
-pub mod llm;
-pub mod regex;
-pub mod types;
+//! Product construction over tinycortex entity extraction.
 
 use std::sync::Arc;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::chat::build_chat_runtime;
+use async_trait::async_trait;
 
-pub use extractor::{CompositeExtractor, EntityExtractor, RegexEntityExtractor};
-pub use llm::{LlmEntityExtractor, LlmExtractorConfig};
-pub use types::{EntityKind, ExtractedEntities, ExtractedEntity, ExtractedTopic};
+pub use tinycortex::memory::score::extract::{
+    ChatPrompt, ChatProvider, CompositeExtractor, EntityExtractor, EntityKind, ExtractedEntities,
+    ExtractedEntity, ExtractedTopic, LlmExtractorConfig, RegexEntityExtractor,
+};
 
-/// Build the extractor used by seal handlers to label new summary nodes.
-///
-/// Composition:
-/// - regex extractor — always on, mechanical, near-zero cost
-/// - LLM extractor with `emit_topics: true` — added when the unified
-///   summarization workload can be built from inference routing.
-///
-/// Differs from [`super::ScoringConfig::from_config`] (the chunk-admission
-/// builder) in two ways: returns *just* an extractor (no thresholds /
-/// weights / drop logic — none of which apply at seal time), and flips
-/// `emit_topics` on so summaries surface thematic labels alongside
-/// entities. Leaf-side scoring is unchanged.
+pub mod regex {
+    pub use tinycortex::memory::score::extract::regex::extract;
+}
+
+pub struct LlmEntityExtractor(tinycortex::memory::score::extract::LlmEntityExtractor);
+
+impl LlmEntityExtractor {
+    pub fn new(
+        config: LlmExtractorConfig,
+        provider: Arc<dyn crate::openhuman::memory::chat::ChatProvider>,
+    ) -> Self {
+        let provider = Arc::new(crate::openhuman::tinycortex::SeamChatProvider::new(
+            provider,
+        ));
+        Self(tinycortex::memory::score::extract::LlmEntityExtractor::new(
+            config, provider,
+        ))
+    }
+}
+
+#[async_trait]
+impl EntityExtractor for LlmEntityExtractor {
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+
+    async fn extract(&self, text: &str) -> anyhow::Result<ExtractedEntities> {
+        self.0.extract(text).await
+    }
+}
+
 pub fn build_summary_extractor(config: &Config) -> Arc<dyn EntityExtractor> {
-    let (provider, model) = match build_chat_runtime(config) {
+    let (provider, model) = match crate::openhuman::memory::chat::build_chat_runtime(config) {
         Ok(runtime) => runtime,
-        Err(err) => {
+        Err(error) => {
             log::warn!(
-                "[memory_tree::extract] summary extractor: build_chat_runtime failed: \
-                 {err:#} — falling back to regex-only"
+                "[memory_tree::extract] chat provider unavailable; using regex-only extraction: {error:#}"
             );
             return Arc::new(CompositeExtractor::regex_only());
         }
     };
-
-    let cfg = LlmExtractorConfig {
-        model: model.clone(),
-        emit_topics: true,
-        output_language: config.output_language.clone(),
-        ..LlmExtractorConfig::default()
-    };
-
-    log::debug!(
-        "[memory_tree::extract] summary extractor: regex + LLM provider={} model={} \
-         emit_topics=true",
-        provider.name(),
-        model
+    let extractor = LlmEntityExtractor::new(
+        LlmExtractorConfig {
+            model,
+            emit_topics: true,
+            output_language: config.output_language.clone(),
+            ..Default::default()
+        },
+        provider,
     );
     Arc::new(CompositeExtractor::new(vec![
         Box::new(RegexEntityExtractor),
-        Box::new(LlmEntityExtractor::new(cfg, provider)),
+        Box::new(extractor),
     ]))
 }

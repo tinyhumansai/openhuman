@@ -378,6 +378,28 @@ fn clamp_to_work_area(
 mod tests {
     use super::*;
 
+    #[test]
+    fn window_state_toml_roundtrips() {
+        // `save_main` serializes this record to `window_state.toml` and
+        // `restore_main` parses it back on the next launch. The whole
+        // save-on-quit → restore-on-launch feature (#4810) hinges on this
+        // record surviving the round trip byte-for-byte, including a
+        // negative x from a monitor left of the primary. Guards the
+        // on-disk contract against an accidental serde/rename change.
+        let state = WindowState {
+            x: -1920,
+            y: 100,
+            width: 1280,
+            height: 800,
+        };
+        let raw = toml::to_string_pretty(&state).expect("serialize");
+        let parsed: WindowState = toml::from_str(&raw).expect("parse");
+        assert_eq!(
+            (parsed.x, parsed.y, parsed.width, parsed.height),
+            (state.x, state.y, state.width, state.height)
+        );
+    }
+
     fn wa(x: i32, y: i32, width: u32, height: u32) -> WorkArea {
         WorkArea {
             x,
