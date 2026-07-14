@@ -116,8 +116,8 @@ impl JailBackend for AppContainerBackend {
         // AppContainer is *reachable* on every supported Windows (8+ / Server
         // 2012+), but the spawn path in `spawn_in_container` can't yet return
         // a `std::process::Child` — after `CreateProcessW` succeeds it must
-        // reply `Err(io::ErrorKind::Unsupported)` (see TODO at
-        // `spawn_in_container`, ~line 279). Reporting the backend as
+        // reply `Err(io::ErrorKind::Unsupported)` (see the TODO / `Unsupported`
+        // return at the end of `spawn_in_container`). Reporting the backend as
         // available anyway strands the successfully-spawned process on the
         // caller side: `execute_local_jail` bubbles the `Err` up as a spawn
         // failure and never `wait`s on the running `cmd.exe`, so it

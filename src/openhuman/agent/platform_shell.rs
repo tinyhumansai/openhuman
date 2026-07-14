@@ -33,9 +33,10 @@ use std::path::Path;
 /// platform's default shell. Callers are responsible for setting
 /// `current_dir`, environment, and stdio.
 pub fn build_tokio_command(command: &str) -> tokio::process::Command {
-    let (program, args) = select_shell_program_and_args(command);
-    let mut cmd = tokio::process::Command::new(program);
-    cmd.args(args);
+    let mut cmd = tokio::process::Command::new(shell_program());
+    // `as_std_mut()` so the Windows arm can reach `raw_arg` (only defined on
+    // `std::process::Command`); the tokio wrapper forwards the raw arg.
+    configure_shell_args(cmd.as_std_mut(), command);
     cmd
 }
 
@@ -43,26 +44,48 @@ pub fn build_tokio_command(command: &str) -> tokio::process::Command {
 /// to [`crate::openhuman::cwd_jail::spawn`], which is built around
 /// `std::process::Command` (not the tokio variant).
 pub fn build_std_command(command: &str) -> std::process::Command {
-    let (program, args) = select_shell_program_and_args(command);
-    let mut cmd = std::process::Command::new(program);
-    cmd.args(args);
+    let mut cmd = std::process::Command::new(shell_program());
+    configure_shell_args(&mut cmd, command);
     cmd
 }
 
-/// Single source of truth for the shell-selection policy shared by
-/// [`build_tokio_command`] and [`build_std_command`] — future changes
-/// to the platform matrix (adding pwsh, changing pipefail semantics)
-/// belong here, so both `Command` flavours stay in lockstep.
-fn select_shell_program_and_args(command: &str) -> (&'static str, [String; 2]) {
+/// Shell binary for the current platform. Single source of truth shared by
+/// [`build_tokio_command`] and [`build_std_command`] — future changes to the
+/// platform matrix (adding pwsh, changing pipefail semantics) belong here plus
+/// [`configure_shell_args`], so both `Command` flavours stay in lockstep.
+fn shell_program() -> &'static str {
     if cfg!(windows) {
-        ("cmd", ["/C".to_string(), command.to_string()])
-    } else if let Some(bash) = bash_path() {
-        (
-            bash,
-            ["-lc".to_string(), format!("set -o pipefail\n{command}")],
-        )
+        "cmd"
     } else {
-        ("sh", ["-lc".to_string(), command.to_string()])
+        bash_path().unwrap_or("sh")
+    }
+}
+
+/// Append the shell flag + command payload to `cmd`.
+///
+/// On Windows the payload MUST go through `raw_arg`, not `arg`: Rust's `arg`
+/// applies MSVCRT (`CommandLineToArgvW`) quoting, escaping any interior `"` as
+/// `\"`. But `cmd.exe` does not understand `\"` — it only toggles quote state
+/// on a bare `"`. Handed to `cmd /C` via `arg`, the `>` / `2>` operators in a
+/// redirect wrap (see [`wrap_with_output_redirection`]) land inside a cmd
+/// quote-span, so no redirection happens and the `.sandbox_stdout` /
+/// `.sandbox_stderr` capture files are never written. `raw_arg` passes the
+/// string to cmd verbatim, which is exactly the byte-transparent contract this
+/// module promises. `/C` itself has no special characters.
+#[cfg(windows)]
+fn configure_shell_args(cmd: &mut std::process::Command, command: &str) {
+    use std::os::windows::process::CommandExt;
+    cmd.arg("/C").raw_arg(command);
+}
+
+/// Unix arm: `bash -lc "set -o pipefail\n<command>"` when bash is present
+/// (so a masked pipe-stage failure still surfaces), else plain `sh -lc`.
+#[cfg(not(windows))]
+fn configure_shell_args(cmd: &mut std::process::Command, command: &str) {
+    if bash_path().is_some() {
+        cmd.arg("-lc").arg(format!("set -o pipefail\n{command}"));
+    } else {
+        cmd.arg("-lc").arg(command);
     }
 }
 
