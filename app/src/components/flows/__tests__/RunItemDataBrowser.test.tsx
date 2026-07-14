@@ -105,4 +105,28 @@ describe('RunItemDataBrowser', () => {
     render(<RunItemDataBrowser items={[]} testIdPrefix={PREFIX} />);
     expect(screen.getByTestId(`${PREFIX}-no-items`)).toBeInTheDocument();
   });
+
+  // Issue B19 — a double-wrapped `{ json: { json: X, raw: X, text: null } }`
+  // step output must render X exactly once, not once as `json` and again as
+  // the identical `raw` copy.
+  it('renders a double-wrapped json/raw payload exactly once, in both views', () => {
+    const payload = { has_important: false, summary: 'No new emails today.' };
+    const items = normalizeItems([{ json: { json: payload, raw: payload, text: null } }]);
+    render(<RunItemDataBrowser items={items} testIdPrefix={PREFIX} />);
+
+    // Table view: exactly one `summary` column, not a duplicate under `raw`.
+    const table = screen.getByTestId(`${PREFIX}-table`);
+    const headers = within(table)
+      .getAllByRole('columnheader')
+      .map(h => h.textContent);
+    expect(headers).toEqual(['has_important', 'summary']);
+    expect(screen.getAllByText('No new emails today.')).toHaveLength(1);
+
+    // JSON view: the payload appears once, and no leftover `"raw"`/nested `"json"` keys.
+    fireEvent.click(screen.getByTestId(`${PREFIX}-view-json`));
+    const jsonText = screen.getByTestId(`${PREFIX}-json`).textContent ?? '';
+    expect(jsonText.match(/No new emails today\./g)).toHaveLength(1);
+    expect(jsonText).not.toContain('"raw"');
+    expect(jsonText).not.toMatch(/"json":\s*{/);
+  });
 });

@@ -10,7 +10,6 @@ use crate::openhuman::agent::Agent;
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::local as local_ai;
 use crate::openhuman::inference::provider as providers;
-use crate::openhuman::inference::provider::ops::ProviderRuntimeOptions;
 use crate::openhuman::inference::{
     LocalAiAssetsStatus, LocalAiDownloadsProgress, LocalAiEmbeddingResult, LocalAiSpeechResult,
     LocalAiStatus, LocalAiTtsResult,
@@ -148,29 +147,25 @@ pub async fn agent_chat_simple(
         .clone()
         .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.to_string());
 
-    let options = ProviderRuntimeOptions {
-        auth_profile_override: None,
-        openhuman_dir: effective.config_path.parent().map(std::path::PathBuf::from),
-        secrets_encrypt: effective.secrets.encrypt,
-        reasoning_enabled: effective.runtime.reasoning_enabled,
-    };
-
-    let provider = providers::create_routed_provider_with_options(
-        config.inference_url.as_deref(),
-        config.api_url.as_deref(),
-        config.api_key.as_deref(),
-        &effective.reliability,
-        &effective.model_routes,
-        default_model.as_str(),
-        &options,
+    let (model, resolved_model) = providers::create_chat_model_with_model_id(
+        "chat",
+        &effective,
+        effective.default_temperature,
     )
     .map_err(|e| e.to_string())?;
-
-    let run = provider.chat_with_system(
-        None,
-        message,
-        default_model.as_str(),
-        effective.default_temperature,
+    tracing::debug!(
+        requested_model = %default_model,
+        resolved_model = %resolved_model,
+        temperature = effective.default_temperature,
+        "[inference] agent_chat_simple invoking crate-native chat model"
+    );
+    let run = model.invoke(
+        &(),
+        tinyagents::harness::model::ModelRequest::new(vec![
+            tinyagents::harness::message::Message::user(message.to_string()),
+        ])
+        .with_model(default_model.clone())
+        .with_temperature(effective.default_temperature),
     );
     let response = match thread_id.as_deref() {
         Some(id) if !id.trim().is_empty() => {
@@ -182,7 +177,8 @@ pub async fn agent_chat_simple(
             run.await
         }
     }
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())?
+    .text();
 
     Ok(RpcOutcome::single_log(
         response,

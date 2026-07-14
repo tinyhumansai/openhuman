@@ -751,6 +751,28 @@ mod tests {
                         "orchestrator must have read-only direct tool `{direct}`"
                     );
                 }
+                // Direct memory surface (#4762): recall/store are the product's
+                // core and must be first-class direct tools, not a sub-agent
+                // spawn — a trivial recall or a single "remember this" must not
+                // pay a blocking agentic round-trip (over-delegation, #4744) that
+                // can hang or return a 0-char result with persistence unconfirmed.
+                // Deep tree walks / reconciliation still delegate to
+                // `retrieve_memory` / `manage_profile_memory`.
+                for direct in ["memory_recall", "memory_store", "save_preference"] {
+                    assert!(
+                        tools.iter().any(|t| t == direct),
+                        "orchestrator must have direct memory tool `{direct}` (#4762)"
+                    );
+                }
+                // Memory-protocol close-out (#4116): a direct `memory_store` write
+                // obliges an `update_memory_md` index reconcile, so the tool that
+                // performs it must be in scope — otherwise the protocol's guidance
+                // is unsatisfiable and MEMORY.md (loaded here) drifts from the store.
+                assert!(
+                    tools.iter().any(|t| t == "update_memory_md"),
+                    "orchestrator must have `update_memory_md` to reconcile MEMORY.md \
+                     after a direct memory_store (#4762)"
+                );
             }
             ToolScope::Wildcard => panic!("orchestrator must have named tool allowlist"),
         }

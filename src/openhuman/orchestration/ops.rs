@@ -8,6 +8,8 @@
 //! - attention signals: [`command_center_needs_input`], [`gather_unread_signals`],
 //!   [`gather_remote_approval_signals`].
 
+use std::sync::OnceLock;
+
 use serde::Serialize;
 use serde_json::Value;
 
@@ -17,8 +19,14 @@ use super::store;
 use super::types::SessionEnvelopeV1;
 
 const LOG: &str = "orchestration";
+static MESSAGE_DRAIN_SUPERVISOR_STARTED: OnceLock<()> = OnceLock::new();
 
 pub fn start_message_drain_supervisor() {
+    if MESSAGE_DRAIN_SUPERVISOR_STARTED.set(()).is_err() {
+        log::debug!(target: LOG, "[orchestration] message drain supervisor already running");
+        return;
+    }
+
     tokio::spawn(async {
         // Receiving DMs is impossible unless this agent has published its Signal
         // keys (peers 404 on the prekey bundle otherwise) — the exact blocker

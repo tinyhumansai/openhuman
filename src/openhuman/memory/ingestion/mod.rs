@@ -11,24 +11,17 @@
 //! 5. **Persistence**: Upserting the document, text chunks, and graph relations into
 //!    the memory store.
 
-mod parse;
-mod regex;
-mod rules;
-mod types;
-
 pub mod queue;
 pub mod state;
 
 pub use queue::{IngestionJob, IngestionQueue, DEFAULT_QUEUE_CAPACITY};
 pub use state::{IngestionState, IngestionStatusSnapshot};
-pub use types::{
+pub use tinycortex::memory::ingest::{
     ExtractedEntity, ExtractedRelation, ExtractionMode, MemoryIngestionConfig,
     MemoryIngestionRequest, MemoryIngestionResult, DEFAULT_MEMORY_EXTRACTION_MODEL,
 };
 
-use parse::{enrich_document_metadata, parse_document};
 use serde_json::json;
-use types::ParsedIngestion;
 
 use crate::openhuman::memory_store::types::NamespaceDocumentInput;
 use crate::openhuman::memory_store::UnifiedMemory;
@@ -41,34 +34,19 @@ impl UnifiedMemory {
         &self,
         request: MemoryIngestionRequest,
     ) -> Result<MemoryIngestionResult, String> {
-        let parsed = parse_document(
-            &request.document.content,
-            &request.document.title,
-            &request.config,
-        )
-        .await;
-        let (enriched_input, tags) =
-            enrich_document_metadata(&request.document, &parsed, &request.config);
+        let (enriched_input, mut extraction) =
+            tinycortex::memory::ingest::extract_enriched_document(
+                &request.document,
+                &request.config,
+            );
         let namespace = Self::sanitize_namespace(&enriched_input.namespace);
         let document_id = self.upsert_document(enriched_input).await?;
 
-        self.upsert_graph_relations(&namespace, &document_id, &parsed, &request.config)
+        self.upsert_graph_relations(&namespace, &document_id, &extraction, &request.config)
             .await?;
-
-        Ok(MemoryIngestionResult {
-            document_id,
-            namespace,
-            model_name: request.config.model_name,
-            extraction_mode: request.config.extraction_mode.as_str().to_string(),
-            chunk_count: parsed.chunk_count,
-            entity_count: parsed.entities.len(),
-            relation_count: parsed.relations.len(),
-            preference_count: parsed.preference_count,
-            decision_count: parsed.decision_count,
-            tags,
-            entities: parsed.entities,
-            relations: parsed.relations,
-        })
+        extraction.document_id = document_id;
+        extraction.namespace = namespace;
+        Ok(extraction)
     }
 
     /// Extract entities/relations and write them to the graph for a document
@@ -83,28 +61,15 @@ impl UnifiedMemory {
         document: &NamespaceDocumentInput,
         config: &MemoryIngestionConfig,
     ) -> Result<MemoryIngestionResult, String> {
-        let parsed = parse_document(&document.content, &document.title, config).await;
+        let (_enriched, mut extraction) =
+            tinycortex::memory::ingest::extract_enriched_document(document, config);
         let namespace = Self::sanitize_namespace(&document.namespace);
 
-        self.upsert_graph_relations(&namespace, document_id, &parsed, config)
+        self.upsert_graph_relations(&namespace, document_id, &extraction, config)
             .await?;
-
-        let (_, tags) = enrich_document_metadata(document, &parsed, config);
-
-        Ok(MemoryIngestionResult {
-            document_id: document_id.to_string(),
-            namespace,
-            model_name: config.model_name.clone(),
-            extraction_mode: config.extraction_mode.as_str().to_string(),
-            chunk_count: parsed.chunk_count,
-            entity_count: parsed.entities.len(),
-            relation_count: parsed.relations.len(),
-            preference_count: parsed.preference_count,
-            decision_count: parsed.decision_count,
-            tags,
-            entities: parsed.entities,
-            relations: parsed.relations,
-        })
+        extraction.document_id = document_id.to_string();
+        extraction.namespace = namespace;
+        Ok(extraction)
     }
 
     /// Clear existing relations for the document then upsert all extracted
@@ -113,13 +78,13 @@ impl UnifiedMemory {
         &self,
         namespace: &str,
         document_id: &str,
-        parsed: &ParsedIngestion,
+        extraction: &MemoryIngestionResult,
         config: &MemoryIngestionConfig,
     ) -> Result<(), String> {
         self.graph_remove_document_namespace(namespace, document_id)
             .await?;
 
-        for relation in &parsed.relations {
+        for relation in &extraction.relations {
             let chunk_ids = relation
                 .chunk_ids
                 .iter()

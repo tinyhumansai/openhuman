@@ -240,6 +240,17 @@ fn parse_content_disposition_filename(value: &str) -> Option<String> {
     None
 }
 
+/// Egress spine (privacy epic S2, #4436): disclose an OpenHuman managed-backend
+/// round-trip before it leaves the device. The query string is stripped so only
+/// the endpoint (the "to where") is disclosed, never any data carried in the
+/// query. Fire-and-forget — never fails the caller.
+fn emit_backend_egress(path: &str) {
+    let endpoint = path.split('?').next().unwrap_or(path);
+    crate::openhuman::security::egress::emit_external_transfer(
+        crate::openhuman::security::egress::EgressDescriptor::integration(endpoint),
+    );
+}
+
 /// Shared client for all integration tools. Holds backend URL, auth token,
 /// a reusable `reqwest::Client`, and a lazily-fetched pricing cache.
 pub struct IntegrationClient {
@@ -320,6 +331,7 @@ impl IntegrationClient {
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<T> {
+        emit_backend_egress(path);
         self.ensure_budget_available(path).await?;
         let url = crate::api::config::api_url(&self.backend_url, path);
         tracing::debug!("[integrations] POST {}", url);
@@ -424,6 +436,7 @@ impl IntegrationClient {
 
     /// GET from a backend endpoint and parse the response `data` field.
     pub async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
+        emit_backend_egress(path);
         self.ensure_budget_available(path).await?;
         let url = crate::api::config::api_url(&self.backend_url, path);
         tracing::debug!("[integrations] GET {}", url);

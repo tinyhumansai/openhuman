@@ -14,6 +14,12 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Incremental type-checking: cache the type graph so warm `tsc` runs only
+       re-check files that changed. With noEmit there is no outDir to hold the
+       cache, so point tsBuildInfoFile at the gitignored node_modules cache. */
+    "incremental": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsc/app.tsbuildinfo",
+
     /* Path aliases */
     "baseUrl": ".",
     "paths": {

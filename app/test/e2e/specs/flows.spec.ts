@@ -54,9 +54,10 @@ async function currentHash(): Promise<string> {
   return browser.execute(() => window.location.hash);
 }
 
-/** Open the Workflows list page and wait for it to render. */
+/** Open the Workflows list page and wait for it to render. `/flows` now lands
+ *  on the Welcome landing, so jump straight to the functional list view. */
 async function openFlowsPage(): Promise<void> {
-  await navigateViaHash('/flows');
+  await navigateViaHash('/flows?view=main');
   await waitForTestId('flows-page', 15_000);
 }
 

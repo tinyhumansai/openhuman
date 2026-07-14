@@ -6,7 +6,7 @@ use serde_json::json;
 
 use crate::openhuman::memory::ops::helpers::active_memory_client;
 use crate::openhuman::memory_tools::{
-    ToolMemoryPriority, ToolMemoryRule, ToolMemorySource, ToolMemoryStore,
+    tool_memory_store, ToolMemoryPriority, ToolMemoryRule, ToolMemorySource,
 };
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 
@@ -82,7 +82,7 @@ impl Tool for MemoryToolsPutTool {
         let client = active_memory_client()
             .await
             .map_err(|e| anyhow::anyhow!("memory_tools_put: {e}"))?;
-        let store = ToolMemoryStore::new(client.memory_handle());
+        let store = tool_memory_store(client.memory_handle());
         let mut rule = ToolMemoryRule::new(
             &parsed.tool_name,
             &parsed.rule,
@@ -107,7 +107,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::openhuman::config::{Config, TEST_ENV_LOCK};
-    use crate::openhuman::memory_tools::ToolMemoryStore;
+    use crate::openhuman::memory_tools::tool_memory_store;
     use crate::openhuman::tools::traits::Tool;
     use serde_json::json;
 
@@ -240,7 +240,7 @@ mod tests {
         let client = crate::openhuman::memory::ops::helpers::active_memory_client()
             .await
             .expect("active memory client");
-        let store = ToolMemoryStore::new(client.memory_handle());
+        let store = tool_memory_store(client.memory_handle());
         let rules = store.list_rules("bash").await.expect("list stored rules");
         let stored = rules
             .iter()

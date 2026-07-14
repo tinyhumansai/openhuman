@@ -248,7 +248,10 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
         "## Connected Integrations\n\n\
          IMPORTANT: You MUST use the `delegate_to_integrations_agent` tool for any request \
          involving connected services. You do NOT have direct access to these services — all \
-         interaction must go through delegation. Never claim you cannot access a connected \
+         interaction must go through delegation. Delegate here ONLY when the request actually \
+         operates on a connected service's data or actions; a connected service is not a reason \
+         to touch it for general-knowledge, web/news, headline, date/time, or math questions. \
+         Never claim you cannot access a connected \
          service without first attempting delegation.\n\n\
          The following services have an active connection. Their tool implementations \
          live inside the `integrations_agent` sub-agent — NOT in your own tool list. \
@@ -612,6 +615,46 @@ mod tests {
             body.contains("Never claim you cannot access a connected service without first attempting delegation"),
             "delegation guide must instruct the model to always attempt delegation"
         );
+    }
+
+    #[test]
+    fn build_scope_gates_integrations_delegation() {
+        // Regression: a connected service (e.g. Gmail) is not, by itself, a
+        // reason to operate on it — a general-knowledge / web / date ask that
+        // names no service must NOT spawn `delegate_to_integrations_agent`.
+        // Guards both the static Step-2 scope gate and the rendered
+        // delegation-guide clause.
+        let no_integrations = build(&ctx_with(&[])).unwrap();
+        assert!(
+            no_integrations
+                .contains("General-knowledge answers, web/news lookups, headlines, date/time"),
+            "Step-2 scope gate must keep general/web/date asks off integrations delegation"
+        );
+        assert!(
+            no_integrations
+                .contains("neither names nor clearly implies a specific service's own data"),
+            "Step-2 scope gate must forbid reaching into an unreferenced service"
+        );
+
+        let gmail = vec![ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email access.".into(),
+            tools: Vec::new(),
+            gated_tools: Vec::new(),
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        }];
+        let with_gmail = build(&ctx_with(&gmail)).unwrap();
+        assert!(
+            with_gmail
+                .contains("a connected service is not a reason to touch it for general-knowledge"),
+            "delegation guide must carry the scoping clause when integrations are connected"
+        );
+        // The existing always-delegate contract for real service asks is preserved.
+        assert!(with_gmail.contains(
+            "Never claim you cannot access a connected service without first attempting delegation"
+        ));
     }
 
     #[test]

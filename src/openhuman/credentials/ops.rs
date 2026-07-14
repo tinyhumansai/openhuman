@@ -442,6 +442,18 @@ async fn store_session_inner(
             logs.push(format!("memory client bind warning: {e}"));
         }
     }
+    match crate::core::runtime::context::CoreContext::rebind_default_workspace_dir(
+        &effective_config.workspace_dir,
+    ) {
+        Ok(_) => logs.push(format!(
+            "core context bound to workspace {}",
+            effective_config.workspace_dir.display()
+        )),
+        Err(e) => {
+            tracing::warn!(error = %e, "[credentials] failed to rebind core context after login");
+            logs.push(format!("core context bind warning: {e}"));
+        }
+    }
     // Rebind the people store to the per-user workspace too — the boot seed may
     // have bound it to the pre-login workspace, and it must follow the active
     // user like the memory client does (#4378).

@@ -433,11 +433,11 @@ fn is_api_key_unset_failure(
 }
 
 /// TAURI-RUST-12K — a cron **agent** job pinned to a **local** LLM provider
-/// (LM Studio / Ollama / llama.cpp on `localhost:<port>`) fails at the TCP
-/// layer with "connection refused" because the user's local server isn't
-/// running. This is a genuinely unpreventable user-environment state: the app
-/// has no lever to start a user's local model server, and retrying across the
-/// backoff loop cannot bring the port up within one cron cycle.
+/// (LM Studio / Ollama / llama.cpp on `localhost:<port>`) fails because the
+/// user's local runtime is unavailable or reachable-but-idle with no model
+/// loaded. This is a genuinely unpreventable user-environment state: the app
+/// has no lever to start a user's local model server or load a model there, and
+/// retrying across the backoff loop cannot fix it within one cron cycle.
 ///
 /// The provider / agent emit sites already demote this via
 /// `report_error_or_expected` (the `expected_error_kind` classifier routes it
@@ -448,13 +448,15 @@ fn is_api_key_unset_failure(
 /// the source demotion and the sibling billing / api-key guards
 /// (TAURI-RUST-514 / -BMW / -HCK).
 ///
-/// Delegates to the single-source matcher
+/// Delegates loopback-unreachable detection to the single-source matcher
 /// [`crate::core::observability::is_local_provider_unreachable_message`] so
-/// the wording cannot drift from the classifier emit site. Narrow by design:
-/// only **loopback** connection-refused matches, so a transient *remote*
-/// provider / backend network error still retries and still reports. Routes on
-/// `last_agent_error` first (the raw anyhow chain carrying the wire message),
-/// falling back to `last_output`. Restricted to `JobType::Agent`.
+/// the wording cannot drift from the classifier emit site. Also recognizes the
+/// inference provider's stable local-runtime "no model loaded" user message.
+/// Narrow by design: a transient *remote* provider / backend network error
+/// still retries and still reports. Checks both `last_agent_error` (the raw
+/// anyhow chain carrying the wire message) and `last_output` (the surfaced user
+/// message), because some provider paths preserve only one of those shapes.
+/// Restricted to `JobType::Agent`.
 fn is_local_provider_unreachable_failure(
     job_type: &JobType,
     last_agent_error: Option<&str>,
@@ -463,8 +465,17 @@ fn is_local_provider_unreachable_failure(
     if !matches!(job_type, JobType::Agent) {
         return false;
     }
-    let signal = last_agent_error.unwrap_or(last_output);
-    crate::core::observability::is_local_provider_unreachable_message(signal)
+    let raw_signal = last_agent_error.unwrap_or("");
+    crate::core::observability::is_local_provider_unreachable_message(raw_signal)
+        || crate::core::observability::is_local_provider_unreachable_message(last_output)
+        || is_local_provider_no_model_loaded_message(raw_signal)
+        || is_local_provider_no_model_loaded_message(last_output)
+}
+
+fn is_local_provider_no_model_loaded_message(signal: &str) -> bool {
+    let lower = signal.to_ascii_lowercase();
+    (lower.contains("local inference server") && lower.contains("no model loaded"))
+        || lower.contains("no models loaded")
 }
 
 async fn execute_job_with_retry(
@@ -835,8 +846,16 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                     .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.to_string());
                 let resolved_model = match &def.model {
                     ModelSpec::Hint(workload) => {
-                        match crate::openhuman::inference::provider::create_chat_provider(
-                            workload, &effective,
+                        // Resolve the workload's configured model id via the crate
+                        // `ChatModel` factory (#4249 Phase 1). We only need the
+                        // resolved model string here, so the built model is
+                        // discarded — `create_chat_model_with_model_id` wraps the
+                        // same `create_chat_provider` resolution, so the model id is
+                        // identical; temperature is irrelevant to id resolution.
+                        match crate::openhuman::inference::provider::create_chat_model_with_model_id(
+                            workload,
+                            &effective,
+                            effective.default_temperature,
                         ) {
                             Ok((_, m)) => {
                                 tracing::debug!(

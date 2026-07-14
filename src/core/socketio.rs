@@ -363,6 +363,11 @@ struct ChatStartPayload {
 #[derive(Debug, Deserialize)]
 struct ChatCancelPayload {
     thread_id: String,
+    /// The request this cancel targets. When the client passes the id of the
+    /// turn it started, the cancel is scoped to that turn so a late cancel for a
+    /// timed-out request can't kill the next turn on the thread (#4760).
+    #[serde(default)]
+    request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -551,9 +556,10 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                         client_id,
                         payload.thread_id
                     );
-                    let _ = crate::openhuman::channels::providers::web::cancel_chat(
+                    let _ = crate::openhuman::channels::providers::web::cancel_chat_scoped(
                         &client_id,
                         &payload.thread_id,
+                        payload.request_id.as_deref(),
                     )
                     .await;
                 },

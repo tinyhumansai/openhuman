@@ -1,5 +1,7 @@
-//! Worker pool: claims jobs from `mem_tree_jobs`, dispatches them through
-//! [`handlers::handle_job`], and settles the row.
+//! Worker pool: drives the crate queue engine (W4 flip). Each `run_once`
+//! delegates claim → dispatch → settle to `tinycortex::memory::queue::run_once`
+//! via [`crate::openhuman::tinycortex::HostQueueDelegates`]; the legacy host
+//! `handlers` engine that used to own dispatch was deleted at the flip.
 //!
 //! Concurrency control for LLM-bound work is delegated to
 //! [`crate::openhuman::scheduler_gate`] — its global single-slot
@@ -16,15 +18,13 @@ use anyhow::Result;
 use tokio::sync::Notify;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_queue::handlers;
-use crate::openhuman::memory_queue::redact::scrub_for_log;
-use crate::openhuman::memory_queue::store::{
-    claim_next, claim_ready_extract_batch, mark_deferred, mark_done, mark_failed_typed,
-    recover_stale_locks, release_running_locks, DEFAULT_LOCK_DURATION_MS,
-};
-use crate::openhuman::memory_queue::types::{Job, JobKind, JobOutcome};
+// W4 flip: `run_once` now delegates claim/dispatch/settle to the crate, so the
+// legacy `handlers`, per-job settle (`mark_*`/`scrub_for_log`), and claim
+// helpers are gone from this module. Only startup lock recovery + the loop's
+// storage-degraded signalling remain host.
+use crate::openhuman::memory_queue::store::{recover_stale_locks, release_running_locks};
 use crate::openhuman::memory_tree::health::{
-    clear_storage_degraded, mark_storage_degraded, FailureCode, PipelineFailure,
+    clear_storage_degraded, mark_storage_degraded, FailureCode,
 };
 
 /// Number of concurrent job-worker tasks. Each worker claims one job
@@ -269,145 +269,24 @@ pub fn start(config: Config) {
 /// Claim and run a single job. Returns `true` when work was processed,
 /// `false` when no eligible row was available.
 pub async fn run_once(config: &Config) -> Result<bool> {
-    // Cooperative throttle BEFORE `claim_next()`. Holding the DB claim
-    // across an awaited `wait_for_capacity()` would let `Paused` mode
-    // sit on the row past `DEFAULT_LOCK_DURATION_MS`, after which
-    // `recover_stale_locks()` would requeue it for another worker to
-    // pick up — duplicating side effects. Throttling here means
-    // non-LLM jobs (AppendBuffer/FlushStale) also experience the same
-    // gate delay, but that's fine: in Throttled mode the host is
-    // already overloaded and a 30s breather between any DB-write batch
-    // is welcome; in Paused mode the user has explicitly asked us to
-    // stand down. Returns immediately in Aggressive/Normal so plugged-in
-    // desktops with headroom pay zero cost.
-    //
-    // For LLM-bound jobs the returned `LlmPermit` reserves the global
-    // single slot for the lifetime of `handle_job`. Non-LLM jobs
-    // (`AppendBuffer`, `FlushStale`) drop the permit before the
-    // handler runs so they don't block the slot.
-    let gate_permit = crate::openhuman::scheduler_gate::wait_for_capacity().await;
+    // Cooperative throttle BEFORE claiming, so memory queue work still yields to
+    // voice/autocomplete/triage under load (Throttled/Paused modes), exactly as
+    // the legacy pool did. Held across the single crate step below; returns
+    // immediately in Aggressive/Normal so idle desktops pay zero cost.
+    let _gate_permit = crate::openhuman::scheduler_gate::wait_for_capacity().await;
 
-    let Some(job) = claim_next(config, DEFAULT_LOCK_DURATION_MS)? else {
-        return Ok(false);
-    };
-
-    let llm_permit = if job.kind.is_llm_bound() {
-        // Local Ollama loads ~1.3 GB resident per concurrent call —
-        // hold the gate to enforce process-wide single-slot RAM
-        // safety. Cloud calls are bandwidth-bound, not RAM-bound:
-        // drop the permit so multiple workers can run cloud
-        // extract/summarise calls in parallel (the worker pool
-        // itself, sized to `WORKER_COUNT`, is the upstream bound).
-        let memory_uses_local = config.workload_uses_local("memory");
-        log::trace!(
-            "[memory::jobs] llm permit routing job_id={} kind={} memory_uses_local={}",
-            job.id,
-            job.kind.as_str(),
-            memory_uses_local
-        );
-        if memory_uses_local {
-            gate_permit
-        } else {
-            drop(gate_permit);
-            None
-        }
-    } else {
-        // Non-LLM jobs don't need the global slot; release it so an
-        // LLM-bound caller waiting elsewhere in the process can run.
-        drop(gate_permit);
-        None
-    };
-
-    let mut jobs = vec![job];
-    if jobs[0].kind == JobKind::ExtractChunk {
-        let extra_limit = handlers::EXTRACT_EMBED_BATCH.saturating_sub(1);
-        let mut extra = claim_ready_extract_batch(config, DEFAULT_LOCK_DURATION_MS, extra_limit)?;
-        if !extra.is_empty() {
-            log::debug!(
-                "[memory::jobs] running extract batch count={}",
-                extra.len() + 1
-            );
-            jobs.append(&mut extra);
-        }
-    }
-
-    let results = if jobs.len() > 1 && jobs[0].kind == JobKind::ExtractChunk {
-        handlers::handle_extract_batch(config, &jobs).await?
-    } else {
-        let job = jobs
-            .pop()
-            .expect("worker has exactly one claimed job in non-batch path");
-        let result = handlers::handle_job(config, &job).await;
-        vec![(job, result)]
-    };
-    drop(llm_permit);
-
-    // A failed settle (`mark_done` / `mark_failed` / `mark_deferred` below)
-    // can also return `SQLITE_BUSY`. The worker's outer `Err` arm in
-    // `start` reclassifies those into a warn-log + backoff (no Sentry
-    // report) via [`is_sqlite_busy`]. On a stale settle the row's
-    // `locked_until_ms` eventually elapses and `recover_stale_locks`
-    // requeues it, so dropping the error here is at-most a re-run.
-    for (job, result) in results {
-        settle_job(config, &job, result)?;
-    }
-
-    Ok(true)
-}
-
-fn settle_job(config: &Config, job: &Job, result: Result<JobOutcome>) -> Result<()> {
-    match result {
-        Ok(JobOutcome::Done) => {
-            log::debug!(
-                "[memory::jobs] done id={} kind={}",
-                job.id,
-                job.kind.as_str()
-            );
-            mark_done(config, job)?;
-        }
-        Ok(JobOutcome::Defer { until_ms, reason }) => {
-            // Defer is normal operation (transient blocker, e.g. rate
-            // limit) — log at info, not warn — and do NOT count this
-            // claim toward the failure-attempt budget. `mark_deferred`
-            // reverts the bump applied by `claim_next` so the row's
-            // attempts counter stays where it was before this claim.
-            //
-            // `reason` is handler-supplied free-form text and may
-            // include upstream provider responses; scrub for log
-            // emission while keeping the original in DB state.
-            log::info!(
-                "[memory::jobs] deferred id={} kind={} until_ms={} reason={}",
-                job.id,
-                job.kind.as_str(),
-                until_ms,
-                scrub_for_log(&reason)
-            );
-            mark_deferred(config, job, until_ms, &reason)?;
-        }
-        Err(err) => {
-            // Preserve the full anyhow cause chain in the persisted
-            // last_error so a reader of mem_tree_jobs can see the root
-            // cause, not just the top-level message. The log line gets
-            // the same chain after `scrub_for_log`, since anyhow chains
-            // commonly embed upstream HTTP bodies / auth headers.
-            let message = format!("{err:#}");
-            // #002: if the error chain carries a typed `PipelineFailure`
-            // (attached at the embed/extract boundary), pass it through so
-            // `mark_failed_typed` can fail fast on unrecoverable causes
-            // (budget/auth/dim) instead of burning the retry budget, and
-            // persist the typed reason for the status/doctor surface.
-            let typed = err.downcast_ref::<PipelineFailure>();
-            log::warn!(
-                "[memory::jobs] job failed id={} kind={} reason={:?} err={}",
-                job.id,
-                job.kind.as_str(),
-                typed.map(|f| f.code.as_str()),
-                scrub_for_log(&message)
-            );
-            mark_failed_typed(config, job, &message, typed)?;
-        }
-    }
-    Ok(())
+    // W4 flip: TinyCortex now owns claim → dispatch → settle. `queue::run_once`
+    // claims one `mem_tree_jobs` row (the same table host producers enqueue
+    // into — identical schema, parity P4) and runs it through the crate's
+    // `handle_job` + `HostQueueDelegates`, which bridge each heavy step
+    // (score/admit, buffer push, seal, seal-document, re-embed) back to the host
+    // `memory_tree`/score/embed engine, then settles the row itself. The crate's
+    // single-slot LLM gate serialises llm-bound jobs; the legacy per-job
+    // local/cloud permit routing and the extract-batch coalescing are
+    // intentionally dropped here (perf, not correctness — W4 follow-up).
+    let mc = crate::openhuman::tinycortex::memory_config_from(config, config.workspace_dir.clone());
+    let delegates = crate::openhuman::tinycortex::HostQueueDelegates::new(config.clone());
+    tinycortex::memory::queue::run_once(&mc, &delegates).await
 }
 
 /// Classify whether an error is a transient I/O failure that should be

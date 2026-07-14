@@ -13,15 +13,18 @@ vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (key: string) =
 // time the (hoisted) factory runs. (These specific names happened to work
 // without it, since Vitest's compiler special-cases `mock`-prefixed
 // identifiers, but that's an incidental heuristic, not a guarantee.)
-const { mockCreateFlow, mockUpdateFlow, mockDispatch, mockNavigate } = vi.hoisted(() => ({
-  mockCreateFlow: vi.fn(),
-  mockUpdateFlow: vi.fn(),
-  mockDispatch: vi.fn(),
-  mockNavigate: vi.fn(),
-}));
+const { mockCreateFlow, mockUpdateFlow, mockSetFlowEnabled, mockDispatch, mockNavigate } =
+  vi.hoisted(() => ({
+    mockCreateFlow: vi.fn(),
+    mockUpdateFlow: vi.fn(),
+    mockSetFlowEnabled: vi.fn(),
+    mockDispatch: vi.fn(),
+    mockNavigate: vi.fn(),
+  }));
 vi.mock('../../services/api/flowsApi', () => ({
   createFlow: (...args: unknown[]) => mockCreateFlow(...args),
   updateFlow: (...args: unknown[]) => mockUpdateFlow(...args),
+  setFlowEnabled: (...args: unknown[]) => mockSetFlowEnabled(...args),
 }));
 vi.mock('../../store/hooks', () => ({ useAppDispatch: () => mockDispatch }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }));
@@ -44,8 +47,11 @@ function proposal(partial: Partial<WorkflowProposal> = {}): WorkflowProposal {
 
 describe('WorkflowProposalCard', () => {
   beforeEach(() => {
-    mockCreateFlow.mockReset().mockResolvedValue({ id: 'f1', name: 'Daily standup summary' });
+    mockCreateFlow
+      .mockReset()
+      .mockResolvedValue({ id: 'f1', name: 'Daily standup summary', enabled: true });
     mockUpdateFlow.mockReset();
+    mockSetFlowEnabled.mockReset().mockResolvedValue({ id: 'f1', enabled: true });
     mockDispatch.mockReset();
     mockNavigate.mockReset();
   });
@@ -74,6 +80,8 @@ describe('WorkflowProposalCard', () => {
       expect(mockCreateFlow).toHaveBeenCalledWith(p.name, p.graph, p.requireApproval)
     );
     expect(mockDispatch).toHaveBeenCalledTimes(1);
+    // createFlow already came back enabled — no need for a follow-up arm.
+    expect(mockSetFlowEnabled).not.toHaveBeenCalled();
   });
 
   it('shows a loading state while saving', async () => {
@@ -86,7 +94,7 @@ describe('WorkflowProposalCard', () => {
     render(<WorkflowProposalCard threadId="t1" proposal={proposal()} />);
     fireEvent.click(screen.getByText('chat.flowProposal.save'));
     await waitFor(() => expect(screen.getByText('chat.flowProposal.saving')).toBeInTheDocument());
-    resolveCreate({ id: 'f1' });
+    resolveCreate({ id: 'f1', enabled: true });
   });
 
   it('surfaces an error and stays mounted when createFlow fails', async () => {
@@ -96,6 +104,51 @@ describe('WorkflowProposalCard', () => {
     await waitFor(() => expect(screen.getByText(/chat\.flowProposal\.error/)).toBeInTheDocument());
     // Not cleared on failure.
     expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockSetFlowEnabled).not.toHaveBeenCalled();
+  });
+
+  // Issue B29 Rule 1: an automatic-trigger graph (schedule/app_event/webhook)
+  // comes back from `flows_create` disabled, regardless of what the caller
+  // asked for. "Save & enable" is the user's own explicit arming click, so
+  // the card must follow up with `setFlowEnabled` to actually arm it —
+  // otherwise the CTA's own label would be a lie and the flow would never
+  // fire despite the user clicking "enable".
+  it('explicitly enables via setFlowEnabled when createFlow returns a disabled auto-trigger flow', async () => {
+    mockCreateFlow.mockResolvedValueOnce({
+      id: 'f1',
+      name: 'Daily standup summary',
+      enabled: false,
+    });
+    const p = proposal();
+    render(<WorkflowProposalCard threadId="t1" proposal={p} />);
+    fireEvent.click(screen.getByText('chat.flowProposal.save'));
+    await waitFor(() => expect(mockSetFlowEnabled).toHaveBeenCalledWith('f1', true));
+    expect(mockDispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the flow saved and lets the user retry just the enable step if setFlowEnabled fails', async () => {
+    mockCreateFlow.mockResolvedValueOnce({
+      id: 'f1',
+      name: 'Daily standup summary',
+      enabled: false,
+    });
+    mockSetFlowEnabled.mockRejectedValueOnce(new Error('enable boom'));
+    render(<WorkflowProposalCard threadId="t1" proposal={proposal()} />);
+    fireEvent.click(screen.getByText('chat.flowProposal.save'));
+    await waitFor(() =>
+      expect(screen.getByText(/chat\.flowProposal\.enableError/)).toBeInTheDocument()
+    );
+    // The flow was already persisted — the card must not be cleared, and a
+    // retry must not re-create it (which would duplicate the flow).
+    expect(mockDispatch).not.toHaveBeenCalled();
+
+    mockSetFlowEnabled.mockResolvedValueOnce({ id: 'f1', enabled: true });
+    fireEvent.click(screen.getByText('chat.flowProposal.save'));
+    await waitFor(() => expect(mockDispatch).toHaveBeenCalledTimes(1));
+    // Only ever created once, even though "Save & enable" was clicked twice.
+    expect(mockCreateFlow).toHaveBeenCalledTimes(1);
+    expect(mockSetFlowEnabled).toHaveBeenCalledTimes(2);
+    expect(mockSetFlowEnabled).toHaveBeenLastCalledWith('f1', true);
   });
 
   it('opens the proposed graph in the canvas as an unsaved draft without persisting', () => {

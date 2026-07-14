@@ -31,7 +31,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::openhuman::agent::harness::run_queue::RunQueue;
 use crate::openhuman::agent::progress::AgentProgress;
-use crate::openhuman::inference::provider::{ChatMessage, Provider, AGENT_TURN_MAX_OUTPUT_TOKENS};
+use crate::openhuman::inference::provider::{ChatMessage, AGENT_TURN_MAX_OUTPUT_TOKENS};
 use crate::openhuman::tinyagents::{
     run_turn_via_tinyagents_shared, TinyagentsTurnOutcome, TurnContextMiddleware,
 };
@@ -43,12 +43,12 @@ use crate::openhuman::tools::Tool;
 /// arguments (no child scope, no early-exit tools, graceful cap pause, per-turn
 /// output cap) are applied inside [`run_chat_turn_graph`].
 pub(crate) struct ChatTurnGraph {
-    /// The session provider (already cloned by the caller).
-    pub provider: Arc<dyn Provider>,
+    /// The turn's crate `ChatModel` set (primary + tier routes + summarizer),
+    /// already built by the caller from the session's `TurnModelSource` (issue
+    /// #4249, Phase 3 / Motion A). The graph names crate model types only.
+    pub turn_models: crate::openhuman::tinyagents::TurnModels,
     /// The effective model id for this turn.
     pub model: String,
-    /// Sampling temperature.
-    pub temperature: f64,
     /// Provider-ready messages (system + prior history + this turn's user turn,
     /// multimodal markers already expanded).
     pub messages: Vec<ChatMessage>,
@@ -89,17 +89,12 @@ pub(crate) async fn run_chat_turn_graph(graph: ChatTurnGraph) -> Result<Tinyagen
     } else {
         Some(graph.visible_tool_names)
     };
-    // Build the turn's crate `ChatModel` set from the session provider; the seam
-    // entry is crate-native (issue #4249, Phase 5).
-    let provider_id = graph.provider.telemetry_provider_id();
-    let turn_models = crate::openhuman::tinyagents::build_turn_models(
-        graph.provider,
-        &graph.model,
-        graph.temperature,
-        graph.context_window,
-    );
+    // The turn's crate `ChatModel` set was built by the caller from the session's
+    // `TurnModelSource` (issue #4249, Phase 3 / Motion A); the telemetry id rides
+    // on the bundle.
+    let provider_id = graph.turn_models.provider_id().to_string();
     run_turn_via_tinyagents_shared(
-        turn_models,
+        graph.turn_models,
         provider_id,
         &graph.model,
         graph.messages,

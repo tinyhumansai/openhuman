@@ -2863,7 +2863,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.57.0",
+ "windows-core 0.58.0",
 ]
 
 [[package]]
@@ -4341,7 +4341,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.58.14"
+version = "0.58.19"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -6806,19 +6806,21 @@ dependencies = [
 
 [[package]]
 name = "tinyagents"
-version = "1.7.1"
+version = "1.9.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "chrono",
  "futures",
  "reqwest 0.12.28",
  "rhai",
  "rusqlite",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -6873,16 +6875,23 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "futures",
  "git2",
+ "log",
  "parking_lot",
- "rand 0.8.6",
+ "rand 0.10.1",
  "regex",
+ "reqwest 0.12.28",
  "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
+ "tinyagents",
+ "tokio",
  "toml 0.8.23",
+ "tracing",
  "uuid 1.23.1",
  "walkdir",
 ]
@@ -6928,7 +6937,7 @@ dependencies = [
 
 [[package]]
 name = "tinyplace"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "aes",
  "async-trait",

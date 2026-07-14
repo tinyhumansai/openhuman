@@ -1815,10 +1815,11 @@ pub(super) const CAPABILITIES: &[Capability] = &[
                       forwards session DMs to the hosted orchestration brain, which reasons, \
                       replies, and steers on its own cadence server-side. The device executes the \
                       effects the brain pushes back (send the reply, mirror an eviction into local \
-                      memory), renders the hosted read surface, and shows a notice when the cloud \
-                      brain is unreachable.",
+                      memory), renders the hosted read surface, and can run the paid Medulla API \
+                      directly with its local contact, session-history, and send-to-agent tools.",
         how_to: "Intelligence > Orchestration (pair a wrapped session, then chat via the Master \
-                 window).",
+                 window), or call openhuman.orchestration_run. Prompt, graph, and resource \
+                 overrides live under [orchestration.medulla] in config.toml.",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,
     },

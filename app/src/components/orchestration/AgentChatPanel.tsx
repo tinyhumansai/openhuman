@@ -19,12 +19,14 @@ import debugFactory from 'debug';
 import {
   type KeyboardEvent,
   type ReactNode,
+  type Ref,
   useCallback,
   useEffect,
   useRef,
   useState,
 } from 'react';
 
+import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { useT } from '../../lib/i18n/I18nContext';
 import {
   orchestrationClient,
@@ -47,6 +49,10 @@ import SessionTranscript from './SessionTranscript';
 
 const debug = debugFactory('orchestration:agent-chat');
 
+// Stable identity for an empty transcript so `useStickToBottom`'s layout effect
+// doesn't re-run every render when the selected chat has no messages yet.
+const EMPTY_MESSAGES: readonly unknown[] = [];
+
 function sessionLabel(session: SessionSummary): string {
   return session.label?.trim() || session.sessionId;
 }
@@ -60,10 +66,12 @@ function sessionLabel(session: SessionSummary): string {
 function ChatPageScaffold({
   header,
   footer,
+  scrollRef,
   children,
 }: {
   header?: ReactNode;
   footer?: ReactNode;
+  scrollRef?: Ref<HTMLDivElement>;
   children: ReactNode;
 }) {
   const footerRef = useRef<HTMLDivElement | null>(null);
@@ -91,6 +99,8 @@ function ChatPageScaffold({
     <div className="relative flex h-full flex-col overflow-hidden bg-surface/70 dark:bg-black/40">
       {header}
       <div
+        ref={scrollRef}
+        data-testid="orch-chat-scroll"
         className="min-h-0 flex-1 overflow-y-auto"
         style={footer ? { paddingBottom: footerHeight } : undefined}>
         {children}
@@ -184,6 +194,11 @@ function AgentComposer({
 function SessionChatView({ session }: { session: SessionSummary }) {
   const { t } = useT();
   const { state, messages, refresh } = useSessionTranscript(session.sessionId);
+  const { containerRef: scrollRef } = useStickToBottom(
+    messages,
+    session.sessionId,
+    session.sessionId
+  );
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -232,6 +247,7 @@ function SessionChatView({ session }: { session: SessionSummary }) {
 
   return (
     <ChatPageScaffold
+      scrollRef={scrollRef}
       header={
         // Agent metadata, centered to the same width-capped column as the chat.
         <div className="border-b border-line bg-surface/60 dark:bg-black/30">
@@ -343,6 +359,14 @@ export default function AgentChatPanel({
     sendMessage,
   } = useOrchestrationChats(t);
   const contactSessions = useContactSessions();
+  // Keep the transcript pinned to the newest message (and disengage when the
+  // user scrolls up). Called before the `openSession` early return so hook order
+  // stays stable; `selectedId` as thread + reset key snaps fresh on tab switch.
+  const { containerRef: masterScrollRef } = useStickToBottom(
+    selected?.messages ?? EMPTY_MESSAGES,
+    selectedId,
+    selectedId
+  );
 
   const [composerBody, setComposerBody] = useState('');
   const [sending, setSending] = useState(false);
@@ -456,6 +480,7 @@ export default function AgentChatPanel({
     // switching chip in the footer. When subconscious is active, the steering
     // directive + "Run review" ride alongside the chip (no header bar).
     <ChatPageScaffold
+      scrollRef={masterScrollRef}
       footer={
         <div className="flex flex-col gap-2">
           {showComposer ? (

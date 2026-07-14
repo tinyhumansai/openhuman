@@ -11,7 +11,6 @@ vi.mock('./MemoryGraph', () => ({ MemoryGraph: () => null }));
 vi.mock('./MemorySourcesRegistry', () => ({ MemorySourcesRegistry: () => null }));
 vi.mock('./MemoryTreeStatusPanel', () => ({ MemoryTreeStatusPanel: () => null }));
 vi.mock('./ObsidianVaultSection', () => ({ ObsidianVaultSection: () => null }));
-vi.mock('./SyncAuditPanel', () => ({ SyncAuditPanel: () => null }));
 vi.mock('./WhatsAppMemorySection', () => ({ WhatsAppMemorySection: () => null }));
 vi.mock('../../utils/tauriCommands', () => ({
   memoryTreeGraphExport: vi.fn().mockResolvedValue({ nodes: [], edges: [] }),

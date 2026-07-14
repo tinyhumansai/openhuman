@@ -7,7 +7,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use super::store;
-use super::types::GoalsDoc;
+use super::GoalsDoc;
 use crate::openhuman::config::Config;
 use crate::rpc::RpcOutcome;
 

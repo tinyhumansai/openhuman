@@ -212,17 +212,24 @@ pub fn insert_duplicate_flow(config: &Config, source: &Flow, new_name: String) -
 
 /// Creates a brand-new [`Flow`] row from a name + validated graph, stamping
 /// fresh id/timestamps, and returns the persisted record.
+///
+/// `enabled` is decided by the caller ([`crate::openhuman::flows::ops::flows_create`],
+/// issue B29 — save/enable safety): a graph with an automatic trigger
+/// (`schedule` / `app_event` / `webhook`) is created disabled so it cannot
+/// silently arm itself live and unattended; a `manual`-triggered graph is
+/// created enabled since it only ever runs on explicit `flows_run`.
 pub fn create_flow(
     config: &Config,
     name: String,
     graph: tinyflows::model::WorkflowGraph,
     require_approval: bool,
+    enabled: bool,
 ) -> Result<Flow> {
     let now = Utc::now().to_rfc3339();
     let flow = Flow {
         id: Uuid::new_v4().to_string(),
         name,
-        enabled: true,
+        enabled,
         graph,
         created_at: now.clone(),
         updated_at: now,

@@ -9,7 +9,7 @@
 import { useEffect, useRef } from 'react';
 
 import { type GraphEdge, type GraphMode, type GraphNode } from '../../utils/tauriCommands';
-import { buildGraph } from './memoryGraphLayout';
+import { buildGraph, type SimTuning } from './memoryGraphLayout';
 import { mountPixiGraph, type PixiGraphHandle } from './pixiGraphRenderer';
 
 interface PixiGraphProps {
@@ -27,6 +27,8 @@ interface PixiGraphProps {
   fitToBounds?: boolean;
   /** Draw an always-on text label under each node. */
   showLabels?: boolean;
+  /** Optional force-simulation tuning (defaults preserve the standard layout). */
+  tuning?: SimTuning;
   /** Bump to recentre the view (Reset view button). */
   resetSignal: number;
   onHover: (node: GraphNode | null) => void;
@@ -48,6 +50,7 @@ export function PixiGraph({
   fitScale,
   fitToBounds,
   showLabels,
+  tuning,
   resetSignal,
   onHover,
   onOpen,
@@ -93,6 +96,7 @@ export function PixiGraph({
       fitScale,
       fitToBounds,
       showLabels,
+      tuning,
       onHover: n => onHoverRef.current(n),
       onOpen: n => onOpenRef.current(n),
       onReady: () => onReadyRef.current?.(),
@@ -117,7 +121,7 @@ export function PixiGraph({
       mountedModeRef.current = null;
       void pending.then(handle => handle?.destroy());
     };
-  }, [nodes, edges, mode, rootLabel, fitScale, fitToBounds, showLabels]);
+  }, [nodes, edges, mode, rootLabel, fitScale, fitToBounds, showLabels, tuning]);
 
   useEffect(() => {
     handleRef.current?.setTheme(dark);

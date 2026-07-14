@@ -1,3 +1,5 @@
+import createDebug from 'debug';
+
 /**
  * runItems — normalize a `tinyflows` run step's opaque `output` into the
  * n8n-style item-array shape the run inspector's per-item data browser
@@ -18,6 +20,7 @@
  * normalize into `FlowRunItem[]`. Anything it can't interpret as item-shaped is
  * treated as a single item whose `json` is the raw value — never throws.
  */
+const log = createDebug('app:flows:items');
 
 /** A single binary attachment reference (metadata only — bytes never inlined). */
 export interface FlowBinaryRef {
@@ -42,7 +45,7 @@ export interface FlowRunItem {
   pairedIndex: number | null;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
@@ -82,19 +85,126 @@ function parseBinary(raw: unknown): FlowBinaryRef[] {
   });
 }
 
+/**
+ * Known keys of the internal `{ json, raw, text }` payload envelope some nodes
+ * (Composio tool calls in particular) persist alongside the n8n item shape —
+ * `json` is the parsed payload, `raw` is the same payload pre-parse (always a
+ * verbatim duplicate in practice), `text` an optional plain-text fallback
+ * (usually `null`). Rendered naked, `json` and `raw` show the identical data
+ * twice side by side (issue B19). An object is only treated as this envelope
+ * when its keys are a subset of these three AND it actually carries `json` —
+ * a real payload that merely happens to have a field called "raw" but no
+ * "json" is left untouched.
+ */
+const PAYLOAD_ENVELOPE_KEYS = new Set(['json', 'raw', 'text']);
+
+/**
+ * Structural equality for JSON-like values (objects/arrays/primitives). Used
+ * to prove a sibling envelope field (`raw`/`text`) is actually a duplicate of
+ * the selected value before we discard it — see {@link unwrapPayloadEnvelope}.
+ */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((item, index) => deepEqual(item, b[index]));
+  }
+  if (isPlainObject(a) && isPlainObject(b)) {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+    return aKeys.every(
+      key => Object.prototype.hasOwnProperty.call(b, key) && deepEqual(a[key], b[key])
+    );
+  }
+  return false;
+}
+
+/**
+ * A sibling envelope field is safe to discard when it's absent/null, or when
+ * it's a proven structural duplicate of the value we're keeping. Anything
+ * else means the sibling carries distinct, meaningful data.
+ */
+function isDuplicateOrEmpty(sibling: unknown, kept: unknown): boolean {
+  return sibling === undefined || sibling === null || deepEqual(sibling, kept);
+}
+
+/**
+ * Collapse the internal `{ json, raw, text }` payload envelope (see
+ * {@link PAYLOAD_ENVELOPE_KEYS}) down to a single canonical value, so the
+ * inspector renders one copy of the data instead of the same payload twice
+ * under sibling `json`/`raw` keys. Anything that doesn't match the envelope
+ * shape passes through unchanged.
+ *
+ * A node can intentionally return a payload shaped exactly like this envelope
+ * (e.g. parsed content plus a genuinely different raw body) — collapsing
+ * unconditionally would silently drop that data. So we only ever discard a
+ * sibling field when it's absent/null or a proven duplicate of the value
+ * we're keeping ({@link isDuplicateOrEmpty}); otherwise the object is left
+ * intact.
+ */
+function unwrapPayloadEnvelope(value: unknown): unknown {
+  if (!isPlainObject(value)) {
+    log('unwrapPayloadEnvelope: non-object value (type=%s) — pass through', typeof value);
+    return value;
+  }
+  const keys = Object.keys(value);
+  if (keys.length === 0 || !keys.every(key => PAYLOAD_ENVELOPE_KEYS.has(key))) {
+    log('unwrapPayloadEnvelope: non-envelope object (keys=%o) — pass through', keys);
+    return value;
+  }
+  if (!('json' in value)) {
+    log('unwrapPayloadEnvelope: envelope-shaped keys=%o but missing `json` — pass through', keys);
+    return value;
+  }
+  if (value.json !== undefined && value.json !== null) {
+    if (isDuplicateOrEmpty(value.raw, value.json) && isDuplicateOrEmpty(value.text, value.json)) {
+      log('unwrapPayloadEnvelope: envelope keys=%o — selected `json` branch', keys);
+      return value.json;
+    }
+    log(
+      'unwrapPayloadEnvelope: envelope keys=%o — `raw`/`text` carry distinct data, not collapsing',
+      keys
+    );
+    return value;
+  }
+  if (value.raw !== undefined && value.raw !== null) {
+    if (isDuplicateOrEmpty(value.text, value.raw)) {
+      log('unwrapPayloadEnvelope: envelope keys=%o — `json` empty, selected `raw` branch', keys);
+      return value.raw;
+    }
+    log(
+      'unwrapPayloadEnvelope: envelope keys=%o — `json` empty but `text` carries distinct data, not collapsing',
+      keys
+    );
+    return value;
+  }
+  if (value.text !== undefined && value.text !== null) {
+    log(
+      'unwrapPayloadEnvelope: envelope keys=%o — `json`/`raw` empty, selected `text` branch',
+      keys
+    );
+    return value.text;
+  }
+  log('unwrapPayloadEnvelope: envelope keys=%o — all fields null, falling back to `json`', keys);
+  return value.json;
+}
+
 /** Normalize one raw element into a {@link FlowRunItem}. */
 function toItem(raw: unknown): FlowRunItem {
   // Item-shaped: `{ json, binary?, paired_item? }`. `json` present as an own key
   // is the discriminant — a plain data object without it is treated as the
   // payload itself (see below).
   if (isPlainObject(raw) && 'json' in raw) {
+    log('toItem: item-shaped input (has `json` key) — selected item branch');
     return {
-      json: raw.json,
+      json: unwrapPayloadEnvelope(raw.json),
       binary: parseBinary(raw.binary),
       pairedIndex: resolvePairedIndex(raw.paired_item),
     };
   }
-  return { json: raw, binary: [], pairedIndex: null };
+  log('toItem: payload-shaped input (type=%s) — wrapping raw value as item json', typeof raw);
+  return { json: unwrapPayloadEnvelope(raw), binary: [], pairedIndex: null };
 }
 
 /**

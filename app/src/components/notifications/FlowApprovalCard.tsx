@@ -28,6 +28,7 @@
  */
 import debug from 'debug';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { resumeFlow } from '../../services/api/flowsApi';
@@ -37,7 +38,7 @@ import {
   markRead,
   type NotificationItem,
 } from '../../store/notificationSlice';
-import { FlowRunInspectorDrawer } from '../flows/FlowRunInspectorDrawer';
+import { type FlowRepairRequest, FlowRunInspectorDrawer } from '../flows/FlowRunInspectorDrawer';
 import Button from '../ui/Button';
 
 const log = debug('notifications:flow-approval-card');
@@ -71,9 +72,30 @@ interface Props {
 const FlowApprovalCard = ({ notification: n }: Props) => {
   const { t } = useT();
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const [pending, setPending] = useState<'approve' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [inspecting, setInspecting] = useState(false);
+
+  // "Fix with agent" (issue B22) — a run opened from this notification can
+  // fail with the gate never actually reached (or after it), so the same
+  // repair action `FlowsPage`'s run-history drawer offers must be reachable
+  // from here too. This card can render from anywhere in the app (it's a
+  // `CoreNotification` surface), so — unlike `FlowRunsSidebar`, which is
+  // always already on the flow's own canvas — always navigate there first.
+  const handleFixWithAgent = (request: FlowRepairRequest) => {
+    log('fix with agent: notification=%s flow=%s run=%s', n.id, request.flowId, request.runId);
+    setInspecting(false);
+    navigate(`/flows/${request.flowId}`, {
+      state: {
+        copilotRepair: {
+          runId: request.runId,
+          error: request.error,
+          failingNodeIds: request.failingNodeIds,
+        },
+      },
+    });
+  };
 
   const payload = n.actions?.[0]?.payload;
   const parsed = isFlowApprovalPayload(payload) ? payload : null;
@@ -204,6 +226,7 @@ const FlowApprovalCard = ({ notification: n }: Props) => {
         <FlowRunInspectorDrawer
           runId={inspecting ? parsed.thread_id : null}
           onClose={() => setInspecting(false)}
+          onFixWithAgent={handleFixWithAgent}
         />
       )}
     </div>

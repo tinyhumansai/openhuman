@@ -13,13 +13,12 @@ Each tool gets its own namespace `tool-{tool_name}`. Build the string via
 | Path | Role |
 | --- | --- |
 | [`mod.rs`](mod.rs) | Module root + public re-exports. |
-| [`types.rs`](types.rs) | `ToolMemoryRule` (id, tool_name, rule text, priority, source, tags, created_at, updated_at) + `ToolMemoryPriority` (Normal / High / Critical) + `ToolMemorySource` (UserExplicit / PostTurn / Programmatic) + `tool_memory_namespace(tool_name)`. |
-| [`store.rs`](store.rs) | `ToolMemoryStore` over `Arc<dyn Memory>`: `put_rule`, `get_rule`, `list_rules`, `delete_rule`, `rules_for_prompt`, `list_tool_names`, `record`, `list_rules_json`. |
-| [`store_tests.rs`](store_tests.rs) | Store coverage against the `MockMemory` from `test_helpers`. |
-| [`capture.rs`](capture.rs) | `ToolMemoryCaptureHook` — `PostTurnHook` impl that captures user edicts and repeated tool failures into the store. |
-| [`prompt.rs`](prompt.rs) | `ToolMemoryRulesSection` + `render_tool_memory_rules` — prompt section that pins Critical / High rules into the system prompt so they survive compression. `TOOL_MEMORY_HEADING` + `TOOL_MEMORY_PROMPT_CAP` constants. |
+| [`types.rs`](types.rs) | **Shim** — re-exports `ToolMemoryRule` / `ToolMemoryPriority` / `ToolMemorySource` / `tool_memory_namespace` from `tinycortex::memory::tool_memory::types` (W7). |
+| [`store.rs`](store.rs) | **Shim** — re-exports the crate `ToolMemoryStore` (`put_rule`, `get_rule`, `list_rules`, `delete_rule`, `rules_for_prompt`, `list_tool_names`, `record`, `list_rules_json`) + `tool_memory_store(Arc<dyn Memory>)`. The trait and engine are both crate-owned. |
+| [`capture.rs`](capture.rs) | `ToolMemoryCaptureHook` — `PostTurnHook` impl that captures user edicts and repeated tool failures into the store (host-retained). |
+| [`prompt.rs`](prompt.rs) | **Shim** — re-exports the crate `ToolMemoryRulesSection` + `render_tool_memory_rules` + `TOOL_MEMORY_HEADING`, and keeps the host `PromptSection` impl that plugs the section into the system-prompt builder. |
 | [`tools/`](tools/) | Agent-facing read/write tools: `MemoryToolsListTool` (list rules for a tool), `MemoryToolsPutTool` (upsert a rule). |
-| [`test_helpers.rs`](test_helpers.rs) | `#[cfg(test)]` `MockMemory` used by `store_tests` + `capture::tests`. |
+| [`test_helpers.rs`](test_helpers.rs) | `#[cfg(test)]` `MockMemory` used by `capture::tests` (the store engine's own coverage lives in the crate). |
 
 ## How it fits
 

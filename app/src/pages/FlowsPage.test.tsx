@@ -80,16 +80,24 @@ describe('FlowsPage', () => {
     markSuggestionBuilt.mockResolvedValue(true);
   });
 
+  it('shows the beta banner at the top of the page', async () => {
+    listFlows.mockResolvedValue([]);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
+
+    await waitFor(() => expect(screen.getByTestId('flows-beta-banner')).toBeInTheDocument());
+    expect(screen.getByTestId('flows-beta-banner')).toHaveTextContent('Beta');
+  });
+
   it('shows a loading state while flows are being fetched', () => {
     listFlows.mockReturnValue(new Promise(() => {})); // never resolves
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     expect(screen.getByText('Loading workflows…')).toBeInTheDocument();
   });
 
   it('shows the empty state when there are no saved flows, with a "New workflow" action', async () => {
     listFlows.mockResolvedValue([]);
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     await waitFor(() => expect(screen.getByText('No workflows yet')).toBeInTheDocument());
     // There's no canvas builder yet (B5b) — the empty state's action bridges
@@ -99,7 +107,7 @@ describe('FlowsPage', () => {
 
   it('shows an error banner when the fetch fails', async () => {
     listFlows.mockRejectedValue(new Error('core unreachable'));
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     await waitFor(() =>
       expect(screen.getByText('Could not load workflows. Please try again.')).toBeInTheDocument()
@@ -108,7 +116,7 @@ describe('FlowsPage', () => {
 
   it('renders one row per saved flow', async () => {
     listFlows.mockResolvedValue([makeFlow(), makeFlow({ id: 'flow-2', name: 'Weekly report' })]);
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     await waitFor(() => expect(screen.getByText('Daily digest')).toBeInTheDocument());
     expect(screen.getByText('Weekly report')).toBeInTheDocument();
@@ -117,7 +125,7 @@ describe('FlowsPage', () => {
   it('toggles a flow via setFlowEnabled and reflects the updated state', async () => {
     listFlows.mockResolvedValue([makeFlow({ enabled: true })]);
     setFlowEnabled.mockResolvedValue(makeFlow({ enabled: false }));
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     await waitFor(() => expect(screen.getByTestId('flow-toggle-flow-1')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('flow-toggle-flow-1'));
@@ -131,7 +139,7 @@ describe('FlowsPage', () => {
   it('runs a flow, shows a "Workflow started" toast, and refetches the list', async () => {
     listFlows.mockResolvedValue([makeFlow()]);
     runFlow.mockResolvedValue({ output: null, pending_approvals: [], thread_id: 't1' });
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     await waitFor(() => expect(screen.getByTestId('flow-run-flow-1')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('flow-run-flow-1'));
@@ -145,7 +153,7 @@ describe('FlowsPage', () => {
   it('shows an error banner (without a toast) when runFlow rejects', async () => {
     listFlows.mockResolvedValue([makeFlow()]);
     runFlow.mockRejectedValue(new Error('flow disabled'));
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     await waitFor(() => expect(screen.getByTestId('flow-run-flow-1')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('flow-run-flow-1'));
@@ -157,7 +165,7 @@ describe('FlowsPage', () => {
   it('opens the run-history drawer for the clicked flow when "View runs" is clicked', async () => {
     listFlows.mockResolvedValue([makeFlow()]);
     listFlowRuns.mockResolvedValue([]);
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     await waitFor(() => expect(screen.getByTestId('flow-view-runs-flow-1')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('flow-view-runs-flow-1'));
@@ -172,7 +180,7 @@ describe('FlowsPage', () => {
 
   it('navigates to the Workflow Canvas when a flow name is clicked', async () => {
     listFlows.mockResolvedValue([makeFlow()]);
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     await waitFor(() => expect(screen.getByTestId('flow-view-flow-1')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('flow-view-flow-1'));
@@ -182,7 +190,7 @@ describe('FlowsPage', () => {
 
   it('renders a "New workflow" header button that opens the chooser modal', async () => {
     listFlows.mockResolvedValue([makeFlow()]);
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     const newWorkflowButton = await screen.findByTestId('flows-new-workflow');
     expect(newWorkflowButton).toHaveTextContent('New workflow');
@@ -192,9 +200,19 @@ describe('FlowsPage', () => {
     expect(screen.getByTestId('new-workflow-scratch')).toBeInTheDocument();
   });
 
-  it('opens the chooser from the empty-state "New workflow" action', async () => {
+  it('opens the chooser from the welcome landing "New workflow" action', async () => {
     listFlows.mockResolvedValue([]);
     renderWithProviders(<FlowsPage />);
+
+    fireEvent.click(await screen.findByTestId('flows-welcome-cta-new'));
+
+    expect(screen.getByTestId('new-workflow-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('new-workflow-scratch')).toBeInTheDocument();
+  });
+
+  it('opens the chooser from the empty-state "New workflow" action', async () => {
+    listFlows.mockResolvedValue([]);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     const emptyStateButton = await screen.findByTestId('flows-empty-new-workflow');
     fireEvent.click(emptyStateButton);
@@ -204,7 +222,7 @@ describe('FlowsPage', () => {
 
   it('always shows the in-place prompt bar and the chooser no longer duplicates it', async () => {
     listFlows.mockResolvedValue([makeFlow()]);
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     // The prompt bar is the single "describe a workflow" entry point.
     expect(await screen.findByTestId('workflow-prompt-bar')).toBeInTheDocument();
@@ -218,7 +236,7 @@ describe('FlowsPage', () => {
   it('empty-state template gallery creates a flow and opens its canvas', async () => {
     listFlows.mockResolvedValue([]);
     createFlow.mockResolvedValue({ id: 'flow-created' });
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     await screen.findByTestId('flows-empty-templates');
     const template = FLOW_TEMPLATES[0];
@@ -231,7 +249,7 @@ describe('FlowsPage', () => {
 
   it('renders an Import button in the header', async () => {
     listFlows.mockResolvedValue([makeFlow()]);
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     const importButton = await screen.findByTestId('flows-import');
     expect(importButton).toHaveTextContent('Import');
@@ -239,7 +257,7 @@ describe('FlowsPage', () => {
 
   it('exports a flow row as JSON via downloadFlowGraph', async () => {
     listFlows.mockResolvedValue([makeFlow({ graph: { nodes: [], edges: [] } })]);
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     // Export now lives behind the row's "⋯" overflow menu.
     fireEvent.click(await screen.findByTestId('flow-menu-flow-1'));
@@ -251,7 +269,7 @@ describe('FlowsPage', () => {
   it('deletes a flow via the overflow menu + confirm dialog', async () => {
     listFlows.mockResolvedValueOnce([makeFlow()]).mockResolvedValueOnce([]);
     deleteFlow.mockResolvedValue('flow-1');
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     fireEvent.click(await screen.findByTestId('flow-menu-flow-1'));
     fireEvent.click(await screen.findByTestId('flow-delete-flow-1'));
@@ -266,7 +284,7 @@ describe('FlowsPage', () => {
   it('duplicates a flow via the overflow menu', async () => {
     listFlows.mockResolvedValue([makeFlow()]);
     duplicateFlow.mockResolvedValue(makeFlow({ id: 'flow-2', name: 'Daily digest copy' }));
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     fireEvent.click(await screen.findByTestId('flow-menu-flow-1'));
     fireEvent.click(await screen.findByTestId('flow-duplicate-flow-1'));
@@ -278,7 +296,7 @@ describe('FlowsPage', () => {
     listFlows.mockResolvedValue([]);
     const graph = { schema_version: 1, name: 'Imported', nodes: [], edges: [] };
     importFlow.mockResolvedValue({ graph, warnings: ['heads up'] });
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     const input = await screen.findByTestId('flows-import-input');
     const file = new File([JSON.stringify({ nodes: [] })], 'wf.json', { type: 'application/json' });
@@ -294,7 +312,7 @@ describe('FlowsPage', () => {
 
   it('shows an error when the picked file is not valid JSON', async () => {
     listFlows.mockResolvedValue([]);
-    renderWithProviders(<FlowsPage />);
+    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
     const input = await screen.findByTestId('flows-import-input');
     const file = new File(['not json{'], 'wf.json', { type: 'application/json' });

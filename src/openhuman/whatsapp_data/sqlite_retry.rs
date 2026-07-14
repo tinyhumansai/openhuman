@@ -7,7 +7,9 @@
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+// `anyhow::Error::context` (used in `retry_on_sqlite_busy`) is the inherent
+// method on `Error`, not the `Context` trait, so only `Result` is imported.
+use anyhow::Result;
 
 /// Per-connection busy handler window (issue #2077).
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
@@ -28,6 +30,40 @@ pub fn is_sqlite_busy(err: &anyhow::Error) -> bool {
     }
     let msg = format!("{err:#}").to_ascii_lowercase();
     msg.contains("database is locked") || msg.contains("database table is locked")
+}
+
+/// Returns true when `err` is a `SQLITE_CORRUPT` malformed-image condition
+/// (primary code `DatabaseCorrupt`, code 11) or the closely-related
+/// `NotADatabase` (code 26 — the header itself is unreadable).
+///
+/// Unlike [`is_sqlite_busy`], a malformed on-disk image is **persistent
+/// damage**: the upsert can never succeed, so every scan poll (2–30s)
+/// re-opens the dead file, re-hits the error, and re-reports to Sentry —
+/// turning one corrupt file into an escalating flood (Sentry TAURI-RUST-KNH:
+/// 1,813 events from a single host). Detecting it here is what lets the store
+/// drive its quarantine + rebuild recovery
+/// ([`WhatsAppDataStore::recover_corrupt_db`](crate::openhuman::whatsapp_data::store::WhatsAppDataStore))
+/// instead of retrying forever.
+///
+/// Matching on the error **code** is rusqlite-version-stable. The text
+/// fallback covers the case where the rusqlite error was flattened to a plain
+/// `anyhow!` string across `.context()` layers — SQLite renders these as
+/// "database disk image is malformed" (code 11) and "file is not a database"
+/// (code 26). The `"disk image is malformed"` substring matches both the bare
+/// and `Error code 11: The database disk image is malformed` envelope shapes.
+pub fn is_sqlite_corrupt(err: &anyhow::Error) -> bool {
+    if let Some(rusqlite::Error::SqliteFailure(sqlite_err, _)) =
+        err.downcast_ref::<rusqlite::Error>()
+    {
+        if matches!(
+            sqlite_err.code,
+            rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+        ) {
+            return true;
+        }
+    }
+    let msg = format!("{err:#}").to_ascii_lowercase();
+    msg.contains("disk image is malformed") || msg.contains("file is not a database")
 }
 
 /// Run `f` up to [`WRITE_RETRY_ATTEMPTS`] times when SQLite reports busy/locked.
@@ -99,6 +135,87 @@ mod tests {
         );
         let err = anyhow::Error::from(raw);
         assert!(!is_sqlite_busy(&err));
+    }
+
+    #[test]
+    fn is_sqlite_corrupt_matches_database_corrupt_code() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DatabaseCorrupt,
+                extended_code: 11,
+            },
+            Some("database disk image is malformed".into()),
+        );
+        assert!(is_sqlite_corrupt(&anyhow::Error::from(raw)));
+    }
+
+    #[test]
+    fn is_sqlite_corrupt_matches_not_a_database_code() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::NotADatabase,
+                extended_code: 26,
+            },
+            Some("file is not a database".into()),
+        );
+        assert!(is_sqlite_corrupt(&anyhow::Error::from(raw)));
+    }
+
+    /// The rusqlite error sits under the `[whatsapp_data] ingest failed:` +
+    /// `upsert wa_chat …` context layers when it bubbles out of the store; the
+    /// downcast must still find the `DatabaseCorrupt` code (regression guard:
+    /// don't rely on the top-level error type).
+    #[test]
+    fn is_sqlite_corrupt_matches_through_context_layers() {
+        let raw = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DatabaseCorrupt,
+                extended_code: 11,
+            },
+            Some("database disk image is malformed".into()),
+        );
+        let wrapped = anyhow::Error::from(raw)
+            .context("upsert wa_chat 207897942335683@lid")
+            .context("[whatsapp_data] ingest failed");
+        assert!(is_sqlite_corrupt(&wrapped));
+    }
+
+    /// Text fallback: the exact flattened Sentry string (TAURI-RUST-KNH) must
+    /// classify even when no rusqlite error is available to downcast.
+    #[test]
+    fn is_sqlite_corrupt_text_fallback() {
+        let err = anyhow::anyhow!(
+            "[whatsapp_data] ingest failed: upsert wa_chat 207897942335683@lid: \
+             database disk image is malformed: Error code 11: The database disk image is malformed"
+        );
+        assert!(is_sqlite_corrupt(&err));
+    }
+
+    /// Busy/locked and constraint violations must NOT be swallowed as
+    /// corruption — quarantining on those would destroy a perfectly good DB.
+    #[test]
+    fn is_sqlite_corrupt_does_not_match_busy_or_constraint() {
+        let busy = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::DatabaseBusy,
+                extended_code: 5,
+            },
+            Some("database is locked".into()),
+        );
+        assert!(!is_sqlite_corrupt(&anyhow::Error::from(busy)));
+
+        let constraint = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::ConstraintViolation,
+                extended_code: 19,
+            },
+            Some("UNIQUE constraint failed".into()),
+        );
+        assert!(!is_sqlite_corrupt(&anyhow::Error::from(constraint)));
+
+        assert!(!is_sqlite_corrupt(&anyhow::anyhow!(
+            "upstream returned 500: internal server error"
+        )));
     }
 
     #[test]

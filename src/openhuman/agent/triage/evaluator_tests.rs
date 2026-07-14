@@ -252,7 +252,10 @@ impl Provider for NoopProvider {
 
 fn cloud_arm() -> ResolvedProvider {
     ResolvedProvider {
-        provider: StdArc::new(NoopProvider) as StdArc<dyn Provider>,
+        turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(StdArc::new(
+            NoopProvider,
+        )
+            as StdArc<dyn Provider>),
         provider_name: "stub-cloud".to_string(),
         model: "stub-cloud-model".to_string(),
         used_local: false,
@@ -261,7 +264,10 @@ fn cloud_arm() -> ResolvedProvider {
 
 fn local_arm() -> ResolvedProvider {
     ResolvedProvider {
-        provider: StdArc::new(NoopProvider) as StdArc<dyn Provider>,
+        turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(StdArc::new(
+            NoopProvider,
+        )
+            as StdArc<dyn Provider>),
         provider_name: "stub-local".to_string(),
         model: "stub-local-model".to_string(),
         used_local: true,

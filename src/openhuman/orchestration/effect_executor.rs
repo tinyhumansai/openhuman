@@ -63,7 +63,8 @@ pub fn device_tool_manifest() -> Value {
                     "properties": {
                         "agent_id": { "type": "string", "description": "Local sub-agent id, e.g. code_executor, researcher, tools_agent." },
                         "prompt": { "type": "string", "description": "Clear, self-contained instruction for the sub-agent." },
-                        "context": { "type": "string", "description": "Optional context blob from prior results." }
+                        "context": { "type": "string", "description": "Optional context blob from prior results." },
+                        "toolkit": { "type": "string", "description": "Composio toolkit to scope to (e.g. gmail, notion). REQUIRED when agent_id is integrations_agent; ignored otherwise." }
                     },
                     "additionalProperties": false
                 }
@@ -177,6 +178,91 @@ async fn run_local_agent(args: &Value, cycle_id: &str) -> Result<Value, String> 
     }))
 }
 
+/// Run the requested local sub-agent to completion and return `(ok, output)`.
+///
+/// The device tool bridge fires this from a bare `tokio::spawn` task, so there is
+/// no agent turn on the stack and `current_parent()` is `None`. We install a
+/// background root [`ParentExecutionContext`] via the blessed [`with_root_parent`]
+/// (provider / tools / memory / model / workspace harvested from a `Config`-built
+/// agent) and dispatch through [`run_subagent`] directly — the same pattern every
+/// other turn-less surface uses (delegation, workflow runs, agent teams,
+/// subconscious). This is what lets a Master-chat cycle actually run a local
+/// sub-agent; without it the nested spawn failed `NoParentContext`
+/// ("spawn_async_subagent called outside of an agent turn").
+///
+/// We call `run_subagent` (synchronous, real `output`) rather than the
+/// `spawn_async_subagent` tool wrapper on purpose: the wrapper defaults to the
+/// async path (returning a `[async_subagent_ref]`, not the answer) and gates on
+/// the root parent's empty `allowed_subagent_ids`; `run_subagent` has neither
+/// footgun. Every failure (unknown agent id, provider/parent build, run error)
+/// becomes `(false, message)` — never a bail — so the caller always forwards a
+/// `tool_completion` and the hosted brain always learns the outcome.
+async fn run_local_subagent(
+    config: &crate::openhuman::config::Config,
+    agent_id: &str,
+    prompt: &str,
+    context: Option<String>,
+    toolkit: Option<String>,
+) -> (bool, String) {
+    use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
+    use crate::openhuman::agent::harness::subagent_runner::{
+        run_subagent, SubagentRunOptions, SubagentRunStatus,
+    };
+    use crate::openhuman::agent_orchestration::parent_context::with_root_parent;
+
+    // `integrations_agent` MUST be scoped to a single Composio toolkit — mirror the
+    // `SpawnSubagentTool` pre-flight so a device run can't reason over the full,
+    // unscoped integration surface. `run_subagent` only narrows tools + the
+    // Connected-Integrations section when `toolkit_override` is set, so reject a
+    // toolkit-less request rather than run it unscoped.
+    if agent_id == "integrations_agent" && toolkit.is_none() {
+        return (
+            false,
+            "run_local_agent(integrations_agent): a `toolkit` argument is required".to_string(),
+        );
+    }
+
+    let definition = match AgentDefinitionRegistry::global().and_then(|r| r.get(agent_id).cloned())
+    {
+        Some(def) => def,
+        None => {
+            return (
+                false,
+                format!("run_local_agent: unknown agent_id '{agent_id}'"),
+            )
+        }
+    };
+    let options = SubagentRunOptions {
+        context,
+        toolkit_override: toolkit,
+        ..Default::default()
+    };
+    let run = async move {
+        match run_subagent(&definition, prompt, options).await {
+            Ok(outcome) => {
+                let output = outcome.output;
+                match outcome.status {
+                    // A clarification question / stop-reason lives in `status`, not
+                    // `output` — surface it so the brain sees more than empty text.
+                    SubagentRunStatus::Completed => (true, output),
+                    SubagentRunStatus::AwaitingUser { question, .. } => {
+                        (false, format!("{output}\n[awaiting user] {question}"))
+                    }
+                    SubagentRunStatus::Incomplete { reason } => {
+                        (false, format!("{output}\n[incomplete] {reason}"))
+                    }
+                }
+            }
+            Err(e) => (false, format!("sub-agent invocation error: {e}")),
+        }
+    };
+    // Bare background task → no ambient parent, so a root is built from config.
+    // (Tests install a mock parent and hit `with_root_parent`'s reuse branch.)
+    with_root_parent(config, "local_exec", "local_exec", "localexec", run)
+        .await
+        .unwrap_or_else(|e| (false, format!("build local-exec parent: {e}")))
+}
+
 /// Background half of `run_local_agent`: run the local sub-agent to completion,
 /// then forward its result up as a `tool_completion` event on the originating
 /// session (which the backend wakes a fresh cycle for).
@@ -187,16 +273,34 @@ async fn run_local_agent_and_forward(
     agent_id: &str,
     run_args: Value,
 ) -> Result<(), String> {
-    use crate::openhuman::tools::traits::Tool;
-    // 1. Run the local sub-agent synchronously to completion (real output).
-    let tool = crate::openhuman::agent_orchestration::tools::SpawnSubagentTool::new();
-    // Convert an invocation error into a failure completion rather than bailing:
-    // the hosted brain must always learn the outcome (success OR failure) via the
-    // forwarded `tool_completion`, never be left with no follow-up at all.
-    let (ok, output) = match tool.execute(run_args).await {
-        Ok(result) => (!result.is_error, result.output()),
-        Err(e) => (false, format!("sub-agent invocation error: {e}")),
-    };
+    // Config is needed both to build the background parent context for the
+    // sub-agent run and to persist + forward the completion — load it once.
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .map_err(|e| format!("config load: {e}"))?;
+
+    // 1. Run the local sub-agent to completion (real output) under a background
+    //    root parent context. A failed run still yields `(false, msg)` so the
+    //    hosted brain always learns the outcome via the forwarded `tool_completion`.
+    let prompt = run_args
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let context = run_args
+        .get("context")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let toolkit = run_args
+        .get("toolkit")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let (ok, output) = run_local_subagent(&config, agent_id, &prompt, context, toolkit).await;
+
     let body = format!(
         "[local sub-agent `{agent_id}` task {task_id} {}]\n{output}",
         if ok { "completed" } else { "failed" }
@@ -204,9 +308,6 @@ async fn run_local_agent_and_forward(
 
     // 2. Persist the completion into the render cache (allocates a monotonic seq)
     //    and forward it as a `tool_completion` event → backend wakes a new cycle.
-    let config = crate::openhuman::config::Config::load_or_init()
-        .await
-        .map_err(|e| format!("config load: {e}"))?;
     let now = chrono::Utc::now().to_rfc3339();
     let seq = super::store::with_connection(&config.workspace_dir, |conn| {
         let seq = super::store::next_session_seq(conn, counterpart, session_id)?;
@@ -221,6 +322,16 @@ async fn run_local_agent_and_forward(
                 body: body.clone(),
                 timestamp: now.clone(),
                 seq,
+                // Bookkeeping row: this raw `[local sub-agent … completed]` dump is
+                // forwarded to the brain (below) purely so it can synthesize a
+                // reply — the user reads that synthesized `send_dm` reply, not this.
+                // Tagging it with an excluded event_kind keeps the row (so `seq`
+                // stays allocated and the envelope forwards) but hides it from the
+                // master transcript, previews, and unread counts (store.rs filters
+                // out 'status'/'lifecycle'/'unknown'/'session_info'). Without this,
+                // a brain that spawns many sub-agents floods the chat with raw
+                // dumps. See list_messages_by_session / count_unread in store.rs.
+                event_kind: Some("lifecycle".to_string()),
                 ..Default::default()
             },
         )?;
@@ -239,7 +350,27 @@ async fn run_local_agent_and_forward(
         ts,
         "tool_completion",
     );
-    super::cloud::push_event(&config, &envelope).await?;
+    if let Err(e) = super::cloud::push_event(&config, &envelope).await {
+        // Forward failed (offline / signed out / retries exhausted): the brain
+        // never got this result and the completion row was persisted hidden, so
+        // it would vanish entirely. Un-hide it — it is now the only copy — and
+        // nudge the renderer so the user sees the result rather than losing it.
+        let completion_id = format!("tool-completion:{task_id}:{seq}");
+        if let Err(store_err) = super::store::with_connection(&config.workspace_dir, |conn| {
+            super::store::clear_message_event_kind(conn, &completion_id)
+        }) {
+            log::warn!(
+                target: LOG,
+                "[orchestration] run_local_agent.unhide_failed task={task_id}: {store_err}"
+            );
+        }
+        super::bus::notify_orchestration_message(
+            counterpart,
+            session_id,
+            super::types::ChatKind::Master.as_str(),
+        );
+        return Err(e);
+    }
     log::debug!(
         target: LOG,
         "[orchestration] run_local_agent.forwarded task={task_id} session={session_id} seq={seq} ok={ok}"
@@ -258,11 +389,54 @@ pub async fn handle_tool_call(data: &Value) -> Option<(String, Value)> {
             return None;
         }
     };
+    // Dedup redelivered side-effecting local-execution tools (run_local_agent):
+    // `orch:tool_call` is at-least-once, so the same call can arrive twice, and
+    // without this each redelivery re-spawns the sub-agent AND forwards another
+    // `tool_completion` — which wakes another brain cycle and can surface a
+    // duplicate reply. Read-only tools (device_status) are idempotent and left
+    // un-guarded. Mirrors the guard in `handle_send_dm`. A successful async ack
+    // stays latched (a redelivery re-acks without re-spawning); a claim whose
+    // dispatch FAILS is released below so the redelivery re-runs and returns the
+    // real error instead of a fabricated accept.
+    if super::exec_gate::is_local_execution_tool(&frame.name) && is_duplicate_call(&frame.call_id) {
+        log::debug!(
+            target: LOG,
+            "[orchestration] tool_call.duplicate call_id={} name={} (re-acking, no re-dispatch)",
+            frame.call_id,
+            frame.name
+        );
+        return Some((
+            frame.call_id.clone(),
+            tool_result_frame(
+                &frame.call_id,
+                true,
+                json!({ "accepted": true, "status": "running", "duplicate": true }),
+                None,
+            ),
+        ));
+    }
     let (ok, result, error) =
         match dispatch_device_tool(&frame.name, &frame.args, &frame.cycle_id).await {
             Ok(value) => (true, value, None),
             Err(e) => (false, Value::Null, Some(e)),
         };
+    // A claimed local-execution call whose dispatch FAILED — an A2A-gate denial
+    // (dispatch_device_tool restricts run_local_agent to Master cycles), an
+    // unknown cycle origin, or invalid args — must release its claim so an
+    // at-least-once redelivery re-runs it and returns the same real error. Left
+    // latched, the dedup fast-path above would fabricate an `accepted/running` ok
+    // for a call that never ran, masking the denial and stranding the brain on a
+    // `tool_completion` that never comes.
+    if !ok && super::exec_gate::is_local_execution_tool(&frame.name) {
+        // Diagnostic for the denied/invalid path; no raw args or error body.
+        log::warn!(
+            target: LOG,
+            "[orchestration] tool_call.dispatch_failed call_id={} name={} released_claim=true",
+            frame.call_id,
+            frame.name
+        );
+        release_call(&frame.call_id);
+    }
     Some((
         frame.call_id.clone(),
         tool_result_frame(&frame.call_id, ok, result, error.as_deref()),
@@ -650,4 +824,121 @@ pub async fn handle_evict(data: &Value) -> Option<(String, Value)> {
         effect.call_id.clone(),
         effect_result_frame(&effect.call_id, ok, error.as_deref()),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::config::Config;
+
+    #[tokio::test]
+    async fn integrations_agent_without_toolkit_is_rejected() {
+        // The toolkit guard fires before any registry/provider/network work, so a
+        // toolkit-less integrations_agent request is a failure completion rather
+        // than an unscoped run over the full Composio surface.
+        let (ok, msg) = run_local_subagent(
+            &Config::default(),
+            "integrations_agent",
+            "check gmail",
+            None,
+            None,
+        )
+        .await;
+        assert!(!ok);
+        assert!(
+            msg.contains("toolkit"),
+            "expected toolkit error, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_run_local_agent_tool_call_is_reacked_without_redispatch() {
+        // A redelivered run_local_agent call_id must NOT re-spawn the sub-agent:
+        // the guard re-acks accepted/running without dispatching (dispatch would
+        // run_local_agent → spawn → forward a duplicate tool_completion).
+        let call_id = "call-dup-run-local-agent-test";
+        assert!(
+            !is_duplicate_call(call_id),
+            "first claim is not a duplicate"
+        );
+        let frame = serde_json::json!({
+            "callId": call_id,
+            "name": "run_local_agent",
+            "cycleId": "cyc:openhuman:local:master:1",
+            "args": { "agent_id": "researcher", "prompt": "x" },
+        });
+        let (cid, result) = handle_tool_call(&frame).await.expect("frame parses");
+        assert_eq!(cid, call_id);
+        assert_eq!(result["ok"].as_bool(), Some(true));
+        assert_eq!(
+            result["result"]["duplicate"].as_bool(),
+            Some(true),
+            "redelivery re-acked as duplicate without re-dispatch"
+        );
+        release_call(call_id);
+    }
+
+    #[tokio::test]
+    async fn read_only_device_status_is_not_dedup_guarded() {
+        // Read-only tools are idempotent: even a previously-seen call_id still
+        // dispatches and returns real data — the guard is scoped to
+        // side-effecting local-execution tools, never device_status.
+        let call_id = "call-device-status-test";
+        is_duplicate_call(call_id); // claim it as if already seen
+        let frame = serde_json::json!({
+            "callId": call_id,
+            "name": "device_status",
+            "cycleId": "cyc:openhuman:local:master:1",
+            "args": {},
+        });
+        let (_, result) = handle_tool_call(&frame).await.expect("frame parses");
+        assert_eq!(result["ok"].as_bool(), Some(true));
+        assert!(
+            result["result"]["platform"].is_string(),
+            "real status returned, not the duplicate placeholder"
+        );
+        assert!(result["result"].get("duplicate").is_none());
+        release_call(call_id);
+    }
+
+    #[tokio::test]
+    async fn failed_run_local_agent_dispatch_releases_claim_for_redelivery() {
+        // A run_local_agent on a non-Master (e.g. A2A) cycle is denied by the
+        // gate. Its claim must be released so an at-least-once redelivery re-runs
+        // and is denied AGAIN — never fabricated as accepted/duplicate (which
+        // would strand the brain waiting on a tool_completion that never comes).
+        let call_id = "call-a2a-denied-release-test";
+        let frame = serde_json::json!({
+            "callId": call_id,
+            "name": "run_local_agent",
+            "cycleId": "cyc:openhuman:a2a:@peer:5", // unregistered → not Master → denied
+            "args": { "agent_id": "researcher", "prompt": "x" },
+        });
+        let (_, first) = handle_tool_call(&frame).await.expect("frame parses");
+        assert_eq!(
+            first["ok"].as_bool(),
+            Some(false),
+            "non-Master run_local_agent is denied"
+        );
+        // Redelivery: the failed claim was released, so it re-dispatches and is
+        // denied again — not the duplicate re-ack.
+        let (_, second) = handle_tool_call(&frame).await.expect("frame parses");
+        assert_eq!(
+            second["ok"].as_bool(),
+            Some(false),
+            "redelivery re-denied, not fabricated-accepted"
+        );
+        assert!(second["result"].get("duplicate").is_none());
+        // Same real denial both times — not a fabricated/different error.
+        assert_eq!(first["error"], second["error"]);
+        assert!(
+            second["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("restricted to the Master chat"),
+            "the real non-Master denial: {}",
+            second["error"]
+        );
+        release_call(call_id);
+    }
 }

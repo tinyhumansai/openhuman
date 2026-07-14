@@ -176,15 +176,17 @@ fn create_provider(
     // (`SUMMARIZATION_TEMP` in `engine`), so the construction temperature here is
     // just a default the per-call value overrides.
     if config.local_ai.runtime_enabled {
-        // Local path: Ollama + the user's local chat model.
-        let provider = create_local_ai_provider(config)?;
         let model = config.local_ai.chat_model_id.clone();
-        let chat = crate::openhuman::inference::provider::chat_model_from_provider(
-            provider,
-            model.clone(),
-            config.default_temperature,
+        let provider_string = format!("ollama:{model}");
+        tracing::debug!(
+            model = %model,
+            "[tree_summarizer] building crate-native local Ollama model"
         );
-        return Ok((chat, model));
+        return crate::openhuman::inference::provider::factory::create_local_chat_model_from_string(
+            &provider_string,
+            config,
+        )
+        .map_err(|e| format!("tree summarizer: failed to build local model: {e:#}"));
     }
 
     if !config.memory_tree.cloud_summarization_opt_in {
@@ -233,42 +235,6 @@ pub fn summarizer_available(config: &Config) -> (bool, &'static str) {
             "no summarization provider available — enable local AI, or opt in to cloud summarization (memory_tree.cloud_summarization_opt_in) with a provider set in Connections → API keys → LLM",
         ),
     }
-}
-
-/// Create a provider backed by the local Ollama instance for summarization,
-/// wrapped in `ReliableProvider` for retry/backoff on transient failures.
-fn create_local_ai_provider(
-    config: &Config,
-) -> Result<Box<dyn crate::openhuman::inference::provider::traits::Provider>, String> {
-    use crate::openhuman::inference::local::OLLAMA_BASE_URL;
-    use crate::openhuman::inference::provider::compatible::{AuthStyle, OpenAiCompatibleProvider};
-    use crate::openhuman::inference::provider::reliable::ReliableProvider;
-
-    let base_url = format!("{}/v1", OLLAMA_BASE_URL);
-    let inner = OpenAiCompatibleProvider::new_no_responses_fallback(
-        "ollama-local",
-        &base_url,
-        None,
-        AuthStyle::None,
-    );
-
-    let providers: Vec<(
-        String,
-        Box<dyn crate::openhuman::inference::provider::traits::Provider>,
-    )> = vec![("ollama-local".to_string(), Box::new(inner))];
-    let reliable = ReliableProvider::new(
-        providers,
-        config.reliability.provider_retries,
-        config.reliability.provider_backoff_ms,
-    );
-
-    tracing::debug!(
-        "[tree_summarizer] using local Ollama provider at {} with model '{}'",
-        base_url,
-        config.local_ai.chat_model_id
-    );
-
-    Ok(Box::new(reliable))
 }
 
 #[cfg(test)]
@@ -349,14 +315,6 @@ mod tests {
             !model.trim().is_empty(),
             "cloud fallback must resolve a model"
         );
-    }
-
-    #[test]
-    fn create_local_ai_provider_uses_ollama_local_label() {
-        let mut cfg = Config::default();
-        cfg.local_ai.runtime_enabled = true;
-        let provider = create_local_ai_provider(&cfg).expect("provider");
-        let _ = provider;
     }
 
     #[tokio::test]

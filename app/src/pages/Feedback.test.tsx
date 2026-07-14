@@ -72,7 +72,7 @@ describe('<Feedback />', () => {
   it('loads and renders feedback items from the board', async () => {
     mockList.mockResolvedValueOnce({ items: [makeItem()], total: 1, page: 1, limit: 20 });
 
-    renderWithProviders(<Feedback />);
+    renderWithProviders(<Feedback />, { initialEntries: ['/?view=main'] });
 
     expect(await screen.findByText('Add dark mode')).toBeInTheDocument();
     expect(mockList).toHaveBeenCalledWith(
@@ -85,7 +85,7 @@ describe('<Feedback />', () => {
   it('shows the empty state when there is no feedback', async () => {
     mockList.mockResolvedValueOnce({ items: [], total: 0, page: 1, limit: 20 });
 
-    renderWithProviders(<Feedback />);
+    renderWithProviders(<Feedback />, { initialEntries: ['/?view=main'] });
 
     expect(
       await screen.findByText('No feedback yet. Be the first to share an idea.')
@@ -95,7 +95,7 @@ describe('<Feedback />', () => {
   it('surfaces a load error without also showing the empty state', async () => {
     mockList.mockRejectedValueOnce(new Error('boom'));
 
-    renderWithProviders(<Feedback />);
+    renderWithProviders(<Feedback />, { initialEntries: ['/?view=main'] });
 
     await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
     // The empty-state copy must not render alongside the error banner.
@@ -159,7 +159,7 @@ describe('<Feedback /> keeps the board in sync after local mutations', () => {
     });
 
     const user = userEvent.setup();
-    renderWithProviders(<Feedback />);
+    renderWithProviders(<Feedback />, { initialEntries: ['/?view=main'] });
     await screen.findByText('Existing');
 
     await submitFeature(user, 'Brand new');
@@ -191,7 +191,7 @@ describe('<Feedback /> keeps the board in sync after local mutations', () => {
     });
 
     const user = userEvent.setup();
-    renderWithProviders(<Feedback />);
+    renderWithProviders(<Feedback />, { initialEntries: ['/?view=main'] });
     await screen.findByText('A bug');
 
     await openFilter(user, 'All types', 'Bug');
@@ -217,7 +217,7 @@ describe('<Feedback /> keeps the board in sync after local mutations', () => {
     );
 
     const user = userEvent.setup();
-    renderWithProviders(<Feedback />);
+    renderWithProviders(<Feedback />, { initialEntries: ['/?view=main'] });
     await screen.findByText('Votable');
 
     await user.click(screen.getByRole('button', { name: 'Upvote' }));
@@ -243,7 +243,7 @@ describe('<Feedback /> keeps the board in sync after local mutations', () => {
     });
 
     const user = userEvent.setup();
-    renderWithProviders(<Feedback />);
+    renderWithProviders(<Feedback />, { initialEntries: ['/?view=main'] });
     await screen.findByText('Commentable');
 
     await user.click(screen.getByText('Show more'));
@@ -267,7 +267,7 @@ describe('<Feedback /> keeps the board in sync after local mutations', () => {
     );
 
     const user = userEvent.setup();
-    renderWithProviders(<Feedback />);
+    renderWithProviders(<Feedback />, { initialEntries: ['/?view=main'] });
     await screen.findByText('Open item');
 
     await openFilter(user, 'All statuses', 'Open');

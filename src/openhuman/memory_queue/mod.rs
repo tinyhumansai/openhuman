@@ -30,9 +30,7 @@
 //! execution/runtime concern rather than a leaf of the memory policy API.
 //! `openhuman::memory` re-exports it as `memory::jobs` during the migration.
 
-pub(crate) mod handlers;
 mod ops;
-mod redact;
 pub mod scheduler;
 pub mod store;
 pub mod testing;

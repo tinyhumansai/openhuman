@@ -16,6 +16,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tinyagents::graph::SqliteCheckpointer;
+use tinyagents::harness::model::ModelRequest;
 use tinyflows::caps::{
     AgentRunner, Capabilities, CodeLanguage, CodeRunner, HttpClient, LlmProvider, StateStore,
     ToolInvoker, WorkflowResolver,
@@ -31,7 +32,7 @@ use crate::openhuman::config::{Config, HttpRequestConfig};
 use crate::openhuman::credentials::{HttpCredential, HttpCredentialsStore};
 use crate::openhuman::flows;
 use crate::openhuman::inference::provider::{
-    create_chat_provider, is_raw_passthrough_model, role_for_model_tier, ChatMessage, ChatRequest,
+    create_chat_model_with_model_id, is_raw_passthrough_model, role_for_model_tier, ChatMessage,
     UsageInfo,
 };
 use crate::openhuman::sandbox::{execute_in_sandbox, resolve_sandbox_policy};
@@ -57,6 +58,25 @@ fn usage_to_json(usage: &Option<UsageInfo>) -> Value {
             "charged_amount_usd": u.charged_amount_usd,
         }),
     }
+}
+
+fn model_response_to_completion_value(
+    response: &tinyagents::harness::model::ModelResponse,
+) -> Value {
+    json!({
+        "text": response.text(),
+        "tool_calls": response
+            .tool_calls()
+            .iter()
+            .map(crate::openhuman::tinyagents::ta_call_to_oh_call)
+            .collect::<Vec<_>>(),
+        "usage": usage_to_json(
+            &crate::openhuman::tinyagents::model::usage_info_from_response(response)
+        ),
+        "reasoning_content": crate::openhuman::tinyagents::reasoning_from_content(
+            &response.message.content
+        ),
+    })
 }
 
 /// Hard autonomy-tier gate for an *acting* flow node (Phase 2).
@@ -516,23 +536,25 @@ impl LlmProvider for OpenHumanLlm {
             "[flows] llm.complete: dispatching agent-node completion"
         );
 
-        let (provider, model) = create_chat_provider(role, &self.config)
+        let (chat_model, model) = create_chat_model_with_model_id(role, &self.config, temperature)
             .map_err(|e| EngineError::Capability(e.to_string()))?;
         // `create_chat_provider` handed back the role's default model. If the node
         // pinned a raw/BYOK id, forward it verbatim instead (issue #4598).
         let model = resolve_completion_model(node_model, model);
 
-        let response = provider
-            .chat(
-                ChatRequest {
-                    messages: &messages,
-                    tools: None,
-                    stream: None,
-                    max_tokens,
-                },
-                &model,
-                temperature,
-            )
+        let mut model_request = ModelRequest::new(
+            messages
+                .iter()
+                .map(crate::openhuman::tinyagents::chat_message_to_message)
+                .collect(),
+        )
+        .with_model(model.clone())
+        .with_temperature(temperature);
+        if let Some(max_tokens) = max_tokens {
+            model_request = model_request.with_max_tokens(max_tokens);
+        }
+        let response = chat_model
+            .invoke(&(), model_request)
             .await
             .map_err(|e| EngineError::Capability(e.to_string()))?;
 
@@ -541,7 +563,8 @@ impl LlmProvider for OpenHumanLlm {
         // agent node's output_parser sub-port then validates it against the
         // configured schema (and auto-fixes when it doesn't parse here).
         if structured {
-            if let Some(parsed) = response.text.as_deref().and_then(parse_llm_json) {
+            let text = response.text();
+            if let Some(parsed) = parse_llm_json(&text) {
                 tracing::debug!(
                     target: "flows",
                     "[flows] llm.complete: structured output parsed from completion text"
@@ -556,12 +579,7 @@ impl LlmProvider for OpenHumanLlm {
             );
         }
 
-        Ok(json!({
-            "text": response.text,
-            "tool_calls": response.tool_calls,
-            "usage": usage_to_json(&response.usage),
-            "reasoning_content": response.reasoning_content,
-        }))
+        Ok(model_response_to_completion_value(&response))
     }
 }
 
@@ -4801,5 +4819,51 @@ mod tests {
             resolve_completion_model(Some("   "), "chat-v1".to_string()),
             "chat-v1"
         );
+    }
+
+    #[test]
+    fn crate_model_response_preserves_flow_completion_contract() {
+        use tinyagents::harness::message::{AssistantMessage, ContentBlock};
+        use tinyagents::harness::model::ModelResponse;
+        use tinyagents::harness::tool::ToolCall;
+        use tinyagents::harness::usage::Usage;
+
+        let usage = Usage::new(11, 7);
+        let response = ModelResponse {
+            message: AssistantMessage {
+                id: Some("msg-1".to_string()),
+                content: vec![
+                    ContentBlock::Text("done".to_string()),
+                    ContentBlock::thinking("private chain"),
+                ],
+                tool_calls: vec![ToolCall {
+                    id: "call-1".to_string(),
+                    name: "lookup".to_string(),
+                    arguments: json!({"query": "weather"}),
+                    invalid: None,
+                }],
+                usage: Some(usage),
+            },
+            usage: Some(usage),
+            finish_reason: Some("tool_calls".to_string()),
+            raw: crate::openhuman::tinyagents::model::merge_openhuman_usage_meta(
+                None, 0.125, 128_000,
+            ),
+            resolved_model: None,
+        };
+
+        let value = model_response_to_completion_value(&response);
+        assert_eq!(value["text"], "done");
+        assert_eq!(value["tool_calls"][0]["id"], "call-1");
+        assert_eq!(value["tool_calls"][0]["name"], "lookup");
+        assert_eq!(
+            value["tool_calls"][0]["arguments"],
+            r#"{"query":"weather"}"#
+        );
+        assert_eq!(value["usage"]["input_tokens"], 11);
+        assert_eq!(value["usage"]["output_tokens"], 7);
+        assert_eq!(value["usage"]["context_window"], 128_000);
+        assert_eq!(value["usage"]["charged_amount_usd"], 0.125);
+        assert_eq!(value["reasoning_content"], "private chain");
     }
 }

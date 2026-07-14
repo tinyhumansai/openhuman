@@ -224,6 +224,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
     let mut port: Option<u16> = None;
     let mut host: Option<String> = None;
     let mut socketio_enabled = true;
+    let mut headless_api = false;
     let mut verbose = false;
     let mut log_scope = CliLogDefault::Global;
     let mut i = 0usize;
@@ -253,6 +254,11 @@ fn run_server_command(args: &[String]) -> Result<()> {
                 socketio_enabled = false;
                 i += 1;
             }
+            "--headless-api" => {
+                socketio_enabled = false;
+                headless_api = true;
+                i += 1;
+            }
             "-v" | "--verbose" => {
                 verbose = true;
                 i += 1;
@@ -263,7 +269,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
                 i += 1;
             }
             "-h" | "--help" => {
-                println!("Usage: openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only] [--autocomplete-logs] [-v|--verbose]");
+                println!("Usage: openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only|--headless-api] [--autocomplete-logs] [-v|--verbose]");
                 println!();
                 println!(
                     "  --host <addr>    Bind address (default: 127.0.0.1 or OPENHUMAN_CORE_HOST)"
@@ -272,6 +278,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
                     "  --port <u16>     Listen address port (default: 7788 or OPENHUMAN_CORE_PORT)"
                 );
                 println!("  --jsonrpc-only   HTTP JSON-RPC only; disable Socket.IO");
+                println!("  --headless-api   HTTP JSON-RPC only; disable all background services");
                 autocomplete_cli_adapter::print_run_scope_help_line();
                 println!("  -v, --verbose    Shorthand for RUST_LOG=debug when RUST_LOG is unset");
                 println!();
@@ -298,7 +305,11 @@ fn run_server_command(args: &[String]) -> Result<()> {
         .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
         .build()?;
     rt.block_on(async {
-        crate::core::jsonrpc::run_server(host.as_deref(), port, socketio_enabled).await
+        if headless_api {
+            crate::core::jsonrpc::run_server_headless(host.as_deref(), port).await
+        } else {
+            crate::core::jsonrpc::run_server(host.as_deref(), port, socketio_enabled).await
+        }
     })?;
     Ok(())
 }

@@ -14,13 +14,13 @@ use std::sync::Arc;
 use anyhow::Context;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::inference::provider::{self, Provider, INFERENCE_BACKEND_ID};
+use crate::openhuman::inference::provider::{self, INFERENCE_BACKEND_ID};
 
 /// The concrete provider + metadata that [`crate::openhuman::agent::triage::evaluator::run_triage`]
 /// should use for this particular triage turn.
 pub struct ResolvedProvider {
-    /// Ready-to-use provider, already constructed.
-    pub provider: Arc<dyn Provider>,
+    /// Model source for this arm. Production sources are crate-native.
+    pub turn_model_source: crate::openhuman::tinyagents::TurnModelSource,
     /// Provider name token — always `"openhuman"` (remote backend).
     /// Kept for telemetry / observability compat with the previous two-path design.
     pub provider_name: String,
@@ -59,15 +59,10 @@ pub async fn resolve_provider_with_config(config: &Config) -> anyhow::Result<Res
 /// is configured — callers (`evaluator::run_triage`) skip straight to
 /// `Deferred` in that case.
 ///
-/// The returned provider is a thin `OpenAiCompatibleProvider` pointed
-/// at the configured local inference base (Ollama by default,
-/// overridable via `OPENHUMAN_LOCAL_INFERENCE_URL`). It mirrors the
-/// wiring `routing::factory::new_provider` uses for the local arm of
-/// `IntelligentRoutingProvider` so the same model that serves
-/// lightweight chat also serves the triage fallback.
+/// The returned source is crate-native and targets the configured local
+/// inference base (Ollama by default, overridable via
+/// `OPENHUMAN_LOCAL_INFERENCE_URL`).
 pub fn build_local_provider_with_config(config: &Config) -> Option<ResolvedProvider> {
-    use crate::openhuman::inference::provider::compatible::{AuthStyle, OpenAiCompatibleProvider};
-
     let local_cfg = &config.local_ai;
     if !local_cfg.runtime_enabled {
         tracing::debug!("[triage::routing] local arm disabled (runtime_enabled=false)");
@@ -89,44 +84,28 @@ pub fn build_local_provider_with_config(config: &Config) -> Option<ResolvedProvi
             "llamacpp" | "llama-server" | "custom_openai"
         );
 
-    let (label, base) = if use_openai_compat {
-        let base = override_base
-            .or_else(|| local_cfg.base_url.clone())
-            .unwrap_or_else(|| "http://127.0.0.1:8080/v1".to_string());
+    let (label, provider_string) = if use_openai_compat {
         let label = if provider_kind == "custom_openai" {
             "custom_openai"
         } else {
             "llamacpp"
         };
-        (label, base)
+        (label, format!("local-openai:{}", local_cfg.chat_model_id))
     } else {
-        let ollama_base = crate::openhuman::inference::local::ollama_base_url();
-        ("ollama", format!("{ollama_base}/v1"))
+        ("ollama", format!("ollama:{}", local_cfg.chat_model_id))
     };
-
-    let local_api_key = local_cfg
-        .api_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|key| !key.is_empty());
-    let auth_style = if local_api_key.is_some() {
-        AuthStyle::Bearer
-    } else {
-        AuthStyle::None
-    };
-    let provider: Arc<dyn Provider> = Arc::new(OpenAiCompatibleProvider::new(
-        label,
-        &base,
-        local_api_key,
-        auth_style,
-    ));
     tracing::debug!(
         provider = %label,
         model = %local_cfg.chat_model_id,
         "[triage::routing] resolved local fallback provider"
     );
     Some(ResolvedProvider {
-        provider,
+        turn_model_source:
+            crate::openhuman::tinyagents::TurnModelSource::new_crate_native_from_string(
+                "subconscious",
+                provider_string,
+                Arc::new(config.clone()),
+            ),
         provider_name: label.to_string(),
         model: local_cfg.chat_model_id.clone(),
         used_local: true,
@@ -169,7 +148,7 @@ fn is_local_cli_route(provider_string: &str) -> bool {
 fn build_remote_provider(config: &Config) -> anyhow::Result<ResolvedProvider> {
     use crate::openhuman::inference::local::profile::is_local_provider_string;
     use crate::openhuman::inference::provider::factory::{
-        create_chat_provider_from_string, PROVIDER_OPENHUMAN,
+        create_chat_model_from_string_with_model_id, PROVIDER_OPENHUMAN,
     };
 
     let resolved = provider::provider_for_role("subconscious", config);
@@ -198,9 +177,12 @@ fn build_remote_provider(config: &Config) -> anyhow::Result<ResolvedProvider> {
     // id via `make_openhuman_backend` → `managed_tier_for_role`, BYOK cloud routes
     // via the slug's configured model.
     let build = |provider_string: &str| -> anyhow::Result<ResolvedProvider> {
-        let (provider_box, model) =
-            create_chat_provider_from_string("subconscious", provider_string, config)?;
-        let provider: Arc<dyn Provider> = Arc::from(provider_box);
+        let (_chat_model, model) = create_chat_model_from_string_with_model_id(
+            "subconscious",
+            provider_string,
+            config,
+            config.default_temperature,
+        )?;
         let provider_name = if provider_string == PROVIDER_OPENHUMAN {
             INFERENCE_BACKEND_ID.to_string()
         } else {
@@ -211,7 +193,12 @@ fn build_remote_provider(config: &Config) -> anyhow::Result<ResolvedProvider> {
                 .to_string()
         };
         Ok(ResolvedProvider {
-            provider,
+            turn_model_source:
+                crate::openhuman::tinyagents::TurnModelSource::new_crate_native_from_string(
+                    "subconscious",
+                    provider_string,
+                    Arc::new(config.clone()),
+                ),
             provider_name,
             model,
             used_local: false,

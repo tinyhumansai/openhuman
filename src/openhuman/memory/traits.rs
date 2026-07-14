@@ -13,15 +13,9 @@
 //! byte-identical to the former host definition before re-exporting; the tests
 //! below are the host-side seam that pins that contract on the crate type.
 //!
-//! The `Memory` trait itself stays host-defined for now because of the
-//! `sqlite_conn()` escape hatch, which the crate deliberately omits. That hatch
-//! is retired in W3 (callers move to `tinycortex::memory::chunks::with_connection`),
-//! after which the trait can also become a crate re-export.
-
-use async_trait::async_trait;
-use parking_lot::Mutex;
-use rusqlite::Connection;
-use std::sync::Arc;
+//! The `Memory` trait is also re-exported from `tinycortex`; backend-specific
+//! resources such as SQLite connections are carried explicitly by factories
+//! instead of being exposed through the storage abstraction.
 
 // ── Value types: re-exported from the crate (W2 type-unification, spec §0.5) ──
 //
@@ -30,129 +24,8 @@ use std::sync::Arc;
 // fail-closed `from_db_str`). Re-exporting keeps one source of truth while every
 // `use crate::openhuman::memory::traits::{MemoryEntry, …}` site compiles unchanged.
 pub use tinycortex::memory::{
-    MemoryCategory, MemoryEntry, MemoryTaint, NamespaceSummary, RecallOpts,
+    Memory, MemoryCategory, MemoryEntry, MemoryTaint, NamespaceSummary, RecallOpts,
 };
-
-/// The core trait for memory storage and retrieval.
-///
-/// Any persistence backend (SQLite, Postgres, Vector DB, etc.) should implement
-/// this trait to be used within the OpenHuman ecosystem.
-///
-/// This mirrors [`tinycortex::memory::Memory`] method-for-method **plus** the
-/// host-only [`Memory::sqlite_conn`] escape hatch. It stays host-defined until
-/// W3 migrates that hatch to the crate's scoped `with_connection` accessor.
-#[async_trait]
-pub trait Memory: Send + Sync {
-    /// Returns the name of the memory backend (e.g., "sqlite", "vector").
-    fn name(&self) -> &str;
-
-    /// Stores a new memory entry or updates an existing one.
-    async fn store(
-        &self,
-        namespace: &str,
-        key: &str,
-        content: &str,
-        category: MemoryCategory,
-        session_id: Option<&str>,
-    ) -> anyhow::Result<()>;
-
-    /// Store an entry with explicit provenance taint.
-    ///
-    /// Sync paths that ingest text from third-party services (Gmail / Slack /
-    /// Notion / Composio / etc.) MUST go through this entry point with
-    /// [`MemoryTaint::ExternalSync`] so the subconscious gate can refuse
-    /// external_effect tools when the resulting chunks reach a tick's
-    /// context window.
-    ///
-    /// The default implementation degrades to [`Self::store`] for backends
-    /// that do not yet persist taint (e.g. mock / in-memory stores used in
-    /// tests); the `UnifiedMemory` backend overrides this with a real
-    /// taint-carrying upsert.
-    async fn store_with_taint(
-        &self,
-        namespace: &str,
-        key: &str,
-        content: &str,
-        category: MemoryCategory,
-        session_id: Option<&str>,
-        taint: MemoryTaint,
-    ) -> anyhow::Result<()> {
-        let _ = taint;
-        self.store(namespace, key, content, category, session_id)
-            .await
-    }
-
-    /// Recalls memories matching a query string using keyword or semantic search.
-    ///
-    /// Namespace is passed via `opts.namespace`; `None` uses the backend's
-    /// legacy default namespace (`GLOBAL_NAMESPACE`).
-    async fn recall(
-        &self,
-        query: &str,
-        limit: usize,
-        opts: RecallOpts<'_>,
-    ) -> anyhow::Result<Vec<MemoryEntry>>;
-
-    /// Recall documents in `namespace` semantically relevant to `query`, keeping
-    /// only those whose *vector* similarity to the query is at least
-    /// `min_vector_similarity`. Returns `(key, content)` pairs, most-relevant
-    /// first — the key lets callers act on the matched entry (e.g. overwrite a
-    /// contradicting preference by its topic).
-    ///
-    /// Unlike [`Self::recall`] (which ranks on a combined keyword + vector +
-    /// freshness score), this gates on the vector component alone, so an
-    /// unrelated query surfaces nothing — the behaviour Lane-B situational
-    /// preferences need. Default returns empty so keyword-only and mock backends
-    /// opt out; the unified store overrides it.
-    async fn recall_relevant_by_vector(
-        &self,
-        namespace: &str,
-        query: &str,
-        limit: usize,
-        min_vector_similarity: f64,
-    ) -> anyhow::Result<Vec<(String, String)>> {
-        let _ = (namespace, query, limit, min_vector_similarity);
-        Ok(Vec::new())
-    }
-
-    /// Retrieves a specific memory entry by exact (namespace, key).
-    async fn get(&self, namespace: &str, key: &str) -> anyhow::Result<Option<MemoryEntry>>;
-
-    /// Lists memory entries, optionally scoped by namespace, category, session.
-    async fn list(
-        &self,
-        namespace: Option<&str>,
-        category: Option<&MemoryCategory>,
-        session_id: Option<&str>,
-    ) -> anyhow::Result<Vec<MemoryEntry>>;
-
-    /// Deletes a memory entry associated with the given (namespace, key).
-    ///
-    /// Returns `Ok(true)` if the entry was found and deleted, `Ok(false)` if not found.
-    async fn forget(&self, namespace: &str, key: &str) -> anyhow::Result<bool>;
-
-    /// Lists all namespaces with aggregate stats, for agent-side discovery.
-    async fn namespace_summaries(&self) -> anyhow::Result<Vec<NamespaceSummary>>;
-
-    /// Returns the total count of all memory entries in the backend.
-    async fn count(&self) -> anyhow::Result<usize>;
-
-    /// Performs a health check on the underlying storage system.
-    async fn health_check(&self) -> bool;
-
-    /// Return the shared SQLite connection when the backend is `UnifiedMemory`.
-    ///
-    /// Used by subsystems (e.g. `ArchivistHook`) that need direct SQLite
-    /// access for FTS5 / segment writes without going through the async
-    /// `Memory` trait.
-    ///
-    /// Default: `None`. Only `UnifiedMemory` overrides this. Host-only escape
-    /// hatch (the crate omits it by design); retired to
-    /// `tinycortex::memory::chunks::with_connection` in W3.
-    fn sqlite_conn(&self) -> Option<Arc<Mutex<Connection>>> {
-        None
-    }
-}
 
 #[cfg(test)]
 mod tests {

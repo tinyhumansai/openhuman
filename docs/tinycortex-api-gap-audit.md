@@ -41,7 +41,7 @@ The crate exposes every seam the plan expects, plus more. Host implements these:
 
 | Trait | Path | Host adapter (W1) |
 | --- | --- | --- |
-| `EmbeddingBackend` | `store/vectors/embedding.rs:32` | `tinycortex/embeddings.rs` over `openhuman::embeddings` |
+| `EmbeddingBackend` | `store/vectors/embedding.rs:32` | `tinycortex/embeddings.rs` over `openhuman::embeddings` *(amended: bridged to `tinyagents::harness::embeddings::EmbeddingModel` in W-EMB, plan §8.2)* |
 | `Embedder` (retrieval/summarise) | `score/embed.rs:28` | same seam file |
 | `ChatProvider` | `score/extract/llm.rs:70` | `tinycortex/chat.rs` over `memory::chat` / `inference` |
 | `Summariser` (bucket-seal, structured) | `tree/summarise.rs:70` | `tinycortex/chat.rs` |
@@ -54,7 +54,9 @@ The crate exposes every seam the plan expects, plus more. Host implements these:
 | `EntityOccurrenceIndex` | `graph/types.rs:44` | `tinycortex/sinks.rs` |
 | `SelfIdentity` | `store/entity_index/store.rs:25` | host identity registry |
 | `GoalsGenerator` | `goals/reflect.rs:57` | `tinycortex/chat.rs` |
-| `SourceReader` | `sources/readers/mod.rs:1732` | local readers only; live sync stays host |
+| `SourceReader` | `sources/readers/mod.rs:1732` | local readers only *(amended: live-sync readers join the crate in W-SYNC, plan §8)* |
+| `SyncEventSink` *(new, W-SYNC)* | `sync/traits.rs` (planned) | `tinycortex/sync_sink.rs` → `MemorySyncStage` bus events |
+| `SkillDocSink` *(new, W-SYNC)* | `sync/traits.rs` (planned) | forwards to `MemoryClient::store_skill_sync` (host-retained unified tier) |
 | `ConversationEventBus` / `ChannelEventHandler` | `conversations/bus.rs:106/95` | `tinycortex/bus.rs` (translate to `DomainEvent`) |
 
 Config seam: `MemoryConfig{workspace, embedding: EmbeddingConfig{dim,model,strict},
@@ -165,3 +167,9 @@ retrieval: RetrievalConfig{default_profile}, sync_budget: SyncBudgetConfig}` +
 
 **No hard gap blocks W1 (seam scaffolding) or W4 (queue, only drift D2).** W3 is gated by G1;
 W5 by G3/G6; W6/W7 by G2. These are recorded here and mirrored in the spec's deletion ledger.
+
+**Amendment 2026-07-09 (plan §8):** the crate's sync data model (`SourceKind::Composio`,
+`SyncBudgetConfig`, the TOML source registry with `upsert_composio_source` /
+`memory_sync_defaults_for_toolkit`) — previously host-consumed only — becomes **engine-consumed by
+W-SYNC**: the crate's own sync engine reads the registry and enforces the budget. New seam traits
+`SyncEventSink` / `SkillDocSink` land with W-SYNC.1 (see roster above); no other new gaps.

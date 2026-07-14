@@ -73,6 +73,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![
                 required_string("client_id", "Client stream identifier."),
                 required_string("thread_id", "Thread identifier."),
+                optional_string(
+                    "request_id",
+                    "Request id to cancel. When set, only that turn is cancelled (a stale cancel for a superseded request is ignored so the newer turn survives). Omit to stop whatever is running on the thread.",
+                ),
             ],
             outputs: vec![json_output("ack", "Cancellation payload.")],
         },
@@ -149,7 +153,7 @@ fn handle_queue_clear(params: Map<String, Value>) -> ControllerFuture {
 fn handle_cancel(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<WebCancelParams>(params)?;
-        to_json(channel_web_cancel(&p.client_id, &p.thread_id).await?)
+        to_json(channel_web_cancel(&p.client_id, &p.thread_id, p.request_id.as_deref()).await?)
     })
 }
 

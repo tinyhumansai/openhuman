@@ -56,9 +56,9 @@ describe('resolveIntegrationRoute', () => {
     expect(resolveIntegrationRoute(makeIntegration({ provider }))).toBe('/chat');
   });
 
-  it('falls back to /notifications for unknown providers', () => {
+  it('falls back to the notifications main view for unknown providers', () => {
     expect(resolveIntegrationRoute(makeIntegration({ provider: 'unknown-app' }))).toBe(
-      '/notifications'
+      '/notifications?view=main'
     );
   });
 
@@ -110,16 +110,22 @@ describe('resolveSystemRoute', () => {
     expect(resolveSystemRoute(makeSystem({ category: 'system' }))).toBe('/home');
   });
 
-  it('routes meetings category to /notifications', () => {
-    expect(resolveSystemRoute(makeSystem({ category: 'meetings' }))).toBe('/notifications');
+  it('routes meetings category to the notifications main view', () => {
+    expect(resolveSystemRoute(makeSystem({ category: 'meetings' }))).toBe(
+      '/notifications?view=main'
+    );
   });
 
-  it('routes reminders category to /notifications', () => {
-    expect(resolveSystemRoute(makeSystem({ category: 'reminders' }))).toBe('/notifications');
+  it('routes reminders category to the notifications main view', () => {
+    expect(resolveSystemRoute(makeSystem({ category: 'reminders' }))).toBe(
+      '/notifications?view=main'
+    );
   });
 
-  it('routes important category to /notifications', () => {
-    expect(resolveSystemRoute(makeSystem({ category: 'important' }))).toBe('/notifications');
+  it('routes important category to the notifications main view', () => {
+    expect(resolveSystemRoute(makeSystem({ category: 'important' }))).toBe(
+      '/notifications?view=main'
+    );
   });
 
   it('prefers deepLink over category default', () => {

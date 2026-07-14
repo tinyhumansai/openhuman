@@ -116,9 +116,9 @@ async fn message_dispatch_processes_messages_in_parallel() {
 
         let runtime_ctx = Arc::new(ChannelRuntimeContext {
             channels_by_name: Arc::new(channels_by_name),
-            provider: Arc::new(SlowProvider {
+            provider: Some(Arc::new(SlowProvider {
                 delay: Duration::from_millis(5),
-            }),
+            })),
             default_provider: Arc::new("test-provider".to_string()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
@@ -139,6 +139,7 @@ async fn message_dispatch_processes_messages_in_parallel() {
             message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             multimodal: crate::openhuman::config::MultimodalConfig::default(),
             multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+            config: None,
         });
 
         (channel_impl, runtime_ctx)
@@ -188,9 +189,9 @@ async fn process_channel_message_cancels_scoped_typing_task() {
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(SlowProvider {
+        provider: Some(Arc::new(SlowProvider {
             delay: Duration::from_millis(20),
-        }),
+        })),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -211,6 +212,7 @@ async fn process_channel_message_cancels_scoped_typing_task() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(
@@ -277,7 +279,7 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
         channels_by_name: Arc::new(channels_by_name),
         // Still need a Provider for the Arc field, but the stubbed bus
         // handler never invokes it — so a minimal no-op is fine.
-        provider: Arc::new(super::common::DummyProvider),
+        provider: Some(Arc::new(super::common::DummyProvider)),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -298,6 +300,7 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(
@@ -359,7 +362,7 @@ async fn channel_processed_event_records_resolved_agent_route() {
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(super::common::DummyProvider),
+        provider: Some(Arc::new(super::common::DummyProvider)),
         default_provider: Arc::new("requested-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -380,6 +383,7 @@ async fn channel_processed_event_records_resolved_agent_route() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(
@@ -470,7 +474,7 @@ async fn process_channel_message_hardens_multimodal_files_against_smuggled_marke
     };
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(super::common::DummyProvider),
+        provider: Some(Arc::new(super::common::DummyProvider)),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -491,6 +495,7 @@ async fn process_channel_message_hardens_multimodal_files_against_smuggled_marke
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: permissive_operator_default,
+        config: None,
     });
 
     // Attacker-shaped message: an absolute-path FILE marker dropped
@@ -552,7 +557,7 @@ async fn process_channel_message_hardens_against_relative_path_markers() {
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(super::common::DummyProvider),
+        provider: Some(Arc::new(super::common::DummyProvider)),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -573,6 +578,7 @@ async fn process_channel_message_hardens_against_relative_path_markers() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(

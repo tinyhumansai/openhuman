@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { FLOW_CANVAS_DRAFT_ROUTE, type FlowCanvasDraftState } from '../../lib/flows/canvasDraft';
 import type { WorkflowGraph } from '../../lib/flows/types';
 import { useT } from '../../lib/i18n/I18nContext';
-import { createFlow } from '../../services/api/flowsApi';
+import { createFlow, setFlowEnabled } from '../../services/api/flowsApi';
 import {
   clearWorkflowProposalForThread,
   type WorkflowProposal,
@@ -36,6 +36,18 @@ interface Props {
  * the client; the agent has no way to reach that RPC on its own. "Dismiss"
  * just clears the proposal without saving anything.
  *
+ * B29 (save/enable safety) Rule 1 forces `flows_create` to persist an
+ * automatic-trigger graph (`schedule` / `app_event` / `webhook`) DISABLED,
+ * no matter what the caller passed — that's what stops a copilot
+ * `save_workflow` autosave from silently arming an unattended automation.
+ * But "Save & enable" is the user's own explicit arming click, not a silent
+ * autosave, so when `createFlow` hands back a disabled flow here, `save`
+ * follows up with an explicit {@link setFlowEnabled} call — the same toggle
+ * `flows_set_enabled` exposes everywhere else — so the button does what it
+ * says. If that follow-up enable call itself fails, the flow stays saved
+ * (disabled) and the card keeps `savedFlowId` around so a retry re-enables
+ * instead of re-creating (which would duplicate the flow).
+ *
  * Mirrors {@link PlanReviewCard}'s placement/chrome above the composer, and
  * the tool-timeline `StatusTag`/detail-chip visual language for the
  * node-kind badges + config hints in the step list.
@@ -46,6 +58,11 @@ export const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSa
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Set once `createFlow` has persisted the flow but it came back disabled
+  // (B29 Rule 1) and the follow-up `setFlowEnabled` call hasn't succeeded
+  // yet. Non-null means a retry of `save` should skip `createFlow` entirely
+  // and only retry the enable step.
+  const [savedFlowId, setSavedFlowId] = useState<string | null>(null);
 
   const dismiss = () => {
     dispatch(clearWorkflowProposalForThread({ threadId }));
@@ -80,13 +97,37 @@ export const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSa
     if (saving) return;
     setSaving(true);
     setErrorMsg(null);
+    // Track persistence locally (not via `savedFlowId` state) because a
+    // `setState` call doesn't apply synchronously — reading `savedFlowId`
+    // itself in the `catch` below would see this render's stale value, not
+    // what just happened in this attempt.
+    let flowId = savedFlowId;
+    let flowPersisted = flowId !== null;
     try {
-      await createFlow(proposal.name, proposal.graph, proposal.requireApproval);
+      if (!flowId) {
+        const flow = await createFlow(proposal.name, proposal.graph, proposal.requireApproval);
+        flowId = flow.id;
+        flowPersisted = true;
+        if (flow.enabled) {
+          log('save: createFlow returned enabled — nothing further to arm id=%s', flow.id);
+          dispatch(clearWorkflowProposalForThread({ threadId }));
+          onSaved?.();
+          return;
+        }
+        // B29 Rule 1 saved this automatic-trigger flow disabled. This click
+        // is the user's own explicit "Save & enable" — not the copilot's
+        // silent autosave Rule 1 guards against — so arm it now.
+        log('save: createFlow returned disabled (Rule 1) — arming explicitly id=%s', flow.id);
+        setSavedFlowId(flow.id);
+      }
+      await setFlowEnabled(flowId, true);
       dispatch(clearWorkflowProposalForThread({ threadId }));
       onSaved?.();
     } catch (e) {
-      log('createFlow failed: %o', e);
-      setErrorMsg(t('chat.flowProposal.error'));
+      log('save failed (createFlow/setFlowEnabled): %o', e);
+      setErrorMsg(
+        flowPersisted ? t('chat.flowProposal.enableError') : t('chat.flowProposal.error')
+      );
       setSaving(false);
     }
   };

@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::rpc::RpcOutcome;
 
-use super::git_store::Ledger;
+use tinycortex::memory::diff::Ledger;
+
 use super::ops;
 use super::types::*;
 

@@ -303,6 +303,10 @@ mod tests {
 
     #[test]
     fn build_provider_returns_inference_wrapper_when_local_memory_is_configured() {
+        // Serialize with the process-global `test_provider_override` (see the
+        // inference factory tests): while an override is active, `create_chat_model`
+        // returns the mock, so an unguarded read here could race it.
+        let _guard = crate::openhuman::inference::inference_test_guard();
         let mut cfg = Config::default();
         cfg.memory_provider = Some("ollama:qwen2.5:0.5b".into());
         let provider = build_chat_provider(&cfg).unwrap();
@@ -311,6 +315,7 @@ mod tests {
 
     #[test]
     fn build_chat_runtime_preserves_local_memory_model() {
+        let _guard = crate::openhuman::inference::inference_test_guard();
         let mut cfg = Config::default();
         cfg.memory_provider = Some("ollama:qwen2.5:0.5b".into());
         let (_provider, model) = build_chat_runtime(&cfg).unwrap();
