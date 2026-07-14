@@ -156,6 +156,22 @@ pub async fn execute_composio_action_kind_with_connection(
         return Err("composio: tool slug must not be empty".to_string());
     }
 
+    // Local-only enforcement (privacy epic S7, #4441): gate ABOVE the
+    // backend-vs-direct branch. The per-client gate lives inside
+    // `ComposioClient::execute_tool{,_once}` and therefore only covers the
+    // Backend arm — the Direct arm (`direct_execute`) never reaches it, so
+    // without this a Composio tool call would still POST its arguments to
+    // Composio under LocalOnly in direct mode (the dual-path drift this very
+    // review flagged). A Composio execute ships the tool arguments off-device
+    // in BOTH modes, so refuse here — once, before either dispatch — for a
+    // single chokepoint. The Backend arm stays gated too (defense in depth).
+    if let Err(e) = crate::openhuman::security::egress::enforce_egress(
+        &crate::openhuman::security::egress::EgressDescriptor::composio(tool_trim),
+    ) {
+        tracing::debug!(tool = %tool_trim, "[composio][dispatch] local-only egress block");
+        return Err(e.to_string());
+    }
+
     let prepared = match prepare_execute_arguments(tool_trim, arguments) {
         Ok(args) => args,
         Err(msg) => {
