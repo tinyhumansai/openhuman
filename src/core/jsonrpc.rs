@@ -1802,85 +1802,113 @@ async fn run_server_with_services(
     runtime.serve(ready_tx, shutdown_token).await
 }
 
-/// Registers all long-lived domain event-bus subscribers exactly once.
+/// Per-`DomainGroup` gating decision for each event-bus subscriber that
+/// [`register_domain_subscribers`] conditionally registers. Extracted as a
+/// pure value so the subscriber→group mapping has a single source of truth
+/// that the registrar consumes and tests assert directly — without registering
+/// real subscribers or touching the process-global event bus (#4796 DoD item 3).
 ///
-/// Guarded by `std::sync::Once` so repeated calls to `bootstrap_core_runtime`
-/// are safe and idempotent.
+/// Unlisted subscribers (health, scheduler-gate, TokenJuice content-router,
+/// session-token seeding, `SessionExpired`, service restart/shutdown) are
+/// always registered as core/platform infra and intentionally absent here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DomainSubscriberPlan {
+    /// webhook + notification-bridge + composio trigger + task-sources + device-tunnel.
+    pub platform: bool,
+    /// channel-inbound + web-only proactive.
+    pub channels: bool,
+    /// flows trigger dispatch.
+    pub flows: bool,
+    /// memory conversation-persistence + sync-stage bridge.
+    pub memory: bool,
+    /// agent_meetings calendar + meeting-event subscribers.
+    pub meet: bool,
+    /// agent handlers + background delivery + run-ledger finalizer + orchestration ingest.
+    pub agent: bool,
+    /// mcp_registry lifecycle bus init.
+    pub mcp: bool,
+}
+
+impl DomainSubscriberPlan {
+    /// The subscriber-registration plan for `domains`. Pure: no side effects.
+    pub fn for_domains(domains: crate::core::runtime::DomainSet) -> Self {
+        use crate::core::all::DomainGroup;
+        Self {
+            platform: domains.allows(DomainGroup::Platform),
+            channels: domains.allows(DomainGroup::Channels),
+            flows: domains.allows(DomainGroup::Flows),
+            memory: domains.allows(DomainGroup::Memory),
+            meet: domains.allows(DomainGroup::Meet),
+            agent: domains.allows(DomainGroup::Agent),
+            mcp: domains.allows(DomainGroup::Mcp),
+        }
+    }
+}
+
+/// Registers all long-lived domain event-bus subscribers, each group at most
+/// once per process.
+///
+/// Ungated core/platform infra runs exactly once behind `INFRA: Once`; each
+/// gated [`DomainGroup`](crate::core::all::DomainGroup) installs the first time
+/// it is enabled (tracked by `group_first_time`), so widening the ambient
+/// `DomainSet` on a later call (`harness()` → `full()`) still installs the
+/// newly-enabled groups without double-subscribing the ones already registered.
 fn register_domain_subscribers(
     workspace_dir: std::path::PathBuf,
     config: crate::openhuman::config::Config,
     embedded_core: bool,
+    domains: crate::core::runtime::DomainSet,
 ) {
-    use std::sync::{Arc, Once};
+    use crate::core::all::DomainGroup;
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex, Once, OnceLock};
 
-    static REGISTERED: Once = Once::new();
-    REGISTERED.call_once(|| {
-        // Leak the SubscriptionHandle so the background tasks live for the
-        // entire process — SubscriptionHandle::drop aborts the task.
-        if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
-            crate::openhuman::webhooks::bus::WebhookRequestSubscriber::new(),
-        )) {
-            std::mem::forget(handle);
-        } else {
-            log::warn!("[event_bus] failed to register webhook subscriber — bus not initialized");
-        }
+    let plan = DomainSubscriberPlan::for_domains(domains);
+    log::debug!("[event_bus] register_domain_subscribers: domains={domains:?} plan={plan:?}");
 
-        if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
-            crate::openhuman::channels::bus::ChannelInboundSubscriber::new(),
-        )) {
-            std::mem::forget(handle);
-        } else {
-            log::warn!("[event_bus] failed to register channel subscriber — bus not initialized");
-        }
+    // Per-group idempotency (#4808 review): the previous single process-wide
+    // `Once` fixed the subscriber set to the FIRST caller's DomainSet — an
+    // embedder or test that built `harness()`/`none()` first and later widened
+    // to `full()` would never install the subscribers skipped on that first
+    // call, even though those domains' controllers are now exposed. Tracking the
+    // set of already-registered groups lets a later, wider DomainSet install
+    // exactly the newly-enabled groups (and no group twice). `insert` returns
+    // `true` only the first time a group is seen.
+    fn group_first_time(group: DomainGroup) -> bool {
+        static DONE: OnceLock<Mutex<HashSet<DomainGroup>>> = OnceLock::new();
+        DONE.get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .expect("domain-subscriber registry lock poisoned")
+            .insert(group)
+    }
 
-        // Flows trigger dispatch (issue B2): maps FlowScheduleTick /
-        // ComposioTriggerReceived / WebhookIncomingRequest onto enabled flows and
-        // runs `flows::ops::flows_run`. Registered here (unconditional core boot,
-        // Once-guarded) rather than under channel startup, so schedule/app-event
-        // workflows still dispatch when no realtime channel is configured or
-        // `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` short-circuits `start_channels`.
-        if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
-            crate::openhuman::flows::bus::FlowTriggerSubscriber::new(Arc::new(config.clone())),
-        )) {
-            std::mem::forget(handle);
-        } else {
-            log::warn!("[event_bus] failed to register flows trigger subscriber — bus not initialized");
-        }
-
+    // Ungated core/platform infra — health, scheduler-gate, TokenJuice
+    // content-router, session-token seeding, the SessionExpired handler, and
+    // service restart/shutdown. These are DomainSet-independent, so they run
+    // exactly once on the first call regardless of which composition boots
+    // first. Registered BEFORE any gated subscriber so the SessionExpired
+    // handler is live before a gated subscriber could publish a 401-derived
+    // event. Leaked `SubscriptionHandle`s live for the whole process
+    // (`SubscriptionHandle::drop` aborts the task).
+    static INFRA: Once = Once::new();
+    INFRA.call_once(|| {
         crate::openhuman::health::bus::register_health_subscriber();
-        crate::openhuman::notifications::register_notification_bridge_subscriber(config.clone());
-        crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
-            workspace_dir.clone(),
-        );
-        crate::openhuman::memory::sync::register_sync_stage_bridge(&config);
-        if let Err(error) = crate::openhuman::composio::init_composio_trigger_history(
-            workspace_dir.clone(),
-        ) {
-            log::warn!("[composio][history] failed to initialize trigger archive: {error}");
-        }
-        crate::openhuman::composio::register_composio_trigger_subscriber();
-        crate::openhuman::agent_meetings::calendar::register_meet_calendar_subscriber();
-        crate::openhuman::agent_meetings::bus::register_meeting_event_subscriber();
-        // Orchestration: ingest tiny.place harness session DMs off the stream bus.
-        crate::openhuman::orchestration::register_orchestration_ingest_subscriber();
-        // Task-sources proactive ingestion: connection-created hook + poll.
-        crate::openhuman::task_sources::bus::register_task_sources_subscriber();
-        // Initialise the scheduler gate before any background AI workers
-        // start so they observe a real policy on their first iteration
-        // (otherwise they fall back to `Policy::Normal` and miss the
-        // initial throttle decision on battery-powered hosts).
+
+        // Initialise the scheduler gate before any background AI workers start
+        // so they observe a real policy on their first iteration (otherwise they
+        // fall back to `Policy::Normal` and miss the initial throttle decision on
+        // battery-powered hosts).
         crate::openhuman::scheduler_gate::init_global(&config);
 
         // Install the TokenJuice content-router runtime config (compressor
-        // toggles + CCR cache limits + optional on-disk tier). Compaction runs
-        // on every agent's tool output, so this must be set before any agent
-        // loop executes a tool.
+        // toggles + CCR cache limits + optional on-disk tier). Compaction runs on
+        // every agent's tool output, so this must be set before any agent loop
+        // executes a tool.
         crate::openhuman::tokenjuice::install_from_config(&config);
 
-        // Seed the scheduler-gate signed-out override from the on-disk
-        // session. Without this, a sidecar that boots with no stored JWT
-        // would happily spin up cron / channel loops and fire LLM requests
-        // that all 401 immediately.
+        // Seed the scheduler-gate signed-out override from the on-disk session.
+        // Without this, a sidecar that boots with no stored JWT would happily
+        // spin up cron / channel loops and fire LLM requests that all 401.
         match crate::api::jwt::get_session_token(&config) {
             Ok(Some(_)) => {
                 crate::openhuman::scheduler_gate::set_signed_out(false);
@@ -1905,9 +1933,9 @@ fn register_domain_subscribers(
             }
         }
 
-        // Register the SessionExpired handler before any subscribers that
-        // might publish 401-derived events, so the very first 401 is
-        // routed through `clear_session` + the scheduler-gate override.
+        // Register the SessionExpired handler before any subscribers that might
+        // publish 401-derived events, so the very first 401 is routed through
+        // `clear_session` + the scheduler-gate override.
         if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
             crate::openhuman::credentials::bus::SessionExpiredSubscriber::new(),
         )) {
@@ -1930,46 +1958,154 @@ fn register_domain_subscribers(
             // subscriber exits the current process after a short grace period.
             crate::openhuman::service::bus::register_shutdown_subscriber();
         }
-
-        // Proactive message subscriber (web-only in the desktop runtime —
-        // no external channel instances are registered here). Uses a
-        // Once-guarded registrar so domain-level startup can't duplicate it.
-        crate::openhuman::channels::proactive::register_web_only_proactive_subscriber();
-
-        // Device tunnel subscriber: handles tunnel:frame handshakes, peer-status
-        // events, and register acks. Must be registered before any tunnel:frame
-        // events can arrive.
-        crate::openhuman::devices::bus::register_device_tunnel_subscriber();
-
-        // Native request handlers — typed in-process request/response.
-        // The agent `agent.run_turn` handler is what channel dispatch
-        // calls instead of importing `run_tool_call_loop` directly.
-        crate::openhuman::agent::bus::register_agent_handlers();
-
-        // Background-completion delivery: when a detached sub-agent
-        // (spawn_async_subagent) finishes, surface its result back into the
-        // originating chat as an idle-gated, batched, system-injected turn.
-        crate::openhuman::agent_orchestration::background_delivery::register_background_delivery();
-
-        // Run-ledger finalizer: detached `spawn_async_subagent` runs outlive
-        // their parent turn, so their terminal `AgentProgress` never reaches the
-        // per-turn progress bridge that settles the ledger. This global-bus
-        // subscriber settles `agent_runs` from `DomainEvent::Subagent{Completed,
-        // Failed}` (always fired from the detached task), preventing rows from
-        // leaking as perpetual `running` timeline entries on thread reopen.
-        crate::openhuman::agent_orchestration::run_ledger_finalize::register_run_ledger_finalize_subscriber(&config);
-
-        // MCP clients lifecycle subscriber: logs McpServer{Installed,Connected,
-        // Disconnected} + McpClientToolExecuted for observability. The boot-time
-        // spawn of installed servers (boot::spawn_installed_servers) runs later
-        // in bootstrap_core_runtime; this subscriber must be live before then so
-        // those connect events are observed (issue #3039 gap A1).
-        crate::openhuman::mcp_registry::bus::init();
-
-        log::info!(
-            "[event_bus] domain subscribers registered (webhook, channel, health, conversation, composio, restart, proactive, agent, session_expired, mcp_client)"
-        );
     });
+
+    // ---- Gated domain subscribers — each group installed at most once, the
+    // first time its owning DomainGroup is enabled. -------------------------
+
+    // Platform: webhook + notification bridge + composio trigger + task-sources
+    // proactive ingestion + device tunnel.
+    if plan.platform {
+        if group_first_time(DomainGroup::Platform) {
+            if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
+                crate::openhuman::webhooks::bus::WebhookRequestSubscriber::new(),
+            )) {
+                std::mem::forget(handle);
+            } else {
+                log::warn!(
+                    "[event_bus] failed to register webhook subscriber — bus not initialized"
+                );
+            }
+            crate::openhuman::notifications::register_notification_bridge_subscriber(
+                config.clone(),
+            );
+            if let Err(error) =
+                crate::openhuman::composio::init_composio_trigger_history(workspace_dir.clone())
+            {
+                log::warn!("[composio][history] failed to initialize trigger archive: {error}");
+            }
+            crate::openhuman::composio::register_composio_trigger_subscriber();
+            crate::openhuman::task_sources::bus::register_task_sources_subscriber();
+            // Device tunnel subscriber: handles tunnel:frame handshakes,
+            // peer-status events, and register acks. Must be live before any
+            // tunnel:frame events can arrive.
+            crate::openhuman::devices::bus::register_device_tunnel_subscriber();
+        }
+    } else {
+        log::debug!(
+            "[event_bus] Platform subscribers (webhook/notification/composio/task-sources/device-tunnel) SKIPPED — Platform domain disabled"
+        );
+    }
+
+    // Channels: inbound dispatch + web-only proactive messaging.
+    if plan.channels {
+        if group_first_time(DomainGroup::Channels) {
+            if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
+                crate::openhuman::channels::bus::ChannelInboundSubscriber::new(),
+            )) {
+                std::mem::forget(handle);
+            } else {
+                log::warn!(
+                    "[event_bus] failed to register channel subscriber — bus not initialized"
+                );
+            }
+            // Web-only proactive message subscriber (no external channel
+            // instances are registered here in the desktop runtime).
+            crate::openhuman::channels::proactive::register_web_only_proactive_subscriber();
+        }
+    } else {
+        log::debug!(
+            "[event_bus] Channels subscribers (inbound + web-only proactive) SKIPPED — Channels domain disabled"
+        );
+    }
+
+    // Flows trigger dispatch (issue B2): maps FlowScheduleTick /
+    // ComposioTriggerReceived / WebhookIncomingRequest onto enabled flows and
+    // runs `flows::ops::flows_run`, so schedule/app-event workflows still
+    // dispatch when no realtime channel is configured or
+    // `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` short-circuits `start_channels`.
+    if plan.flows {
+        if group_first_time(DomainGroup::Flows) {
+            if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
+                crate::openhuman::flows::bus::FlowTriggerSubscriber::new(Arc::new(config.clone())),
+            )) {
+                std::mem::forget(handle);
+            } else {
+                log::warn!(
+                    "[event_bus] failed to register flows trigger subscriber — bus not initialized"
+                );
+            }
+        }
+    } else {
+        log::debug!("[event_bus] flows trigger subscriber SKIPPED — Flows domain disabled");
+    }
+
+    // Memory: conversation-persistence + sync-stage bridge.
+    if plan.memory {
+        if group_first_time(DomainGroup::Memory) {
+            crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
+                workspace_dir.clone(),
+            );
+            crate::openhuman::memory::sync::register_sync_stage_bridge(&config);
+        }
+    } else {
+        log::debug!(
+            "[event_bus] memory conversation-persistence + sync bridge SKIPPED — Memory domain disabled"
+        );
+    }
+
+    // Meet: calendar + meeting-event subscribers.
+    if plan.meet {
+        if group_first_time(DomainGroup::Meet) {
+            crate::openhuman::agent_meetings::calendar::register_meet_calendar_subscriber();
+            crate::openhuman::agent_meetings::bus::register_meeting_event_subscriber();
+        }
+    } else {
+        log::debug!("[event_bus] agent_meetings subscribers SKIPPED — Meet domain disabled");
+    }
+
+    // Agent: orchestration ingest + native agent handlers + background-completion
+    // delivery + run-ledger finalizer.
+    if plan.agent {
+        if group_first_time(DomainGroup::Agent) {
+            // Orchestration: ingest tiny.place harness session DMs off the stream bus.
+            crate::openhuman::orchestration::register_orchestration_ingest_subscriber();
+            // Native request handlers — the agent `agent.run_turn` handler is
+            // what channel dispatch calls instead of importing
+            // `run_tool_call_loop` directly.
+            crate::openhuman::agent::bus::register_agent_handlers();
+            // Background-completion delivery: when a detached sub-agent
+            // (spawn_async_subagent) finishes, surface its result back into the
+            // originating chat as an idle-gated, batched, system-injected turn.
+            crate::openhuman::agent_orchestration::background_delivery::register_background_delivery();
+            // Run-ledger finalizer: detached `spawn_async_subagent` runs outlive
+            // their parent turn, so their terminal `AgentProgress` never reaches
+            // the per-turn progress bridge that settles the ledger. This
+            // global-bus subscriber settles `agent_runs` from
+            // `DomainEvent::Subagent{Completed,Failed}`, preventing rows from
+            // leaking as perpetual `running` timeline entries on thread reopen.
+            crate::openhuman::agent_orchestration::run_ledger_finalize::register_run_ledger_finalize_subscriber(&config);
+        }
+    } else {
+        log::debug!(
+            "[event_bus] agent handlers + background delivery + run-ledger finalizer + orchestration ingest SKIPPED — Agent domain disabled"
+        );
+    }
+
+    // MCP clients lifecycle subscriber: logs McpServer{Installed,Connected,
+    // Disconnected} + McpClientToolExecuted for observability. The boot-time
+    // spawn of installed servers (boot::spawn_installed_servers) runs later in
+    // bootstrap_core_runtime; this subscriber must be live before then so those
+    // connect events are observed (issue #3039 gap A1).
+    if plan.mcp {
+        if group_first_time(DomainGroup::Mcp) {
+            crate::openhuman::mcp_registry::bus::init();
+        }
+    } else {
+        log::debug!("[event_bus] mcp_registry bus init SKIPPED — Mcp domain disabled");
+    }
+
+    log::info!("[event_bus] domain subscriber registration complete: plan={plan:?}");
 }
 
 /// Initializes long-lived socket/event-bus infrastructure.
@@ -1983,6 +2119,7 @@ fn register_domain_subscribers(
 pub async fn bootstrap_core_runtime(
     host_kind: crate::core::types::HostKind,
     config: Option<crate::openhuman::config::Config>,
+    domains: crate::core::runtime::DomainSet,
 ) {
     use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;
@@ -2001,10 +2138,12 @@ pub async fn bootstrap_core_runtime(
     // Ensure the global event bus is initialized (no-op if already done by start_channels).
     crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
     crate::openhuman::file_state::init_global();
-    // Register domain subscribers for cross-module event handling.
-    // Uses a Once guard so repeated calls to bootstrap_core_runtime()
-    // cannot double-subscribe.
-    register_domain_subscribers(workspace_dir.clone(), cfg.clone(), embedded_core);
+    // Register domain subscribers for cross-module event handling. Ungated infra
+    // runs once (INFRA: Once) and each DomainGroup installs at most once via the
+    // per-group `group_first_time` set, so repeated calls to
+    // bootstrap_core_runtime() cannot double-subscribe (and a later, wider
+    // DomainSet still installs its newly-enabled groups).
+    register_domain_subscribers(workspace_dir.clone(), cfg.clone(), embedded_core, domains);
 
     // --- Turn-state recovery -------------------------------------------
     // Any per-thread turn snapshots left on disk from a previous process
@@ -2068,10 +2207,14 @@ pub async fn bootstrap_core_runtime(
     // --- x402 payment ledger ---
     // Initializes the JSONL-backed spending ledger for machine-payable API
     // payments (x402 protocol). Budget defaults can be overridden via
-    // the `openhuman.x402_update_budget` RPC.
-    {
+    // the `openhuman.x402_update_budget` RPC. Gated on the Web3 domain (#4808
+    // review): under `harness()`/`none()` the x402 controllers are absent, so
+    // their ledger must not initialize either.
+    if domains.allows(crate::core::all::DomainGroup::Web3) {
         let x402_session = format!("x402-{}", uuid::Uuid::new_v4());
         crate::openhuman::x402::init_ledger(&workspace_dir, &x402_session);
+    } else {
+        log::debug!("[boot] x402 payment ledger SKIPPED — Web3 domain disabled");
     }
 
     // --- Sub-agent definition registry bootstrap ---
@@ -2130,7 +2273,13 @@ pub async fn bootstrap_core_runtime(
     // installs. Idempotent — shares a process-global OnceLock with the
     // `start_channels` site so it registers exactly once regardless of which
     // path runs first. (Matching only for now; activation handoff still pending.)
-    crate::openhuman::skills::bus::ensure_triggered_workflow_subscriber(&workspace_dir);
+    // Gated on the Skills domain (#4808 review): under `harness()`/`none()` the
+    // skills controllers are absent, so their trigger subscriber must not install.
+    if domains.allows(crate::core::all::DomainGroup::Skills) {
+        crate::openhuman::skills::bus::ensure_triggered_workflow_subscriber(&workspace_dir);
+    } else {
+        log::debug!("[boot] triggered-workflow subscriber SKIPPED — Skills domain disabled");
+    }
 
     // --- Approval gate (#1339) ---
     // ON by default; opt out with `OPENHUMAN_APPROVAL_GATE=0` (or `false`).
@@ -2194,6 +2343,11 @@ pub async fn bootstrap_core_runtime(
     // unguarded standalone/CLI/Docker core would park a plan review that never
     // reaches the UI and dies at the gate TTL. Idempotent (Once-guarded).
     crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
+    // Egress-surface bridge (privacy epic S2, #4436) — registered
+    // unconditionally alongside the approval surface so external-transfer
+    // disclosures reach the UI even on cores that skip `start_channels` or run
+    // with the approval gate disabled. Idempotent (OnceLock-guarded).
+    crate::openhuman::channels::providers::web::register_egress_surface_subscriber();
 
     if decision.install_gate {
         // Per-launch correlation token for the approval gate. This is

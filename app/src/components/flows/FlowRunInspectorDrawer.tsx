@@ -28,6 +28,7 @@ import { useFlowPendingApprovals } from '../../hooks/useFlowPendingApprovals';
 import { useFlowRunPoller } from '../../hooks/useFlowRunPoller';
 import { type FlowNodeRunStatus, useFlowRunProgress } from '../../hooks/useFlowRunProgress';
 import { type FlowRunItem, normalizeItems } from '../../lib/flows/runItems';
+import { summarizeStep } from '../../lib/flows/runStepSummary';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { FlowRunStatus, FlowRunStep } from '../../services/api/flowsApi';
 import Button from '../ui/Button';
@@ -120,6 +121,20 @@ const FLOW_STEP_LIVE_DOT: Record<string, string> = {
   failed: 'bg-coral-500',
 };
 
+/** Text color per plain-language summary outcome (issue B20). */
+const STEP_SUMMARY_TEXT_CLASS: Record<'success' | 'error' | 'neutral', string> = {
+  success: 'text-content-secondary',
+  error: 'text-coral-600 dark:text-coral-400',
+  neutral: 'italic text-content-faint',
+};
+
+/** Leading emoji per plain-language summary outcome (issue B20). */
+const STEP_SUMMARY_EMOJI: Record<'success' | 'error' | 'neutral', string> = {
+  success: '✅',
+  error: '❌',
+  neutral: '',
+};
+
 function StepRow({
   step,
   index,
@@ -138,7 +153,14 @@ function StepRow({
 }) {
   const { t } = useT();
   const items = normalizeItems(step.output);
-  const dotClass = (liveStatus && FLOW_STEP_LIVE_DOT[liveStatus]) ?? 'bg-content-faint';
+  // Live socket status (Phase 3e) takes priority while the run is in flight;
+  // once it's gone quiet (drawer reopened after the fact), fall back to the
+  // durable per-step `status` the observer recorded (`services/api/flowsApi.ts`).
+  const dotClass =
+    (liveStatus && FLOW_STEP_LIVE_DOT[liveStatus]) ??
+    (step.status && FLOW_STEP_LIVE_DOT[step.status]) ??
+    'bg-content-faint';
+  const summary = summarizeStep({ status: step.status }, items, t);
 
   return (
     <li
@@ -178,6 +200,18 @@ function StepRow({
           </ul>
         </div>
       )}
+      {/* Plain-language summary (issue B20) — the primary, always-visible view
+          of what this step did. Raw Composio/tool JSON (costUsd, labelIds,
+          markdownFormatted, …) lives only behind the "Show raw output"
+          disclosure below, never here. */}
+      <div
+        data-testid={`flow-run-step-summary-${index}`}
+        className={`mt-1.5 text-[11px] ${STEP_SUMMARY_TEXT_CLASS[summary.outcome]}`}>
+        {STEP_SUMMARY_EMOJI[summary.outcome] && (
+          <span aria-hidden>{STEP_SUMMARY_EMOJI[summary.outcome]} </span>
+        )}
+        {summary.text}
+      </div>
       {items.length > 0 && (
         <details className="mt-1.5">
           <summary className="cursor-pointer text-[11px] font-medium text-content-faint hover:text-content-secondary">
@@ -296,8 +330,19 @@ export function FlowRunInspectorDrawer({ runId, onClose, onFixWithAgent }: Props
                   {t(FLOW_RUN_STATUS_KEY[run.status])}
                 </span>
               )}
-              {run && <span className="truncate font-mono">{run.flow_id}</span>}
-              {run && <span className="truncate font-mono">{run.thread_id}</span>}
+              {/* Internal ids are dev/debug info, not primary-view content (issue
+                  B20) — shown short-form only, full value on hover via `title`,
+                  matching `FlowRunsDrawer`'s row-level `run.id.slice(0, 8)`. */}
+              {run && (
+                <span className="truncate font-mono" title={run.flow_id}>
+                  {run.flow_id.slice(0, 8)}
+                </span>
+              )}
+              {run && (
+                <span className="truncate font-mono" title={run.thread_id}>
+                  {run.thread_id.slice(0, 8)}
+                </span>
+              )}
             </div>
           </div>
           <button

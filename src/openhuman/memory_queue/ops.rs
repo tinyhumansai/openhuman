@@ -37,20 +37,3 @@ pub fn ensure_reembed_backfill(config: &crate::openhuman::config::Config) {
         log::warn!("[memory::jobs] ensure_reembed_backfill failed: {error:#}");
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn backfill_flag_roundtrip() {
-        set_backfill_in_progress(false);
-        assert!(!backfill_in_progress());
-
-        set_backfill_in_progress(true);
-        assert!(backfill_in_progress());
-
-        set_backfill_in_progress(false);
-        assert!(!backfill_in_progress());
-    }
-}

@@ -69,6 +69,10 @@ pub(super) fn handle_sio_event(
                 "orch:register_tools",
                 crate::openhuman::orchestration::effect_executor::device_tool_manifest(),
             );
+            // Advertise this core's agent roster to the backend so a medulla
+            // operator can delegate `medulla:task_run` to a named agent. The
+            // backend clears the roster on socket disconnect.
+            super::medulla::emit_register_agents();
         }
         "error" => {
             log::error!("[socket] Server error event: {}", data);
@@ -477,6 +481,42 @@ pub(super) fn handle_sio_event(
                 error,
                 correlation_id,
             });
+        }
+
+        // ── Medulla harness plane ────────────────────────────────────────
+        // A medulla operator (running in the backend) drives an openhuman agent
+        // session as a delegated sub-agent. See `socket::medulla`.
+        "medulla:task_run" => {
+            match serde_json::from_value::<super::medulla::payloads::TaskRun>(data) {
+                Ok(run) => {
+                    log::info!(
+                        "[socket] medulla:task_run task_id={} cycle_id={} agent_id={:?}",
+                        run.task_id,
+                        run.cycle_id,
+                        run.agent_id
+                    );
+                    super::medulla::manager().start_task(run);
+                }
+                Err(e) => log::warn!("[socket] failed to parse medulla:task_run: {e}"),
+            }
+        }
+        "medulla:task_send" => {
+            match serde_json::from_value::<super::medulla::payloads::TaskSend>(data) {
+                Ok(send) => {
+                    log::info!("[socket] medulla:task_send task_id={}", send.task_id);
+                    super::medulla::manager().steer_task(send);
+                }
+                Err(e) => log::warn!("[socket] failed to parse medulla:task_send: {e}"),
+            }
+        }
+        "medulla:task_abort" => {
+            match serde_json::from_value::<super::medulla::payloads::TaskAbort>(data) {
+                Ok(abort) => {
+                    log::info!("[socket] medulla:task_abort task_id={}", abort.task_id);
+                    super::medulla::manager().abort_task(abort);
+                }
+                Err(e) => log::warn!("[socket] failed to parse medulla:task_abort: {e}"),
+            }
         }
 
         // Channel inbound message — publish to event bus for ChannelInboundSubscriber

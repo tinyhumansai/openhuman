@@ -3009,3 +3009,151 @@ fn try_create_cloud_slug_flips_openai_but_declines_non_cloud() {
     unconfigured.chat_provider = Some("deepseek:deepseek-chat".to_string());
     assert!(try_create_cloud_slug_chat_model("chat", &unconfigured).is_none());
 }
+
+/// Real-path smoke (privacy epic S2, #4436): driving the actual inference
+/// chokepoint `create_chat_provider_from_string` with an EXTERNAL provider must
+/// publish an `ExternalTransferPending` egress event — proving the emit is wired
+/// into the live construction path, not merely callable in isolation.
+/// Complements the isolated emit unit tests in `security::egress`.
+#[tokio::test]
+async fn from_string_external_provider_emits_egress_realpath() {
+    use crate::core::event_bus::{init_global, DomainEvent, DEFAULT_CAPACITY};
+    use crate::openhuman::security::egress::EgressReason;
+
+    init_global(DEFAULT_CAPACITY);
+    let mut rx = crate::core::event_bus::global().unwrap().raw_receiver();
+
+    let config = Config::default();
+    // External provider → real chokepoint must emit BEFORE constructing.
+    let _ = create_chat_provider_from_string("agentic", "openai:gpt-4o-mini", &config);
+
+    // Bus is process-wide; drain past unrelated events until our descriptor lands.
+    let found = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            match rx.recv().await {
+                Ok(DomainEvent::ExternalTransferPending { descriptor, .. })
+                    if descriptor.provider_slug == "openai"
+                        && descriptor.is_external
+                        && matches!(descriptor.reason, EgressReason::Inference) =>
+                {
+                    return descriptor;
+                }
+                Ok(_) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    panic!("event bus closed before ExternalTransferPending arrived")
+                }
+            }
+        }
+    })
+    .await;
+
+    assert!(
+        found.is_ok(),
+        "external inference via create_chat_provider_from_string must publish ExternalTransferPending"
+    );
+}
+
+/// Real-path smoke (privacy epic S2, #4436): the crate-native ChatModel path
+/// `create_chat_model_with_model_id` — the path production agent turns use
+/// post-#4784 — must emit EXACTLY ONE egress descriptor for a managed-backend
+/// (external) construction. Regression guard for the gap where emit lived only
+/// on the legacy `Provider` path, so the default managed turn disclosed nothing.
+#[tokio::test]
+async fn create_chat_model_managed_emits_exactly_one_egress_realpath() {
+    use crate::core::event_bus::{init_global, publish_global, DomainEvent, DEFAULT_CAPACITY};
+    use crate::openhuman::security::egress::{EgressDescriptor, EgressReason};
+    use std::time::Duration;
+
+    init_global(DEFAULT_CAPACITY);
+    let mut rx = crate::core::event_bus::global().unwrap().raw_receiver();
+
+    // Unique model marker so the process-wide bus can't confuse a concurrent
+    // test's managed event with ours. `heartbeat` has no managed tier and
+    // resolves to the managed backend, so `default_model` flows through verbatim.
+    let marker = "egress-managed-realpath-marker-v1";
+    let mut config = Config::default();
+    config.default_model = Some(marker.to_string());
+    let _ = create_chat_model_with_model_id("heartbeat", &config, 0.7);
+
+    // Bound the drain with a unique sentinel published AFTER our construction.
+    let sentinel = "egress-managed-sentinel-end";
+    publish_global(DomainEvent::ExternalTransferPending {
+        descriptor: EgressDescriptor::network_fetch(sentinel),
+        thread_id: None,
+        client_id: None,
+    });
+
+    let mut count = 0usize;
+    loop {
+        match tokio::time::timeout(Duration::from_secs(3), rx.recv()).await {
+            Ok(Ok(DomainEvent::ExternalTransferPending { descriptor, .. })) => {
+                if descriptor.service == marker {
+                    assert_eq!(descriptor.provider_slug, "openhuman");
+                    assert!(descriptor.is_external, "managed backend is external");
+                    assert!(matches!(descriptor.reason, EgressReason::Inference));
+                    count += 1;
+                } else if descriptor.service == sentinel {
+                    break;
+                }
+            }
+            Ok(Ok(_)) => continue,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                panic!("event bus closed before sentinel arrived")
+            }
+            Err(_) => panic!("timed out before egress sentinel arrived"),
+        }
+    }
+    assert_eq!(
+        count, 1,
+        "managed inference via create_chat_model_with_model_id must emit EXACTLY ONE egress descriptor (no miss, no double)"
+    );
+}
+
+/// Real-path smoke (privacy epic S2, #4436): a LOCAL runtime construction on the
+/// crate-native ChatModel path must NOT publish an `ExternalTransferPending`
+/// (nothing leaves the device — it is disclosed as non-external, no event).
+#[tokio::test]
+async fn create_chat_model_local_runtime_does_not_emit_egress_realpath() {
+    use crate::core::event_bus::{init_global, publish_global, DomainEvent, DEFAULT_CAPACITY};
+    use crate::openhuman::security::egress::EgressDescriptor;
+    use std::time::Duration;
+
+    init_global(DEFAULT_CAPACITY);
+    let mut rx = crate::core::event_bus::global().unwrap().raw_receiver();
+
+    let local_marker = "egress-local-realpath-marker";
+    let mut config = Config::default();
+    config.chat_provider = Some(format!("ollama:{local_marker}"));
+    let _ = create_chat_model_with_model_id("chat", &config, 0.7);
+
+    // Sentinel bounds the drain; if the local marker ever appears as an external
+    // transfer before it, the local-suppression contract is broken.
+    let sentinel = "egress-local-sentinel-end";
+    publish_global(DomainEvent::ExternalTransferPending {
+        descriptor: EgressDescriptor::network_fetch(sentinel),
+        thread_id: None,
+        client_id: None,
+    });
+
+    loop {
+        match tokio::time::timeout(Duration::from_secs(3), rx.recv()).await {
+            Ok(Ok(DomainEvent::ExternalTransferPending { descriptor, .. })) => {
+                assert_ne!(
+                    descriptor.service, local_marker,
+                    "local runtime must NOT publish ExternalTransferPending"
+                );
+                if descriptor.service == sentinel {
+                    break;
+                }
+            }
+            Ok(Ok(_)) => continue,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                panic!("event bus closed before sentinel arrived")
+            }
+            Err(_) => panic!("timed out before egress sentinel arrived"),
+        }
+    }
+}

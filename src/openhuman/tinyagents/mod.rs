@@ -142,11 +142,59 @@ pub(crate) struct ToolPolicyEnforcement {
 /// [`routes::route_fallback_policy`]); it is safe to enable now because
 /// `ReliableProvider` does *not* fail over across the registered workload-tier
 /// routes (chat→burst, reasoning→agentic, …) the way the harness registry can.
+/// Default per-turn wall-clock ceiling for an openhuman agent turn, in seconds
+/// (issue #4746). Applied as the harness `RunLimits::max_wall_clock_ms` so the
+/// loop interrupts a hung/slow model or tool/sub-agent call instead of parking
+/// forever with no terminal event. Deliberately generous — a normal turn, even
+/// a slow multi-step reasoning one, finishes well under it; this is a hang
+/// backstop, not a UX deadline. 10 minutes.
+const DEFAULT_AGENT_TURN_TIMEOUT_SECS: u64 = 600;
+
+/// Resolve the per-turn wall-clock ceiling in milliseconds for the harness
+/// policy. Reads `OPENHUMAN_AGENT_TURN_TIMEOUT_SECS` (falling back to
+/// [`DEFAULT_AGENT_TURN_TIMEOUT_SECS`]); `0` means "no ceiling" → `None`, which
+/// restores the previous unbounded behavior for callers that deliberately opt
+/// out (e.g. very long autonomous runs).
+fn agent_turn_wall_clock_ms() -> Option<u64> {
+    parse_agent_turn_wall_clock_ms(
+        std::env::var("OPENHUMAN_AGENT_TURN_TIMEOUT_SECS")
+            .ok()
+            .as_deref(),
+    )
+}
+
+/// Pure core of [`agent_turn_wall_clock_ms`]: map an optional
+/// `OPENHUMAN_AGENT_TURN_TIMEOUT_SECS` value to a wall-clock ceiling in
+/// milliseconds. An absent/unparseable value falls back to
+/// [`DEFAULT_AGENT_TURN_TIMEOUT_SECS`]; `0` yields `None` (unbounded opt-out).
+/// Kept env-free so it is deterministically unit-testable.
+fn parse_agent_turn_wall_clock_ms(env_value: Option<&str>) -> Option<u64> {
+    let secs = env_value
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_AGENT_TURN_TIMEOUT_SECS);
+    (secs > 0).then(|| secs.saturating_mul(1_000))
+}
+
 fn run_policy_for(max_iterations: usize, response_cache_enabled: bool) -> RunPolicy {
     let mut policy = RunPolicy::default();
     policy.limits.max_model_calls = max_iterations;
     policy.limits.max_tool_calls = max_iterations.saturating_mul(8).max(8);
     policy.limits.max_depth = MAX_SPAWN_DEPTH;
+    // Wall-clock ceiling for the whole turn (issue #4746). The harness bounds
+    // every individual model AND tool call by the run's *remaining* wall-clock
+    // budget (`with_call_budget` → `tokio::time::timeout`), but ONLY when a
+    // deadline is configured — with `max_wall_clock_ms = None` (the default)
+    // `call_budget()` returns `None` and each call is awaited UNBOUNDED. That is
+    // exactly how a turn shipped an empty reply: a hung/slow model stream or a
+    // delegated sub-agent tool call that never returned left the loop parked
+    // inside an await, so the between-call deadline check never ran and no
+    // terminal event (loop `Timeout` → chat_error) ever fired. Setting the cap
+    // here arms the harness's per-call timeout so a wedged call is interrupted
+    // mid-flight and the turn degrades gracefully. It also bounds sub-agents:
+    // the parent's remaining-budget wraps the sub-agent tool call, and a child
+    // turn with no per-run timeout inherits this policy-level cap. Generous by
+    // design (a backstop, not a UX deadline); env-overridable, `0` disables.
+    policy.limits.max_wall_clock_ms = agent_turn_wall_clock_ms();
     // Crate-owned retry (Phase 3a): mirror the former `ReliableProvider` schedule
     // (2 retries, 500 ms exponential backoff). `backoff_sleep` is on so a
     // transient 429/5xx actually waits before retrying, as it did before.
@@ -1280,34 +1328,50 @@ fn build_turn_models_crate(
             }
         };
 
-    let primary = build_primary(model)?;
+    // Build the primary, every workload-tier route, and the summarizer under one
+    // per-turn egress-dedup ledger: each managed construction resolves through the
+    // same `resolve_managed_backend` chokepoint and would otherwise publish a
+    // separate `ExternalTransferPending` for the same logical destination (codex
+    // P2, PR #4812). `dedup_turn_scope` collapses same-destination repeats to one
+    // disclosure per turn while still surfacing each distinct tier model.
+    #[allow(clippy::type_complexity)]
+    let (primary, routes, summarizer): (
+        Arc<dyn tinyagents::harness::model::ChatModel<()>>,
+        Vec<(String, Arc<dyn tinyagents::harness::model::ChatModel<()>>)>,
+        Arc<dyn tinyagents::harness::model::ChatModel<()>>,
+    ) = crate::openhuman::security::egress::dedup_turn_scope(|| {
+        let primary = build_primary(model)?;
 
-    // Additive workload-tier routes: one crate-native model per tier (skipping the
-    // turn's own model, which is registered as the default primary), each pinned to
-    // the tier alias so the crate registry resolves cross-route fallback across them.
-    let mut routes: Vec<(String, Arc<dyn tinyagents::harness::model::ChatModel<()>>)> = Vec::new();
-    for &tier in routes::WORKLOAD_ROUTE_TIERS {
-        if tier == model {
-            continue;
-        }
-        let tier_role = factory::role_for_model_tier(tier);
-        match factory::create_turn_chat_model(tier_role, config, tier, temperature) {
-            Ok(route_model) => routes.push((tier.to_string(), route_model)),
-            Err(e) => {
-                // A route that can't be built (e.g. an unconfigured BYOK tier) is
-                // skipped, not fatal — the primary still dispatches (parity with the
-                // `Provider` path, where an unresolved tier simply isn't registered).
-                tracing::debug!(
-                    route = tier,
-                    error = %e,
-                    "[models] skipping crate-native workload route that failed to build"
-                );
+        // Additive workload-tier routes: one crate-native model per tier (skipping the
+        // turn's own model, which is registered as the default primary), each pinned to
+        // the tier alias so the crate registry resolves cross-route fallback across them.
+        let mut routes: Vec<(String, Arc<dyn tinyagents::harness::model::ChatModel<()>>)> =
+            Vec::new();
+        for &tier in routes::WORKLOAD_ROUTE_TIERS {
+            if tier == model {
+                continue;
+            }
+            let tier_role = factory::role_for_model_tier(tier);
+            match factory::create_turn_chat_model(tier_role, config, tier, temperature) {
+                Ok(route_model) => routes.push((tier.to_string(), route_model)),
+                Err(e) => {
+                    // A route that can't be built (e.g. an unconfigured BYOK tier) is
+                    // skipped, not fatal — the primary still dispatches (parity with the
+                    // `Provider` path, where an unresolved tier simply isn't registered).
+                    tracing::debug!(
+                        route = tier,
+                        error = %e,
+                        "[models] skipping crate-native workload route that failed to build"
+                    );
+                }
             }
         }
-    }
 
-    // The summarizer is a distinct adapter instance (own empty error slot).
-    let summarizer = build_primary(model)?;
+        // The summarizer is a distinct adapter instance (own empty error slot).
+        let summarizer = build_primary(model)?;
+
+        anyhow::Ok((primary, routes, summarizer))
+    })?;
 
     Ok(TurnModels {
         primary,

@@ -21,6 +21,20 @@ fn noop_handler(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { Ok(Value::Null) })
 }
 
+/// Wrap raw controllers as [`GroupedController`]s (all `Platform`) so the
+/// `validate_registry` unit tests — which build hand-made `RegisteredController`
+/// lists — can feed the grouped-registry signature (#4796). The group is
+/// irrelevant to `validate_registry`, which only inspects `.controller.schema`.
+fn grouped(controllers: Vec<RegisteredController>) -> Vec<GroupedController> {
+    controllers
+        .into_iter()
+        .map(|controller| GroupedController {
+            group: DomainGroup::Platform,
+            controller,
+        })
+        .collect()
+}
+
 #[test]
 fn validate_registry_rejects_duplicate_namespace_function() {
     let declared = vec![schema("dup", "fn", vec![]), schema("dup", "fn", vec![])];
@@ -35,7 +49,7 @@ fn validate_registry_rejects_duplicate_namespace_function() {
         },
     ];
 
-    let err = validate_registry(&registered).expect_err("expected duplicate error");
+    let err = validate_registry(&grouped(registered)).expect_err("expected duplicate error");
     assert!(err.contains("duplicate registered controller `dup.fn`"));
 }
 
@@ -64,7 +78,7 @@ fn validate_registry_rejects_duplicate_required_inputs() {
         handler: noop_handler,
     }];
 
-    let err = validate_registry(&registered).expect_err("expected duplicate input");
+    let err = validate_registry(&grouped(registered)).expect_err("expected duplicate input");
     assert!(err.contains("duplicate required input `use_cache` in `doctor.models`"));
 }
 
@@ -82,7 +96,7 @@ fn validate_registry_accepts_valid_registry() {
             handler: noop_handler,
         })
         .collect::<Vec<_>>();
-    assert!(validate_registry(&registered).is_ok());
+    assert!(validate_registry(&grouped(registered)).is_ok());
 }
 
 #[test]
@@ -185,6 +199,39 @@ fn all_controller_schemas_matches_registered_count() {
     let schemas = all_controller_schemas();
     let controllers = all_registered_controllers();
     assert_eq!(schemas.len(), controllers.len());
+}
+
+/// With the `voice` feature on (the default), the voice + audio_toolkit
+/// controllers are compiled in and registered — the desktop build is
+/// byte-identical.
+#[test]
+#[cfg(feature = "voice")]
+fn voice_and_audio_controllers_registered_when_feature_on() {
+    let schemas = all_controller_schemas();
+    assert!(
+        schemas.iter().any(|s| s.namespace == "voice"),
+        "voice controllers must be registered when the `voice` feature is on"
+    );
+    assert!(
+        schemas.iter().any(|s| s.namespace == "audio_toolkit"),
+        "audio_toolkit controllers must be registered when the `voice` feature is on"
+    );
+}
+
+/// With the `voice` feature off, both domains are compiled out: their
+/// controllers never enter the registry, so voice/audio RPC methods are
+/// unknown-method and absent from `/schema`. This is the compile-time
+/// stub-facade correctness gate (see `openhuman::voice::stub`).
+#[test]
+#[cfg(not(feature = "voice"))]
+fn voice_and_audio_controllers_absent_when_feature_off() {
+    let schemas = all_controller_schemas();
+    assert!(
+        !schemas
+            .iter()
+            .any(|s| s.namespace == "voice" || s.namespace == "audio_toolkit"),
+        "voice/audio_toolkit controllers must be compiled out when the `voice` feature is off"
+    );
 }
 
 #[test]
@@ -522,7 +569,7 @@ fn validate_registry_rejects_empty_namespace() {
         schema: declared[0].clone(),
         handler: noop_handler,
     }];
-    let err = validate_registry(&registered).unwrap_err();
+    let err = validate_registry(&grouped(registered)).unwrap_err();
     assert!(err.contains("namespace must not be empty"));
 }
 
@@ -533,7 +580,7 @@ fn validate_registry_rejects_empty_function() {
         schema: declared[0].clone(),
         handler: noop_handler,
     }];
-    let err = validate_registry(&registered).unwrap_err();
+    let err = validate_registry(&grouped(registered)).unwrap_err();
     assert!(err.contains("function must not be empty"));
 }
 
@@ -546,7 +593,7 @@ fn validate_registry_rejects_whitespace_only_namespace() {
         schema: declared[0].clone(),
         handler: noop_handler,
     }];
-    let err = validate_registry(&registered).unwrap_err();
+    let err = validate_registry(&grouped(registered)).unwrap_err();
     assert!(err.contains("namespace must not be empty"));
 }
 
@@ -567,7 +614,7 @@ fn validate_registry_rejects_duplicate_registered_controllers() {
             handler: noop_handler,
         },
     ];
-    let err = validate_registry(&registered).unwrap_err();
+    let err = validate_registry(&grouped(registered)).unwrap_err();
     assert!(err.contains("duplicate registered controller `a.b`"));
 }
 
@@ -625,4 +672,197 @@ fn every_registered_controller_has_matching_declared_schema() {
         registered, declared,
         "registry/schema sets must be identical"
     );
+}
+
+// --- DomainSet registration filter (#4796) ------------------------------
+
+use crate::core::runtime::context::CoreContext;
+use crate::core::runtime::DomainSet;
+
+/// The [`DomainGroup`] a registered controller (agent-facing OR internal) is
+/// tagged with, looked up by its namespace. Test-only helper over the private
+/// grouped registry.
+fn group_for_namespace(ns: &str) -> Option<DomainGroup> {
+    registry()
+        .iter()
+        .chain(internal_registry().iter())
+        .find(|g| g.controller.schema.namespace == ns)
+        .map(|g| g.group)
+}
+
+#[test]
+fn full_registration_is_byte_identical() {
+    // With no ambient CoreContext (⇒ full, no filter), the public
+    // `all_registered_controllers()` must equal the raw grouped registry — same
+    // length AND same rpc-method-name sequence IN ORDER. This is the DoD (1)
+    // proof that wrapping every entry in a `GroupedController` + filtering by the
+    // ambient DomainSet changes neither the membership nor the ordering of the
+    // full() surface.
+    //
+    // The baseline is the raw `registry()` view rather than a checked-in method
+    // snapshot (a #4808 review suggestion): `all_registered_controllers()` and
+    // `registry()` are DIFFERENT code paths — the former exercises the ambient
+    // filter (`group_allowed`) and re-collects, the latter is the unfiltered
+    // source — so this asserts the filter is an order-preserving identity under
+    // full(). A frozen snapshot would instead ossify the controller list and
+    // force churn on every legitimate new controller; git history is the
+    // authoritative pre-#4796 baseline for "did the raw list itself change".
+    let filtered_methods: Vec<String> = all_registered_controllers()
+        .iter()
+        .map(|c| c.rpc_method_name())
+        .collect();
+    let raw_methods: Vec<String> = registry()
+        .iter()
+        .map(|g| g.controller.rpc_method_name())
+        .collect();
+
+    assert_eq!(
+        filtered_methods.len(),
+        raw_methods.len(),
+        "unfiltered all_registered_controllers() must equal raw registry length"
+    );
+    // Ordered comparison — NOT sorted. A reordering (or a drop/add) under full()
+    // would change dispatch/schema iteration order and must fail here.
+    assert_eq!(
+        filtered_methods, raw_methods,
+        "unfiltered rpc-method sequence must be byte-identical (order + membership) to the raw registry"
+    );
+}
+
+#[tokio::test]
+async fn harness_excludes_gated_namespaces() {
+    use std::collections::BTreeSet;
+
+    // Baseline (full, no scope) — every family present.
+    let full_ns: BTreeSet<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.namespace)
+        .collect();
+    assert!(full_ns.contains("flows"), "full() must expose flows");
+    assert!(full_ns.contains("voice"), "full() must expose voice");
+
+    let ctx = CoreContext::for_test(DomainSet::harness(), None);
+    let harness_ns: BTreeSet<&'static str> =
+        CoreContext::scope(ctx, async { all_controller_schemas() })
+            .await
+            .iter()
+            .map(|s| s.namespace)
+            .collect();
+
+    // Harness families remain.
+    for present in ["memory", "threads", "config", "security", "agent"] {
+        assert!(
+            harness_ns.contains(present),
+            "harness() must keep the `{present}` namespace"
+        );
+    }
+    // Gate families + platform-only namespaces are gone.
+    for absent in [
+        "flows",
+        "voice",
+        "skills",
+        "wallet",
+        "meet",
+        "mcp_clients",
+        "health",
+    ] {
+        assert!(
+            !harness_ns.contains(absent),
+            "harness() must omit the gated/platform `{absent}` namespace"
+        );
+    }
+    assert!(
+        harness_ns.len() < full_ns.len(),
+        "harness() must expose strictly fewer namespaces than full()"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_returns_none_for_gated_method() {
+    // A method whose group is gated OFF under the ambient DomainSet must
+    // dispatch as an unknown method (None) — indistinguishable from absent.
+    let gated_method = all_registered_controllers()
+        .into_iter()
+        .find(|c| c.schema.namespace == "flows")
+        .map(|c| c.rpc_method_name())
+        .expect("a flows.* method exists in the full registry");
+
+    let ctx = CoreContext::for_test(DomainSet::harness(), None);
+    let out = CoreContext::scope(ctx, try_invoke_registered_rpc(&gated_method, Map::new())).await;
+    assert!(
+        out.is_none(),
+        "gated method `{gated_method}` must dispatch as None under harness()"
+    );
+
+    // A harness-family method still routes (Some) — security.policy_info needs
+    // no workspace, so it is a clean positive control.
+    let ctx = CoreContext::for_test(DomainSet::harness(), None);
+    let out = CoreContext::scope(
+        ctx,
+        try_invoke_registered_rpc("openhuman.security_policy_info", Map::new()),
+    )
+    .await;
+    assert!(
+        out.is_some(),
+        "harness-family security.policy_info must still route under harness()"
+    );
+}
+
+#[tokio::test]
+async fn schema_lookup_is_gated_in_lockstep_with_dispatch() {
+    // #4808 review: `schema_for_rpc_method` must gate identically to
+    // `try_invoke_registered_rpc`, otherwise `invoke_method_inner` validates a
+    // gated method's params BEFORE the dispatch gate fires — returning the
+    // controller's validation error instead of method-not-found and leaking the
+    // hidden RPC surface. Prove the schema lookup returns None for a gated
+    // method under harness() (so no validation runs) while a harness-family
+    // method still resolves.
+    let gated_method = all_registered_controllers()
+        .into_iter()
+        .find(|c| c.schema.namespace == "flows")
+        .map(|c| c.rpc_method_name())
+        .expect("a flows.* method exists in the full registry");
+
+    // Full (no scope): the gated method's schema IS visible — proves the None
+    // below is the gate, not a missing method.
+    assert!(
+        schema_for_rpc_method(&gated_method).is_some(),
+        "under full() the schema for `{gated_method}` must resolve"
+    );
+
+    let ctx = CoreContext::for_test(DomainSet::harness(), None);
+    let gated_schema =
+        CoreContext::scope(ctx, async { schema_for_rpc_method(&gated_method) }).await;
+    assert!(
+        gated_schema.is_none(),
+        "schema lookup for gated `{gated_method}` must be None under harness() (no param validation, no surface leak)"
+    );
+
+    let ctx = CoreContext::for_test(DomainSet::harness(), None);
+    let kept_schema = CoreContext::scope(ctx, async {
+        schema_for_rpc_method("openhuman.security_policy_info")
+    })
+    .await;
+    assert!(
+        kept_schema.is_some(),
+        "harness-family security.policy_info schema must still resolve under harness()"
+    );
+}
+
+#[test]
+fn group_mapping_smoke() {
+    // Representative controller from each harness family maps to its group…
+    assert_eq!(group_for_namespace("memory"), Some(DomainGroup::Memory));
+    assert_eq!(group_for_namespace("threads"), Some(DomainGroup::Threads));
+    assert_eq!(group_for_namespace("config"), Some(DomainGroup::Config));
+    assert_eq!(group_for_namespace("security"), Some(DomainGroup::Security));
+    assert_eq!(group_for_namespace("agent"), Some(DomainGroup::Agent));
+    // …and a representative gated one maps to its gate group.
+    assert_eq!(group_for_namespace("flows"), Some(DomainGroup::Flows));
+    assert_eq!(group_for_namespace("skills"), Some(DomainGroup::Skills));
+    assert_eq!(group_for_namespace("voice"), Some(DomainGroup::Voice));
+    assert_eq!(group_for_namespace("wallet"), Some(DomainGroup::Web3));
+    assert_eq!(group_for_namespace("meet"), Some(DomainGroup::Meet));
+    // Internal-only registry is grouped too (mcp_audit → Mcp).
+    assert_eq!(group_for_namespace("mcp_audit"), Some(DomainGroup::Mcp));
 }

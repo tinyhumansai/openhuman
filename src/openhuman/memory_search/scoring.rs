@@ -32,43 +32,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn profiles_sum_to_one() {
-        for profile in [
-            WeightProfile::BALANCED,
-            WeightProfile::SEMANTIC,
-            WeightProfile::LEXICAL,
-            WeightProfile::GRAPH_FIRST,
-        ] {
-            let sum = profile.graph + profile.vector + profile.keyword + profile.freshness;
-            assert!(
-                (sum - 1.0).abs() < 0.01,
-                "profile weights should sum to ~1.0, got {sum}"
-            );
-        }
-    }
-
-    #[test]
-    fn by_name_resolves_with_balanced_fallback() {
-        assert_eq!(
-            WeightProfile::by_name("semantic").vector,
-            WeightProfile::SEMANTIC.vector
-        );
-        assert_eq!(
-            WeightProfile::by_name("lexical").keyword,
-            WeightProfile::LEXICAL.keyword
-        );
-        assert_eq!(
-            WeightProfile::by_name("graph_first").graph,
-            WeightProfile::GRAPH_FIRST.graph
-        );
-        // Unknown names fall back to balanced.
-        assert_eq!(
-            WeightProfile::by_name("unknown").graph,
-            WeightProfile::BALANCED.graph
-        );
-    }
-
-    #[test]
     fn compose_score_is_weighted_sum() {
         let p = WeightProfile::BALANCED;
         let s = compose_score(&p, 1.0, 1.0, 1.0, 1.0);

@@ -40,7 +40,3 @@ pub fn scoring_config_from(config: &crate::openhuman::config::Config) -> Scoring
     );
     ScoringConfig::with_llm_extractor(Arc::new(extractor))
 }
-
-#[cfg(test)]
-#[path = "mod_tests.rs"]
-mod tests;

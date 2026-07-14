@@ -578,7 +578,7 @@ async fn web_channel_public_paths_cover_validation_cancel_schema_and_event_bus()
         .expect("no in-flight cancel");
     assert_eq!(none, None);
 
-    let outcome = channel_web_cancel(" client ", " round15-thread ")
+    let outcome = channel_web_cancel(" client ", " round15-thread ", None)
         .await
         .expect("cancel rpc outcome");
     assert_eq!(outcome.value["cancelled"], false);

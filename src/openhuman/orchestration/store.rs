@@ -354,6 +354,18 @@ pub fn insert_message(conn: &Connection, m: &OrchestrationMessage) -> Result<boo
     Ok(changed > 0)
 }
 
+/// Clear a message's `event_kind` (set it NULL), making a previously hidden
+/// bookkeeping row visible again in the transcript / unread counts. Used to
+/// un-hide a `tool_completion` row whose forward to the hosted brain failed, so
+/// its result is not silently lost from the UI. Returns whether a row changed.
+pub fn clear_message_event_kind(conn: &Connection, id: &str) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE messages SET event_kind = NULL WHERE id = ?1",
+        params![id],
+    )?;
+    Ok(changed > 0)
+}
+
 /// Count persisted messages for a session (test/observability helper).
 pub fn count_messages(conn: &Connection, agent_id: &str, session_id: &str) -> Result<i64> {
     Ok(conn.query_row(
@@ -944,6 +956,30 @@ mod tests {
             assert!(!insert_message(conn, &msg("m1", "@a", "h1", 1))?);
             assert!(message_exists(conn, "m1")?);
             assert_eq!(count_messages(conn, "@a", "h1")?, 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn clear_message_event_kind_unhides_a_hidden_row() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_connection(tmp.path(), |conn| {
+            upsert_session(conn, &session("@a", "master", 1))?;
+            let hidden = OrchestrationMessage {
+                event_kind: Some("lifecycle".into()),
+                ..msg("tool-completion:cyc:1", "@a", "master", 1)
+            };
+            insert_message(conn, &hidden)?;
+            // Hidden from the transcript while event_kind is an excluded kind.
+            assert!(list_messages_by_session(conn, "master", 50, None)?.is_empty());
+            // Un-hiding it (clear event_kind) makes it visible again.
+            assert!(clear_message_event_kind(conn, "tool-completion:cyc:1")?);
+            let visible = list_messages_by_session(conn, "master", 50, None)?;
+            assert_eq!(visible.len(), 1);
+            assert_eq!(visible[0].id, "tool-completion:cyc:1");
+            // A non-existent id changes nothing.
+            assert!(!clear_message_event_kind(conn, "nope")?);
             Ok(())
         })
         .unwrap();

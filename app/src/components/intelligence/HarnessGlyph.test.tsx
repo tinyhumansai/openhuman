@@ -8,6 +8,8 @@ describe('HarnessGlyph', () => {
     ['claude', 'C'],
     ['codex', 'Cx'],
     ['gemini', 'G'],
+    ['cursor', 'Cu'],
+    ['windsurf', 'Ws'],
     ['openhuman', 'OH'],
   ])('renders the %s mark', (harness, label) => {
     render(<HarnessGlyph harness={harness} />);

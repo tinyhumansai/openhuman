@@ -128,11 +128,11 @@ pub struct ContextConfig {
     ///
     /// Read once at session/thread construction, so toggling it only
     /// affects threads started afterwards (the value is baked into the
-    /// frozen turn-1 context). Default: `true`. Env override:
-    /// `OPENHUMAN_SUPER_CONTEXT` (set to `0` to opt out). Surfaced in the
-    /// UI as the "super context" toggle next to the chat composer's
-    /// Quick/Reasoning mode switch, shown only on a fresh thread.
-    #[serde(default = "default_true")]
+    /// frozen turn-1 context). Default: `false` — it's an expensive pass, so
+    /// it's opt-in. Env override: `OPENHUMAN_SUPER_CONTEXT` (set to `1` to opt
+    /// in). Surfaced in the UI as the "super context" toggle next to the chat
+    /// composer's Quick/Reasoning mode switch, shown only on a fresh thread.
+    #[serde(default = "default_false")]
     pub super_context_enabled: bool,
 }
 
@@ -142,6 +142,10 @@ fn default_enabled() -> bool {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_false() -> bool {
+    false
 }
 
 fn default_microcompact_keep_recent() -> usize {
@@ -178,7 +182,7 @@ impl Default for ContextConfig {
             summarizer_model: None,
             prefer_markdown_tool_output: default_true(),
             compaction_enabled: default_true(),
-            super_context_enabled: default_true(),
+            super_context_enabled: default_false(),
         }
     }
 }

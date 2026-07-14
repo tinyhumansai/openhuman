@@ -322,6 +322,16 @@ async fn run_local_agent_and_forward(
                 body: body.clone(),
                 timestamp: now.clone(),
                 seq,
+                // Bookkeeping row: this raw `[local sub-agent … completed]` dump is
+                // forwarded to the brain (below) purely so it can synthesize a
+                // reply — the user reads that synthesized `send_dm` reply, not this.
+                // Tagging it with an excluded event_kind keeps the row (so `seq`
+                // stays allocated and the envelope forwards) but hides it from the
+                // master transcript, previews, and unread counts (store.rs filters
+                // out 'status'/'lifecycle'/'unknown'/'session_info'). Without this,
+                // a brain that spawns many sub-agents floods the chat with raw
+                // dumps. See list_messages_by_session / count_unread in store.rs.
+                event_kind: Some("lifecycle".to_string()),
                 ..Default::default()
             },
         )?;
@@ -340,7 +350,27 @@ async fn run_local_agent_and_forward(
         ts,
         "tool_completion",
     );
-    super::cloud::push_event(&config, &envelope).await?;
+    if let Err(e) = super::cloud::push_event(&config, &envelope).await {
+        // Forward failed (offline / signed out / retries exhausted): the brain
+        // never got this result and the completion row was persisted hidden, so
+        // it would vanish entirely. Un-hide it — it is now the only copy — and
+        // nudge the renderer so the user sees the result rather than losing it.
+        let completion_id = format!("tool-completion:{task_id}:{seq}");
+        if let Err(store_err) = super::store::with_connection(&config.workspace_dir, |conn| {
+            super::store::clear_message_event_kind(conn, &completion_id)
+        }) {
+            log::warn!(
+                target: LOG,
+                "[orchestration] run_local_agent.unhide_failed task={task_id}: {store_err}"
+            );
+        }
+        super::bus::notify_orchestration_message(
+            counterpart,
+            session_id,
+            super::types::ChatKind::Master.as_str(),
+        );
+        return Err(e);
+    }
     log::debug!(
         target: LOG,
         "[orchestration] run_local_agent.forwarded task={task_id} session={session_id} seq={seq} ok={ok}"
@@ -359,11 +389,54 @@ pub async fn handle_tool_call(data: &Value) -> Option<(String, Value)> {
             return None;
         }
     };
+    // Dedup redelivered side-effecting local-execution tools (run_local_agent):
+    // `orch:tool_call` is at-least-once, so the same call can arrive twice, and
+    // without this each redelivery re-spawns the sub-agent AND forwards another
+    // `tool_completion` — which wakes another brain cycle and can surface a
+    // duplicate reply. Read-only tools (device_status) are idempotent and left
+    // un-guarded. Mirrors the guard in `handle_send_dm`. A successful async ack
+    // stays latched (a redelivery re-acks without re-spawning); a claim whose
+    // dispatch FAILS is released below so the redelivery re-runs and returns the
+    // real error instead of a fabricated accept.
+    if super::exec_gate::is_local_execution_tool(&frame.name) && is_duplicate_call(&frame.call_id) {
+        log::debug!(
+            target: LOG,
+            "[orchestration] tool_call.duplicate call_id={} name={} (re-acking, no re-dispatch)",
+            frame.call_id,
+            frame.name
+        );
+        return Some((
+            frame.call_id.clone(),
+            tool_result_frame(
+                &frame.call_id,
+                true,
+                json!({ "accepted": true, "status": "running", "duplicate": true }),
+                None,
+            ),
+        ));
+    }
     let (ok, result, error) =
         match dispatch_device_tool(&frame.name, &frame.args, &frame.cycle_id).await {
             Ok(value) => (true, value, None),
             Err(e) => (false, Value::Null, Some(e)),
         };
+    // A claimed local-execution call whose dispatch FAILED — an A2A-gate denial
+    // (dispatch_device_tool restricts run_local_agent to Master cycles), an
+    // unknown cycle origin, or invalid args — must release its claim so an
+    // at-least-once redelivery re-runs it and returns the same real error. Left
+    // latched, the dedup fast-path above would fabricate an `accepted/running` ok
+    // for a call that never ran, masking the denial and stranding the brain on a
+    // `tool_completion` that never comes.
+    if !ok && super::exec_gate::is_local_execution_tool(&frame.name) {
+        // Diagnostic for the denied/invalid path; no raw args or error body.
+        log::warn!(
+            target: LOG,
+            "[orchestration] tool_call.dispatch_failed call_id={} name={} released_claim=true",
+            frame.call_id,
+            frame.name
+        );
+        release_call(&frame.call_id);
+    }
     Some((
         frame.call_id.clone(),
         tool_result_frame(&frame.call_id, ok, result, error.as_deref()),
@@ -776,5 +849,96 @@ mod tests {
             msg.contains("toolkit"),
             "expected toolkit error, got: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn duplicate_run_local_agent_tool_call_is_reacked_without_redispatch() {
+        // A redelivered run_local_agent call_id must NOT re-spawn the sub-agent:
+        // the guard re-acks accepted/running without dispatching (dispatch would
+        // run_local_agent → spawn → forward a duplicate tool_completion).
+        let call_id = "call-dup-run-local-agent-test";
+        assert!(
+            !is_duplicate_call(call_id),
+            "first claim is not a duplicate"
+        );
+        let frame = serde_json::json!({
+            "callId": call_id,
+            "name": "run_local_agent",
+            "cycleId": "cyc:openhuman:local:master:1",
+            "args": { "agent_id": "researcher", "prompt": "x" },
+        });
+        let (cid, result) = handle_tool_call(&frame).await.expect("frame parses");
+        assert_eq!(cid, call_id);
+        assert_eq!(result["ok"].as_bool(), Some(true));
+        assert_eq!(
+            result["result"]["duplicate"].as_bool(),
+            Some(true),
+            "redelivery re-acked as duplicate without re-dispatch"
+        );
+        release_call(call_id);
+    }
+
+    #[tokio::test]
+    async fn read_only_device_status_is_not_dedup_guarded() {
+        // Read-only tools are idempotent: even a previously-seen call_id still
+        // dispatches and returns real data — the guard is scoped to
+        // side-effecting local-execution tools, never device_status.
+        let call_id = "call-device-status-test";
+        is_duplicate_call(call_id); // claim it as if already seen
+        let frame = serde_json::json!({
+            "callId": call_id,
+            "name": "device_status",
+            "cycleId": "cyc:openhuman:local:master:1",
+            "args": {},
+        });
+        let (_, result) = handle_tool_call(&frame).await.expect("frame parses");
+        assert_eq!(result["ok"].as_bool(), Some(true));
+        assert!(
+            result["result"]["platform"].is_string(),
+            "real status returned, not the duplicate placeholder"
+        );
+        assert!(result["result"].get("duplicate").is_none());
+        release_call(call_id);
+    }
+
+    #[tokio::test]
+    async fn failed_run_local_agent_dispatch_releases_claim_for_redelivery() {
+        // A run_local_agent on a non-Master (e.g. A2A) cycle is denied by the
+        // gate. Its claim must be released so an at-least-once redelivery re-runs
+        // and is denied AGAIN — never fabricated as accepted/duplicate (which
+        // would strand the brain waiting on a tool_completion that never comes).
+        let call_id = "call-a2a-denied-release-test";
+        let frame = serde_json::json!({
+            "callId": call_id,
+            "name": "run_local_agent",
+            "cycleId": "cyc:openhuman:a2a:@peer:5", // unregistered → not Master → denied
+            "args": { "agent_id": "researcher", "prompt": "x" },
+        });
+        let (_, first) = handle_tool_call(&frame).await.expect("frame parses");
+        assert_eq!(
+            first["ok"].as_bool(),
+            Some(false),
+            "non-Master run_local_agent is denied"
+        );
+        // Redelivery: the failed claim was released, so it re-dispatches and is
+        // denied again — not the duplicate re-ack.
+        let (_, second) = handle_tool_call(&frame).await.expect("frame parses");
+        assert_eq!(
+            second["ok"].as_bool(),
+            Some(false),
+            "redelivery re-denied, not fabricated-accepted"
+        );
+        assert!(second["result"].get("duplicate").is_none());
+        // Same real denial both times — not a fabricated/different error.
+        assert_eq!(first["error"], second["error"]);
+        assert!(
+            second["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("restricted to the Master chat"),
+            "the real non-Master denial: {}",
+            second["error"]
+        );
+        release_call(call_id);
     }
 }

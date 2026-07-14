@@ -81,15 +81,15 @@ fn autocompact_enabled_requires_both_master_and_autocompact_flags() {
 
 #[test]
 fn super_context_enabled_reflects_config() {
-    // Default config: on.
-    let on = default_manager();
-    assert!(on.super_context_enabled());
-
-    // Explicitly disabled in config → getter reports off.
-    let mut config = ContextConfig::default();
-    config.super_context_enabled = false;
-    let off = manager_with_config(&config);
+    // Default config: off (it's an expensive opt-in pass).
+    let off = default_manager();
     assert!(!off.super_context_enabled());
+
+    // Explicitly enabled in config → getter reports on.
+    let mut config = ContextConfig::default();
+    config.super_context_enabled = true;
+    let on = manager_with_config(&config);
+    assert!(on.super_context_enabled());
 }
 
 #[test]

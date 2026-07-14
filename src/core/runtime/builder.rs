@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
+use crate::core::all::DomainGroup;
 use crate::core::jsonrpc::{self, EmbeddedReadySignal};
 use crate::core::runtime::context::CoreContext;
 use crate::core::types::HostKind;
@@ -110,6 +111,144 @@ impl ServiceSet {
     }
 }
 
+/// Selects which domain *families* exist at runtime on a [`CoreRuntime`] (#4796).
+///
+/// Sibling of [`ServiceSet`]: where `ServiceSet` selects background services and
+/// transports, `DomainSet` selects which controller/tool/store/subscriber
+/// surfaces are live. Each flag is an independent [`DomainGroup`]; presets cover
+/// the common hosts:
+/// [`DomainSet::full`] (every family — today's behavior, the default),
+/// [`DomainSet::harness`] (agent + memory + threads + config + security only —
+/// the embeddable agent core used by `examples/embed_headless.rs`), and
+/// [`DomainSet::none`] (all domain families disabled; transport built-ins and
+/// always-on core infrastructure still run).
+///
+/// `full()` is byte-identical to pre-#4796 registration, so the desktop shell
+/// and standalone CLI are unchanged. Per-gate Cargo `[features]` (children
+/// #4797–#4804) narrow the *compile-time* surface further; this struct is the
+/// *runtime* axis they compose with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DomainSet {
+    /// Agent definition/registry/experience, orchestration, session DB/import.
+    pub agent: bool,
+    /// Documents, knowledge graph, memory tree/sources/sync/diff/goals.
+    pub memory: bool,
+    /// Conversation threads, per-thread goals, todos.
+    pub threads: bool,
+    /// Persisted runtime configuration.
+    pub config: bool,
+    /// Encryption, keyring consent, security policy, approval, plan-review.
+    pub security: bool,
+    /// Saved automation workflows (tinyflows graphs).
+    pub flows: bool,
+    /// SKILL.md skills, skill runtime, skill registry.
+    pub skills: bool,
+    /// MCP client subsystem (Smithery registry, local servers, audit).
+    pub mcp: bool,
+    /// Google Meet join, agent meetings, live meet-agent loop.
+    pub meet: bool,
+    /// Messaging channels + webview bridges (web channel, whatsapp data, …).
+    pub channels: bool,
+    /// Wallet, high-level web3 surface, x402 machine payments.
+    pub web3: bool,
+    /// Speech-to-text / text-to-speech, audio toolkit.
+    pub voice: bool,
+    /// Image/video media generation. NOTE: today this gates only the
+    /// `media_generate_*` **agent tools** — no controller/store/subscriber is
+    /// tagged `Media` (there is no `media` RPC namespace yet), so a custom set
+    /// with `media: false, platform: true` drops the media tools while any
+    /// future backing controller would stay live. Fold the media-generation
+    /// controller into this group when it lands.
+    pub media: bool,
+    /// Everything not in a named family — always on in `full()`.
+    pub platform: bool,
+}
+
+impl DomainSet {
+    /// Every family on — today's behavior and the [`CoreBuilder`] default.
+    /// Registration is byte-identical to pre-#4796.
+    pub fn full() -> Self {
+        Self {
+            agent: true,
+            memory: true,
+            threads: true,
+            config: true,
+            security: true,
+            flows: true,
+            skills: true,
+            mcp: true,
+            meet: true,
+            channels: true,
+            web3: true,
+            voice: true,
+            media: true,
+            platform: true,
+        }
+    }
+
+    /// The embeddable agent core: agent + memory + threads + config + security.
+    /// Every gate family AND `platform` are off. Used by
+    /// `examples/embed_headless.rs`.
+    pub fn harness() -> Self {
+        Self {
+            agent: true,
+            memory: true,
+            threads: true,
+            config: true,
+            security: true,
+            flows: false,
+            skills: false,
+            mcp: false,
+            meet: false,
+            channels: false,
+            web3: false,
+            voice: false,
+            media: false,
+            platform: false,
+        }
+    }
+
+    /// Nothing on — every family disabled.
+    pub fn none() -> Self {
+        Self {
+            agent: false,
+            memory: false,
+            threads: false,
+            config: false,
+            security: false,
+            flows: false,
+            skills: false,
+            mcp: false,
+            meet: false,
+            channels: false,
+            web3: false,
+            voice: false,
+            media: false,
+            platform: false,
+        }
+    }
+
+    /// Whether the given [`DomainGroup`] is enabled in this set.
+    pub fn allows(&self, group: DomainGroup) -> bool {
+        match group {
+            DomainGroup::Agent => self.agent,
+            DomainGroup::Memory => self.memory,
+            DomainGroup::Threads => self.threads,
+            DomainGroup::Config => self.config,
+            DomainGroup::Security => self.security,
+            DomainGroup::Flows => self.flows,
+            DomainGroup::Skills => self.skills,
+            DomainGroup::Mcp => self.mcp,
+            DomainGroup::Meet => self.meet,
+            DomainGroup::Channels => self.channels,
+            DomainGroup::Web3 => self.web3,
+            DomainGroup::Voice => self.voice,
+            DomainGroup::Media => self.media,
+            DomainGroup::Platform => self.platform,
+        }
+    }
+}
+
 /// How the per-process RPC bearer token is seeded.
 pub enum TokenSource {
     /// An in-memory bearer supplied by the embedder (the Tauri shell hands its
@@ -129,18 +268,20 @@ pub struct CoreBuilder {
     host_kind: HostKind,
     token: TokenSource,
     services: ServiceSet,
+    domains: DomainSet,
     host: Option<String>,
     port: Option<u16>,
 }
 
 impl CoreBuilder {
-    /// Start a builder for the given host kind. Defaults: [`TokenSource::EnvOrFile`]
-    /// and [`ServiceSet::desktop`].
+    /// Start a builder for the given host kind. Defaults: [`TokenSource::EnvOrFile`],
+    /// [`ServiceSet::desktop`], and [`DomainSet::full`].
     pub fn new(host_kind: HostKind) -> Self {
         Self {
             host_kind,
             token: TokenSource::EnvOrFile,
             services: ServiceSet::desktop(),
+            domains: DomainSet::full(),
             host: None,
             port: None,
         }
@@ -149,6 +290,14 @@ impl CoreBuilder {
     /// Choose which background services / transports [`CoreRuntime::serve`] runs.
     pub fn services(mut self, services: ServiceSet) -> Self {
         self.services = services;
+        self
+    }
+
+    /// Choose which domain families exist at runtime (default [`DomainSet::full`]).
+    /// `harness()` builds the embeddable agent core; `none()` disables every
+    /// domain family while retaining transport built-ins and core infrastructure.
+    pub fn domains(mut self, domains: DomainSet) -> Self {
+        self.domains = domains;
         self
     }
 
@@ -178,7 +327,7 @@ impl CoreBuilder {
     /// Stage A).
     pub async fn build(self) -> anyhow::Result<CoreRuntime> {
         let (ctx, has_operator_token, config) =
-            CoreContext::init(self.host_kind, &self.token).await?;
+            CoreContext::init(self.host_kind, &self.token, self.domains).await?;
 
         Ok(CoreRuntime {
             ctx,
@@ -424,7 +573,83 @@ impl CoreRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::ServiceSet;
+    use super::{DomainSet, ServiceSet};
+    use crate::core::all::DomainGroup;
+
+    #[test]
+    fn domain_set_presets_have_expected_flags() {
+        // full() = every family on (byte-identical registration).
+        let full = DomainSet::full();
+        for group in [
+            DomainGroup::Agent,
+            DomainGroup::Memory,
+            DomainGroup::Threads,
+            DomainGroup::Config,
+            DomainGroup::Security,
+            DomainGroup::Flows,
+            DomainGroup::Skills,
+            DomainGroup::Mcp,
+            DomainGroup::Meet,
+            DomainGroup::Channels,
+            DomainGroup::Web3,
+            DomainGroup::Voice,
+            DomainGroup::Media,
+            DomainGroup::Platform,
+        ] {
+            assert!(full.allows(group), "full() must allow {group:?}");
+        }
+
+        // harness() = exactly agent/memory/threads/config/security on; all gate
+        // families AND platform off.
+        let harness = DomainSet::harness();
+        for on in [
+            DomainGroup::Agent,
+            DomainGroup::Memory,
+            DomainGroup::Threads,
+            DomainGroup::Config,
+            DomainGroup::Security,
+        ] {
+            assert!(harness.allows(on), "harness() must allow {on:?}");
+        }
+        for off in [
+            DomainGroup::Flows,
+            DomainGroup::Skills,
+            DomainGroup::Mcp,
+            DomainGroup::Meet,
+            DomainGroup::Channels,
+            DomainGroup::Web3,
+            DomainGroup::Voice,
+            DomainGroup::Media,
+            DomainGroup::Platform,
+        ] {
+            assert!(!harness.allows(off), "harness() must NOT allow {off:?}");
+        }
+
+        // none() = every family off.
+        let none = DomainSet::none();
+        for group in [
+            DomainGroup::Agent,
+            DomainGroup::Memory,
+            DomainGroup::Threads,
+            DomainGroup::Config,
+            DomainGroup::Security,
+            DomainGroup::Flows,
+            DomainGroup::Skills,
+            DomainGroup::Mcp,
+            DomainGroup::Meet,
+            DomainGroup::Channels,
+            DomainGroup::Web3,
+            DomainGroup::Voice,
+            DomainGroup::Media,
+            DomainGroup::Platform,
+        ] {
+            assert!(!none.allows(group), "none() must NOT allow {group:?}");
+        }
+
+        // Spot-check the field/group wiring is not transposed.
+        assert!(DomainSet::harness().allows(DomainGroup::Memory));
+        assert!(!DomainSet::harness().allows(DomainGroup::Web3));
+    }
 
     #[test]
     fn boot_jobs_are_independent_from_runtime_service_flags() {

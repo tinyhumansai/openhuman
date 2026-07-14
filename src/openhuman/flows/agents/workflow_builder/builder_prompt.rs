@@ -8,7 +8,7 @@
 //! strings and relying on the chat orchestrator to route them.
 //!
 //! Persistence contract: every mode is PROPOSE-ONLY — saving always stays
-//! behind the user's explicit action (the review card's Accept, then the
+//! behind the user's explicit action (the copilot panel's Accept, then the
 //! canvas's own Save). [`BuildMode::Build`] is the instant-create path (the
 //! host already made the blank flow), so its brief injects that flow id as
 //! future-turn context but explicitly forbids `save_workflow` on this turn:
@@ -30,8 +30,9 @@ pub enum BuildMode {
     /// Diagnose a failed run and propose a corrected graph.
     Repair,
     /// Instant-create: the flow already exists (blank), so build → dry-run →
-    /// propose against `flow_id`. Persistence still waits on the user's
-    /// explicit Accept + Save; the agent must NOT `save_workflow` here.
+    /// propose against `flow_id`. Persistence still waits on the copilot
+    /// panel's Accept + the canvas's Save; the agent must NOT `save_workflow`
+    /// here.
     Build,
 }
 
@@ -101,9 +102,9 @@ const DIRECTIVE_REVISE: &str = "Revise this tinyflows automation and return the 
 
 const DIRECTIVE_BUILD_PROPOSE_ONLY: &str = "Build this tinyflows automation END-TO-END and return the workflow \
      proposal. The flow already exists (created blank just now) — design the graph and verify it with \
-     dry_run_workflow, then return the proposal for me to review. Do NOT save_workflow in this turn: I will \
-     Accept the proposal explicitly and the canvas's Save persists it. Do not enable, disable, or run_flow \
-     anything unless I explicitly confirm first.";
+     dry_run_workflow, then return the proposal for me to review. Do NOT save_workflow in this turn — \
+     I will review the proposal in the copilot panel, accept it onto the canvas draft, and save it \
+     myself. Do not enable, disable, or run_flow anything unless I explicitly confirm first.";
 
 /// Serialize a graph compactly for injection as agent context.
 fn serialize_graph(graph: &Value) -> String {
@@ -252,8 +253,8 @@ mod tests {
         // Regression for #4596: the instant-create build turn must NOT
         // instruct the agent to `save_workflow`. Rejecting the proposal has
         // to leave the created-blank flow's persisted graph untouched, so
-        // persistence stays behind the user's explicit Accept + Save. The
-        // flow id is still injected as context for future turns.
+        // persistence stays behind the copilot panel's Accept + the canvas's
+        // Save. The flow id is still injected as context for future turns.
         let mut r = req(BuildMode::Build);
         r.flow_id = Some("flow_9".into());
         r.graph = Some(json!({ "nodes": [], "edges": [] }));
@@ -275,6 +276,15 @@ mod tests {
             assert!(
                 !p.contains(banned),
                 "build directive must not carry auto-save phrasing `{banned}` (#4596)"
+            );
+        }
+        // Negative (B27): the old phantom "review card" phrasing must not
+        // survive — the agent echoed this verbatim to users, contradicting
+        // its own auto-save behavior.
+        for banned in ["review card", "Accept the proposal explicitly"] {
+            assert!(
+                !p.contains(banned),
+                "build directive must not carry phantom review-card phrasing `{banned}` (B27)"
             );
         }
         // Context is still injected so the user can later ask the agent to

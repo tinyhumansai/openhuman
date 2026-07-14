@@ -58,96 +58,9 @@ interface DevGroup {
 //   → Settings home (Assistant group)
 // ---------------------------------------------------------------------------
 
-const knowledgeMemoryGroup: DevGroup = {
-  labelKey: 'settings.devGroups.knowledgeMemory',
-  items: [
-    {
-      // intelligence appears only once here (Council duplicate removed).
-      id: 'intelligence',
-      titleKey: 'settings.developerMenu.intelligence.title',
-      descriptionKey: 'settings.developerMenu.intelligence.desc',
-      route: 'intelligence',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'memory-data',
-      titleKey: 'devOptions.memoryInspection',
-      descriptionKey: 'devOptions.memoryInspectionDesc',
-      route: 'memory-data',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'memory-debug',
-      titleKey: 'devOptions.debugPanels',
-      descriptionKey: 'devOptions.debugPanelsDesc',
-      route: 'memory-debug',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'analysis-views',
-      titleKey: 'settings.analysisViews.title',
-      descriptionKey: 'settings.analysisViews.menuDesc',
-      route: 'analysis-views',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-          />
-        </svg>
-      ),
-    },
-  ],
-};
-
 const agentDebugGroup: DevGroup = {
   labelKey: 'settings.devGroups.agentsAutonomy',
   items: [
-    {
-      id: 'tool-policy-diagnostics',
-      titleKey: 'devOptions.diagnostics',
-      descriptionKey: 'devOptions.toolPolicyDiagnosticsDesc',
-      route: 'tool-policy-diagnostics',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 17v-5a2 2 0 012-2h2a2 2 0 012 2v5m-8 0h8m-8 0H7a2 2 0 01-2-2V7a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2h-2"
-          />
-        </svg>
-      ),
-    },
     {
       id: 'approval-history',
       titleKey: 'settings.approvalHistory.title',
@@ -160,38 +73,6 @@ const agentDebugGroup: DevGroup = {
             strokeLinejoin="round"
             strokeWidth={2}
             d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'agent-chat',
-      titleKey: 'settings.developerMenu.agentChat.title',
-      descriptionKey: 'settings.developerMenu.agentChat.desc',
-      route: 'agent-chat',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'local-model-debug',
-      titleKey: 'settings.developerMenu.localModelDebug.title',
-      descriptionKey: 'settings.developerMenu.localModelDebug.desc',
-      route: 'local-model-debug',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
           />
         </svg>
       ),
@@ -225,22 +106,6 @@ const modelsDebugGroup: DevGroup = {
   labelKey: 'settings.devGroups.modelsInference',
   items: [
     {
-      id: 'model-health',
-      titleKey: 'settings.modelHealth.title',
-      descriptionKey: 'settings.modelHealth.desc',
-      route: 'model-health',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-          />
-        </svg>
-      ),
-    },
-    {
       id: 'agentbox',
       titleKey: 'settings.agentbox.title',
       descriptionKey: 'settings.agentbox.desc',
@@ -273,22 +138,6 @@ const modelsDebugGroup: DevGroup = {
       ),
     },
     {
-      id: 'voice-debug',
-      titleKey: 'settings.developerMenu.voiceDebug.title',
-      descriptionKey: 'settings.developerMenu.voiceDebug.desc',
-      route: 'voice-debug',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-          />
-        </svg>
-      ),
-    },
-    {
       id: 'autocomplete-debug',
       titleKey: 'settings.developerMenu.autocomplete.title',
       descriptionKey: 'settings.developerMenu.autocomplete.desc',
@@ -311,22 +160,6 @@ const automationDebugGroup: DevGroup = {
   labelKey: 'settings.devGroups.automationIntegrations',
   items: [
     {
-      id: 'tasks',
-      titleKey: 'settings.developerMenu.tasks.title',
-      descriptionKey: 'settings.developerMenu.tasks.desc',
-      route: 'tasks',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-6 0h.01M12 16h3m-6 0h.01"
-          />
-        </svg>
-      ),
-    },
-    {
       id: 'cron-jobs',
       titleKey: 'settings.developerMenu.cronJobs.title',
       descriptionKey: 'settings.developerMenu.cronJobs.desc',
@@ -338,38 +171,6 @@ const automationDebugGroup: DevGroup = {
             strokeLinejoin="round"
             strokeWidth={2}
             d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'composio-triggers',
-      titleKey: 'settings.developerMenu.composio.title',
-      descriptionKey: 'settings.developerMenu.composio.desc',
-      route: 'composio-triggers',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M13 10V3L4 14h7v7l9-11h-7z"
-          />
-        </svg>
-      ),
-    },
-    {
-      id: 'webhooks-debug',
-      titleKey: 'settings.developerMenu.webhooks.title',
-      descriptionKey: 'settings.developerMenu.webhooks.desc',
-      route: 'webhooks-debug',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M13.828 10.172a4 4 0 010 5.656l-2 2a4 4 0 01-5.656-5.656l1-1m5-5a4 4 0 015.656 5.656l-1 1m-5 5l5-5"
           />
         </svg>
       ),
@@ -390,28 +191,28 @@ const automationDebugGroup: DevGroup = {
         </svg>
       ),
     },
-    {
-      id: 'dev-workflow',
-      titleKey: 'settings.developerMenu.devWorkflow.title',
-      descriptionKey: 'settings.developerMenu.devWorkflow.desc',
-      route: 'dev-workflow',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-          />
-        </svg>
-      ),
-    },
   ],
 };
 
 const diagnosticsLogsGroup: DevGroup = {
   labelKey: 'settings.devGroups.diagnosticsLogs',
   items: [
+    {
+      id: 'tool-policy-diagnostics',
+      titleKey: 'devOptions.diagnostics',
+      descriptionKey: 'devOptions.toolPolicyDiagnosticsDesc',
+      route: 'tool-policy-diagnostics',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9 17v-5a2 2 0 012-2h2a2 2 0 012 2v5m-8 0h8m-8 0H7a2 2 0 01-2-2V7a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2h-2"
+          />
+        </svg>
+      ),
+    },
     {
       id: 'event-log',
       titleKey: 'settings.developerMenu.eventLog.title',
@@ -449,7 +250,6 @@ const diagnosticsLogsGroup: DevGroup = {
 
 /** All debug-only groups in display order */
 const DEV_GROUPS: DevGroup[] = [
-  knowledgeMemoryGroup,
   agentDebugGroup,
   modelsDebugGroup,
   automationDebugGroup,

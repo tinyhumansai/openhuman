@@ -666,6 +666,42 @@ fn enforce_local_only_inference(role: &str, provider: &str) -> anyhow::Result<()
     }
 }
 
+/// Egress spine (privacy epic S2, #4436): emit an [`EgressDescriptor`] for a
+/// concrete inference provider string. `provider` is expected to be already
+/// resolved (no `""` / `"cloud"` / BYOK sentinels — those are handled before
+/// this is called). Local runtimes are marked non-external, so
+/// [`emit_external_transfer`](crate::openhuman::security::egress::emit_external_transfer)
+/// discloses them without firing the external-transfer event.
+fn emit_inference_egress(role: &str, provider: &str) {
+    let p = provider.trim();
+    if p.is_empty() || p == "cloud" {
+        // Defensive: a sentinel would re-resolve on recursion; don't emit here.
+        return;
+    }
+    if p == PROVIDER_OPENHUMAN {
+        // Managed backend is emitted centrally in `resolve_managed_backend` (the
+        // universal managed funnel shared by the Provider AND crate-native
+        // ChatModel/turn paths). Skipping here avoids a double-emit when the
+        // Provider path builds the managed backend.
+        return;
+    }
+    let is_local = crate::openhuman::inference::local::profile::is_local_provider_string(p);
+    let (slug, model) = match p.split_once(':') {
+        Some((s, m)) if !s.trim().is_empty() => (s.trim().to_string(), m.trim().to_string()),
+        _ => (p.to_string(), String::new()),
+    };
+    // Fall back to the workload role when the provider string carries no model
+    // component (e.g. a bare `"openhuman"` / `"ollama"` slug).
+    let service = if model.is_empty() {
+        role.to_string()
+    } else {
+        model
+    };
+    crate::openhuman::security::egress::emit_external_transfer(
+        crate::openhuman::security::egress::EgressDescriptor::inference(slug, service, !is_local),
+    );
+}
+
 /// Build a `(Provider, model)` for the given workload role.
 pub fn create_chat_provider(
     role: &str,
@@ -754,6 +790,15 @@ pub fn create_chat_provider_from_string(
     {
         verify_session_active(config)?;
     }
+
+    // Egress spine (privacy epic S2, #4436): `p` is a concrete external provider
+    // string (sentinels resolved / BYOK bailed / `PROVIDER_OPENHUMAN` returned
+    // above, and it self-emits via `resolve_managed_backend`). Emit the descriptor
+    // only after the session gate has passed — an external provider that fails
+    // `verify_session_active` never sends, so disclosing it would be a false
+    // transfer (coderabbit, PR #4812). Local runtimes are disclosed as
+    // non-external and never fire the pending event (see `emit_external_transfer`).
+    emit_inference_egress(role, p);
 
     if let Some(model_with_temp) =
         p.strip_prefix(crate::openhuman::inference::provider::claude_code::PROVIDER_PREFIX)
@@ -1350,6 +1395,18 @@ fn resolve_managed_backend(
             }
         }
     };
+    // Egress spine (privacy epic S2, #4436): `resolve_managed_backend` is the
+    // universal chokepoint for EVERY managed-backend inference construction —
+    // the legacy Provider path (`make_openhuman_backend`), the crate-native
+    // ChatModel path (`make_openhuman_backend_model`), and both turn paths
+    // (`create_turn_chat_model[_from_string]_with_native_tools`) resolve here.
+    // Emitting once here guarantees the DEFAULT managed chat turn — which
+    // post-#4784 bypasses the Provider path entirely — still discloses egress.
+    // The Provider-path top-level emit skips `PROVIDER_OPENHUMAN` so this is the
+    // single managed emit (see `emit_inference_egress`).
+    crate::openhuman::security::egress::emit_external_transfer(
+        crate::openhuman::security::egress::EgressDescriptor::inference("openhuman", &model, true),
+    );
     Ok((
         OpenHumanBackendProvider::new(config.api_url.as_deref(), &options),
         model,
@@ -1587,6 +1644,14 @@ fn try_create_local_runtime_chat_model_from_string(
             return Some(Err(e));
         }
     }
+
+    // Egress spine (privacy epic S2, #4436): committed to a local runtime here
+    // (past the non-local `None` return + access gates). Disclose it as
+    // NON-external — local inference never leaves the device, so
+    // `emit_external_transfer` records it without firing a pending event. This
+    // is the single local chokepoint for every crate-native ChatModel/turn
+    // entry (the Provider path's local builders emit via `emit_inference_egress`).
+    emit_inference_egress(role, &p);
 
     let unsupported = config.temperature_unsupported_models.clone();
     let empty_model_err = |p: &str, form: &str| {
@@ -2573,6 +2638,19 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
             CompatAuthStyle::Bearer
         }
     };
+
+    // Egress spine (privacy epic S2, #4436): committed to a BYOK cloud slug here
+    // — past the managed/bespoke/OpenhumanJwt `None` returns and the access
+    // gates, so this constructs. Disclose as external. Single cloud chokepoint
+    // for every crate-native ChatModel/turn entry (the Provider path's cloud
+    // builder emits via `emit_inference_egress`).
+    crate::openhuman::security::egress::emit_external_transfer(
+        crate::openhuman::security::egress::EgressDescriptor::inference(
+            &slug,
+            &effective_model,
+            true,
+        ),
+    );
 
     let unsupported = config.temperature_unsupported_models.clone();
     let chat =

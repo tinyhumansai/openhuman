@@ -208,7 +208,7 @@ struct SessionSummary {
     session_id: String,
     agent_id: String,
     source: String,
-    /// The emitting harness (claude/codex/gemini) when this is an external agent
+    /// The emitting harness (claude/codex/gemini/cursor/windsurf) when this is an external agent
     /// instance; absent for the pinned master/subconscious/user-created windows.
     #[serde(skip_serializing_if = "Option::is_none")]
     harness_type: Option<String>,
@@ -304,11 +304,15 @@ fn is_active(last_message_at: &str) -> bool {
 }
 
 /// The harness provider for a session, when its `source` names one. Session
-/// windows persist the emitting harness (claude/codex/gemini) in `source` (see
+/// windows persist the emitting harness (claude/codex/gemini/cursor/windsurf) in `source` (see
 /// `ingest.rs`); the sentinel windows (master/subconscious/user_created/
 /// orchestration) carry no harness and yield `None`.
 fn harness_type_for(source: &str) -> Option<String> {
-    matches!(source, "claude" | "codex" | "gemini").then(|| source.to_string())
+    matches!(
+        source,
+        "claude" | "codex" | "gemini" | "cursor" | "windsurf"
+    )
+    .then(|| source.to_string())
 }
 
 /// Coarse instance status for the roster dot. Reads the persisted v2 run-state
@@ -1248,6 +1252,8 @@ mod tests {
         assert_eq!(harness_type_for("claude").as_deref(), Some("claude"));
         assert_eq!(harness_type_for("codex").as_deref(), Some("codex"));
         assert_eq!(harness_type_for("gemini").as_deref(), Some("gemini"));
+        assert_eq!(harness_type_for("cursor").as_deref(), Some("cursor"));
+        assert_eq!(harness_type_for("windsurf").as_deref(), Some("windsurf"));
         // Sentinel / origin sources are not harnesses.
         assert_eq!(harness_type_for("master"), None);
         assert_eq!(harness_type_for("user_created"), None);

@@ -83,6 +83,14 @@ impl EmbeddingProvider for OpenHumanCloudEmbedding {
     }
 
     async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+        // Egress spine (privacy epic S2, #4436): the input texts leave the
+        // device for the cloud embedding backend — disclose before the request.
+        crate::openhuman::security::egress::emit_external_transfer(
+            crate::openhuman::security::egress::EgressDescriptor::embedding(
+                "cloud",
+                self.inner.model_id(),
+            ),
+        );
         self.inner.embed(texts).await
     }
 }

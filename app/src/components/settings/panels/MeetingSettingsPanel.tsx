@@ -1,5 +1,5 @@
 import debug from 'debug';
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
@@ -43,7 +43,13 @@ const AUTO_SUMMARIZE_LABEL_KEY: Record<MeetAutoSummarizePolicy, string> = {
  * transcript ingestion. The orchestrator-handoff privacy gate stays in the
  * Privacy panel and is intentionally not duplicated here.
  */
-const MeetingSettingsPanel = () => {
+interface MeetingSettingsPanelProps {
+  /** When true, render without the SettingsPanel chrome (used when embedded in
+   *  the Connections meetings tab under the meetings list). */
+  embedded?: boolean;
+}
+
+const MeetingSettingsPanel = ({ embedded = false }: MeetingSettingsPanelProps = {}) => {
   const { t } = useT();
 
   const [isLoading, setIsLoading] = useState(isTauri());
@@ -140,106 +146,106 @@ const MeetingSettingsPanel = () => {
     void persist({ ingest_backend_transcripts: next }, () => setIngestTranscripts(prev));
   };
 
-  if (!isTauri()) {
-    return (
-      <SettingsPanel description={t('settings.meetings.menuDesc')}>
-        <p className="text-sm text-content-muted">{t('settings.meetings.desktopOnly')}</p>
+  const wrap = (node: ReactNode, testId?: string) =>
+    embedded ? (
+      <div data-testid={testId ? `${testId}-embedded` : undefined}>{node}</div>
+    ) : (
+      <SettingsPanel description={t('settings.meetings.menuDesc')} testId={testId}>
+        {node}
       </SettingsPanel>
     );
+
+  if (!isTauri()) {
+    return wrap(<p className="text-sm text-content-muted">{t('settings.meetings.desktopOnly')}</p>);
   }
 
   if (isLoading) {
-    return (
-      <SettingsPanel description={t('settings.meetings.menuDesc')}>
-        <p className="text-sm text-content-muted">{t('settings.meetings.loading')}</p>
-      </SettingsPanel>
-    );
+    return wrap(<p className="text-sm text-content-muted">{t('settings.meetings.loading')}</p>);
   }
 
-  return (
-    <SettingsPanel description={t('settings.meetings.menuDesc')} testId="meeting-settings-panel">
-      <>
-        {/* Auto-join policy */}
-        <SettingsSection
-          title={t('settings.meetings.autoJoin.title')}
-          description={t('settings.meetings.autoJoin.desc')}>
-          <SettingsRow
-            stacked
-            control={
-              <SettingsSelect
-                value={autoJoin}
-                onChange={e => handleAutoJoinChange(e.target.value as MeetAutoJoinPolicy)}
-                aria-label={t('settings.meetings.autoJoin.title')}>
-                {AUTO_JOIN_OPTIONS.map(opt => (
-                  <option key={opt} value={opt}>
-                    {t(AUTO_JOIN_LABEL_KEY[opt])}
-                  </option>
-                ))}
-              </SettingsSelect>
-            }
-          />
-        </SettingsSection>
-
-        {/* Auto-summarize policy */}
-        <SettingsSection
-          title={t('settings.meetings.autoSummarize.title')}
-          description={t('settings.meetings.autoSummarize.desc')}>
-          <SettingsRow
-            stacked
-            control={
-              <SettingsSelect
-                value={autoSummarize}
-                onChange={e => handleAutoSummarizeChange(e.target.value as MeetAutoSummarizePolicy)}
-                aria-label={t('settings.meetings.autoSummarize.title')}>
-                {AUTO_SUMMARIZE_OPTIONS.map(opt => (
-                  <option key={opt} value={opt}>
-                    {t(AUTO_SUMMARIZE_LABEL_KEY[opt])}
-                  </option>
-                ))}
-              </SettingsSelect>
-            }
-          />
-        </SettingsSection>
-
-        {/* Toggles */}
-        <SettingsSection>
-          <SettingsRow
-            htmlFor="switch-meet-listen-only"
-            label={t('settings.meetings.listenOnly')}
-            description={t('settings.meetings.listenOnlyDesc')}
-            control={
-              <SettingsSwitch
-                id="switch-meet-listen-only"
-                checked={listenOnly}
-                onCheckedChange={handleListenOnlyChange}
-                aria-label={t('settings.meetings.listenOnly')}
-              />
-            }
-          />
-          <SettingsRow
-            htmlFor="switch-meet-ingest-transcripts"
-            label={t('settings.meetings.ingestTranscripts')}
-            description={t('settings.meetings.ingestTranscriptsDesc')}
-            control={
-              <SettingsSwitch
-                id="switch-meet-ingest-transcripts"
-                checked={ingestTranscripts}
-                onCheckedChange={handleIngestChange}
-                aria-label={t('settings.meetings.ingestTranscripts')}
-              />
-            }
-          />
-        </SettingsSection>
-
-        {/* Status line */}
-        <SettingsStatusLine
-          saving={isSaving}
-          savedNote={savedNote}
-          error={error}
-          savingLabel={t('settings.meetings.saving')}
+  return wrap(
+    <>
+      {/* Auto-join policy */}
+      <SettingsSection
+        title={t('settings.meetings.autoJoin.title')}
+        description={t('settings.meetings.autoJoin.desc')}>
+        <SettingsRow
+          stacked
+          control={
+            <SettingsSelect
+              value={autoJoin}
+              onChange={e => handleAutoJoinChange(e.target.value as MeetAutoJoinPolicy)}
+              aria-label={t('settings.meetings.autoJoin.title')}>
+              {AUTO_JOIN_OPTIONS.map(opt => (
+                <option key={opt} value={opt}>
+                  {t(AUTO_JOIN_LABEL_KEY[opt])}
+                </option>
+              ))}
+            </SettingsSelect>
+          }
         />
-      </>
-    </SettingsPanel>
+      </SettingsSection>
+
+      {/* Auto-summarize policy */}
+      <SettingsSection
+        title={t('settings.meetings.autoSummarize.title')}
+        description={t('settings.meetings.autoSummarize.desc')}>
+        <SettingsRow
+          stacked
+          control={
+            <SettingsSelect
+              value={autoSummarize}
+              onChange={e => handleAutoSummarizeChange(e.target.value as MeetAutoSummarizePolicy)}
+              aria-label={t('settings.meetings.autoSummarize.title')}>
+              {AUTO_SUMMARIZE_OPTIONS.map(opt => (
+                <option key={opt} value={opt}>
+                  {t(AUTO_SUMMARIZE_LABEL_KEY[opt])}
+                </option>
+              ))}
+            </SettingsSelect>
+          }
+        />
+      </SettingsSection>
+
+      {/* Toggles */}
+      <SettingsSection>
+        <SettingsRow
+          htmlFor="switch-meet-listen-only"
+          label={t('settings.meetings.listenOnly')}
+          description={t('settings.meetings.listenOnlyDesc')}
+          control={
+            <SettingsSwitch
+              id="switch-meet-listen-only"
+              checked={listenOnly}
+              onCheckedChange={handleListenOnlyChange}
+              aria-label={t('settings.meetings.listenOnly')}
+            />
+          }
+        />
+        <SettingsRow
+          htmlFor="switch-meet-ingest-transcripts"
+          label={t('settings.meetings.ingestTranscripts')}
+          description={t('settings.meetings.ingestTranscriptsDesc')}
+          control={
+            <SettingsSwitch
+              id="switch-meet-ingest-transcripts"
+              checked={ingestTranscripts}
+              onCheckedChange={handleIngestChange}
+              aria-label={t('settings.meetings.ingestTranscripts')}
+            />
+          }
+        />
+      </SettingsSection>
+
+      {/* Status line */}
+      <SettingsStatusLine
+        saving={isSaving}
+        savedNote={savedNote}
+        error={error}
+        savingLabel={t('settings.meetings.saving')}
+      />
+    </>,
+    'meeting-settings-panel'
   );
 };
 
