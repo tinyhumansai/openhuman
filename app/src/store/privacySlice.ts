@@ -59,11 +59,32 @@ interface PrivacyState {
   /**
    * Per-thread disclosure ledger, newest last. The disclosure card renders the
    * most recent entry for the active thread; dismissal removes one entry by id.
+   *
+   * IMPORTANT: this ledger is user-DISMISSIBLE history for the in-chat card
+   * only. It MUST NOT drive the status pill's on/off-device sub-state — a
+   * dismissal removing the last entry would otherwise flip the pill to
+   * "on-device" while the transfer is still in flight, and an un-dismissed
+   * historical entry would keep it "off-device" during later purely-local
+   * turns. The pill reads {@link activeExternalByThread} instead.
    */
   disclosuresByThread: Record<string, PrivacyDisclosure[]>;
+  /**
+   * Per-thread "an external transfer is active on the current turn" flag. Set
+   * true when an external disclosure is pushed, and CLEARED on the turn
+   * boundary (chat_done / chat_error / socket-disconnect reconcile) by
+   * ChatRuntimeProvider — the same turn-completion signals the approval/plan
+   * flows use. This is the SOLE source of truth for the pill's off-device
+   * state, kept deliberately separate from the dismissible ledger above so the
+   * pill reflects the live transfer, not the card's history.
+   */
+  activeExternalByThread: Record<string, boolean>;
 }
 
-const initialState: PrivacyState = { privacyMode: null, disclosuresByThread: {} };
+const initialState: PrivacyState = {
+  privacyMode: null,
+  disclosuresByThread: {},
+  activeExternalByThread: {},
+};
 
 /** Cap the per-thread ledger so a chatty turn can't grow it unbounded. */
 const MAX_DISCLOSURES_PER_THREAD = 20;
@@ -134,10 +155,18 @@ const privacySlice = createSlice({
       if (list.length > MAX_DISCLOSURES_PER_THREAD) {
         list.splice(0, list.length - MAX_DISCLOSURES_PER_THREAD);
       }
+      // Mark the thread as having a live external transfer so the status pill
+      // flips off-device. This is independent of the dismissible ledger above:
+      // dismissing the card does NOT clear it (the transfer is still active) —
+      // only the turn-boundary `clearActiveExternalForThread` does.
+      if (disclosure.isExternal) {
+        state.activeExternalByThread[threadId] = true;
+      }
       privacyLog(
-        '[privacy] pushDisclosureForThread thread=%s service=%s depth=%d',
+        '[privacy] pushDisclosureForThread thread=%s service=%s external=%s depth=%d',
         threadId,
         disclosure.service,
+        String(disclosure.isExternal),
         list.length
       );
     },
@@ -162,6 +191,19 @@ const privacySlice = createSlice({
       delete state.disclosuresByThread[action.payload.threadId];
       privacyLog('[privacy] clearDisclosuresForThread thread=%s', action.payload.threadId);
     },
+    /**
+     * Clear the live external-transfer flag for a thread. Dispatched by
+     * ChatRuntimeProvider on the turn boundary (chat_done / chat_error /
+     * disconnect reconcile) so the pill returns to on-device once the turn's
+     * external activity is over — even though the (un-dismissed) ledger entries
+     * remain for the in-chat card's history.
+     */
+    clearActiveExternalForThread: (state, action: PayloadAction<{ threadId: string }>) => {
+      if (state.activeExternalByThread[action.payload.threadId]) {
+        delete state.activeExternalByThread[action.payload.threadId];
+        privacyLog('[privacy] clearActiveExternalForThread thread=%s', action.payload.threadId);
+      }
+    },
   },
   extraReducers: builder => {
     // On identity flip / sign-out, drop per-user disclosure history. The
@@ -179,6 +221,7 @@ export const {
   pushDisclosureForThread,
   dismissDisclosureForThread,
   clearDisclosuresForThread,
+  clearActiveExternalForThread,
 } = privacySlice.actions;
 
 export default privacySlice.reducer;

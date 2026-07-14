@@ -68,6 +68,7 @@ import {
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
+  clearActiveExternalForThread,
   disclosureFromEvent,
   hydratePrivacyMode,
   pushDisclosureForThread,
@@ -1220,6 +1221,10 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         dispatch(clearStreamingAssistantForThread({ threadId: event.thread_id }));
         dispatch(clearPendingApprovalForThread({ threadId: event.thread_id }));
         dispatch(clearPendingPlanReviewForThread({ threadId: event.thread_id }));
+        // Turn boundary: this turn's external transfers are done, so return the
+        // privacy pill to on-device. The (un-dismissed) disclosure ledger stays
+        // for the in-chat card's history — only the live flag clears (#4437).
+        dispatch(clearActiveExternalForThread({ threadId: event.thread_id }));
 
         const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         if (existing.length > 0) {
@@ -1372,6 +1377,9 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         dispatch(clearStreamingAssistantForThread({ threadId: event.thread_id }));
         dispatch(clearPendingApprovalForThread({ threadId: event.thread_id }));
         dispatch(clearPendingPlanReviewForThread({ threadId: event.thread_id }));
+        // Turn boundary (error path): clear the live external-transfer flag so
+        // the privacy pill resets to on-device, mirroring the done path (#4437).
+        dispatch(clearActiveExternalForThread({ threadId: event.thread_id }));
 
         const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         if (existing.length > 0) {
@@ -1459,6 +1467,10 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       // can't complete.
       dispatch(clearPendingApprovalForThread({ threadId }));
       dispatch(clearPendingPlanReviewForThread({ threadId }));
+      // A disconnect tears the turn down without a done/error event, so clear
+      // the live external-transfer flag here too — otherwise the privacy pill
+      // would stay off-device for a turn that can never complete (#4437).
+      dispatch(clearActiveExternalForThread({ threadId }));
       dispatch(endInferenceTurn({ threadId }));
     }
     // A disconnect kills every in-flight turn on the dead session, so clear all
