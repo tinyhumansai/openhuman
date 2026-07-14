@@ -43,7 +43,7 @@ export function reasonLabelKey(reason: EgressReason | string): string {
   }
 }
 
-export function privacyModeLabelKey(mode: PrivacyMode): string {
+export function privacyModeLabelKey(mode: PrivacyMode | string): string {
   switch (mode) {
     case 'local_only':
       return 'privacy.mode.localOnly';
@@ -51,5 +51,11 @@ export function privacyModeLabelKey(mode: PrivacyMode): string {
       return 'privacy.mode.standard';
     case 'sensitive':
       return 'privacy.mode.sensitive';
+    // The pill is always-visible, so an unexpected/future mode string must
+    // still resolve to a real i18n key — never `undefined`, which `t()` would
+    // choke on. Fall back to the neutral "Standard" label, matching the sibling
+    // dataKind/reason mappers.
+    default:
+      return 'privacy.mode.standard';
   }
 }
