@@ -146,6 +146,68 @@ describe('coreRpcClient', () => {
     await expect(callCoreRpc({ method: 'openhuman.config_get' })).rejects.toThrow('boom from core');
   });
 
+  test('broadcasts core-rpc-auth-expired on a SESSION_EXPIRED error by default', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 4,
+        error: {
+          code: -32000,
+          message:
+            'SESSION_EXPIRED: backend rejected session token on GET /agent-integrations/composio/triggers/available — sign in again to resume',
+        },
+      }),
+    } as Response);
+
+    const listener = vi.fn();
+    window.addEventListener('core-rpc-auth-expired', listener);
+    try {
+      await expect(callCoreRpc({ method: 'openhuman.team_get' })).rejects.toThrow(
+        'SESSION_EXPIRED'
+      );
+    } finally {
+      window.removeEventListener('core-rpc-auth-expired', listener);
+    }
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  test('suppressAuthExpiredEvent skips the global sign-out broadcast but still throws auth_expired', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 5,
+        error: {
+          code: -32000,
+          message:
+            'SESSION_EXPIRED: backend rejected session token on GET /agent-integrations/composio/triggers/available — sign in again to resume',
+        },
+      }),
+    } as Response);
+
+    const listener = vi.fn();
+    window.addEventListener('core-rpc-auth-expired', listener);
+    let caught: unknown;
+    try {
+      await callCoreRpc({
+        method: 'openhuman.composio_list_available_triggers',
+        suppressAuthExpiredEvent: true,
+      });
+    } catch (err) {
+      caught = err;
+    } finally {
+      window.removeEventListener('core-rpc-auth-expired', listener);
+    }
+    // The error still surfaces (so the panel can render its in-place CTA)…
+    expect(caught).toBeInstanceOf(CoreRpcError);
+    expect((caught as CoreRpcError).kind).toBe('auth_expired');
+    // …but the global teardown event is NOT broadcast.
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   test('throws on non-ok HTTP response', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({

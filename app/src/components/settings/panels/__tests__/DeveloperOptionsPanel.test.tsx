@@ -123,14 +123,16 @@ describe('DeveloperOptionsPanel — CoreModeBadge', () => {
       { preloadedState: { locale: { current: 'zh-CN' } } }
     );
 
-    // 'AI 配置' was removed from Developer Options in Pass A (moved to the AI
-    // section page). Assert a destination that IS present: 智能 (Intelligence).
-    expect(screen.getByText('智能')).toBeInTheDocument();
+    // 'AI 配置' was removed from Developer Options in Pass A, and the whole
+    // Knowledge & Memory group was retired. Assert a destination that IS
+    // present: 事件日志 (Event Log).
+    expect(screen.getByText('事件日志')).toBeInTheDocument();
     // Two screen-awareness rows now exist (the moved settings row + the debug
     // panel), which collapse to the same zh-CN label — assert at least one.
     expect(screen.getAllByText('屏幕感知').length).toBeGreaterThan(0);
-    // The messaging tile was removed; composio replaced it as a single destination.
-    expect(screen.getByText('Composio')).toBeInTheDocument();
+    // Composio triggers moved to the Connections Composio page — assert a
+    // destination that IS still present: MCP 服务器 (MCP Server).
+    expect(screen.getByText('MCP 服务器')).toBeInTheDocument();
   });
 });
 

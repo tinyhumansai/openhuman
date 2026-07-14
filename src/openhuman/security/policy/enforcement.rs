@@ -143,6 +143,15 @@ impl SecurityPolicy {
 
         Self {
             autonomy: autonomy_config.level,
+            // Privacy mode is not carried on `AutonomyConfig` (it lives in the
+            // separate `[privacy]` block), and `from_config` has ~40 call sites
+            // that only hold the autonomy block — so we default to `Standard`
+            // here and let the install / reload chokepoints layer the real
+            // `config.privacy.mode` on via [`with_privacy_mode`]. The live-policy
+            // paths (`install` seeds from the built policy, `reload_from`
+            // re-applies the stored mode, `reload_privacy` swaps it) keep the
+            // effective enforcement mode correct without touching every caller.
+            privacy_mode: crate::openhuman::config::PrivacyMode::default(),
             workspace_dir: workspace_dir.to_path_buf(),
             action_dir: action_dir.to_path_buf(),
             workspace_only: autonomy_config.workspace_only,
@@ -158,6 +167,32 @@ impl SecurityPolicy {
             tracker: ActionTracker::new(),
             canonical_workspace: Arc::new(OnceCell::new()),
         }
+    }
+
+    /// Return a copy of this policy with `privacy_mode` set. Used by the live-
+    /// policy install / reload chokepoints to layer `config.privacy.mode` onto a
+    /// policy that [`from_config`](Self::from_config) built with the `Standard`
+    /// default. Builder-style so call sites read as
+    /// `SecurityPolicy::from_config(..).with_privacy_mode(config.privacy.mode)`.
+    #[must_use]
+    pub fn with_privacy_mode(
+        mut self,
+        privacy_mode: crate::openhuman::config::PrivacyMode,
+    ) -> Self {
+        log::debug!(
+            "[privacy][policy] privacy_mode set on SecurityPolicy: {:?} (was {:?})",
+            privacy_mode,
+            self.privacy_mode
+        );
+        self.privacy_mode = privacy_mode;
+        self
+    }
+
+    /// The active data-egress posture (Privacy Mode). Read by the inference
+    /// chokepoint to enforce local-only model routing; later slices (S4/S7) also
+    /// branch on `Sensitive` here.
+    pub fn privacy_mode(&self) -> crate::openhuman::config::PrivacyMode {
+        self.privacy_mode
     }
 }
 

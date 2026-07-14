@@ -101,6 +101,11 @@
 //! Assertion is implicit: cargo reports the test as failed when the
 //! tokio runtime aborts with stack overflow.
 
+// This stress target is still compiled by normal cargo test. Under llvm-cov,
+// coverage instrumentation makes the already-large integration-test binary
+// trip CI's linker with SIGBUS before the regression can run.
+#![cfg(not(coverage))]
+
 use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::openhuman::agent::harness::definition::{AgentDefinitionRegistry, ModelSpec};
@@ -340,13 +345,16 @@ async fn drive_subagent() {
     let parent = ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: ["integrations_agent".to_string()].into_iter().collect(),
-        provider: provider.clone(),
+        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(
+            provider.clone(),
+        ),
         all_tools: Arc::new(vec![]),
         all_tool_specs: Arc::new(vec![]),
         visible_tool_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),
         temperature: 0.4,
         workspace_dir: std::env::temp_dir(),
+        workspace_descriptor: None,
         memory: Arc::new(StubMemory),
         agent_config: AgentConfig::default(),
         workflows: Arc::new(vec![]),

@@ -6,7 +6,7 @@
 //! The memory-tree embedder factory historically resolved only: explicit
 //! Ollama override → `ollama:` workload prefix → managed `CloudEmbedder`
 //! (backend→Voyage) → skip. So a user who configured **OpenAI** (or any
-//! custom OpenAI-compatible endpoint) in Settings → AI → Embeddings was
+//! custom OpenAI-compatible endpoint) in Connections → API keys → Embeddings was
 //! silently ignored: their `embeddings_provider = "openai"` matched no branch
 //! and fell through to the managed backend, which then hit "managed budget"
 //! while the user's own key sat unused. This adapter closes that gap.

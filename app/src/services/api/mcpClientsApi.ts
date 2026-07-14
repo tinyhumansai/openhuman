@@ -77,10 +77,19 @@ interface ConfigAssistResult {
 
 interface UpdateEnvResult {
   server_id: string;
-  status: 'connected' | 'disconnected';
+  status: 'connected' | 'disconnected' | 'disabled' | 'unauthorized';
   env_keys: string[];
   tools?: McpTool[];
   error?: string;
+  /**
+   * Stable auth-failure reason code present when `status === 'unauthorized'`:
+   * `'oauth_required'` (use Sign in — a pasted token won't work),
+   * `'token_rejected'` (credential sent but refused), or
+   * `'credential_required'` (auth needed, none provided). The raw 401 message
+   * is intentionally withheld server-side (it leaks the OAuth metadata URL),
+   * so the UI maps this code to localized copy (#4289).
+   */
+  auth_hint?: string;
 }
 
 /** Non-secret registry-credentials snapshot. Secret *values* are never returned. */
@@ -98,6 +107,8 @@ export const mcpClientsApi = {
   /** Search the Smithery registry. Returns paged results. */
   registrySearch: async (params: {
     query?: string;
+    /** Transport filter: 'stdio' | 'hosted' | 'all' (omit for all). */
+    transport?: string;
     page?: number;
     page_size?: number;
   }): Promise<RegistrySearchResult> => {

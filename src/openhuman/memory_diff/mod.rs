@@ -11,8 +11,14 @@
 //! Storage is a git repository at `<workspace>/memory_diff/repo` (the diff
 //! *ledger*): snapshots are commits, checkpoints are tags, read markers are
 //! refs, and diffs are git tree diffs. `mem_tree_chunks` stays authoritative;
-//! the ledger is a derived view used purely for change tracking. See
-//! [`git_store`] for the mapping.
+//! the ledger is a derived view used purely for change tracking.
+//!
+//! W7: the snapshot/diff/checkpoint/ledger engine is now
+//! `tinycortex::memory::diff::DiffEngine` (a byte-identical port over the same
+//! `<workspace>/memory_diff/repo` git layout). This module is a thin host shim:
+//! [`ops`] async-wraps the engine, [`source`] supplies the chunk-store item
+//! seam (`DiffEngine`'s `SnapshotItemSource`), [`types`] re-exports the crate
+//! wire types, and [`rpc`]/[`schemas`]/[`tools`] keep the RPC + agent surface.
 //!
 //! Features:
 //! - Per-source snapshots (auto after sync, or manual via RPC)
@@ -20,10 +26,10 @@
 //! - Named checkpoints for cross-source "what changed since X" queries
 //! - Agent tool for in-conversation diff queries
 
-pub mod git_store;
 pub mod ops;
 pub mod rpc;
 pub mod schemas;
+pub mod source;
 pub mod tools;
 pub mod types;
 

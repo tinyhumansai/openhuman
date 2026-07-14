@@ -10,14 +10,12 @@
 //!    capabilities sections — pass their own via
 //!    [`ContextManager::build_system_prompt_with`].
 //!
-//! 2. **Mechanical context reduction** — a [`ContextPipeline`] with its
-//!    guard, microcompact stage, and session-memory tracker.
-//!
-//! 3. **LLM summarization dispatch** — an `Arc<dyn Summarizer>` that
-//!    gets called when the pipeline reports
-//!    [`PipelineOutcome::AutocompactionRequested`]. The manager records
-//!    the summarizer outcome on the guard's circuit breaker so
-//!    repeated failures don't loop forever.
+//! 2. **Context bookkeeping** — a [`ContextStatsState`] with utilisation
+//!    stats, tool-result budget config, and session-memory trigger state.
+//!    Live history reduction/summarization moved to the
+//!    tinyagents graph (`ContextCompressionMiddleware` +
+//!    `MessageTrimMiddleware`, issue #4249); this manager no longer runs
+//!    an in-turn summarizer.
 //!
 //! # What it doesn't own
 //!
@@ -28,51 +26,12 @@
 //! [`ContextManager::should_extract_session_memory`] so `turn.rs` can
 //! gate its existing `spawn_subagent` call.
 
-use std::sync::Arc;
-
-use super::pipeline::{
-    ContextPipeline, ContextPipelineConfig, PipelineOutcome, SessionMemoryHandle,
-};
 use super::prompt::{PromptContext, SystemPromptBuilder};
 use super::session_memory::SessionMemoryConfig;
-use super::summarizer::{Summarizer, SummaryStats};
+use super::stats::{ContextStatsState, SessionMemoryHandle};
 use crate::openhuman::config::ContextConfig;
-use crate::openhuman::inference::provider::{ConversationMessage, UsageInfo};
+use crate::openhuman::inference::provider::UsageInfo;
 use anyhow::Result;
-
-/// Outcome of a reduction pass driven by [`ContextManager::reduce_before_call`].
-///
-/// This is a slightly wider shape than [`PipelineOutcome`] because the
-/// manager surfaces the result of the summarizer LLM call as a
-/// first-class variant — the pipeline alone can only return
-/// `AutocompactionRequested`.
-#[derive(Debug, Clone)]
-pub enum ReductionOutcome {
-    /// No stage fired — budget is healthy and history was untouched.
-    NoOp,
-    /// The pipeline's microcompact stage cleared one or more older
-    /// tool-result envelopes. The history has been mutated in place.
-    Microcompacted {
-        envelopes_cleared: usize,
-        entries_cleared: usize,
-        bytes_freed: usize,
-    },
-    /// The pipeline asked for summarization and the summarizer
-    /// successfully rewrote the head of the history. Contains the
-    /// summarizer's own stats for logging / RPC surfacing.
-    Summarized(SummaryStats),
-    /// The summarizer was asked to run but failed — the guard's
-    /// compaction circuit breaker has been nudged. If this happens
-    /// three times in a row the breaker trips and subsequent calls
-    /// return [`ReductionOutcome::Exhausted`].
-    SummarizationFailed { utilisation_pct: u8, reason: String },
-    /// The circuit breaker is tripped and the context is still above
-    /// the hard limit — the agent turn should abort.
-    Exhausted { utilisation_pct: u8, reason: String },
-    /// Autocompaction was requested but disabled by config. The
-    /// caller is expected to surface this via the guard directly.
-    NotAttempted { utilisation_pct: u8 },
-}
 
 /// Read-only snapshot of per-session context state. Returned by
 /// [`ContextManager::stats`] for observability and the optional
@@ -83,8 +42,6 @@ pub struct ContextStats {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub context_window: u64,
-    pub compaction_disabled: bool,
-    pub consecutive_compaction_failures: u8,
     pub session_memory_total_tokens: u64,
     pub session_memory_current_turn: u64,
     pub session_memory_total_tool_calls: u64,
@@ -93,22 +50,17 @@ pub struct ContextStats {
 /// Per-session context manager. Constructed once by the agent harness
 /// at session start; lives for the whole lifetime of the `Agent`.
 pub struct ContextManager {
-    pipeline: ContextPipeline,
-    summarizer: Arc<dyn Summarizer>,
-    /// Model used for the summarization LLM call. Defaults to the
-    /// session's main model; can be overridden via
-    /// [`ContextConfig::summarizer_model`] when the user wants a
-    /// cheaper model for compaction.
-    summarizer_model: String,
+    stats_state: ContextStatsState,
     /// The default system-prompt builder used by
     /// [`ContextManager::build_system_prompt`]. Held by value so the
     /// agent's construction-time builder configuration survives the
     /// move into the manager.
     default_prompt_builder: SystemPromptBuilder,
-    /// Whether the entire module is enabled. When `false`,
-    /// [`ContextManager::reduce_before_call`] always returns `NoOp`.
-    /// Useful for tests and debugging; see
-    /// [`ContextConfig::enabled`].
+    /// Whether the entire module is enabled. Useful for tests and
+    /// debugging; see [`ContextConfig::enabled`]. Live history reduction
+    /// now runs in the tinyagents graph (`ContextCompressionMiddleware` +
+    /// `MessageTrimMiddleware`, issue #4249); this flag only gates the
+    /// manager's own bookkeeping surfaces.
     enabled: bool,
     /// Per-tool-result byte cap applied inline at tool-execution time.
     /// Stored on the manager (rather than on the agent directly) so
@@ -125,54 +77,54 @@ pub struct ContextManager {
     /// kill-switch lives here so every caller reads one source of truth.
     /// See [`ContextConfig::compaction_enabled`].
     compaction_enabled: bool,
+    /// Number of most-recent tool results kept verbatim by the microcompact
+    /// middleware; `0` when microcompact is disabled. Read by the tinyagents
+    /// turn to configure `MicrocompactMiddleware`.
+    microcompact_keep_recent: usize,
     /// When `true`, the harness runs a mandatory first-turn context
     /// collection pass before the orchestrator LLM runs. Read once at
     /// session construction so it only affects newly started threads.
     /// See [`ContextConfig::super_context_enabled`].
     super_context_enabled: bool,
+    /// When `true`, the tinyagents turn installs the LLM summarization step
+    /// (`ContextCompressionMiddleware`). Gated by both `[context].enabled` and
+    /// `[context].autocompact_enabled` so a diagnostic/test opt-out doesn't spend
+    /// summarizer tokens or rewrite history. See [`ContextConfig::autocompact_enabled`].
+    autocompact_enabled: bool,
 }
 
 impl ContextManager {
     /// Construct a manager for a session.
     ///
     /// * `config` — the loaded [`ContextConfig`] section.
-    /// * `summarizer` — typically a [`super::ProviderSummarizer`]
-    ///   wrapping the session's provider, but tests pass a mock.
-    /// * `main_model` — the agent's main model; used as the
-    ///   summarizer model unless `config.summarizer_model` overrides.
     /// * `default_prompt_builder` — the builder [`build_system_prompt`]
     ///   calls. For most agents this is `SystemPromptBuilder::with_defaults()`.
-    pub fn new(
-        config: &ContextConfig,
-        summarizer: Arc<dyn Summarizer>,
-        main_model: String,
-        default_prompt_builder: SystemPromptBuilder,
-    ) -> Self {
-        // Map ContextConfig into the mechanical pipeline's own config
-        // struct. Session-memory thresholds flow through unchanged.
-        let pipeline_config = ContextPipelineConfig {
-            microcompact_keep_recent: config.microcompact_keep_recent,
-            microcompact_enabled: config.microcompact_enabled,
-            autocompact_enabled: config.autocompact_enabled,
-            session_memory: SessionMemoryConfig {
+    ///
+    /// The manager no longer owns a summarizer: live history reduction moved
+    /// to the tinyagents graph (issue #4249). What remains here is the system
+    /// prompt, the stats/utilisation surface, tool-result budgeting, and
+    /// session-memory bookkeeping.
+    pub fn new(config: &ContextConfig, default_prompt_builder: SystemPromptBuilder) -> Self {
+        Self {
+            stats_state: ContextStatsState::new(SessionMemoryConfig {
                 min_token_growth: config.session_memory.min_token_growth,
                 min_tool_calls: config.session_memory.min_tool_calls,
                 min_turns_between: config.session_memory.min_turns_between,
-            },
-        };
-
-        let summarizer_model = config.summarizer_model.clone().unwrap_or(main_model);
-
-        Self {
-            pipeline: ContextPipeline::new(pipeline_config),
-            summarizer,
-            summarizer_model,
+            }),
             default_prompt_builder,
             enabled: config.enabled,
             tool_result_budget_bytes: config.tool_result_budget_bytes,
             prefer_markdown_tool_output: config.prefer_markdown_tool_output,
             compaction_enabled: config.compaction_enabled,
+            microcompact_keep_recent: if config.microcompact_enabled {
+                config.microcompact_keep_recent
+            } else {
+                0
+            },
             super_context_enabled: config.super_context_enabled,
+            // Summarization is off when the whole context system is disabled OR
+            // autocompaction specifically is turned off.
+            autocompact_enabled: config.enabled && config.autocompact_enabled,
         }
     }
 
@@ -182,10 +134,15 @@ impl ContextManager {
         self.prefer_markdown_tool_output
     }
 
-    /// Byte budget for an individual tool result before the context
-    /// pipeline's inline truncation stage fires. Agents read this when
-    /// a tool returns to apply the cap before the result enters
-    /// history.
+    /// Number of most-recent tool results the microcompact middleware keeps
+    /// verbatim; `0` when microcompact is disabled. Read by the tinyagents turn
+    /// to configure `MicrocompactMiddleware`.
+    pub fn microcompact_keep_recent(&self) -> usize {
+        self.microcompact_keep_recent
+    }
+
+    /// Byte budget for an individual tool result before the TinyAgents
+    /// tool-output middleware cap fires.
     pub fn tool_result_budget_bytes(&self) -> usize {
         self.tool_result_budget_bytes
     }
@@ -205,6 +162,15 @@ impl ContextManager {
         self.super_context_enabled
     }
 
+    /// Whether the tinyagents turn should install the LLM summarization step.
+    /// `false` when `[context].enabled = false` or `autocompact_enabled = false`
+    /// — the diagnostic/test opt-outs the legacy reducer honored before
+    /// requesting autocompaction. Read by the chat turn when building
+    /// `TurnContextMiddleware`.
+    pub fn autocompact_enabled(&self) -> bool {
+        self.autocompact_enabled
+    }
+
     /// Force-disable the first-turn super-context pass for this session,
     /// regardless of the config default. Used by non-interactive orchestrator
     /// builds (e.g. read-only model-council jurors) where a scout pass would add
@@ -215,51 +181,45 @@ impl ContextManager {
 
     // ─── Budget tracking ──────────────────────────────────────────
 
-    /// Feed the latest provider [`UsageInfo`] into the guard + the
+    /// Feed the latest provider [`UsageInfo`] into utilisation stats and the
     /// session-memory state.
     pub fn record_usage(&mut self, usage: &UsageInfo) {
-        self.pipeline.record_usage(usage);
+        self.stats_state.record_usage(usage);
     }
 
     /// Bump the session-memory turn counter (called once per user turn).
     pub fn tick_turn(&mut self) {
-        self.pipeline.tick_turn();
+        self.stats_state.tick_turn();
     }
 
     /// Accumulate a turn's tool-call count into the session-memory state.
     pub fn record_tool_calls(&mut self, n: usize) {
-        self.pipeline.record_tool_calls(n);
+        self.stats_state.record_tool_calls(n);
     }
 
     /// Whether the caller should spawn a background session-memory
-    /// extraction this turn. Delegates to the underlying pipeline
-    /// state; the manager does not spawn the extraction itself.
+    /// extraction this turn. Delegates to the underlying stats state; the
+    /// manager does not spawn the extraction itself.
     pub fn should_extract_session_memory(&self) -> bool {
-        self.pipeline.should_extract_session_memory()
+        self.stats_state.should_extract_session_memory()
     }
 
     /// Mark a session-memory extraction as started (so repeated
     /// calls to [`should_extract_session_memory`] return `false` until
     /// the extraction completes).
     pub fn mark_session_memory_started(&mut self) {
-        if let Ok(mut sm) = self.pipeline.session_memory.lock() {
-            sm.mark_extraction_started();
-        }
+        self.stats_state.mark_session_memory_started();
     }
 
     /// Mark a session-memory extraction as complete — resets deltas.
     pub fn mark_session_memory_complete(&mut self) {
-        if let Ok(mut sm) = self.pipeline.session_memory.lock() {
-            sm.mark_extraction_complete();
-        }
+        self.stats_state.mark_session_memory_complete();
     }
 
     /// Mark a session-memory extraction as failed — keeps deltas
     /// intact so the next turn retries.
     pub fn mark_session_memory_failed(&mut self) {
-        if let Ok(mut sm) = self.pipeline.session_memory.lock() {
-            sm.mark_extraction_failed();
-        }
+        self.stats_state.mark_session_memory_failed();
     }
 
     /// Clone the shared session-memory handle so a detached background
@@ -269,8 +229,8 @@ impl ContextManager {
     /// [`Self::mark_session_memory_started`] *before* spawning so
     /// overlapping turns don't fire duplicate extractions while this
     /// one is in flight.
-    pub fn session_memory_handle(&self) -> SessionMemoryHandle {
-        self.pipeline.session_memory_handle()
+    pub(crate) fn session_memory_handle(&self) -> SessionMemoryHandle {
+        self.stats_state.session_memory_handle()
     }
 
     // ─── Prompt building ───────────────────────────────────────────
@@ -284,7 +244,6 @@ impl ContextManager {
     /// automatically, so no boundary marker is emitted.
     pub fn build_system_prompt(&self, ctx: &PromptContext<'_>) -> Result<String> {
         let prompt = self.default_prompt_builder.build(ctx)?;
-        self.warn_if_cache_unstable(&prompt);
         Ok(prompt)
     }
 
@@ -301,115 +260,20 @@ impl ContextManager {
         ctx: &PromptContext<'_>,
     ) -> Result<String> {
         let prompt = builder.build(ctx)?;
-        self.warn_if_cache_unstable(&prompt);
         Ok(prompt)
-    }
-
-    /// Cache-aligner (Stage 1a sibling, warn-only): flag volatile tokens in
-    /// the cache-hot system prompt that would silently break the provider
-    /// KV-cache prefix. Never mutates the prompt. Gated on the compaction
-    /// kill-switch so disabling compaction also silences this diagnostic.
-    fn warn_if_cache_unstable(&self, prompt: &str) {
-        if self.compaction_enabled {
-            crate::openhuman::agent::harness::compaction::cache_align::warn_if_volatile(prompt);
-        }
-    }
-
-    // ─── Reduction ─────────────────────────────────────────────────
-
-    /// Run the reduction chain against `history` before a provider
-    /// call. Cheap when the guard is healthy; executes the
-    /// summarization LLM call internally when the pipeline asks for
-    /// autocompaction.
-    ///
-    /// This is the single reduction entry point — agents call it once
-    /// before every provider hit and map the returned
-    /// [`ReductionOutcome`] into their own logging / abort logic.
-    pub async fn reduce_before_call(
-        &mut self,
-        history: &mut Vec<ConversationMessage>,
-    ) -> Result<ReductionOutcome> {
-        if !self.enabled {
-            return Ok(ReductionOutcome::NoOp);
-        }
-
-        match self.pipeline.run_before_call(history) {
-            PipelineOutcome::NoOp => Ok(ReductionOutcome::NoOp),
-
-            PipelineOutcome::Microcompacted(stats) => Ok(ReductionOutcome::Microcompacted {
-                envelopes_cleared: stats.envelopes_cleared,
-                entries_cleared: stats.entries_cleared,
-                bytes_freed: stats.bytes_freed,
-            }),
-
-            PipelineOutcome::ContextExhausted {
-                utilisation_pct,
-                reason,
-            } => Ok(ReductionOutcome::Exhausted {
-                utilisation_pct,
-                reason,
-            }),
-
-            PipelineOutcome::AutocompactionDisabled { utilisation_pct } => {
-                Ok(ReductionOutcome::NotAttempted { utilisation_pct })
-            }
-
-            PipelineOutcome::AutocompactionRequested { utilisation_pct } => {
-                // Dispatch the summarizer. If it succeeds we reset the
-                // guard's circuit breaker so a prior string of failures
-                // doesn't leave us permanently disabled after a good
-                // run. On failure, we nudge the breaker — three
-                // consecutive failures trip it and we return
-                // `Exhausted` the next time the guard is checked.
-                tracing::info!(
-                    utilisation_pct,
-                    model = %self.summarizer_model,
-                    "[context::manager] dispatching autocompaction summarizer"
-                );
-                match self
-                    .summarizer
-                    .summarize(history, &self.summarizer_model)
-                    .await
-                {
-                    Ok(stats) => {
-                        self.pipeline.guard.record_compaction_success();
-                        Ok(ReductionOutcome::Summarized(stats))
-                    }
-                    Err(e) => {
-                        let reason = e.to_string();
-                        tracing::warn!(
-                            utilisation_pct,
-                            error = %reason,
-                            "[context::manager] summarizer failed — nudging circuit breaker"
-                        );
-                        self.pipeline.guard.record_compaction_failure();
-                        Ok(ReductionOutcome::SummarizationFailed {
-                            utilisation_pct,
-                            reason,
-                        })
-                    }
-                }
-            }
-        }
     }
 
     // ─── Observability ─────────────────────────────────────────────
 
     /// Read-only snapshot of the current budget state.
     pub fn stats(&self) -> ContextStats {
-        let utilisation_pct = self
-            .pipeline
-            .guard
-            .utilization()
-            .map(|u| (u * 100.0).round() as u8);
-        let sm = self.pipeline.session_memory_snapshot();
+        let utilisation_pct = self.stats_state.utilization_pct();
+        let sm = self.stats_state.session_memory_snapshot();
         ContextStats {
             utilisation_pct,
-            input_tokens: self.pipeline.guard.last_input_tokens(),
-            output_tokens: self.pipeline.guard.last_output_tokens(),
-            context_window: self.pipeline.guard.context_window(),
-            compaction_disabled: self.pipeline.guard.is_compaction_disabled(),
-            consecutive_compaction_failures: self.pipeline.guard.consecutive_failures(),
+            input_tokens: self.stats_state.last_input_tokens(),
+            output_tokens: self.stats_state.last_output_tokens(),
+            context_window: self.stats_state.context_window(),
             session_memory_total_tokens: sm.total_tokens,
             session_memory_current_turn: sm.current_turn,
             session_memory_total_tool_calls: sm.total_tool_calls,

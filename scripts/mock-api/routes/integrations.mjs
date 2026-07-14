@@ -199,6 +199,15 @@ export function handleIntegrations(ctx) {
   // ── Composio ───────────────────────────────────────────────
   if (
     method === "GET" &&
+    /^\/(?:api\/v3\/)?connected_accounts\/?(\?.*)?$/.test(url)
+  ) {
+    const items = parseBehaviorJson("composioDirectConnectedAccounts", []);
+    json(res, 200, { items });
+    return true;
+  }
+
+  if (
+    method === "GET" &&
     /^\/agent-integrations\/composio\/toolkits\/?(\?.*)?$/.test(url)
   ) {
     const toolkits = parseBehaviorJson("composioToolkits", ["gmail"]);
@@ -544,6 +553,39 @@ export function handleIntegrations(ctx) {
       return true;
     }
     json(res, 200, { success: true, data: { items_synced: 3 } });
+    return true;
+  }
+
+  // ── Parallel search ────────────────────────────────────────
+  if (
+    method === "POST" &&
+    /^\/agent-integrations\/parallel\/search\/?$/.test(url)
+  ) {
+    const objective =
+      typeof parsedBody?.objective === "string" &&
+      parsedBody.objective.trim().length > 0
+        ? parsedBody.objective.trim()
+        : "unknown objective";
+    const queries = Array.isArray(parsedBody?.searchQueries)
+      ? parsedBody.searchQueries
+          .map((query) => String(query ?? "").trim())
+          .filter(Boolean)
+      : [];
+    const effectiveQueries = queries.length > 0 ? queries : [objective];
+    const results = effectiveQueries.map((query, index) => ({
+      url: `https://search.example.com/${index}`,
+      title: `Result for ${query}`,
+      publish_date: "2026-05-16",
+      excerpts: [`Objective: ${objective}; query: ${query}`],
+    }));
+    json(res, 200, {
+      success: true,
+      data: {
+        searchId: `search-${effectiveQueries.length}`,
+        results,
+        costUsd: 0.02,
+      },
+    });
     return true;
   }
 

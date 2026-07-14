@@ -173,29 +173,47 @@ pub async fn run_connection_sync(
         "[composio:sync] run_connection_sync: caps from registry"
     );
 
-    let ctx = ProviderContext {
-        config: std::sync::Arc::new(config),
-        toolkit: target.toolkit,
-        connection_id: Some(target.connection_id),
-        usage: Default::default(),
-        max_items: src_max_items,
-        sync_depth_days: src_sync_depth_days,
-    };
-
-    let sync_result = provider.sync(&ctx, reason).await;
-
-    // Read the Composio billable-action tally *before* propagating errors.
-    // A sync that errors partway may still have fired billable actions;
-    // reading here ensures the dispatcher audit sees partial cost (#3111).
-    let usage = ctx
-        .usage
-        .lock()
-        .map(|u| u.clone())
-        .unwrap_or_else(|poisoned| poisoned.into_inner().clone());
-
-    match sync_result {
-        Ok(outcome) => Ok((outcome, usage)),
-        Err(e) => Err((e, usage)),
+    let _ = (provider, src_max_items, src_sync_depth_days);
+    let started_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    match crate::openhuman::tinycortex::run_composio_connection(
+        &target.toolkit,
+        &target.connection_id,
+        &config,
+    )
+    .await
+    {
+        Ok(outcome) => {
+            let usage = ComposioUsage {
+                actions_called: outcome.actions_called,
+                cost_usd: outcome.provider_cost_usd,
+            };
+            Ok((
+                SyncOutcome {
+                    toolkit: target.toolkit,
+                    connection_id: Some(target.connection_id),
+                    reason: reason.as_str().to_string(),
+                    items_ingested: outcome.records_ingested as usize,
+                    started_at_ms,
+                    finished_at_ms: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                    summary: outcome.note.unwrap_or_else(|| "sync completed".to_string()),
+                    details: serde_json::json!({ "more_pending": outcome.more_pending }),
+                },
+                usage,
+            ))
+        }
+        Err(error) => Err((
+            error.to_string(),
+            ComposioUsage {
+                actions_called: error.actions_called,
+                cost_usd: error.provider_cost_usd,
+            },
+        )),
     }
 }
 

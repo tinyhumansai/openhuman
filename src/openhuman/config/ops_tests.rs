@@ -971,11 +971,53 @@ async fn apply_browser_settings_updates_enabled_flag() {
         &mut cfg,
         BrowserSettingsPatch {
             enabled: Some(true),
+            backend: None,
         },
     )
     .await
     .expect("apply");
     assert!(cfg.browser.enabled);
+}
+
+#[tokio::test]
+async fn apply_browser_settings_updates_backend() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.browser.backend = "agent_browser".into();
+
+    apply_browser_settings(
+        &mut cfg,
+        BrowserSettingsPatch {
+            enabled: None,
+            backend: Some("playwright".into()),
+        },
+    )
+    .await
+    .expect("apply");
+
+    assert_eq!(cfg.browser.backend, "playwright");
+}
+
+#[tokio::test]
+async fn apply_browser_settings_rejects_unknown_backend() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.browser.enabled = false;
+    cfg.browser.backend = "agent_browser".into();
+
+    let err = apply_browser_settings(
+        &mut cfg,
+        BrowserSettingsPatch {
+            enabled: Some(true),
+            backend: Some("netscape".into()),
+        },
+    )
+    .await
+    .expect_err("unknown backend should fail");
+
+    assert!(err.contains("Unsupported browser backend"));
+    assert!(!cfg.browser.enabled);
+    assert_eq!(cfg.browser.backend, "agent_browser");
 }
 
 #[tokio::test]
@@ -1207,6 +1249,8 @@ async fn apply_meet_settings_updates_all_meeting_assistant_fields() {
             auto_summarize_policy: Some(AutoSummarizePolicy::Never),
             listen_only_default: Some(false),
             ingest_backend_transcripts: Some(true),
+            // Whitespace is trimmed on apply so the anchor match is clean.
+            reply_display_name: Some("  Alex Kim  ".to_string()),
             ..Default::default()
         },
     )
@@ -1216,6 +1260,7 @@ async fn apply_meet_settings_updates_all_meeting_assistant_fields() {
     assert_eq!(cfg.meet.auto_summarize_policy, AutoSummarizePolicy::Never);
     assert!(!cfg.meet.listen_only_default);
     assert!(cfg.meet.ingest_backend_transcripts);
+    assert_eq!(cfg.meet.reply_display_name, "Alex Kim");
 
     // No-op patch must leave the prior values untouched.
     let _ = apply_meet_settings(&mut cfg, MeetSettingsPatch::default())
@@ -1225,6 +1270,7 @@ async fn apply_meet_settings_updates_all_meeting_assistant_fields() {
     assert_eq!(cfg.meet.auto_summarize_policy, AutoSummarizePolicy::Never);
     assert!(!cfg.meet.listen_only_default);
     assert!(cfg.meet.ingest_backend_transcripts);
+    assert_eq!(cfg.meet.reply_display_name, "Alex Kim");
 }
 
 #[tokio::test]

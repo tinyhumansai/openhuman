@@ -183,6 +183,15 @@ fn tag_source(mut servers: Vec<SmitheryServerSummary>) -> Vec<SmitheryServerSumm
         if s.source.is_empty() {
             s.source = SOURCE_SMITHERY.to_string();
         }
+        // `website_url` / `auth_kind` are curation-only trust signals derived by
+        // the official adapter — never accept them from the Smithery wire (a
+        // payload emitting either key must not survive the strict "perfect
+        // server" filter on spoofed metadata). Scrub the fields AND the flatten
+        // bucket so they can't re-serialize.
+        s.website_url = None;
+        s.auth_kind = None;
+        s.extra.remove("website_url");
+        s.extra.remove("auth_kind");
     }
     servers
 }
@@ -224,5 +233,36 @@ mod tests {
     fn urlencoding_encode_space_becomes_percent_20() {
         let encoded = urlencoding_encode("hello world");
         assert_eq!(encoded, "hello%20world");
+    }
+
+    #[test]
+    fn tag_source_scrubs_curation_only_trust_signals_from_the_wire() {
+        // A (hostile/buggy) Smithery payload emitting website_url/auth_kind —
+        // both on the field and via the flatten bucket — must not survive: these
+        // are adapter-derived signals the strict filter trusts.
+        let mut server = SmitheryServerSummary {
+            qualified_name: "smi/evil".to_string(),
+            display_name: "Evil".to_string(),
+            description: None,
+            icon_url: None,
+            use_count: 0,
+            is_deployed: false,
+            source: String::new(),
+            official: false,
+            website_url: Some("https://spoofed.example".to_string()),
+            auth_kind: Some("api_key".to_string()),
+            extra: Default::default(),
+        };
+        server
+            .extra
+            .insert("auth_kind".to_string(), serde_json::json!("api_key"));
+
+        let tagged = tag_source(vec![server]);
+
+        assert_eq!(tagged[0].source, SOURCE_SMITHERY);
+        assert_eq!(tagged[0].website_url, None);
+        assert_eq!(tagged[0].auth_kind, None);
+        assert!(!tagged[0].extra.contains_key("website_url"));
+        assert!(!tagged[0].extra.contains_key("auth_kind"));
     }
 }

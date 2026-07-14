@@ -7,6 +7,6 @@ pub use ops::{
     normalize_task_key, reuse_decision, task_title_from_prompt, upsert_running,
 };
 pub use types::{
-    DurableSubagentSession, DurableSubagentSessionSummary, DurableSubagentStatus, ReuseDecision,
+    DurableSubagentSession, DurableSubagentSessionSummary, DurableSubagentStatus,
     SubagentSessionSelector, SubagentSessionStore, SubagentSessionUpsert,
 };

@@ -41,7 +41,8 @@ export function handleOAuth(ctx) {
   const legacy = url.match(
     /^\/mock-(telegram|notion|google|gmail|slack|discord|twitter|github)-oauth\/?(\?.*)?$/i,
   );
-  const legacyGeneric = !newStyle && !legacy && /^\/mock-oauth\/?(\?.*)?$/.test(url);
+  const legacyGeneric =
+    !newStyle && !legacy && /^\/mock-oauth\/?(\?.*)?$/.test(url);
 
   if (method === "GET" && (newStyle || legacy || legacyGeneric)) {
     const provider = newStyle?.[1] || legacy?.[1] || "generic";
@@ -70,14 +71,20 @@ export function handleOAuth(ctx) {
           integrationId,
         )}&provider=${encodeURIComponent(params.provider || provider)}`;
 
-    html(res, 200, renderOAuthPage({ provider, target, autoRedirectMs, errorCode }));
+    html(
+      res,
+      200,
+      renderOAuthPage({ provider, target, autoRedirectMs, errorCode }),
+    );
     return true;
   }
 
   // Generic callback exchange. Real providers each hit their own
   // backend-specific URL; for e2e a single endpoint per provider that
   // always returns a session token is enough.
-  const callbackMatch = url.match(/^\/auth\/([a-z][a-z0-9_-]*)\/callback\/?(\?.*)?$/i);
+  const callbackMatch = url.match(
+    /^\/auth\/([a-z][a-z0-9_-]*)\/callback\/?(\?.*)?$/i,
+  );
   if (method === "GET" && callbackMatch) {
     const provider = callbackMatch[1];
     const params = parseQuery(url);
@@ -156,7 +163,9 @@ function parseQuery(url) {
     const key = eq < 0 ? pair : pair.slice(0, eq);
     const raw = eq < 0 ? "" : pair.slice(eq + 1);
     try {
-      out[decodeURIComponent(key)] = decodeURIComponent(raw.replace(/\+/g, " "));
+      out[decodeURIComponent(key)] = decodeURIComponent(
+        raw.replace(/\+/g, " "),
+      );
     } catch {
       out[key] = raw;
     }
@@ -171,13 +180,17 @@ function clampDelay(raw, fallback) {
 }
 
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[c]);
+  return String(s).replace(
+    /[&<>"']/g,
+    (c) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[c],
+  );
 }
 
 function renderOAuthPage({ provider, target, autoRedirectMs, errorCode }) {
@@ -193,15 +206,22 @@ function renderOAuthPage({ provider, target, autoRedirectMs, errorCode }) {
   const autoRedirectScript =
     autoRedirectMs === null
       ? ""
-      : `<script>setTimeout(function(){window.location.href=${JSON.stringify(
-          target,
-        )};}, ${Number(autoRedirectMs)});</script>`;
+      : `<script>
+  (function () {
+    var delay = Number(document.body.dataset.autoRedirectMs || 0);
+    window.setTimeout(function () {
+      var link = document.getElementById("continue");
+      if (link instanceof HTMLAnchorElement) window.location.href = link.href;
+    }, Number.isFinite(delay) && delay >= 0 ? delay : 0);
+  })();
+  </script>`;
 
   const metaRefresh =
     autoRedirectMs === null
       ? ""
-      : `<meta http-equiv="refresh" content="${(Number(autoRedirectMs) /
-          1000).toFixed(2)};url=${safeTarget}" />`;
+      : `<meta http-equiv="refresh" content="${(
+          Number(autoRedirectMs) / 1000
+        ).toFixed(2)};url=${safeTarget}" />`;
 
   return `<!doctype html>
 <html lang="en">
@@ -217,7 +237,7 @@ function renderOAuthPage({ provider, target, autoRedirectMs, errorCode }) {
     code { background: #f3f3f3; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
   </style>
 </head>
-<body>
+<body${autoRedirectMs === null ? "" : ` data-auto-redirect-ms="${Number(autoRedirectMs)}"`}>
   <h1>${heading}</h1>
   <p>${blurb}</p>
   <p>Target: <code>${safeTarget}</code></p>

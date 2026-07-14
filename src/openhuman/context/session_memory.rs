@@ -71,7 +71,7 @@ impl Default for SessionMemoryConfig {
 #[derive(Debug, Clone, Default)]
 pub struct SessionMemoryState {
     /// Cumulative tokens observed across the whole session (via
-    /// `ContextGuard::update_usage`).
+    /// `ContextStatsState::record_usage`).
     pub total_tokens: u64,
     /// Tokens at the last completed extraction (or 0 if none yet).
     pub tokens_at_last_extract: u64,

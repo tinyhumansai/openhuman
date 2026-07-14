@@ -55,7 +55,13 @@ const statusTone = (state: string): string => {
   }
 };
 
-const LocalModelDebugPanel = () => {
+interface LocalModelDebugPanelProps {
+  /** When true, render without the SettingsPanel chrome (used when embedded as
+   *  a chip inside the Connections LLM page). */
+  embedded?: boolean;
+}
+
+const LocalModelDebugPanel = ({ embedded = false }: LocalModelDebugPanelProps = {}) => {
   const { t } = useT();
 
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
@@ -375,8 +381,8 @@ const LocalModelDebugPanel = () => {
     }
   };
 
-  return (
-    <SettingsPanel description={t('settings.developerMenu.localModelDebug.desc')}>
+  const body = (
+    <>
       <ModelStatusSection
         status={status}
         downloads={downloads}
@@ -460,6 +466,13 @@ const LocalModelDebugPanel = () => {
         onSetTtsOutputPath={setTtsOutputPath}
         onRunTtsTest={() => void runTtsTest()}
       />
+    </>
+  );
+
+  if (embedded) return body;
+  return (
+    <SettingsPanel description={t('settings.developerMenu.localModelDebug.desc')}>
+      {body}
     </SettingsPanel>
   );
 };

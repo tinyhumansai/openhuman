@@ -6,7 +6,7 @@ import {
   isComposerInteractionBlocked,
   isImeCompositionKeyEvent,
   sortAgentProfiles,
-} from '../Conversations';
+} from '../../features/conversations/Conversations';
 
 describe('isComposerInteractionBlocked', () => {
   it('blocks composer interaction while the selected thread is actively running', () => {

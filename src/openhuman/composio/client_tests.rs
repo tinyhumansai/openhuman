@@ -1142,12 +1142,88 @@ fn direct_tool_for_test() -> std::sync::Arc<crate::openhuman::tools::ComposioToo
 /// Like [`direct_tool_for_test`] but with the v3 base pointed at a local
 /// mock server so HTTP paths (e.g. `direct_list_tools`) can be asserted.
 fn direct_tool_for_mock(base_v3: String) -> std::sync::Arc<crate::openhuman::tools::ComposioTool> {
+    direct_tool_for_mock_with_key(base_v3, "ck_test_direct")
+}
+
+fn direct_tool_for_mock_with_key(
+    base_v3: String,
+    api_key: &str,
+) -> std::sync::Arc<crate::openhuman::tools::ComposioTool> {
     std::sync::Arc::new(crate::openhuman::tools::ComposioTool::new_with_v3_base(
-        "ck_test_direct",
+        api_key,
         Some("default"),
         std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::default()),
         base_v3,
     ))
+}
+
+struct DirectAuthFailureGuard {
+    key_id: u64,
+}
+
+impl DirectAuthFailureGuard {
+    fn for_tool(tool: &std::sync::Arc<crate::openhuman::tools::ComposioTool>) -> Self {
+        let key_id = tool.auth_key_fingerprint();
+        crate::openhuman::composio::direct_auth::reset_direct_auth_failure(key_id);
+        Self { key_id }
+    }
+}
+
+impl Drop for DirectAuthFailureGuard {
+    fn drop(&mut self) {
+        crate::openhuman::composio::direct_auth::reset_direct_auth_failure(self.key_id);
+    }
+}
+
+#[tokio::test]
+async fn direct_list_connections_stops_hitting_composio_after_repeated_invalid_api_key() {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let app = Router::new()
+        .route(
+            "/connected_accounts",
+            get(|State(hits): State<Arc<AtomicUsize>>| async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({ "error": { "message": "Invalid API key" } })),
+                )
+            }),
+        )
+        .with_state(hits.clone());
+    let base = start_mock_backend(app).await;
+    let tool = direct_tool_for_mock_with_key(base, "ck_test_direct_invalid_backoff");
+    let _auth_guard = DirectAuthFailureGuard::for_tool(&tool);
+
+    for _ in 0..2 {
+        let err = direct_list_connections(&tool)
+            .await
+            .expect_err("invalid key should reject");
+        assert!(
+            err.to_string().contains("Invalid API key"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    let opened = direct_list_connections(&tool)
+        .await
+        .expect_err("third invalid-key failure should open the backoff gate");
+    assert!(
+        opened.to_string().contains("re-enter"),
+        "backoff error should be actionable, got: {opened:#}"
+    );
+
+    let short_circuit = direct_list_connections(&tool)
+        .await
+        .expect_err("open backoff gate should short-circuit before HTTP");
+    assert!(
+        short_circuit.to_string().contains("re-enter"),
+        "short-circuit error should stay actionable, got: {short_circuit:#}"
+    );
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        3,
+        "after three invalid-key failures, later polls must not hit Composio"
+    );
 }
 
 #[tokio::test]

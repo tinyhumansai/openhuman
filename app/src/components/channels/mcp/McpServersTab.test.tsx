@@ -5,7 +5,7 @@
  * navigation to detail/install views, install success, uninstall, and
  * status polling.
  */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import McpServersTab from './McpServersTab';
@@ -20,6 +20,11 @@ const mockSetEnabled = vi.fn();
 const mockRegistryGet = vi.fn();
 const mockRegistrySearch = vi.fn();
 const mockConfigAssist = vi.fn();
+const mockOpenUrl = vi.fn();
+
+vi.mock('../../../utils/openUrl', () => ({
+  openUrl: (...args: unknown[]) => mockOpenUrl(...args),
+}));
 
 vi.mock('../../../services/api/mcpClientsApi', () => ({
   mcpClientsApi: {
@@ -107,6 +112,8 @@ describe('McpServersTab', () => {
     mockRegistryGet.mockReset();
     mockRegistrySearch.mockReset();
     mockRegistrySearch.mockResolvedValue({ servers: [], page: 1, total_pages: 1 });
+    mockOpenUrl.mockReset();
+    mockOpenUrl.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -325,7 +332,7 @@ describe('McpServersTab', () => {
     expect(screen.getAllByText('Server B')).toHaveLength(1);
   });
 
-  it('distinguishes look-alike registry rows by slug and source badge', async () => {
+  it('distinguishes look-alike registry rows by slug', async () => {
     mockInstalledList.mockResolvedValue([]);
     mockStatus.mockResolvedValue([]);
     mockRegistrySearch.mockResolvedValue({
@@ -352,11 +359,15 @@ describe('McpServersTab', () => {
 
     // Both rows share the display name "gmail"...
     await waitFor(() => expect(screen.getAllByText('gmail')).toHaveLength(2));
-    // ...but the unique slug and the registry-source badge tell them apart.
+    // ...but the unique slug tells them apart. The registry-source pill was
+    // removed: it labelled every official-registry row "Official", which falsely
+    // vouched for un-vetted community servers. Only the vendor `official` badge
+    // remains, and only on the row flagged official.
     expect(screen.getByText('waystation/gmail')).toBeInTheDocument();
     expect(screen.getByText('mintmcp/gmail')).toBeInTheDocument();
-    expect(screen.getByText('Official')).toBeInTheDocument();
-    expect(screen.getByText('Smithery')).toBeInTheDocument();
+    // Both fixture rows are flagged official → two vendor badges, no source pill.
+    expect(screen.getAllByText(/Official/)).toHaveLength(2);
+    expect(screen.queryByText('Smithery')).not.toBeInTheDocument();
   });
 
   it('renders the registry as one list (no auth-method grouping) in registry order', async () => {
@@ -381,11 +392,90 @@ describe('McpServersTab', () => {
     expect(screen.queryByText('Browser sign-in')).not.toBeInTheDocument();
     expect(screen.queryByText('Token / API key')).not.toBeInTheDocument();
     // Rows keep their registry order (relevance), regardless of transport.
-    const tableText = screen.getByRole('table').textContent ?? '';
+    const table = screen.getByRole('table');
+    const tableText = table.textContent ?? '';
     expect(tableText.indexOf('Local One')).toBeLessThan(tableText.indexOf('Hosted One'));
-    // Per-row Hosted/Local hint badges still render.
-    expect(screen.getByText('Hosted')).toBeInTheDocument();
-    expect(screen.getByText('Local')).toBeInTheDocument();
+    // Per-row transport badges render (Stdio vs Hosted). Scope to the table —
+    // "Stdio"/"Hosted" also appear as the transport filter chips above it.
+    expect(within(table).getByText('Hosted')).toBeInTheDocument();
+    expect(within(table).getByText('Stdio')).toBeInTheDocument();
+  });
+
+  it('renders clickable website + repo links that open externally without installing', async () => {
+    mockInstalledList.mockResolvedValue([]);
+    mockStatus.mockResolvedValue([]);
+    mockRegistrySearch.mockResolvedValue({
+      servers: [
+        {
+          qualified_name: 'io.github.acme/cool-mcp',
+          display_name: 'Cool MCP',
+          is_deployed: true,
+          website_url: 'https://acme.example',
+        },
+      ],
+      page: 1,
+      total_pages: 1,
+    });
+
+    await renderAndWaitForLoad();
+    vi.useRealTimers();
+
+    await waitFor(() => screen.getByText('Cool MCP'));
+
+    // Website link opens the declared site; repo link is derived from the
+    // io.github.<user>/<repo> slug. Neither should trigger the row's install nav.
+    fireEvent.click(screen.getByText('Website'));
+    expect(mockOpenUrl).toHaveBeenCalledWith('https://acme.example');
+
+    fireEvent.click(screen.getByText('Repository'));
+    expect(mockOpenUrl).toHaveBeenCalledWith('https://github.com/acme/cool-mcp');
+
+    // Still on the catalog list — clicking a link did not navigate to install.
+    expect(screen.getByText('Cool MCP')).toBeInTheDocument();
+    expect(screen.queryByText('Install Cool MCP')).not.toBeInTheDocument();
+  });
+
+  it('re-queries the core with a transport filter when the Stdio/Hosted pills are toggled', async () => {
+    mockInstalledList.mockResolvedValue([]);
+    mockStatus.mockResolvedValue([]);
+    // Transport filtering now happens in the core: the mock answers per the
+    // `transport` param it receives, and toggling a pill re-queries.
+    const STDIO = { qualified_name: 'a/stdio-srv', display_name: 'Stdio Srv', is_deployed: false };
+    const HOSTED = {
+      qualified_name: 'b/hosted-srv',
+      display_name: 'Hosted Srv',
+      is_deployed: true,
+    };
+    mockRegistrySearch.mockImplementation((params: { transport?: string }) => {
+      const servers =
+        params.transport === 'stdio'
+          ? [STDIO]
+          : params.transport === 'hosted'
+            ? [HOSTED]
+            : [STDIO, HOSTED];
+      return Promise.resolve({ servers, page: 1, total_pages: 1 });
+    });
+
+    await renderAndWaitForLoad();
+    vi.useRealTimers();
+
+    await waitFor(() => screen.getByText('Hosted Srv'));
+    expect(screen.getByText('Stdio Srv')).toBeInTheDocument();
+
+    // Toggle "Stdio" → core is re-queried with transport:'stdio'; hosted drops.
+    fireEvent.click(screen.getByRole('button', { name: 'Stdio' }));
+    await waitFor(() =>
+      expect(mockRegistrySearch).toHaveBeenCalledWith(
+        expect.objectContaining({ transport: 'stdio' })
+      )
+    );
+    await waitFor(() => expect(screen.queryByText('Hosted Srv')).not.toBeInTheDocument());
+    expect(screen.getByText('Stdio Srv')).toBeInTheDocument();
+
+    // Switch to "Hosted" → transport:'hosted'; stdio drops.
+    fireEvent.click(screen.getByRole('button', { name: 'Hosted' }));
+    await waitFor(() => expect(screen.getByText('Hosted Srv')).toBeInTheDocument());
+    expect(screen.queryByText('Stdio Srv')).not.toBeInTheDocument();
   });
 
   it('renders every returned row and badges only the official one, with no Show all toggle', async () => {
@@ -424,6 +514,54 @@ describe('McpServersTab', () => {
     // No verified/all toggle exists.
     expect(screen.queryByText('Show all')).not.toBeInTheDocument();
     expect(screen.queryByText('Verified only')).not.toBeInTheDocument();
+  });
+
+  it('shows a registry error state with retry when the catalog fetch fails', async () => {
+    mockInstalledList.mockResolvedValue([]);
+    mockStatus.mockResolvedValue([]);
+    // First catalog fetch fails → error state; retry succeeds → rows render.
+    mockRegistrySearch.mockRejectedValueOnce(new Error('registry down'));
+    mockRegistrySearch.mockResolvedValue({
+      servers: [{ qualified_name: 'a/srv', display_name: 'Recovered Srv', is_deployed: false }],
+      page: 1,
+      total_pages: 1,
+    });
+
+    await renderAndWaitForLoad();
+    vi.useRealTimers();
+
+    // Error surfaces instead of a silent empty state.
+    const errorBox = await screen.findByTestId('mcp-catalog-error');
+    expect(errorBox).toHaveTextContent('Failed to load catalog');
+    expect(screen.queryByTestId('mcp-catalog-empty')).not.toBeInTheDocument();
+
+    // Retry re-fetches and renders the recovered catalog.
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(screen.getByText('Recovered Srv')).toBeInTheDocument());
+    expect(screen.queryByTestId('mcp-catalog-error')).not.toBeInTheDocument();
+  });
+
+  it('surfaces the health toolbar and reconnects error-state servers via Retry all', async () => {
+    mockInstalledList.mockResolvedValue(SERVERS);
+    mockStatus.mockResolvedValue([
+      {
+        server_id: 'srv-1',
+        qualified_name: 'acme/fs-server',
+        display_name: 'File Server',
+        status: 'error' as const,
+        tool_count: 0,
+        last_error: 'connect failed',
+      },
+    ]);
+
+    await renderAndWaitForLoad();
+    vi.useRealTimers();
+
+    // The toolbar (previously never rendered in production) now appears, and its
+    // "Retry all" affordance reconnects the errored server.
+    const retry = await screen.findByRole('button', { name: /retry all/i });
+    fireEvent.click(retry);
+    await waitFor(() => expect(mockConnect).toHaveBeenCalledWith('srv-1'));
   });
 
   it('navigates to install view when a registry server row is clicked', async () => {

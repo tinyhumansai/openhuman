@@ -100,5 +100,31 @@ export function classifyUserActionableError(
     };
   }
 
+  // Provider configured but no API key set — a deterministic credential-guard
+  // failure (no HTTP). Matches the stable `api_key_missing` kind token emitted
+  // by core (e.g. cron `user_error`) AND the verbatim guard prose, mirroring
+  // the Rust single-source matcher `is_api_key_unset_message` (observability.rs)
+  // so a wording drift on either side fails its own test rather than silently
+  // dropping the signal (TAURI-RUST-HCK / #4165).
+  const isApiKeyMissing =
+    text.includes('api_key_missing') ||
+    text.includes('api key not set') ||
+    text.includes('missing api key') ||
+    text.includes('no api key is configured') ||
+    text.includes('no api key supplied');
+  if (isApiKeyMissing) {
+    return {
+      id: userErrorId('api_key_missing', scope, signal.provider),
+      kind: 'api_key_missing',
+      severity: 'warning',
+      scope,
+      sourceDomain: signal.sourceDomain,
+      provider: signal.provider,
+      titleKey: 'userErrors.apiKeyMissing.title',
+      bodyKey: 'userErrors.apiKeyMissing.body',
+      action: 'open_provider_settings',
+    };
+  }
+
   return null;
 }

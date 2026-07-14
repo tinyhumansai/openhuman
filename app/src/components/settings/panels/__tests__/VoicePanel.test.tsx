@@ -619,6 +619,77 @@ describe('VoicePanel', () => {
     );
   });
 
+  // ─── Test buttons gate on local-model install completion ────────────────────
+
+  it('disables Test STT while the selected Whisper model is not installed', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'local', engine: 'whisper', model: 'medium' },
+    });
+    runtime.whisperStatus = makeInstallStatus('whisper', { state: 'missing' });
+    // A missing model with no runtime availability is the genuine
+    // "not installed" case the Test button must gate on; `whisperReady`
+    // also clears once `stt_available` reports a usable engine.
+    runtime.voiceStatus.stt_available = false;
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const sttSelect = (await screen.findByTestId('stt-provider-select')) as HTMLSelectElement;
+    await waitFor(() => expect(sttSelect.value).toBe('whisper'));
+
+    expect(await screen.findByTestId('test-stt-button')).toBeDisabled();
+  });
+
+  it('enables Test STT once the selected Whisper model is installed', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'local', engine: 'whisper', model: 'medium' },
+    });
+    runtime.whisperStatus = makeInstallStatus('whisper', { state: 'installed', progress: 100 });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const sttSelect = (await screen.findByTestId('stt-provider-select')) as HTMLSelectElement;
+    await waitFor(() => expect(sttSelect.value).toBe('whisper'));
+
+    const testSttBtn = await screen.findByTestId('test-stt-button');
+    await waitFor(() => expect(testSttBtn).toBeEnabled());
+
+    fireEvent.click(testSttBtn);
+    await waitFor(() =>
+      expect(vi.mocked(testVoiceProvider)).toHaveBeenCalledWith('stt', 'whisper')
+    );
+  });
+
+  it('disables Test TTS while the selected Piper voice is not installed', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      ttsProvider: { kind: 'local', engine: 'piper', model: '' },
+    });
+    runtime.piperStatus = makeInstallStatus('piper', { state: 'missing' });
+    // Mirror the STT gate: no installed voice and no runtime availability is
+    // the real "not installed" case; `piperReady` also keys off `tts_available`.
+    runtime.voiceStatus.tts_available = false;
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const ttsSelect = (await screen.findByTestId('tts-provider-select')) as HTMLSelectElement;
+    await waitFor(() => expect(ttsSelect.value).toBe('piper'));
+
+    expect(await screen.findByTestId('test-tts-button')).toBeDisabled();
+  });
+
+  it('enables Test TTS once the selected Piper voice is installed', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      ttsProvider: { kind: 'local', engine: 'piper', model: '' },
+    });
+    runtime.piperStatus = makeInstallStatus('piper', { state: 'installed', progress: 100 });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    const ttsSelect = (await screen.findByTestId('tts-provider-select')) as HTMLSelectElement;
+    await waitFor(() => expect(ttsSelect.value).toBe('piper'));
+
+    await waitFor(() => expect(screen.getByTestId('test-tts-button')).toBeEnabled());
+  });
+
   // ─── Whisper model picker in routing section ────────────────────────────────
 
   it('changing the Whisper model select immediately calls persistProviders', async () => {

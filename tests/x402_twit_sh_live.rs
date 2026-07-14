@@ -26,7 +26,7 @@ async fn x402_pay_twit_sh_for_hal_finney_tweet() {
 
     println!("=== x402 tool result ===");
     for content in &result.content {
-        if let openhuman_core::openhuman::workflows::types::ToolContent::Text { text } = content {
+        if let openhuman_core::openhuman::skills::types::ToolContent::Text { text } = content {
             println!("{text}");
         }
     }

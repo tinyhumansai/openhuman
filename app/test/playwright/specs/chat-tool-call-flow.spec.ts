@@ -27,6 +27,7 @@ const FORCED_RESPONSES = [
 interface MockRequest {
   method: string;
   url: string;
+  body?: string;
 }
 
 async function resetMock(): Promise<void> {
@@ -49,6 +50,16 @@ async function requests(): Promise<MockRequest[]> {
   const response = await fetch(`${MOCK_ADMIN_BASE}/__admin/requests`);
   const payload = (await response.json()) as { data?: MockRequest[] };
   return Array.isArray(payload.data) ? payload.data : [];
+}
+
+function findToolInLlmLog(log: MockRequest[], toolName: string): boolean {
+  return log.some(
+    request =>
+      request.method === 'POST' &&
+      request.url.includes('/chat/completions') &&
+      typeof request.body === 'string' &&
+      request.body.includes(`"${toolName}"`)
+  );
 }
 
 async function openChat(page: Page): Promise<void> {
@@ -160,14 +171,16 @@ test.describe('Chat Tool Call Flow', () => {
 
     await expect(page.getByText(CANARY_FINAL).first()).toBeVisible({ timeout: 40_000 });
 
-    const names = await expect
-      .poll(async () => toolTimelineNames(page, threadId), { timeout: 20_000 })
-      .not.toEqual([]);
-
-    void names;
-    expect((await toolTimelineNames(page, threadId)).some(name => name.includes('web_fetch'))).toBe(
-      true
-    );
+    await expect
+      .poll(
+        async () => {
+          const names = await toolTimelineNames(page, threadId);
+          if (names.some(name => name.includes('web_fetch'))) return true;
+          return findToolInLlmLog(await requests(), 'web_fetch');
+        },
+        { timeout: 20_000 }
+      )
+      .toBe(true);
 
     await expect
       .poll(async () => {

@@ -49,6 +49,13 @@ export interface ChatToolResultEvent {
   round: number;
   /** Matches the id on the corresponding {@link ChatToolCallEvent}. */
   tool_call_id?: string;
+  /**
+   * Optional structured failure explanation, present only when `success` is
+   * false (#4254). Raw snake_case wire object (`class`, `category`,
+   * `recoverable`, `cause_plain`, `next_action`); parsed defensively via
+   * `parseToolFailure` before it reaches the store.
+   */
+  failure?: unknown;
 }
 
 /** One sub-agent's token/cost contribution within a turn (hover breakdown). */
@@ -128,6 +135,21 @@ export interface ChatSegmentEvent {
 /** Return the segment text from a {@link ChatSegmentEvent} (avoids the misleading wire name). */
 export function segmentText(event: ChatSegmentEvent): string {
   return event.full_response;
+}
+
+/**
+ * The parent agent's leading narration for one round, flushed mid-turn when a
+ * tool/subagent call closes that round. Emitted (`chat_interim`) so the
+ * narration persists as its own interleaved chat bubble instead of vanishing
+ * when the turn settles. `round` is the 1-based iteration it belongs to and
+ * makes a stable per-turn dedup key (one interim per round).
+ */
+export interface ChatInterimEvent {
+  thread_id: string;
+  request_id: string;
+  /** Wire name is `full_response`; carries only this round's narration text. */
+  full_response: string;
+  round: number;
 }
 
 export interface ChatErrorEvent {
@@ -275,6 +297,18 @@ export interface ChatInferenceStartEvent {
   request_id: string;
 }
 
+/**
+ * Periodic liveness beat emitted by the core progress bridge for the whole
+ * duration of an in-flight turn (issue #4270). Carries no payload beyond the
+ * ids — its sole purpose is to rearm the frontend silence timer so a long
+ * prefill or a buffered-reasoning phase that streams no other progress event
+ * does not trip a false "no response after 2 minutes" timeout.
+ */
+export interface ChatInferenceHeartbeatEvent {
+  thread_id: string;
+  request_id: string;
+}
+
 /** Emitted at the start of each LLM iteration in the tool loop. */
 export interface ChatIterationStartEvent {
   thread_id: string;
@@ -408,6 +442,13 @@ export interface ChatSubagentToolResultEvent {
    * `subagent.elapsed_ms`.
    */
   output?: string;
+  /**
+   * Optional structured failure explanation for a FAILED child tool call
+   * (#4459), present only when `success` is false. Parsed via
+   * `parseToolFailure` and stored on the child row so the "why / next" copy
+   * survives live (previously it was dropped until a snapshot reload).
+   */
+  failure?: unknown;
   subagent?: SubagentProgressDetail;
 }
 
@@ -493,6 +534,7 @@ export interface ChatTaskBoardUpdatedEvent {
 
 export interface ChatEventListeners {
   onInferenceStart?: (event: ChatInferenceStartEvent) => void;
+  onInferenceHeartbeat?: (event: ChatInferenceHeartbeatEvent) => void;
   onIterationStart?: (event: ChatIterationStartEvent) => void;
   onToolCall?: (event: ChatToolCallEvent) => void;
   onToolResult?: (event: ChatToolResultEvent) => void;
@@ -505,6 +547,7 @@ export interface ChatEventListeners {
   onSubagentTextDelta?: (event: ChatSubagentTextDeltaEvent) => void;
   onSubagentThinkingDelta?: (event: ChatSubagentThinkingDeltaEvent) => void;
   onSegment?: (event: ChatSegmentEvent) => void;
+  onInterim?: (event: ChatInterimEvent) => void;
   onTextDelta?: (event: ChatTextDeltaEvent) => void;
   onThinkingDelta?: (event: ChatThinkingDeltaEvent) => void;
   onToolArgsDelta?: (event: ChatToolArgsDeltaEvent) => void;
@@ -520,8 +563,16 @@ export interface ChatEventListeners {
 }
 
 export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
-  const socket = socketService.getSocket();
-  if (!socket) return () => {};
+  // Register through the socketService wrapper (not the raw socket instance)
+  // so chat listeners get the same lifecycle guarantees as every other
+  // subscription: queued while the socket is still connecting (the raw-socket
+  // path silently no-opped when `getSocket()` was null, dropping the whole
+  // chat event stream until the next re-subscribe) and re-attached when the
+  // service flushes pending listeners on (re)connect.
+  const socket = {
+    on: (event: string, cb: (...args: unknown[]) => void) => socketService.on(event, cb),
+    off: (event: string, cb: (...args: unknown[]) => void) => socketService.off(event, cb),
+  };
 
   const handlers: Array<[string, (...args: unknown[]) => void]> = [];
   // Canonical convention for web-channel events is snake_case.
@@ -529,6 +580,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
   // processing the same logical event twice.
   const EVENTS = {
     inferenceStart: 'inference_start',
+    inferenceHeartbeat: 'inference_heartbeat',
     iterationStart: 'iteration_start',
     toolCall: 'tool_call',
     toolResult: 'tool_result',
@@ -542,6 +594,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     subagentTextDelta: 'subagent_text_delta',
     subagentThinkingDelta: 'subagent_thinking_delta',
     segment: 'chat_segment',
+    interim: 'chat_interim',
     textDelta: 'text_delta',
     thinkingDelta: 'thinking_delta',
     toolArgsDelta: 'tool_args_delta',
@@ -564,6 +617,21 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     };
     socket.on(EVENTS.inferenceStart, cb);
     handlers.push([EVENTS.inferenceStart, cb]);
+  }
+
+  if (listeners.onInferenceHeartbeat) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatInferenceHeartbeatEvent;
+      chatLog(
+        '%s thread_id=%s request_id=%s',
+        EVENTS.inferenceHeartbeat,
+        e.thread_id,
+        e.request_id
+      );
+      listeners.onInferenceHeartbeat?.(e);
+    };
+    socket.on(EVENTS.inferenceHeartbeat, cb);
+    handlers.push([EVENTS.inferenceHeartbeat, cb]);
   }
 
   if (listeners.onIterationStart) {
@@ -785,6 +853,22 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     };
     socket.on(EVENTS.segment, cb);
     handlers.push([EVENTS.segment, cb]);
+  }
+
+  if (listeners.onInterim) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatInterimEvent;
+      chatLog(
+        '%s thread_id=%s request_id=%s round=%d',
+        EVENTS.interim,
+        e.thread_id,
+        e.request_id,
+        e.round
+      );
+      listeners.onInterim?.(e);
+    };
+    socket.on(EVENTS.interim, cb);
+    handlers.push([EVENTS.interim, cb]);
   }
 
   if (listeners.onTextDelta) {

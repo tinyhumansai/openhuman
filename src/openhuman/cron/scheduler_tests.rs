@@ -101,6 +101,143 @@ async fn push_cron_alert_deduplicates_repeated_morning_briefing_failures() {
     assert_eq!(items[0].body, MORNING_BRIEFING_FAILURE_NOTIFICATION);
 }
 
+// TAURI-RUST-HCK — a failed cron job with NO delivery configured (the default
+// `mode = "none"`) must still surface in /notifications. Before the hoist,
+// `push_cron_alert` fired only inside the proactive / announce arms, so a
+// keyless agent job ("API key not set") failed silently in the alerts tab —
+// the user had no active signal that their cron was broken.
+#[tokio::test]
+async fn deliver_if_configured_alerts_no_delivery_failure() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.name = Some("hermes".into());
+    assert_eq!(job.delivery.mode, "none", "exercise the no-delivery arm");
+
+    let failure =
+        "openrouter API key not set. Configure via the web UI or set the appropriate env var.";
+    deliver_if_configured(&config, &job, failure, false)
+        .await
+        .unwrap();
+
+    let items =
+        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+    assert_eq!(
+        items.len(),
+        1,
+        "a no-delivery cron FAILURE must still alert /notifications"
+    );
+    assert!(
+        items[0].body.contains("API key not set"),
+        "alert body must carry the actionable missing-key wording"
+    );
+}
+
+// Negative guard: a successful no-delivery run with no output must NOT alert —
+// the hoist only surfaces failures + non-empty results, never quiet successes.
+#[tokio::test]
+async fn deliver_if_configured_does_not_alert_successful_empty_no_delivery() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.name = Some("hermes".into());
+
+    deliver_if_configured(&config, &job, "", true)
+        .await
+        .unwrap();
+
+    let items =
+        crate::openhuman::notifications::store::list(&config, 10, 0, Some("cron"), None).unwrap();
+    assert!(
+        items.is_empty(),
+        "a successful empty run must not spam the alerts tab"
+    );
+}
+
+// Codex #4166 — a SUCCESSFUL no-delivery (`none`) run with output must stay
+// silent: its result lives in last_output only (the cron contract), so the
+// hoisted alert must NOT fire an unread /notifications entry every interval.
+// Failures still alert (above); delivering modes still alert success (below).
+#[tokio::test]
+async fn deliver_if_configured_does_not_alert_successful_none_delivery_with_output() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    assert_eq!(job.delivery.mode, "none", "exercise the no-delivery arm");
+
+    deliver_if_configured(&config, &job, "daily digest: 3 new items", true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        cron_alerts(&config).await,
+        0,
+        "a successful none-delivery run must not alert (silent by contract)"
+    );
+}
+
+// Counterpart to the gate: a delivering mode (proactive) DOES alert a
+// successful non-empty run — the mode gate only silences `none`.
+#[tokio::test]
+async fn deliver_if_configured_alerts_successful_proactive_with_output() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let job = proactive_job();
+
+    deliver_if_configured(&config, &job, "morning briefing ready", true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        cron_alerts(&config).await,
+        1,
+        "a delivering-mode successful run still surfaces in /notifications"
+    );
+}
+
+// CodeRabbit #4169 — a permanent config/billing halt must surface its specific,
+// actionable copy (not the generic "Something went wrong"), and that copy must
+// be a static `&'static str` (no raw-error leak). Precedence mirrors the halt
+// classifiers: credits → budget → missing key.
+#[test]
+fn permanent_halt_message_maps_each_state_to_actionable_static_copy() {
+    assert_eq!(
+        permanent_halt_message(true, false),
+        CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE
+    );
+    assert_eq!(
+        permanent_halt_message(false, true),
+        CRON_HALT_BUDGET_EXHAUSTED_MESSAGE
+    );
+    // Neither credits nor budget set → the missing-key state.
+    assert_eq!(
+        permanent_halt_message(false, false),
+        CRON_HALT_API_KEY_UNSET_MESSAGE
+    );
+    // Credits wins when both flags are set (evaluation order).
+    assert_eq!(
+        permanent_halt_message(true, true),
+        CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE
+    );
+    // None of the canned bodies are the generic fallback; all are non-empty and
+    // config-actionable rather than the "report on Discord" generic copy.
+    for body in [
+        CRON_HALT_API_KEY_UNSET_MESSAGE,
+        CRON_HALT_INSUFFICIENT_CREDITS_MESSAGE,
+        CRON_HALT_BUDGET_EXHAUSTED_MESSAGE,
+    ] {
+        assert!(!body.is_empty());
+        assert_ne!(body, AGENT_JOB_USER_FAILURE_MESSAGE);
+        assert!(
+            !body.contains("Discord"),
+            "permanent-halt copy must be config-actionable, not the generic report message"
+        );
+    }
+}
+
 #[test]
 fn agent_session_target_tag_matches_expected_values() {
     assert_eq!(agent_session_target_tag(&SessionTarget::Main), "main");
@@ -501,6 +638,182 @@ fn is_budget_exhausted_failure_does_not_halt_shell_jobs() {
     let wire = r#"OpenHuman API error (400 Bad Request): {"error":"Insufficient budget"}"#;
     assert!(!is_budget_exhausted_failure(&JobType::Shell, None, wire));
     assert!(!is_budget_exhausted_failure(
+        &JobType::Shell,
+        Some(wire),
+        wire
+    ));
+}
+
+// TAURI-RUST-HCK — a cron agent job pinned to a provider with no configured
+// API key fails at the credential guard with "<provider> API key not set …",
+// before any HTTP, and leaks through `last_agent_error`.
+// `is_api_key_unset_failure` must consult the shared matcher so the retry loop
+// halts on the first occurrence (a permanent user-config state) instead of
+// retrying N times and reporting `failure=retries_exhausted` to Sentry (3428
+// events / 1 user) — the bare cron `report_error` bypasses the `ApiKeyMissing`
+// `expected_error_kind` demotion.
+#[test]
+fn is_api_key_unset_failure_matches_verbatim_in_agent_error() {
+    let wire =
+        "openrouter API key not set. Configure via the web UI or set the appropriate env var.";
+    assert!(
+        is_api_key_unset_failure(&JobType::Agent, Some(wire), AGENT_JOB_USER_FAILURE_MESSAGE),
+        "raw agent error carrying the verbatim 'API key not set' wording must trip the halt"
+    );
+}
+
+// Defense-in-depth: classify even if a future path surfaces the raw error in
+// `last_output` rather than `last_agent_error`.
+#[test]
+fn is_api_key_unset_failure_matches_when_only_output_carries_signal() {
+    let wire = "cohere API key not set. Configure via the web UI or set the appropriate env var.";
+    assert!(is_api_key_unset_failure(&JobType::Agent, None, wire));
+}
+
+// Negative guard: the canned user-facing message carries no key signal; an
+// ordinary provider error must NOT halt; and — critically — a *rejected* key
+// (provider 401 "Invalid API key", a present-but-wrong key) is actionable and
+// must keep reaching Sentry. This matcher is for an *absent* key only.
+#[test]
+fn is_api_key_unset_failure_does_not_match_canned_rejected_or_ordinary_errors() {
+    assert!(!is_api_key_unset_failure(
+        &JobType::Agent,
+        Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+        AGENT_JOB_USER_FAILURE_MESSAGE,
+    ));
+    let server_err =
+        r#"OpenHuman API error (500 Internal Server Error): {"error":"Internal server error"}"#;
+    assert!(!is_api_key_unset_failure(
+        &JobType::Agent,
+        Some(server_err),
+        ""
+    ));
+    let rejected_key = r#"OpenAI API error (401 Unauthorized): {"error":{"message":"Invalid API key","type":"invalid_request_error"}}"#;
+    assert!(
+        !is_api_key_unset_failure(&JobType::Agent, Some(rejected_key), ""),
+        "a present-but-rejected key (401 Invalid API key) is actionable — must NOT classify as an unset key"
+    );
+}
+
+// Scope guard: shell jobs that echo an "API key not set" string keep their
+// retry semantics — only agent jobs route through the inference credential guard.
+#[test]
+fn is_api_key_unset_failure_does_not_halt_shell_jobs() {
+    let wire =
+        "openrouter API key not set. Configure via the web UI or set the appropriate env var.";
+    assert!(!is_api_key_unset_failure(&JobType::Shell, None, wire));
+    assert!(!is_api_key_unset_failure(&JobType::Shell, Some(wire), wire));
+}
+
+// TAURI-RUST-12K — a cron agent job pinned to a local LLM provider (LM Studio
+// on localhost:1234) fails with a loopback connection-refused because the
+// user's server isn't running. `is_local_provider_unreachable_failure` must
+// consult the shared loopback matcher so the retry loop halts on the first
+// occurrence (retries can't bring the port up) instead of re-emitting the
+// `failure=retries_exhausted` bare `report_error` the classifier already
+// demotes everywhere else.
+#[test]
+fn is_local_provider_unreachable_failure_matches_localized_loopback_in_agent_error() {
+    // Verbatim from the Sentry event: zh-CN Windows host, localized
+    // WSAECONNREFUSED text, only the errno + `tcp connect error` survive.
+    let wire = "error sending request for url \
+                (http://localhost:1234/v1/chat/completions): client error (Connect): \
+                tcp connect error: 由于目标计算机积极拒绝，无法连接。 (os error 10061)";
+    assert!(
+        is_local_provider_unreachable_failure(
+            &JobType::Agent,
+            Some(wire),
+            AGENT_JOB_USER_FAILURE_MESSAGE
+        ),
+        "raw agent error carrying the localized loopback connect-refused must trip the halt"
+    );
+}
+
+// Defense-in-depth: classify even if a future path surfaces the raw error in
+// `last_output` rather than `last_agent_error`.
+#[test]
+fn is_local_provider_unreachable_failure_matches_when_only_output_carries_signal() {
+    let wire = "error sending request for url (http://localhost:1234/v1/chat/completions) \
+                → tcp connect error → Connection refused (os error 10061)";
+    assert!(is_local_provider_unreachable_failure(
+        &JobType::Agent,
+        None,
+        wire
+    ));
+}
+
+#[test]
+fn is_local_provider_unreachable_failure_keeps_short_loopback_send_error_retryable() {
+    let wire = "error sending request for url (http://localhost:1234/v1/chat/completions)";
+    assert!(
+        !is_local_provider_unreachable_failure(
+            &JobType::Agent,
+            Some(wire),
+            AGENT_JOB_USER_FAILURE_MESSAGE
+        ),
+        "short reqwest send errors can represent transient timeout/reset shapes and must stay retryable without a refused errno/tcp-connect signal"
+    );
+}
+
+#[test]
+fn is_local_provider_unreachable_failure_matches_raw_no_models_loaded_body() {
+    let raw = "LM Studio API error (400 Bad Request): {\"error\":\"No models loaded. \
+               Please load a model in the developer page first.\"}";
+    assert!(
+        is_local_provider_unreachable_failure(
+            &JobType::Agent,
+            Some(raw),
+            AGENT_JOB_USER_FAILURE_MESSAGE
+        ),
+        "raw OpenAI-compatible no-model body should halt without retries"
+    );
+}
+
+#[test]
+fn is_local_provider_unreachable_failure_checks_output_when_raw_is_generic() {
+    let output =
+        "Your local inference server (e.g. LM Studio) is running but has no model loaded. \
+                  Load a model, then try again.";
+    assert!(
+        is_local_provider_unreachable_failure(
+            &JobType::Agent,
+            Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+            output
+        ),
+        "friendly no-model output should halt even when raw agent error is generic"
+    );
+}
+
+// Negative guard: a transient REMOTE provider / backend network error must NOT
+// halt — it may recover on retry and stays actionable in Sentry. Narrowing to
+// loopback is what keeps this guard from blinding real outages.
+#[test]
+fn is_local_provider_unreachable_failure_does_not_match_remote_network_errors() {
+    assert!(!is_local_provider_unreachable_failure(
+        &JobType::Agent,
+        Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+        AGENT_JOB_USER_FAILURE_MESSAGE,
+    ));
+    let remote = "error sending request for url (https://api.tinyhumans.ai/v1/chat/completions) \
+                  → tcp connect error → Connection refused (os error 61)";
+    assert!(
+        !is_local_provider_unreachable_failure(&JobType::Agent, Some(remote), ""),
+        "a remote-host connect-refused must retry + report, not halt as loopback"
+    );
+}
+
+// Scope guard: shell jobs that echo a loopback-refused string keep their retry
+// semantics — only agent jobs route through the inference layer.
+#[test]
+fn is_local_provider_unreachable_failure_does_not_halt_shell_jobs() {
+    let wire = "error sending request for url (http://localhost:1234/v1/chat/completions) \
+                → tcp connect error → Connection refused (os error 10061)";
+    assert!(!is_local_provider_unreachable_failure(
+        &JobType::Shell,
+        None,
+        wire
+    ));
+    assert!(!is_local_provider_unreachable_failure(
         &JobType::Shell,
         Some(wire),
         wire
@@ -934,7 +1247,7 @@ fn agent_error_to_user_message_classifies_provider_non_retryable() {
     let msg = agent_error_to_user_message(&err);
     assert!(msg.contains("provider"));
     assert!(msg.contains("credentials"));
-    assert!(msg.contains("Settings"));
+    assert!(msg.contains("Connections \u{2192} API keys \u{2192} LLM"));
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
 }
 
@@ -966,7 +1279,7 @@ fn agent_error_to_user_message_classifies_max_iterations() {
     let err = AgentError::MaxIterationsExceeded { max: 10 };
     let msg = agent_error_to_user_message(&err);
     assert!(msg.contains("tool iterations"));
-    assert!(msg.contains("Settings"));
+    assert!(msg.contains("Connections \u{2192} API keys \u{2192} LLM"));
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
 }
 
@@ -987,11 +1300,11 @@ fn agent_error_to_user_message_classifies_empty_provider_response_for_3335() {
         "must not claim a local provider exists: {msg}"
     );
     assert!(
-        msg.contains("different model"),
+        msg.contains("another model"),
         "must keep the model-switch remedy: {msg}"
     );
     assert!(
-        msg.contains("Settings \u{2192} AI \u{2192} LLM"),
+        msg.contains("Connections \u{2192} API keys \u{2192} LLM"),
         "must keep the provider-config deep link: {msg}"
     );
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
@@ -1481,4 +1794,105 @@ async fn deliver_if_configured_empty_success_skips_chat_and_alert() {
     // Successful but empty: nothing delivered anywhere.
     assert!(deliver_if_configured(&config, &job, "", true).await.is_ok());
     assert_eq!(cron_alerts(&config).await, 0);
+}
+
+/// Receive the next `user_error` broadcast on `rx` carrying `kind`, skipping any
+/// unrelated events. The web-channel bus is a process-global broadcast, so a
+/// sibling test running concurrently may interleave its own `user_error` (a
+/// different kind) onto the same channel — filtering on `kind` keeps each test
+/// deterministic regardless of ordering.
+///
+/// A concurrent flood can also push our event past the channel capacity before
+/// we read it, surfacing as `Lagged` (the receiver fell behind, not a real
+/// absence). We treat `Lagged` as recoverable and keep scanning (CodeRabbit
+/// #4169); only a terminal `Empty`/`Closed` — the matching event genuinely was
+/// not published — panics.
+fn next_user_error(
+    rx: &mut tokio::sync::broadcast::Receiver<crate::core::socketio::WebChannelEvent>,
+    kind: &str,
+) -> crate::core::socketio::WebChannelEvent {
+    use tokio::sync::broadcast::error::TryRecvError;
+    loop {
+        match rx.try_recv() {
+            Ok(ev) if ev.event == "user_error" && ev.error_type.as_deref() == Some(kind) => {
+                break ev
+            }
+            Ok(_) => continue,
+            // Receiver fell behind a concurrent flood — the dropped slots can't
+            // have held *our* just-published event before this point, so skip
+            // ahead and keep scanning rather than failing spuriously.
+            Err(TryRecvError::Lagged(_)) => continue,
+            Err(e) => panic!("expected a user_error broadcast for kind={kind}, bus said: {e:?}"),
+        }
+    }
+}
+
+#[test]
+fn publish_cron_user_error_broadcasts_metadata_only_for_each_kind() {
+    use crate::openhuman::channels::providers::web::subscribe_web_channel_events;
+
+    // Folded from two tests that both published `api_key_missing` to the
+    // process-global bus and could false-pass off each other's broadcast under
+    // parallel execution (CodeRabbit #4169). One subscription + serialized
+    // publishes means each assertion can only be satisfied by THIS test's own
+    // emission, so a regression in `publish_cron_user_error` actually fails.
+    // The three tokens are exactly the `UserErrorKind` values classify.ts accepts.
+    let mut rx = subscribe_web_channel_events();
+    for kind in ["insufficient_credits", "budget_exceeded", "api_key_missing"] {
+        publish_cron_user_error(kind);
+        let ev = next_user_error(&mut rx, kind);
+        // Broadcast to the "system" room every connected socket auto-joins.
+        assert_eq!(ev.client_id, "system");
+        // Stable kind token mirrors the frontend `UserErrorKind` discriminator.
+        assert_eq!(ev.error_type.as_deref(), Some(kind));
+        assert_eq!(ev.error_source.as_deref(), Some("cron"));
+        // Metadata-only: a `user_error` NEVER carries the raw provider body
+        // (CLAUDE.md) and is thread-less (no chat context).
+        assert!(ev.message.is_none(), "user_error must not carry a raw body");
+        assert!(ev.full_response.is_none());
+        assert!(ev.thread_id.is_empty(), "cron user_error is thread-less");
+        assert!(ev.request_id.is_empty());
+    }
+}
+
+// TAURI-RUST-12K (end-to-end) — the predicate tests above key on hand-written
+// wire strings; this test proves the REAL provider-generated error remains
+// retryable when it only preserves reqwest's short send-error prefix. A cron
+// agent job is routed to a keyless local provider (`AuthStyle::None`, LM Studio
+// shape) whose server is offline: the chat workload skips the credential guard
+// and attempts loopback HTTP. If the provider layer surfaces only
+// `error sending request for url (...)`, without the refused errno/tcp-connect
+// chain, cron must not treat it as a permanent local-provider halt because the
+// same short prefix is also used for transient timeout/reset shapes.
+#[tokio::test]
+async fn cron_agent_job_short_loopback_send_error_stays_retryable() {
+    use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp).await;
+    // Keyless local provider (`AuthStyle::None` → no credential requirement, so
+    // the request proceeds to the HTTP connect). `chat_provider` routes the
+    // chat workload to it; the slug resolves to LM Studio's default endpoint.
+    config.cloud_providers = vec![CloudProviderCreds {
+        id: "lmstudio-offline".into(),
+        slug: "lmstudio".into(),
+        label: "LM Studio".into(),
+        endpoint: "http://127.0.0.1:1".into(),
+        auth_style: AuthStyle::None,
+        ..Default::default()
+    }];
+    config.default_model = Some("lmstudio:local-model".into());
+    config.chat_provider = Some("lmstudio:local-model".into());
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.prompt = Some("Say hello".into());
+
+    let (success, output, raw) = run_agent_job(&config, &job).await;
+    assert!(
+        !success,
+        "a cron agent job against an offline local provider must fail"
+    );
+    assert!(
+        !is_local_provider_unreachable_failure(&JobType::Agent, raw.as_deref(), &output),
+        "provider-generated short loopback send error must stay retryable without refused errno/tcp-connect evidence; got raw={raw:?}"
+    );
 }

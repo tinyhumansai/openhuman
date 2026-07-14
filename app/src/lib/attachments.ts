@@ -33,12 +33,25 @@ export const ALLOWED_FILE_MIME_TYPES = [
 ] as const;
 
 export type AllowedFileMimeType = (typeof ALLOWED_FILE_MIME_TYPES)[number];
-export type AllowedAttachmentMimeType = AllowedImageMimeType | AllowedFileMimeType;
-export type AttachmentKind = 'image' | 'file';
+
+// Video formats accepted by the composer. The original video is never sent to
+// the provider — instead we sample a few still frames client-side and forward
+// them through the existing `[IMAGE:]` vision path (see `extractVideoFrames` +
+// `buildMessageWithAttachments`). So a vision-capable tier is required, the same
+// gate as images; audio and motion between frames are not conveyed.
+export const ALLOWED_VIDEO_MIME_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'] as const;
+
+export type AllowedVideoMimeType = (typeof ALLOWED_VIDEO_MIME_TYPES)[number];
+export type AllowedAttachmentMimeType =
+  | AllowedImageMimeType
+  | AllowedFileMimeType
+  | AllowedVideoMimeType;
+export type AttachmentKind = 'image' | 'file' | 'video';
 
 export const ALLOWED_ATTACHMENT_MIME_TYPES = [
   ...ALLOWED_IMAGE_MIME_TYPES,
   ...ALLOWED_FILE_MIME_TYPES,
+  ...ALLOWED_VIDEO_MIME_TYPES,
 ] as const;
 
 // Document formats the backend actually text-extracts (PDF via pdf_extract;
@@ -52,11 +65,21 @@ export const ALLOWED_ATTACHMENT_MIME_TYPES = [
 // picks, not at the dialog.
 const EXTRACTABLE_FILE_MIME_TYPES = ['application/pdf', 'text/plain', 'text/markdown'] as const;
 
+// Shared image-marker budget per message. Images cost 1 marker each; a video
+// costs VIDEO_FRAME_COUNT markers (its sampled frames). Mirrors the core default
+// `multimodal.max_images` (src/openhuman/config/schema/tools/multimodal.rs) — the
+// core counts every `[IMAGE:]` marker (frames included) and errors on overflow,
+// so the composer must budget images + video frames against this single cap.
 export const ATTACHMENT_MAX_IMAGES = 4;
 export const ATTACHMENT_MAX_FILES = 4;
 export const ATTACHMENT_MAX_IMAGE_SIZE_BYTES = 8 * 1024 * 1024; // 8 MB
 export const ATTACHMENT_MAX_FILE_SIZE_BYTES = 16 * 1024 * 1024; // 16 MB
+export const ATTACHMENT_MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
 export const ATTACHMENT_MAX_SIZE_BYTES = ATTACHMENT_MAX_IMAGE_SIZE_BYTES;
+// Still frames sampled from a video and forwarded as `[IMAGE:]` markers. 2 keeps
+// a clip within the 4-marker budget alongside other attachments (e.g. 1 video +
+// 2 images, or 2 videos).
+export const VIDEO_FRAME_COUNT = 2;
 
 export interface Attachment {
   id: string;
@@ -68,6 +91,10 @@ export interface Attachment {
   originalSizeBytes: number;
   payloadSizeBytes: number;
   compressed: boolean;
+  // Only set for `kind: 'video'`: the still frames sampled from the clip,
+  // expanded into `[IMAGE:]` markers at send time. The chip itself shows a
+  // single poster (the first frame) via `previewUri`.
+  frames?: string[];
 }
 
 export type AttachmentError =
@@ -75,10 +102,15 @@ export type AttachmentError =
   | { code: 'too_large'; sizeBytes: number; maxBytes: number }
   | { code: 'too_many'; kind: AttachmentKind; max: number }
   | { code: 'image_not_supported' }
+  | { code: 'video_not_supported' }
   | { code: 'read_failed'; reason: string };
 
 export function isAllowedMimeType(mime: string): mime is AllowedImageMimeType {
   return (ALLOWED_IMAGE_MIME_TYPES as readonly string[]).includes(mime);
+}
+
+export function isVideoMimeType(mime: string): mime is AllowedVideoMimeType {
+  return (ALLOWED_VIDEO_MIME_TYPES as readonly string[]).includes(mime);
 }
 
 export function isAllowedAttachmentMimeType(mime: string): mime is AllowedAttachmentMimeType {
@@ -92,6 +124,7 @@ export function isAllowedAttachmentMimeType(mime: string): mime is AllowedAttach
  */
 export type SupportedAttachmentMimeType =
   | AllowedImageMimeType
+  | AllowedVideoMimeType
   | (typeof EXTRACTABLE_FILE_MIME_TYPES)[number];
 
 /**
@@ -104,12 +137,15 @@ export type SupportedAttachmentMimeType =
 export function isSupportedAttachmentMimeType(mime: string): mime is SupportedAttachmentMimeType {
   return (
     (ALLOWED_IMAGE_MIME_TYPES as readonly string[]).includes(mime) ||
+    (ALLOWED_VIDEO_MIME_TYPES as readonly string[]).includes(mime) ||
     (EXTRACTABLE_FILE_MIME_TYPES as readonly string[]).includes(mime)
   );
 }
 
 export function attachmentKindForMime(mime: AllowedAttachmentMimeType): AttachmentKind {
-  return isAllowedMimeType(mime) ? 'image' : 'file';
+  if (isAllowedMimeType(mime)) return 'image';
+  if (isVideoMimeType(mime)) return 'video';
+  return 'file';
 }
 
 export function fileToDataUri(file: Blob): Promise<string> {
@@ -180,12 +216,114 @@ async function buildAttachmentDataUri(
   return { dataUri, payloadSizeBytes: file.size, compressed: false };
 }
 
+/** Evenly spread `count` sample points across the 0.1–0.9 span of the clip. */
+function sampleFractions(count: number): number[] {
+  if (count <= 1) return [0.1];
+  const fractions: number[] = [];
+  for (let i = 0; i < count; i++) {
+    fractions.push(0.1 + (0.8 * i) / (count - 1));
+  }
+  return fractions;
+}
+
+function seekVideo(video: HTMLVideoElement, time: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    // Assigning currentTime to (approximately) its current value is a no-op and
+    // never fires `seeked` (HTML spec) — which would hang for zero-length clips
+    // or a first frame already at t=0. Short-circuit those.
+    if (Math.abs(video.currentTime - time) < 0.01) {
+      resolve();
+      return;
+    }
+    const cleanup = () => {
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('error', onError);
+    };
+    const onSeeked = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error('video seek failed'));
+    };
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('error', onError);
+    video.currentTime = time;
+  });
+}
+
+/**
+ * Sample `count` still frames from a video file as JPEG data URIs by decoding it
+ * in a detached `<video>` element and painting each seek point onto a `<canvas>`.
+ * The full clip is never uploaded — only these frames ride the `[IMAGE:]` vision
+ * path. Throws if the browser can't decode the file (the caller maps that to a
+ * `read_failed` error). Requires a real codec-capable runtime (CEF/Chromium);
+ * jsdom can't decode video, so unit tests stub {@link videoFrameExtractor}.
+ */
+async function extractVideoFramesImpl(
+  file: File,
+  count: number = VIDEO_FRAME_COUNT
+): Promise<string[]> {
+  const url = URL.createObjectURL(file);
+  const video = document.createElement('video');
+  video.muted = true;
+  video.preload = 'auto';
+  video.src = url;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error('video metadata load failed'));
+    });
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 320;
+    canvas.height = video.videoHeight || 240;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('canvas 2d context unavailable');
+
+    const frames: string[] = [];
+    for (const fraction of sampleFractions(count)) {
+      const target = duration ? Math.min(duration * fraction, Math.max(duration - 0.05, 0)) : 0;
+      await seekVideo(video, target);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      frames.push(canvas.toDataURL('image/jpeg', 0.7));
+    }
+    debug('[chat:attachments] video_frames name=%s count=%d', file.name, frames.length);
+    return frames;
+  } finally {
+    URL.revokeObjectURL(url);
+    video.removeAttribute('src');
+  }
+}
+
+/**
+ * Indirection seam so unit tests can stub frame extraction (jsdom has no video
+ * decoder). Production calls `extract` directly.
+ */
+export const videoFrameExtractor = { extract: extractVideoFramesImpl };
+
+export function extractVideoFrames(file: File, count?: number): Promise<string[]> {
+  return videoFrameExtractor.extract(file, count);
+}
+
+/** Image-marker cost of an attachment kind (video = its sampled frames). */
+export function imageMarkerCost(kind: AttachmentKind): number {
+  if (kind === 'image') return 1;
+  if (kind === 'video') return VIDEO_FRAME_COUNT;
+  return 0;
+}
+
 export async function validateAndReadFile(
   file: File,
-  existingCount: number,
+  // Image-marker slots already consumed this message: 1 per image + VIDEO_FRAME_COUNT
+  // per video. Images and videos share one budget (ATTACHMENT_MAX_IMAGES) because
+  // the core counts every `[IMAGE:]` marker — frames included — and rejects overflow.
+  existingImageMarkers: number,
   existingFileCount = 0,
-  // When `false` (the active chat model isn't vision-capable), image files are
-  // rejected; documents (PDF/Word/etc.) still flow. Defaults `true` so non-chat
+  // When `false` (the active chat model isn't vision-capable), image AND video
+  // files are rejected (video is conveyed as sampled frames through the vision
+  // path); documents (PDF/Word/etc.) still flow. Defaults `true` so non-chat
   // callers are unaffected.
   allowImages = true
 ): Promise<{ attachment: Attachment } | { error: AttachmentError }> {
@@ -197,19 +335,55 @@ export async function validateAndReadFile(
   if (!allowImages && kind === 'image') {
     return { error: { code: 'image_not_supported' } };
   }
-  const maxCount = kind === 'image' ? ATTACHMENT_MAX_IMAGES : ATTACHMENT_MAX_FILES;
-  const count = kind === 'image' ? existingCount : existingFileCount;
-  if (count >= maxCount) {
-    return { error: { code: 'too_many', kind, max: maxCount } };
+  if (!allowImages && kind === 'video') {
+    return { error: { code: 'video_not_supported' } };
+  }
+
+  if (kind === 'file') {
+    if (existingFileCount >= ATTACHMENT_MAX_FILES) {
+      return { error: { code: 'too_many', kind: 'file', max: ATTACHMENT_MAX_FILES } };
+    }
+  } else {
+    // image or video: budget against the shared image-marker cap.
+    if (existingImageMarkers + imageMarkerCost(kind) > ATTACHMENT_MAX_IMAGES) {
+      return { error: { code: 'too_many', kind: 'image', max: ATTACHMENT_MAX_IMAGES } };
+    }
   }
 
   const maxBytes =
-    kind === 'image' ? ATTACHMENT_MAX_IMAGE_SIZE_BYTES : ATTACHMENT_MAX_FILE_SIZE_BYTES;
+    kind === 'image'
+      ? ATTACHMENT_MAX_IMAGE_SIZE_BYTES
+      : kind === 'video'
+        ? ATTACHMENT_MAX_VIDEO_SIZE_BYTES
+        : ATTACHMENT_MAX_FILE_SIZE_BYTES;
   if (file.size > maxBytes) {
     return { error: { code: 'too_large', sizeBytes: file.size, maxBytes } };
   }
 
   try {
+    if (kind === 'video') {
+      const frames = await videoFrameExtractor.extract(file);
+      if (frames.length === 0) {
+        return { error: { code: 'read_failed', reason: 'no frames extracted' } };
+      }
+      return {
+        attachment: {
+          id: globalThis.crypto.randomUUID(),
+          kind: 'video',
+          file,
+          // The clip is represented to the agent by its frames, not a data URI;
+          // the poster (first frame) drives the chip thumbnail.
+          dataUri: frames[0],
+          previewUri: frames[0],
+          mimeType: file.type,
+          originalSizeBytes: file.size,
+          payloadSizeBytes: file.size,
+          compressed: false,
+          frames,
+        },
+      };
+    }
+
     const { dataUri, payloadSizeBytes, compressed } = await buildAttachmentDataUri(file, file.type);
     const previewUri = kind === 'image' ? await fileToDataUri(file) : undefined;
     return {
@@ -241,7 +415,14 @@ export async function validateAndReadFile(
 export function buildMessageWithAttachments(text: string, attachments: Attachment[]): string {
   if (attachments.length === 0) return text;
   const markers = attachments
-    .map(a => (a.kind === 'image' ? `[IMAGE:${a.dataUri}]` : `[FILE:${a.dataUri}]`))
+    .map(a => {
+      if (a.kind === 'image') return `[IMAGE:${a.dataUri}]`;
+      if (a.kind === 'file') return `[FILE:${a.dataUri}]`;
+      // Video: forward each sampled still as its own image marker so the agent
+      // "sees" the clip through the existing vision path.
+      return (a.frames ?? []).map(frame => `[IMAGE:${frame}]`).join(' ');
+    })
+    .filter(marker => marker.length > 0)
     .join(' ');
   return text.trim() ? `${text.trim()} ${markers}` : markers;
 }

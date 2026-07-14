@@ -15,6 +15,7 @@ import { useHomeNav } from './useHomeNav';
 function matchActive(path: string, pathname: string): boolean {
   if (path === '/chat') return pathname.startsWith('/chat');
   if (path === '/settings') return pathname === '/settings' || pathname.startsWith('/settings/');
+  if (path === '/flows') return pathname === '/flows' || pathname.startsWith('/flows/');
   if (path === '/home') return pathname === '/home';
   return pathname === path;
 }

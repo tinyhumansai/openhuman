@@ -18,6 +18,11 @@ interface TwoPaneNavProps {
   onSelect: (value: string) => void;
   /** Optional fixed header (title/subtitle) above the scrolling nav list. */
   header?: ReactNode;
+  /**
+   * Optional content rendered inside the scroll region *below* the nav groups —
+   * e.g. a separator + a live list of active sessions. Scrolls with the nav.
+   */
+  footer?: ReactNode;
   ariaLabel?: string;
 }
 
@@ -33,12 +38,15 @@ export default function TwoPaneNav({
   selected,
   onSelect,
   header,
+  footer,
   ariaLabel,
 }: TwoPaneNavProps) {
   return (
     <nav aria-label={ariaLabel} className="flex h-full flex-col">
       {header && <div className="shrink-0 px-3 pb-1 pt-3">{header}</div>}
-      <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
+      {/* When there's no header, the list needs its own top padding so the first
+          item doesn't collide with the pane's top edge. */}
+      <div className={`min-h-0 flex-1 overflow-y-auto px-1.5 pb-2 ${header ? '' : 'pt-3'}`}>
         {groups.map((group, groupIndex) => (
           <div key={group.label ?? `__group-${groupIndex}`}>
             {group.label && (
@@ -77,6 +85,7 @@ export default function TwoPaneNav({
             </ul>
           </div>
         ))}
+        {footer}
       </div>
     </nav>
   );

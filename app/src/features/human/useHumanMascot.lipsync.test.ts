@@ -74,8 +74,10 @@ function makePlayback(durationMs: number): FakePlayback {
   let ms = 0;
   let stopped = false;
   let resolveEnded!: () => void;
-  const ended = new Promise<void>(res => {
+  let rejectEnded!: (err: unknown) => void;
+  const ended = new Promise<void>((res, rej) => {
     resolveEnded = res;
+    rejectEnded = rej;
   });
   return {
     handle: {
@@ -83,7 +85,9 @@ function makePlayback(durationMs: number): FakePlayback {
       durationMs: () => durationMs,
       metadataReady: Promise.resolve(),
       stop: () => {
+        if (stopped) return;
         stopped = true;
+        rejectEnded({ stopped: true });
       },
       ended,
     },
@@ -97,6 +101,48 @@ function makePlayback(durationMs: number): FakePlayback {
   };
 }
 
+function makePlaybackWithDeferredMetadata(
+  finalDurationMs: number
+): FakePlayback & { resolveMetadata(): void } {
+  let durationMs = 0;
+  let ms = 0;
+  let stopped = false;
+  let resolveEnded!: () => void;
+  let rejectEnded!: (err: unknown) => void;
+  let resolveMetadata!: () => void;
+  const ended = new Promise<void>((res, rej) => {
+    resolveEnded = res;
+    rejectEnded = rej;
+  });
+  const metadataReady = new Promise<void>(res => {
+    resolveMetadata = () => {
+      durationMs = finalDurationMs;
+      res();
+    };
+  });
+  return {
+    handle: {
+      currentMs: () => (stopped ? -1 : ms),
+      durationMs: () => durationMs,
+      metadataReady,
+      stop: () => {
+        if (stopped) return;
+        stopped = true;
+        rejectEnded({ stopped: true });
+      },
+      ended,
+    },
+    setMs(next: number) {
+      ms = next;
+    },
+    finish() {
+      stopped = true;
+      resolveEnded();
+    },
+    resolveMetadata,
+  };
+}
+
 /**
  * Drive the hook's RAF-based render loop deterministically. The hook calls
  * `requestAnimationFrame` on every speaking frame; without firing it the
@@ -105,12 +151,15 @@ function makePlayback(durationMs: number): FakePlayback {
 let rafQueue: FrameRequestCallback[] = [];
 const originalRaf = window.requestAnimationFrame;
 const originalCancel = window.cancelAnimationFrame;
+let nowMs = 1_000;
 
 beforeEach(() => {
   capturedListeners = null;
   rafQueue = [];
+  nowMs = 1_000;
   (synthesizeSpeech as ReturnType<typeof vi.fn>).mockReset();
   (playBase64Audio as ReturnType<typeof vi.fn>).mockReset();
+  vi.spyOn(window.performance, 'now').mockImplementation(() => nowMs);
   window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
     rafQueue.push(cb);
     return rafQueue.length;
@@ -121,12 +170,13 @@ beforeEach(() => {
 afterEach(() => {
   window.requestAnimationFrame = originalRaf;
   window.cancelAnimationFrame = originalCancel;
+  vi.restoreAllMocks();
 });
 
 function tickRaf() {
   const queue = rafQueue;
   rafQueue = [];
-  for (const cb of queue) cb(performance.now());
+  for (const cb of queue) cb(nowMs);
 }
 
 function fakeDone(text: string) {
@@ -142,7 +192,9 @@ function fakeDone(text: string) {
 
 describe('useHumanMascot — audio-driven lipsync end-to-end', () => {
   it('mouth opens (non-REST) once playback starts and visemes have known codes', async () => {
-    const fake = makePlayback(1000);
+    // Audio duration matches the viseme track span (400ms) so the duration-
+    // alignment rescale is a no-op and this test isolates code→shape mapping.
+    const fake = makePlayback(400);
     (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       audio_base64: 'AAA=',
       audio_mime: 'audio/mpeg',
@@ -183,7 +235,8 @@ describe('useHumanMascot — audio-driven lipsync end-to-end', () => {
   });
 
   it('mouth opens even when backend ships visemes in lowercase / aliased codes', async () => {
-    const fake = makePlayback(1000);
+    // Audio length matches the 600ms viseme span → rescale no-op (mapping only).
+    const fake = makePlayback(600);
     (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       audio_base64: 'AAA=',
       audio_mime: 'audio/mpeg',
@@ -294,6 +347,149 @@ describe('useHumanMascot — audio-driven lipsync end-to-end', () => {
     }
     expect(sampled.has(JSON.stringify(VISEMES.REST))).toBe(false);
     expect(sampled.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it('stretches a short viseme track to match the longer measured audio', async () => {
+    // Backend ships a 400ms viseme track, but the rendered MP3 is 800ms. Without
+    // alignment the mouth would finish at the halfway point and run ahead of the
+    // voice; rescaling doubles every frame so the track fills the audio.
+    const fake = makePlayback(800);
+    (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      audio_base64: 'AAA=',
+      audio_mime: 'audio/mpeg',
+      visemes: [
+        { viseme: 'aa', start_ms: 0, end_ms: 200 },
+        { viseme: 'PP', start_ms: 200, end_ms: 400 },
+      ],
+    });
+    (playBase64Audio as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fake.handle);
+
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: true }));
+    await act(async () => {
+      capturedListeners?.onDone?.(fakeDone('hello'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Rescaled track: frame[0]=aa 0–400ms, frame[1]=PP 400–800ms.
+    // At 300ms the *unscaled* track would already be on frame[1] (PP); after
+    // alignment it is still on frame[0] (aa) — proving the stretch.
+    act(() => {
+      fake.setMs(300);
+      tickRaf();
+    });
+    expect(result.current.viseme).toEqual(VISEMES.A);
+
+    // At 600ms we are into the second (now-stretched) frame.
+    act(() => {
+      fake.setMs(600);
+      tickRaf();
+    });
+    expect(result.current.viseme).toEqual(VISEMES.M);
+  });
+
+  it('uses wall-clock elapsed time when the audio currentTime is frozen', async () => {
+    const fake = makePlayback(600);
+    (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      audio_base64: 'AAA=',
+      audio_mime: 'audio/mpeg',
+      visemes: [
+        { viseme: 'aa', start_ms: 0, end_ms: 200 },
+        { viseme: 'PP', start_ms: 200, end_ms: 400 },
+        { viseme: 'O', start_ms: 400, end_ms: 600 },
+      ],
+    });
+    (playBase64Audio as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fake.handle);
+
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: true }));
+    await act(async () => {
+      capturedListeners?.onDone?.(fakeDone('hello'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Leave fake.currentMs() at 0 to model CEF blob audio where currentTime
+    // fails to advance even though playback is audible.
+    act(() => {
+      nowMs = 1_300;
+      tickRaf();
+    });
+    expect(result.current.viseme).toEqual(VISEMES.M);
+  });
+
+  it('starts lipsync before delayed audio metadata resolves', async () => {
+    const fake = makePlaybackWithDeferredMetadata(600);
+    (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      audio_base64: 'AAA=',
+      audio_mime: 'audio/mpeg',
+      visemes: [
+        { viseme: 'aa', start_ms: 0, end_ms: 200 },
+        { viseme: 'PP', start_ms: 200, end_ms: 400 },
+      ],
+    });
+    (playBase64Audio as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fake.handle);
+
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: true }));
+    await act(async () => {
+      capturedListeners?.onDone?.(fakeDone('hi'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.face).toBe('speaking');
+    act(() => {
+      nowMs = 1_050;
+      tickRaf();
+    });
+    expect(result.current.viseme).toEqual(VISEMES.A);
+
+    await act(async () => {
+      fake.resolveMetadata();
+      fake.finish();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
+
+  it('does not estimate pending metadata duration from collapsed frame ends', async () => {
+    const fake = makePlaybackWithDeferredMetadata(900);
+    (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      audio_base64: 'AAA=',
+      audio_mime: 'audio/mpeg',
+      // Backend regression shape: starts collapsed at zero, short fixed ends.
+      // Treating the final 80ms end as total duration compresses the whole
+      // utterance before metadata is ready and leaves the mouth at rest.
+      visemes: [
+        { viseme: 'aa', start_ms: 0, end_ms: 80 },
+        { viseme: 'PP', start_ms: 0, end_ms: 80 },
+        { viseme: 'O', start_ms: 0, end_ms: 80 },
+      ],
+    });
+    (playBase64Audio as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fake.handle);
+
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: true }));
+    await act(async () => {
+      capturedListeners?.onDone?.(fakeDone('metadata is still loading'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      nowMs = 1_300;
+      tickRaf();
+    });
+    expect(result.current.viseme).not.toEqual(VISEMES.REST);
+
+    await act(async () => {
+      fake.resolveMetadata();
+      fake.finish();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
   });
 
   it('mouth returns to a non-speaking shape once playback ends', async () => {

@@ -150,6 +150,7 @@ export interface RuntimeSettingsUpdate {
 
 export interface BrowserSettingsUpdate {
   enabled?: boolean | null;
+  backend?: 'agent_browser' | 'playwright' | 'rust_native' | 'computer_use' | 'auto' | null;
 }
 
 export interface ScreenIntelligenceSettingsUpdate {
@@ -790,6 +791,17 @@ export interface MeetSettings {
   auto_summarize_policy: MeetAutoSummarizePolicy;
   listen_only_default: boolean;
   ingest_backend_transcripts: boolean;
+  /** Per-platform auto-join policy overrides. Keys: "gmeet"|"zoom"|"teams"|"webex". */
+  platform_auto_join_policies?: Record<string, MeetAutoJoinPolicy>;
+  /**
+   * Master switch for calendar-driven meeting actions (auto-join / ask-to-join).
+   * Decoupled from the heartbeat reminder-notification toggle.
+   */
+  watch_calendar: boolean;
+  /** Calendar detection source for Google Meet: composio (default) | recall. */
+  calendar_provider?: 'composio' | 'recall';
+  /** The user's meeting display name, reused as the bot's reply anchor on join. */
+  reply_display_name?: string;
 }
 
 /** Partial update accepted by `openhuman.config_update_meet_settings`. */
@@ -799,6 +811,14 @@ export interface MeetSettingsUpdate {
   auto_summarize_policy?: MeetAutoSummarizePolicy;
   listen_only_default?: boolean;
   ingest_backend_transcripts?: boolean;
+  /** Per-platform auto-join policy overrides. Keys: "gmeet"|"zoom"|"teams"|"webex". */
+  platform_auto_join_policies?: Record<string, MeetAutoJoinPolicy>;
+  /** Master switch for calendar-driven auto-join / ask-to-join. */
+  watch_calendar?: boolean;
+  /** Calendar detection source for Google Meet: composio (default) | recall. */
+  calendar_provider?: 'composio' | 'recall';
+  /** The user's meeting display name, reused as the bot's reply anchor on join. */
+  reply_display_name?: string;
 }
 
 export async function openhumanUpdateMeetSettings(

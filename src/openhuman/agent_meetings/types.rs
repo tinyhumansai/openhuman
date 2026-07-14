@@ -90,6 +90,33 @@ pub struct RiveColors {
     pub secondary_color: Option<String>,
 }
 
+/// One mascot slot for a multi-mascot backend meeting (issue #4277).
+/// Slot 0 = primary speaker, slot 1 = secondary. The backend bot renders
+/// both mascots side-by-side, alternates the speaking slot per reply, and
+/// synthesizes each slot's replies with `voice_id` (falling back to its
+/// configured default when absent).
+///
+/// Deserialize-only: the RPC input arrives snake_case (`mascot_id`,
+/// `rive_colors`, `voice_id`); the outbound `bot:join` payload is built by
+/// hand in `ops.rs` (camelCase), so this struct is never serialized.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BackendMascotSlot {
+    /// Rive mascot id (e.g. "yellow", "toshi").
+    pub mascot_id: String,
+    /// Optional human-facing mascot name (e.g. "Toshi", "Tiny"), taken from the
+    /// manifest. Drives name-addressed routing (#4277 follow-up): a participant
+    /// who says "Hey Toshi …" is routed to this slot instead of the mechanical
+    /// alternation. Absent → that slot is not name-addressable.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Optional per-mascot color palette overrides.
+    #[serde(default)]
+    pub rive_colors: Option<RiveColors>,
+    /// Optional per-mascot ElevenLabs voice id.
+    #[serde(default)]
+    pub voice_id: Option<String>,
+}
+
 /// Inputs to `openhuman.agent_meetings_join`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct BackendMeetJoinRequest {
@@ -105,11 +132,18 @@ pub struct BackendMeetJoinRequest {
     #[serde(default)]
     pub system_prompt: Option<String>,
     /// Selects which Rive mascot appears in the meeting (e.g. "yellow", "blue").
+    /// Legacy single-mascot field; still honored when `mascots` is absent.
     #[serde(default)]
     pub mascot_id: Option<String>,
-    /// Optional Rive mascot color palette overrides.
+    /// Optional Rive mascot color palette overrides (single-mascot path).
     #[serde(default)]
     pub rive_colors: Option<RiveColors>,
+    /// Dual-mascot config (issue #4277). When present (2 slots) the backend
+    /// renders both mascots and alternates the speaker per reply, using each
+    /// slot's `voice_id`. Absent / single-element falls back to the legacy
+    /// single-mascot `mascot_id` + `rive_colors` behavior.
+    #[serde(default)]
+    pub mascots: Option<Vec<BackendMascotSlot>>,
     /// Only respond to this participant's messages (empty/absent = respond to everyone).
     #[serde(default)]
     pub respond_to_participant: Option<String>,
@@ -151,6 +185,99 @@ pub struct BackendMeetSpeakRequest {
     pub text: String,
     #[serde(default)]
     pub correlation_id: Option<String>,
+}
+
+/// Inputs to `openhuman.agent_meetings_generate_summary`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GenerateSummaryRequest {
+    /// Meeting/call id. For backend Meet calls this is the request_id used by
+    /// the recent-calls detail store.
+    pub meeting_id: String,
+}
+
+/// Outputs from `openhuman.agent_meetings_generate_summary`.
+#[derive(Debug, Clone, Serialize)]
+pub struct GenerateSummaryResponse {
+    pub ok: bool,
+    pub thread_id: String,
+}
+
+// ---------------------------------------------------------------------------
+// meet_list_upcoming RPC types
+// ---------------------------------------------------------------------------
+
+/// Inputs to `openhuman.meet_list_upcoming`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListUpcomingRequest {
+    /// How many minutes ahead to look for meetings. Defaults to 480 (8 hours).
+    #[serde(default)]
+    pub lookahead_minutes: Option<u32>,
+    /// Maximum number of meetings to return. Defaults to 20.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// One upcoming calendar meeting that has a conferencing link.
+#[derive(Debug, Clone, Serialize)]
+pub struct UpcomingMeeting {
+    /// Calendar provider event id (stable dedupe key).
+    pub calendar_event_id: String,
+    /// Human-readable meeting title (from calendar event summary).
+    pub title: String,
+    /// Start time as Unix milliseconds.
+    pub start_time_ms: u64,
+    /// End time as Unix milliseconds.
+    pub end_time_ms: u64,
+    /// Conferencing URL (Google Meet, Zoom, Teams, Webex).
+    pub meet_url: Option<String>,
+    /// Platform slug inferred from the URL host: gmeet, zoom, teams, webex.
+    pub platform: Option<String>,
+    /// Number of attendees listed on the calendar event.
+    pub participant_count: Option<u32>,
+    /// Organizer display name or email, if present.
+    pub organizer: Option<String>,
+    /// Join policy string: "auto" | "ask" | "skip" (mapped from MeetConfig.auto_join_policy).
+    pub join_policy: String,
+    /// Source integration slug, e.g. "googlecalendar".
+    pub calendar_source: String,
+}
+
+/// Response from `openhuman.meet_list_upcoming`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ListUpcomingResponse {
+    pub ok: bool,
+    pub meetings: Vec<UpcomingMeeting>,
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 per-event policy RPC types
+// ---------------------------------------------------------------------------
+
+/// Request for `openhuman.meet_set_event_policy`.
+#[derive(Debug, Deserialize)]
+pub struct SetEventPolicyRequest {
+    pub calendar_event_id: String,
+    /// "auto" | "ask" | "skip"
+    pub policy: String,
+}
+
+/// Response for `openhuman.meet_set_event_policy`.
+#[derive(Debug, Serialize)]
+pub struct SetEventPolicyResponse {
+    pub ok: bool,
+}
+
+/// Request for `openhuman.meet_get_event_policies`.
+#[derive(Debug, Deserialize)]
+pub struct GetEventPoliciesRequest {
+    pub calendar_event_ids: Vec<String>,
+}
+
+/// Response for `openhuman.meet_get_event_policies`.
+#[derive(Debug, Serialize)]
+pub struct GetEventPoliciesResponse {
+    pub ok: bool,
+    pub policies: std::collections::HashMap<String, String>,
 }
 
 #[cfg(test)]

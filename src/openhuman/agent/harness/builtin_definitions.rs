@@ -70,6 +70,7 @@ pub(crate) fn test_main_def() -> AgentDefinition {
         max_iterations: 8,
         iteration_policy: Default::default(),
         max_result_chars: None,
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
@@ -82,6 +83,7 @@ pub(crate) fn test_main_def() -> AgentDefinition {
         delegate_name: None,
         agent_tier: AgentTier::Chat,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 
@@ -115,6 +117,7 @@ pub(crate) fn test_inherit_echo_def() -> AgentDefinition {
         max_iterations: 3,
         iteration_policy: Default::default(),
         max_result_chars: None,
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
@@ -124,6 +127,7 @@ pub(crate) fn test_inherit_echo_def() -> AgentDefinition {
         delegate_name: None,
         agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 
@@ -153,6 +157,7 @@ pub(crate) fn test_inherit_parallel_worker_def() -> AgentDefinition {
         max_iterations: 6,
         iteration_policy: Default::default(),
         max_result_chars: None,
+        max_turn_output_tokens: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
@@ -162,6 +167,7 @@ pub(crate) fn test_inherit_parallel_worker_def() -> AgentDefinition {
         delegate_name: None,
         agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
         source: DefinitionSource::Builtin,
+        graph: Default::default(),
     }
 }
 
@@ -260,6 +266,8 @@ mod tests {
             "critic",
             "archivist",
             "summarizer",
+            "workflow_builder",
+            "flow_discovery",
         ] {
             assert!(ids.contains(&expected.to_string()), "missing {expected}");
         }

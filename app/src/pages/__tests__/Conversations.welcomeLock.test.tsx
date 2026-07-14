@@ -9,7 +9,7 @@
 //   - isComposerInteractionBlocked respects the unlocked path correctly
 import { describe, expect, it } from 'vitest';
 
-import { isComposerInteractionBlocked } from '../Conversations';
+import { isComposerInteractionBlocked } from '../../features/conversations/Conversations';
 
 describe('[#1123] Conversations — unlocked flow (welcome-lock removed)', () => {
   // When chatOnboardingCompleted=false in the old flow, welcome-lock would

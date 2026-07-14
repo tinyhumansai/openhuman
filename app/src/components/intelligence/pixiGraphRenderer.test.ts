@@ -62,6 +62,9 @@ const h = vi.hoisted(() => {
     addChild(c: unknown) {
       this.children.push(c);
     }
+    removeChildren() {
+      this.children = [];
+    }
     toLocal(p: { x: number; y: number }) {
       return {
         x: (p.x - this.position.x) / this.scale.x,
@@ -105,6 +108,7 @@ vi.mock('pixi.js', () => ({
   Container: h.Container,
   Graphics: h.Graphics,
 }));
+vi.mock('pixi.js/unsafe-eval', () => ({}));
 
 function makeNodes(): SimNode[] {
   return [

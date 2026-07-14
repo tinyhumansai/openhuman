@@ -5,6 +5,7 @@ import type { ToastNotification } from '../../types/intelligence';
 import { openUrl, revealPath } from '../../utils/openUrl';
 import { memoryTreeVaultHealthCheck, type VaultHealthCheck } from '../../utils/tauriCommands';
 import Button from '../ui/Button';
+import { resolveVaultHostMatch, type VaultHostMatch } from './vaultHostMatch';
 
 const OBSIDIAN_DOWNLOAD_URL = 'https://obsidian.md/download';
 
@@ -41,6 +42,7 @@ export function VaultHealthChecklist({ onToast, title }: VaultHealthChecklistPro
   const { t } = useT();
   const resolvedTitle = title ?? t('vaultHealth.title');
   const [health, setHealth] = useState<VaultHealthCheck | null>(null);
+  const [hostMatch, setHostMatch] = useState<VaultHostMatch | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +52,7 @@ export function VaultHealthChecklist({ onToast, title }: VaultHealthChecklistPro
     try {
       const next = await memoryTreeVaultHealthCheck();
       setHealth(next);
+      setHostMatch(await resolveVaultHostMatch(next.host_os));
       setError(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -68,6 +71,12 @@ export function VaultHealthChecklist({ onToast, title }: VaultHealthChecklistPro
     if (!health?.content_root_abs) return '';
     return health.exists ? health.content_root_abs : dirname(health.content_root_abs);
   }, [health]);
+
+  // #4278: the vault lives on the core host's filesystem. When this frontend
+  // runs on a different OS than the core, the path can't be opened/registered
+  // locally — disable the local-FS actions and explain why instead of firing a
+  // doomed reveal / deep link.
+  const crossHost = hostMatch ? !hostMatch.local : false;
 
   const openObsidian = useCallback(() => {
     if (!health?.content_root_abs) return;
@@ -164,19 +173,28 @@ export function VaultHealthChecklist({ onToast, title }: VaultHealthChecklistPro
         </code>
       ) : null}
 
+      {crossHost ? (
+        <div
+          className="rounded-md border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
+          data-testid="vault-health-cross-host">
+          <span className="font-semibold">{t('crossHostVault.title')}</span>{' '}
+          {t('crossHostVault.message').replace('{os}', hostMatch?.hostOs ?? '')}
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
         <Button
           variant="secondary"
           size="sm"
           onClick={revealVault}
-          disabled={!health?.content_root_abs}
+          disabled={!health?.content_root_abs || crossHost}
           data-testid="vault-health-reveal">
           {t('vaultHealth.revealFolder')}
         </Button>
         <button
           type="button"
           onClick={openObsidian}
-          disabled={!health?.content_root_abs}
+          disabled={!health?.content_root_abs || crossHost}
           className="rounded-md border border-violet-300 dark:border-violet-500/40 bg-surface px-3 py-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300 disabled:opacity-50"
           data-testid="vault-health-open-obsidian">
           {t('vaultHealth.openInObsidian')}

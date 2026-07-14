@@ -28,11 +28,17 @@ const formatDateTime = (value: string): string => {
 const DECISION_BADGE_VARIANT: Record<
   ApprovalDecision,
   'success' | 'danger' | 'warning' | 'neutral' | 'primary'
-> = { approve_once: 'success', approve_always_for_tool: 'success', deny: 'danger' };
+> = {
+  approve_once: 'success',
+  approve_always_for_tool: 'success',
+  approve_always_for_flow: 'success',
+  deny: 'danger',
+};
 
 const DECISION_LABEL_KEY: Record<ApprovalDecision, string> = {
   approve_once: 'settings.approvalHistory.decision.approveOnce',
   approve_always_for_tool: 'settings.approvalHistory.decision.approveAlways',
+  approve_always_for_flow: 'settings.approvalHistory.decision.approveAlwaysFlow',
   deny: 'settings.approvalHistory.decision.deny',
 };
 

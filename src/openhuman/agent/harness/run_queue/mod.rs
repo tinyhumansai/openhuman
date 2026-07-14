@@ -12,7 +12,7 @@
 //! The engine drains steers and collects at safe points (after tool results are
 //! committed to history), preserving the tool-call / tool-result pairing invariant.
 
-pub mod types;
+mod types;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -100,12 +100,6 @@ impl RunQueue {
         inner.followups.clear();
         inner.collects.clear();
         total
-    }
-
-    /// Check whether any steers or collects are pending (engine poll).
-    pub async fn has_pending_injections(&self) -> bool {
-        let inner = self.inner.lock().await;
-        !inner.steers.is_empty() || !inner.collects.is_empty()
     }
 }
 

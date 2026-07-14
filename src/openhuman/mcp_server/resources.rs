@@ -248,6 +248,18 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         content: include_str!("../agent_registry/agents/screen_awareness_agent/prompt.md"),
     },
     PromptResource {
+        uri: "openhuman://prompts/agents/flow_discovery",
+        name: "flow_discovery",
+        description: "Flow Scout — read-only workflow discovery agent that suggests automations from memory, threads, and integrations.",
+        content: include_str!("../flows/agents/flow_discovery/prompt.md"),
+    },
+    PromptResource {
+        uri: "openhuman://prompts/agents/workflow_builder",
+        name: "workflow_builder",
+        description: "Workflow authoring specialist that builds tinyflows automation graphs and returns proposals for review.",
+        content: include_str!("../flows/agents/workflow_builder/prompt.md"),
+    },
+    PromptResource {
         uri: "openhuman://prompts/agents/agent_memory",
         name: "agent_memory",
         description: "Dedicated memory retrieval subagent using smart-walk strategies.",

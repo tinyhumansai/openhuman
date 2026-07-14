@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use openhuman_core::openhuman::agent::memory_loader::{DefaultMemoryLoader, MemoryLoader};
+use openhuman_core::openhuman::agent_memory::memory_loader::{DefaultMemoryLoader, MemoryLoader};
 use openhuman_core::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
 use std::sync::Arc;
 

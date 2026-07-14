@@ -94,6 +94,7 @@ pub(super) struct RuntimeSettingsUpdate {
 #[derive(Debug, Deserialize)]
 pub(super) struct BrowserSettingsUpdate {
     pub(super) enabled: Option<bool>,
+    pub(super) backend: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +125,15 @@ pub(super) struct MeetSettingsUpdate {
     pub(super) auto_summarize_policy: Option<String>,
     pub(super) listen_only_default: Option<bool>,
     pub(super) ingest_backend_transcripts: Option<bool>,
+    /// Per-platform policy overrides. Keys: "gmeet", "zoom", "teams", "webex".
+    /// Values: `ask_each_time` | `always` | `never`.
+    pub(super) platform_auto_join_policies: Option<std::collections::HashMap<String, String>>,
+    /// Master switch for calendar-driven auto-join / ask-to-join.
+    pub(super) watch_calendar: Option<bool>,
+    /// Calendar detection source as a string: `composio` | `recall`.
+    pub(super) calendar_provider: Option<String>,
+    /// User's meeting display name, reused as the bot's reply anchor.
+    pub(super) reply_display_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -233,6 +243,12 @@ pub(super) struct AutonomySettingsUpdate {
     /// may run without an approval prompt. Empty list clears it.
     pub(super) auto_approve: Option<Vec<String>>,
     pub(super) require_task_plan_approval: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct PrivacyModeUpdate {
+    /// `"local_only" | "standard" | "sensitive"` (case-insensitive).
+    pub(super) mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

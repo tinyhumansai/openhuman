@@ -6,10 +6,10 @@
 use super::{dedup_visible_tool_specs, visible_tool_specs_for_policy};
 use crate::openhuman::agent::harness::session::types::{Agent, AgentBuilder};
 use crate::openhuman::agent::harness::TriggerMemoryAgent;
-use crate::openhuman::agent::memory_loader::DefaultMemoryLoader;
+use crate::openhuman::agent_memory::memory_loader::DefaultMemoryLoader;
 use crate::openhuman::agent_tool_policy::ToolPolicyEngine;
 use crate::openhuman::config::ContextConfig;
-use crate::openhuman::context::{ContextManager, ProviderSummarizer, SegmentRecapSummarizer};
+use crate::openhuman::context::ContextManager;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::tools::{Tool, ToolSpec};
 use anyhow::Result;
@@ -19,7 +19,7 @@ impl AgentBuilder {
     /// Creates a new `AgentBuilder` with default values.
     pub fn new() -> Self {
         Self {
-            provider: None,
+            turn_model_source: None,
             tools: None,
             visible_tool_names: None,
             memory: None,
@@ -49,20 +49,22 @@ impl AgentBuilder {
             tokenjuice_compression: crate::openhuman::tokenjuice::AgentTokenjuiceCompression::Full,
             tool_policy: None,
             archivist_hook: None,
-            unified_compaction_enabled: true,
         }
     }
 
     /// Sets the AI provider for the agent.
     ///
-    /// Accepts a `Box<dyn Provider>` for backward compatibility but stores
-    /// the provider as an `Arc` internally so sub-agents spawned from this
-    /// agent (via `spawn_subagent`) can share the same instance.
+    /// Accepts a `Box<dyn Provider>` for backward compatibility but wraps it in
+    /// the seam [`TurnModelSource`](crate::openhuman::tinyagents::TurnModelSource)
+    /// internally (issue #4249, Phase 3 / Motion A) so the agent + sub-agents
+    /// spawned from it share the same source.
     pub fn provider(
         mut self,
         provider: Box<dyn crate::openhuman::inference::provider::Provider>,
     ) -> Self {
-        self.provider = Some(Arc::from(provider));
+        self.turn_model_source = Some(crate::openhuman::tinyagents::TurnModelSource::new(
+            Arc::from(provider),
+        ));
         self
     }
 
@@ -72,7 +74,24 @@ impl AgentBuilder {
         mut self,
         provider: Arc<dyn crate::openhuman::inference::provider::Provider>,
     ) -> Self {
-        self.provider = Some(provider);
+        self.turn_model_source = Some(crate::openhuman::tinyagents::TurnModelSource::new(provider));
+        self
+    }
+
+    /// Sets the AI provider as a **crate-native** turn-model source (Phase 3 P3-B):
+    /// `build`/`build_summarizer` construct crate `ChatModel`s from `(role, config)`
+    /// via `create_turn_chat_model` (managed → `OpenHumanBackendModel`, local/cloud →
+    /// crate `OpenAiModel`) instead of wrapping `provider` in `ProviderModel`s.
+    /// Used by the production session factory; the plain
+    /// [`provider`](Self::provider) setter (Provider path) stays for tests that
+    /// inject a mock they observe.
+    pub fn crate_native_provider(
+        mut self,
+        role: impl Into<String>,
+        config: Arc<crate::openhuman::config::Config>,
+    ) -> Self {
+        self.turn_model_source =
+            Some(crate::openhuman::tinyagents::TurnModelSource::new_crate_native(role, config));
         self
     }
 
@@ -117,7 +136,7 @@ impl AgentBuilder {
     /// Sets the memory loader for the agent.
     pub fn memory_loader(
         mut self,
-        memory_loader: Box<dyn crate::openhuman::agent::memory_loader::MemoryLoader>,
+        memory_loader: Box<dyn crate::openhuman::agent_memory::memory_loader::MemoryLoader>,
     ) -> Self {
         self.memory_loader = Some(memory_loader);
         self
@@ -170,7 +189,7 @@ impl AgentBuilder {
     }
 
     /// Sets the skills available to the agent.
-    pub fn workflows(mut self, skills: Vec<crate::openhuman::workflows::Workflow>) -> Self {
+    pub fn workflows(mut self, skills: Vec<crate::openhuman::skills::Workflow>) -> Self {
         self.workflows = Some(skills);
         self
     }
@@ -298,18 +317,15 @@ impl AgentBuilder {
         self
     }
 
-    /// Wire an oversized-tool-result summarizer into the agent. When
-    /// set, [`Agent::execute_tool_call`] calls
-    /// [`crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer::maybe_summarize`]
-    /// on every successful tool output and replaces the raw payload
-    /// with the compressed summary on success. Currently set only for
-    /// the orchestrator session by
-    /// [`Agent::build_session_agent_inner`].
+    /// Wire an oversized-tool-result summarizer into the agent. The live
+    /// TinyAgents turn path passes it to `ToolOutputMiddleware`, which calls
+    /// [`crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer::maybe_summarize_in_parent`]
+    /// on successful tool output and replaces the raw payload with the
+    /// compressed summary on success. Currently set only for the orchestrator
+    /// session by [`Agent::build_session_agent_inner`].
     pub fn payload_summarizer(
         mut self,
-        summarizer: Arc<
-            dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer,
-        >,
+        summarizer: Arc<dyn crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer>,
     ) -> Self {
         self.payload_summarizer = Some(summarizer);
         self
@@ -348,21 +364,6 @@ impl AgentBuilder {
         hook: Option<Arc<crate::openhuman::agent::harness::archivist::ArchivistHook>>,
     ) -> Self {
         self.archivist_hook = hook;
-        self
-    }
-
-    /// Phase 1.5 — gate the unified compaction path.
-    ///
-    /// When `true` (the default) and an archivist hook is wired in via
-    /// [`Self::archivist_hook`], the session's `ContextManager` summarizer is
-    /// wrapped with a [`SegmentRecapSummarizer`] that routes autocompaction
-    /// through the archivist's rolling recap (one LLM summarizer, soft-fallback
-    /// to [`ProviderSummarizer`] when the recap is unavailable).
-    ///
-    /// When `false` the `ProviderSummarizer` is used directly and Phase 1.5 is
-    /// completely absent from the hot path — behaviour is identical to today's.
-    pub fn unified_compaction_enabled(mut self, enabled: bool) -> Self {
-        self.unified_compaction_enabled = enabled;
         self
     }
 
@@ -435,12 +436,10 @@ impl AgentBuilder {
             visible_names_list.join(", ")
         );
 
-        // Pull the provider out of the builder once. We store it on
-        // the Agent (for normal turn chat calls) and also clone the
-        // Arc into the ProviderSummarizer so the context manager can
-        // dispatch autocompaction through the same provider.
-        let provider = self
-            .provider
+        // Pull the model source out of the builder once; the Agent holds it and
+        // builds a fresh tiered crate `ChatModel` set from it per turn.
+        let turn_model_source = self
+            .turn_model_source
             .ok_or_else(|| anyhow::anyhow!("provider is required"))?;
 
         let prompt_builder = self
@@ -457,57 +456,12 @@ impl AgentBuilder {
         // model's context window" routes through this single handle.
         let context_config = self.context_config.unwrap_or_default();
 
-        // Phase 1.5 — unified compaction.
-        //
-        // When `unified_compaction_enabled` is true AND an archivist hook
-        // is wired in, wrap the inner `ProviderSummarizer` with a
-        // `SegmentRecapSummarizer`. The outer type:
-        //   1. Tries the rolling segment recap from the open segment.
-        //   2. Falls back to the inner `ProviderSummarizer` if unavailable.
-        //
-        // With the flag off OR no archivist, the plain `ProviderSummarizer`
-        // is used and Phase 1.5 is completely absent from the hot path
-        // — behaviour is identical to Phase 1.
-        let inner_summarizer: Arc<dyn crate::openhuman::context::Summarizer> =
-            Arc::new(ProviderSummarizer::new(provider.clone()));
-        let session_id_for_recap = self
-            .event_session_id
-            .clone()
-            .unwrap_or_else(|| "standalone".to_string());
-        let summarizer: Arc<dyn crate::openhuman::context::Summarizer> =
-            if self.unified_compaction_enabled {
-                if let Some(ref archivist) = self.archivist_hook {
-                    log::debug!(
-                        "[agent::builder] unified_compaction_enabled=true — \
-                         wrapping summarizer with SegmentRecapSummarizer \
-                         session_id={session_id_for_recap}"
-                    );
-                    Arc::new(SegmentRecapSummarizer::new(
-                        Arc::clone(archivist),
-                        session_id_for_recap,
-                        inner_summarizer,
-                    ))
-                } else {
-                    log::debug!(
-                        "[agent::builder] unified_compaction_enabled=true but \
-                         no archivist hook — using ProviderSummarizer"
-                    );
-                    inner_summarizer
-                }
-            } else {
-                log::debug!(
-                    "[agent::builder] unified_compaction_enabled=false — \
-                     using ProviderSummarizer (Phase 1.5 disabled)"
-                );
-                inner_summarizer
-            };
-
-        let context = ContextManager::new(
-            &context_config,
-            summarizer,
-            model_name.clone(),
-            prompt_builder,
-        );
+        // Live history reduction moved to the tinyagents graph
+        // (`ContextCompressionMiddleware` + `MessageTrimMiddleware`, issue
+        // #4249), so the session no longer constructs an in-turn summarizer
+        // here. The archivist hook still drives durable segment recaps on its
+        // own post-turn path; it is no longer coupled to context compaction.
+        let context = ContextManager::new(&context_config, prompt_builder);
 
         let workspace_dir = self
             .workspace_dir
@@ -515,7 +469,7 @@ impl AgentBuilder {
         let action_dir = self.action_dir.unwrap_or_else(|| workspace_dir.clone());
 
         Ok(Agent {
-            provider,
+            turn_model_source,
             tools: Arc::new(tools),
             tool_specs: Arc::new(tool_specs),
             visible_tool_specs: Arc::new(visible_tool_specs),

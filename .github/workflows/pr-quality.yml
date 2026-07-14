@@ -25,7 +25,7 @@ jobs:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Verify Submission Checklist
@@ -42,7 +42,7 @@ jobs:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Verify Coverage Matrix
@@ -55,7 +55,7 @@ jobs:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Lychee link check
@@ -68,6 +68,11 @@ jobs:
             --exclude '^https?://127\.0\.0\.1'
             --exclude 'docs/install\.md#apt-debianubuntu$'
             --exclude '^https://github\.com/tinyhumansai/homebrew-openhuman'
+            --exclude '^https://www\.reddit\.com/r/tinyhumansai/?$'
+            --exclude '^https://www\.star-history\.com/#tinyhumansai/openhuman&type=date&legend=top-left$'
+            --exclude '^https://github\.com/tinyhumansai/openhuman/stargazers'
+            --exclude '^https://api\.star-history\.com/'
+            --exclude '^https://x\.com/karpathy/status/2039805659525644595$'
             'docs/**/*.md'
             'src/**/README.md'
             '.github/PULL_REQUEST_TEMPLATE.md'
@@ -80,7 +85,7 @@ jobs:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Install patchelf

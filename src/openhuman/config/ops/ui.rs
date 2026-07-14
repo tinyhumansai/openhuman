@@ -1,8 +1,11 @@
 //! UI-facing config operations: browser, screen intelligence, analytics, meet,
 //! search, dictation, voice server, onboarding flags.
 
+use std::collections::HashMap;
+
 use serde_json::json;
 
+use crate::openhuman::config::schema::CalendarProvider;
 use crate::openhuman::config::{AutoJoinPolicy, AutoSummarizePolicy, Config};
 use crate::openhuman::screen_intelligence;
 use crate::rpc::RpcOutcome;
@@ -12,6 +15,7 @@ use super::loader::{fallback_workspace_dir, load_config_with_timeout, snapshot_c
 #[derive(Debug, Clone, Default)]
 pub struct BrowserSettingsPatch {
     pub enabled: Option<bool>,
+    pub backend: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -44,6 +48,17 @@ pub struct MeetSettingsPatch {
     pub listen_only_default: Option<bool>,
     /// When `true`, backend-bot transcripts are ingested into memory.
     pub ingest_backend_transcripts: Option<bool>,
+    /// Per-platform auto-join policy overrides. Replaces the stored map wholesale
+    /// when present. Keys: "gmeet", "zoom", "teams", "webex".
+    pub platform_auto_join_policies: Option<HashMap<String, AutoJoinPolicy>>,
+    /// Master switch for calendar-driven meeting actions (auto-join / ask-to-join).
+    /// Decoupled from `heartbeat.notify_meetings` (plain reminder cards).
+    pub watch_calendar: Option<bool>,
+    /// Calendar detection source: `Composio` (default) or `Recall`. Flipped to
+    /// `Recall` when the user connects a calendar via Recall.ai.
+    pub calendar_provider: Option<CalendarProvider>,
+    /// User's meeting display name, reused as the bot's reply anchor on join.
+    pub reply_display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -102,8 +117,17 @@ pub async fn apply_browser_settings(
     config: &mut Config,
     update: BrowserSettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let normalized_backend = update
+        .backend
+        .as_deref()
+        .map(normalize_browser_backend)
+        .transpose()?;
+
     if let Some(enabled) = update.enabled {
         config.browser.enabled = enabled;
+    }
+    if let Some(backend) = normalized_backend {
+        config.browser.backend = backend;
     }
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(config)?;
@@ -114,6 +138,20 @@ pub async fn apply_browser_settings(
             config.config_path.display()
         )],
     ))
+}
+
+fn normalize_browser_backend(raw: &str) -> Result<String, String> {
+    let key = raw.trim().to_ascii_lowercase().replace('-', "_");
+    match key.as_str() {
+        "agent_browser" | "agentbrowser" => Ok("agent_browser".to_string()),
+        "playwright" => Ok("playwright".to_string()),
+        "rust_native" | "native" => Ok("rust_native".to_string()),
+        "computer_use" | "computeruse" => Ok("computer_use".to_string()),
+        "auto" => Ok("auto".to_string()),
+        _ => Err(format!(
+            "Unsupported browser backend '{raw}'. Use agent_browser, playwright, rust_native, computer_use, or auto"
+        )),
+    }
 }
 
 /// Loads the configuration, applies browser settings updates, and saves it.
@@ -229,6 +267,18 @@ pub async fn apply_meet_settings(
     }
     if let Some(ingest) = update.ingest_backend_transcripts {
         config.meet.ingest_backend_transcripts = ingest;
+    }
+    if let Some(policies) = update.platform_auto_join_policies {
+        config.meet.platform_auto_join_policies = policies;
+    }
+    if let Some(watch_calendar) = update.watch_calendar {
+        config.meet.watch_calendar = watch_calendar;
+    }
+    if let Some(provider) = update.calendar_provider {
+        config.meet.calendar_provider = provider;
+    }
+    if let Some(name) = update.reply_display_name {
+        config.meet.reply_display_name = name.trim().to_string();
     }
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(config)?;

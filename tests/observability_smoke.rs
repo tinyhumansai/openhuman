@@ -10,8 +10,9 @@
 
 use openhuman_core::core::observability::{
     is_all_transient_provider_exhaustion_event, is_budget_event, is_session_expired_event,
-    is_transient_backend_api_failure, is_transient_integrations_failure,
-    is_transient_provider_http_failure, is_updater_transient_event,
+    is_skill_install_user_fetch_failure, is_transient_backend_api_failure,
+    is_transient_integrations_failure, is_transient_provider_http_failure,
+    is_updater_transient_event,
 };
 use sentry::protocol::Event;
 use std::collections::BTreeMap;
@@ -63,6 +64,7 @@ fn count_captured(events: Vec<Event<'static>>) -> usize {
                 || is_transient_integrations_failure(&event)
                 || is_budget_event(&event)
                 || is_updater_transient_event(&event)
+                || is_skill_install_user_fetch_failure(&event)
                 || is_session_expired_event(&event)
             {
                 None
@@ -116,6 +118,36 @@ fn drops_backend_api_transient_statuses() {
         count_captured(events),
         0,
         "transient backend_api statuses must be filtered in before_send"
+    );
+}
+
+#[test]
+fn drops_skills_install_fetch_404() {
+    let event = event_with_tags(&[
+        ("domain", "skills"),
+        ("operation", "install_fetch"),
+        ("failure", "non_2xx"),
+        ("status", "404"),
+    ]);
+    assert_eq!(
+        count_captured(vec![event]),
+        0,
+        "user/catalog skill install 4xx failures must be filtered in before_send"
+    );
+}
+
+#[test]
+fn keeps_skills_install_fetch_500() {
+    let event = event_with_tags(&[
+        ("domain", "skills"),
+        ("operation", "install_fetch"),
+        ("failure", "non_2xx"),
+        ("status", "500"),
+    ]);
+    assert_eq!(
+        count_captured(vec![event]),
+        1,
+        "skill install server failures must still reach Sentry"
     );
 }
 

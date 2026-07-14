@@ -93,6 +93,15 @@ pub struct OpenWindowArgs {
     /// fails closed in core (no wakes fire).
     #[serde(default)]
     pub owner_display_name: String,
+    /// ElevenLabs voice for the primary mascot (issue #4277). When the
+    /// user has two mascots enabled the core alternates the speaking
+    /// voice per reply. Absent/empty → core keeps its default voice.
+    #[serde(default)]
+    pub primary_voice_id: Option<String>,
+    /// ElevenLabs voice for the secondary mascot. Absent when only one
+    /// mascot is enabled.
+    #[serde(default)]
+    pub secondary_voice_id: Option<String>,
 }
 
 /// Open a dedicated top-level CEF webview window pointed at the Meet URL.
@@ -262,6 +271,8 @@ pub async fn meet_call_open_window<R: Runtime>(
         let url_for_audio = parsed.to_string();
         let bot_for_audio = args.display_name.clone();
         let owner_for_audio = args.owner_display_name.clone();
+        let primary_voice_for_audio = args.primary_voice_id.clone();
+        let secondary_voice_for_audio = args.secondary_voice_id.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(err) = crate::meet_audio::start(
                 app_for_audio,
@@ -269,6 +280,8 @@ pub async fn meet_call_open_window<R: Runtime>(
                 url_for_audio,
                 owner_for_audio,
                 bot_for_audio,
+                primary_voice_for_audio,
+                secondary_voice_for_audio,
             )
             .await
             {
@@ -549,6 +562,35 @@ mod tests {
                 .is_none(),
             "second remove must return None — handle already consumed"
         );
+    }
+
+    #[test]
+    fn open_window_args_deserializes_voice_ids() {
+        use serde_json::json;
+
+        // Both voice ids present → parse into Some(...). Proves the
+        // #4277 per-mascot voice fields ride through the command payload.
+        let args: OpenWindowArgs = serde_json::from_value(json!({
+            "request_id": "r",
+            "meet_url": "u",
+            "display_name": "d",
+            "primary_voice_id": "va",
+            "secondary_voice_id": "vb",
+        }))
+        .unwrap();
+        assert_eq!(args.primary_voice_id.as_deref(), Some("va"));
+        assert_eq!(args.secondary_voice_id.as_deref(), Some("vb"));
+
+        // Both omitted → #[serde(default)] yields None (single-mascot
+        // callers and older shells that don't forward voices still parse).
+        let args: OpenWindowArgs = serde_json::from_value(json!({
+            "request_id": "r",
+            "meet_url": "u",
+            "display_name": "d",
+        }))
+        .unwrap();
+        assert_eq!(args.primary_voice_id, None);
+        assert_eq!(args.secondary_voice_id, None);
     }
 
     #[test]

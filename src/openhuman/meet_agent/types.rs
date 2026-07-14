@@ -45,6 +45,19 @@ pub struct StartSessionRequest {
     /// updated to forward the URL still parse the payload.
     #[serde(default)]
     pub meet_url: String,
+    /// ElevenLabs voice id for the PRIMARY mascot (speaker slot 0). When
+    /// two mascots are enabled the session alternates the speaking voice
+    /// once per assistant reply (see [`super::session::MeetAgentSession::advance_speaker`]).
+    /// `None`/empty preserves the previous single-default-voice behavior
+    /// (the reply-speech backend picks its own default voice). Defaulted
+    /// so older shells / smoke tests still parse the payload.
+    #[serde(default)]
+    pub primary_voice_id: Option<String>,
+    /// ElevenLabs voice id for the SECONDARY mascot (speaker slot 1).
+    /// Absent when the user has only one mascot enabled — in that case no
+    /// alternation happens and slot 0 speaks every turn.
+    #[serde(default)]
+    pub secondary_voice_id: Option<String>,
 }
 
 fn default_sample_rate() -> u32 {

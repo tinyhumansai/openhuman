@@ -5,10 +5,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppShellDesktop } from '../App';
 
-const { hideWebviewAccountMock, mockDispatch } = vi.hoisted(() => ({
-  hideWebviewAccountMock: vi.fn().mockResolvedValue(undefined),
-  mockDispatch: vi.fn(),
-}));
+const { hideWebviewAccountMock, mockDispatch, webviewMountSpy, webviewUnmountSpy } = vi.hoisted(
+  () => ({
+    hideWebviewAccountMock: vi.fn().mockResolvedValue(undefined),
+    mockDispatch: vi.fn(),
+    // Fired from the mocked WebviewHost's mount/unmount only (empty-deps
+    // effect) so a real remount is observable and distinguishable from a
+    // same-instance prop update. See the #4421 regression test below.
+    webviewMountSpy: vi.fn(),
+    webviewUnmountSpy: vi.fn(),
+  })
+);
 
 const baseState = {
   accounts: {
@@ -71,11 +78,21 @@ vi.mock('../store/hooks', () => ({
   useAppDispatch: () => mockDispatch,
   useAppSelector: (selector: (state: typeof baseState) => unknown) => selector(mockState),
 }));
-vi.mock('../components/accounts/WebviewHost', () => ({
-  default: ({ accountId }: { accountId: string }) => (
-    <div data-testid="webview-host">{accountId}</div>
-  ),
-}));
+vi.mock('../components/accounts/WebviewHost', () => {
+  // Empty deps: the spies fire only on a genuine mount/unmount, not on a prop
+  // change. If App reuses one host instance across account switches (no `key`),
+  // switching accounts is a prop update and neither spy fires for the new
+  // account — which is exactly the desync #4421 guards against.
+  const MockWebviewHost = ({ accountId }: { accountId: string }) => {
+    useEffect(() => {
+      webviewMountSpy(accountId);
+      return () => webviewUnmountSpy(accountId);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    return <div data-testid="webview-host">{accountId}</div>;
+  };
+  return { default: MockWebviewHost };
+});
 vi.mock('../AppRoutes', () => ({ default: () => <main data-testid="routes" /> }));
 vi.mock('../components/AppBackground', () => ({ default: () => null }));
 vi.mock('../components/layout/shell/AppSidebar', () => ({ default: () => <aside /> }));
@@ -127,6 +144,29 @@ describe('AppShellDesktop provider webview visibility', () => {
     expect(screen.queryByTestId('webview-host')).not.toBeInTheDocument();
   });
 
+  it('remounts a fresh host when the active provider account changes — no cross-account webview bleed (#4421)', () => {
+    mockState = stateWithActive('acct-whatsapp');
+    const { rerender } = renderShell();
+
+    expect(webviewMountSpy).toHaveBeenCalledWith('acct-whatsapp');
+    expect(screen.getByTestId('webview-host')).toHaveTextContent('acct-whatsapp');
+
+    // Rapid rail switch to a different provider account. With `key={id}` on
+    // <WebviewHost>, React tears down the WhatsApp host (unmount) and mounts a
+    // fresh Slack host rather than reusing the instance with new props — so the
+    // previous provider's webview can't linger in the new account's slot.
+    mockState = stateWithActive('acct-slack');
+    rerender(
+      <MemoryRouter initialEntries={['/chat/thread-1']}>
+        <RouteChangeHarness />
+      </MemoryRouter>
+    );
+
+    expect(webviewUnmountSpy).toHaveBeenCalledWith('acct-whatsapp');
+    expect(webviewMountSpy).toHaveBeenCalledWith('acct-slack');
+    expect(screen.getByTestId('webview-host')).toHaveTextContent('acct-slack');
+  });
+
   it('hides the active provider and restores the agent selection on route changes', async () => {
     renderShell('/chat/thread-1', '/settings');
 
@@ -137,6 +177,26 @@ describe('AppShellDesktop provider webview visibility', () => {
     });
   });
 });
+
+function stateWithActive(activeAccountId: string) {
+  return {
+    ...baseState,
+    accounts: {
+      ...baseState.accounts,
+      accounts: {
+        ...baseState.accounts.accounts,
+        'acct-slack': {
+          id: 'acct-slack',
+          provider: 'slack',
+          label: 'Slack',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          status: 'open',
+        },
+      },
+      activeAccountId,
+    },
+  };
+}
 
 function renderShell(initialPath = '/chat/thread-1', nextPath?: string) {
   return render(

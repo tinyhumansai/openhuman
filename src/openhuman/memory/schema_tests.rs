@@ -1,3 +1,4 @@
+use super::definitions::NAMESPACE;
 use super::*;
 
 #[test]

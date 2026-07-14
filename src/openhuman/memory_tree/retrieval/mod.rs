@@ -19,6 +19,7 @@
 
 pub mod cover;
 pub mod drill_down;
+mod engine;
 pub mod fast;
 pub mod fetch;
 pub mod rpc;

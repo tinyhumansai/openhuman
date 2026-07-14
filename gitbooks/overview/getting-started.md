@@ -11,6 +11,10 @@ This page walks you through installing OpenHuman, going through the in-app onboa
 
 OpenHuman is open source under the GNU GPL3 license. The codebase is at [github.com/tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman).
 
+{% hint style="info" %}
+**Want a specific outcome?** If you're here to accomplish something concrete (set up a private assistant, run a local model, recover a broken install, or move to a new machine), the [Guides](../guides/README.md) section has task-by-task walkthroughs.
+{% endhint %}
+
 ***
 
 ## System requirements

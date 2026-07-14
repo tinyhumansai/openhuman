@@ -304,8 +304,7 @@ async fn openai_compat_streaming_returns_ordered_deltas() {
         .and(path("/v1/chat/completions"))
         .respond_with(
             ResponseTemplate::new(200)
-                .insert_header("content-type", "text/event-stream")
-                .set_body_string(sse_body),
+                .set_body_raw(sse_body.as_bytes().to_vec(), "text/event-stream"),
         )
         .mount(&server)
         .await;

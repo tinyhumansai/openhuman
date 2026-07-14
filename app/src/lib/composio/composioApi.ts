@@ -160,7 +160,7 @@ export async function authorize(
 
 /**
  * Delete an existing Composio connection. Backend verifies ownership
- * before forwarding to Composio.
+ * before forwarding to Composio
  */
 export async function deleteConnection(
   connectionId: string,
@@ -310,6 +310,11 @@ export async function listAvailableTriggers(
   const raw = await callCoreRpc<unknown>({
     method: 'openhuman.composio_list_available_triggers',
     params,
+    // A 401 here is a single trigger-catalog read failure, not whole-session
+    // death (the connection itself is still active). Suppress the global
+    // sign-out so the trigger panel can show an in-place "Sign in again" CTA
+    // instead of being torn down (#4281, #2286).
+    suppressAuthExpiredEvent: true,
   });
   return unwrapCliEnvelope<ComposioAvailableTriggersResponse>(raw);
 }
@@ -320,7 +325,13 @@ export async function listAvailableTriggers(
 export async function listTriggers(toolkit?: string): Promise<ComposioActiveTriggersResponse> {
   const params: Record<string, unknown> = {};
   if (toolkit) params.toolkit = toolkit;
-  const raw = await callCoreRpc<unknown>({ method: 'openhuman.composio_list_triggers', params });
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.composio_list_triggers',
+    params,
+    // Loaded alongside the available-triggers catalog in the same panel —
+    // keep its 401 handling local too (see `listAvailableTriggers`).
+    suppressAuthExpiredEvent: true,
+  });
   return unwrapCliEnvelope<ComposioActiveTriggersResponse>(raw);
 }
 

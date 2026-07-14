@@ -487,7 +487,7 @@ fn skill_listener_closed_channel_nulls_rx_and_is_not_a_signal() {
 
 #[test]
 fn refresh_workflows_picks_up_skill_installed_on_disk() {
-    use crate::openhuman::workflows::ops_types::{SKILL_MD, TRUST_MARKER};
+    use crate::openhuman::skills::ops_types::{SKILL_MD, TRUST_MARKER};
 
     // Isolated, trusted workspace with one project-scope skill on disk.
     let ws = tempfile::TempDir::new().expect("temp workspace");
@@ -553,7 +553,7 @@ fn refresh_workflows_picks_up_skill_installed_on_disk() {
 
 #[test]
 fn refresh_workflows_retracts_skill_removed_from_disk() {
-    use crate::openhuman::workflows::ops_types::{SKILL_MD, TRUST_MARKER};
+    use crate::openhuman::skills::ops_types::{SKILL_MD, TRUST_MARKER};
 
     let ws = tempfile::TempDir::new().expect("temp workspace");
     let wsp = ws.path().to_path_buf();
@@ -1254,5 +1254,58 @@ fn bound_cached_transcript_messages_snaps_past_leading_orphan_tool() {
             .map(|m| m.content.as_str())
             .collect::<Vec<_>>(),
         vec!["u2", "a2", "u3"]
+    );
+}
+
+/// `hide_tools` on an agent that already has a visible-tool filter must drop
+/// only the named tools and leave the rest of the belt intact.
+#[test]
+fn hide_tools_drops_named_from_existing_filter() {
+    let mut agent = build_minimal_agent_with_definition_name(None);
+    agent.set_visible_tool_names(
+        ["alpha".to_string(), "beta".to_string(), "echo".to_string()]
+            .into_iter()
+            .collect(),
+    );
+
+    agent.hide_tools(&["echo"]);
+
+    let visible = agent.visible_tool_names_for_test();
+    assert!(visible.contains("alpha") && visible.contains("beta"));
+    assert!(
+        !visible.contains("echo"),
+        "hidden tool must be removed from the existing filter; visible = {visible:?}"
+    );
+}
+
+/// `hide_tools` on an agent with *no* filter (empty set = "all visible") must
+/// first seed the allowlist from every registered spec so the hide actually
+/// restricts — otherwise removing from an empty set would no-op and leave the
+/// tool still callable under the "empty == all visible" contract.
+#[test]
+fn hide_tools_seeds_allowlist_when_no_filter_present() {
+    let mut agent = build_minimal_agent_with_definition_name(None);
+    assert!(
+        agent.visible_tool_names_for_test().is_empty(),
+        "precondition: a freshly built minimal agent has no visible-tool filter"
+    );
+    assert!(
+        agent.tool_specs().iter().any(|spec| spec.name == "echo"),
+        "precondition: the mock belt includes `echo`"
+    );
+
+    // Hiding a name that isn't on the belt still forces the seed: the set goes
+    // from empty ("all visible") to a concrete allowlist of the real tools, so
+    // the previously-all-visible belt is now explicitly enumerated.
+    agent.hide_tools(&["not_on_belt"]);
+
+    let visible = agent.visible_tool_names_for_test();
+    assert!(
+        visible.contains("echo"),
+        "seeding must materialise the existing belt into a concrete allowlist; visible = {visible:?}"
+    );
+    assert!(
+        !visible.contains("not_on_belt"),
+        "an absent hidden name is a harmless no-op; visible = {visible:?}"
     );
 }

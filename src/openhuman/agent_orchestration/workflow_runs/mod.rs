@@ -21,9 +21,12 @@
 //! handles SKILL.md / WORKFLOW.md bundle discovery.
 
 mod engine;
+mod graph;
 mod ops;
 mod schemas;
 pub mod types;
+
+pub(crate) use graph::scheduler_graph_topology;
 
 pub use engine::{resume_workflow_run, start_workflow_run, stop_workflow_run};
 pub use ops::{

@@ -5,9 +5,9 @@ import { useT } from '../../lib/i18n/I18nContext';
 import { type CatalogEntry, skillRegistryApi } from '../../services/api/skillRegistryApi';
 import {
   type InstallWorkflowFromUrlResult,
-  workflowsApi,
+  skillsApi,
   type WorkflowSummary,
-} from '../../services/api/workflowsApi';
+} from '../../services/api/skillsApi';
 import EmptyStateCard from '../EmptyStateCard';
 import ChipTabs from '../layout/ChipTabs';
 import Button from '../ui/Button';
@@ -529,6 +529,9 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
 
   const [catalogEntries, setCatalogEntries] = useState<CatalogEntry[]>([]);
   const [catalogTotal, setCatalogTotal] = useState(0);
+  // How many catalog entries are currently revealed. We fetch the whole list
+  // up front, then page through it client-side via the "Show more" control.
+  const [visibleCount, setVisibleCount] = useState(CATALOG_PAGE_SIZE);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogInitialized, setCatalogInitialized] = useState(false);
@@ -571,7 +574,7 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
     try {
       // Include `skills/`-root installs (registry installs land there) so they
       // appear in the Installed tab and flip the catalog Install button.
-      const result = await workflowsApi.listWorkflows({ includeSkills: true });
+      const result = await skillsApi.listWorkflows({ includeSkills: true });
       log('fetchSkills: count=%d', result.length);
       setSkills(result);
     } catch (err) {
@@ -610,7 +613,10 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
         }
         log('fetchCatalog: total=%d', entries.length);
         setCatalogTotal(entries.length);
-        setCatalogEntries(entries.slice(0, CATALOG_PAGE_SIZE));
+        // Keep the full list so "Show more" can page through it without another
+        // RPC; only a window of it is rendered (see displayedCatalog).
+        setCatalogEntries(entries);
+        setVisibleCount(CATALOG_PAGE_SIZE);
         setCatalogInitialized(true);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -678,7 +684,7 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
 
   // When multiple sources are active (but not all), do client-side filtering
   // on the already-fetched results since the RPC only supports single source filter.
-  const displayedCatalog = useMemo(() => {
+  const filteredCatalog = useMemo(() => {
     if (
       activeSources.size === 0 ||
       activeSources.size >= sources.length ||
@@ -688,6 +694,13 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
     }
     return catalogEntries.filter(e => activeSources.has(e.source));
   }, [catalogEntries, activeSources, sources.length]);
+
+  // Client-side pagination window: we already hold the full fetched list, so
+  // "Show more" reveals the next page instantly with no extra RPC.
+  const displayedCatalog = useMemo(
+    () => filteredCatalog.slice(0, visibleCount),
+    [filteredCatalog, visibleCount]
+  );
 
   const handleInstalled = useCallback(
     (result: InstallWorkflowFromUrlResult) => {
@@ -966,7 +979,7 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
       {/* ── Registry view ── */}
       {view === 'registry' && !loading && !error && (
         <>
-          {catalogInitialized && catalogEntries.length === 0 && (
+          {catalogInitialized && filteredCatalog.length === 0 && (
             <EmptyStateCard
               className="mx-1 mb-3 py-10"
               icon={
@@ -1008,13 +1021,20 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
                   />
                 ))}
               </div>
-              {catalogTotal > displayedCatalog.length && (
-                <p className="mt-3 px-1 text-center text-[11px] text-content-faint">
-                  {t('skills.explorer.showingOf')
-                    .replace('{shown}', String(displayedCatalog.length))
-                    .replace('{total}', catalogTotal.toLocaleString()) ||
-                    `Showing ${displayedCatalog.length} of ${catalogTotal.toLocaleString()} results. Refine your search to see more.`}
-                </p>
+              {filteredCatalog.length > displayedCatalog.length && (
+                <div className="mt-3 flex flex-col items-center gap-1">
+                  <button
+                    type="button"
+                    data-testid="registry-show-more"
+                    onClick={() => setVisibleCount(c => c + CATALOG_PAGE_SIZE)}
+                    className="rounded-lg border border-line bg-surface px-4 py-2 text-xs font-medium text-content-secondary shadow-soft transition-colors hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1">
+                    {t('common.showMore')}
+                  </button>
+                  <p className="text-[11px] text-content-faint">
+                    {displayedCatalog.length.toLocaleString()} /{' '}
+                    {filteredCatalog.length.toLocaleString()}
+                  </p>
+                </div>
               )}
             </>
           )}

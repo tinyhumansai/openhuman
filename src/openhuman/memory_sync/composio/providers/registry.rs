@@ -94,7 +94,7 @@ pub fn init_default_providers() {
 mod tests {
     use super::*;
     use crate::openhuman::memory_sync::composio::providers::{
-        ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
+        ProviderContext, ProviderUserProfile,
     };
     use async_trait::async_trait;
 
@@ -112,13 +112,6 @@ mod tests {
             _ctx: &ProviderContext,
         ) -> Result<ProviderUserProfile, String> {
             Ok(ProviderUserProfile::default())
-        }
-        async fn sync(
-            &self,
-            _ctx: &ProviderContext,
-            _reason: SyncReason,
-        ) -> Result<SyncOutcome, String> {
-            Ok(SyncOutcome::default())
         }
     }
 

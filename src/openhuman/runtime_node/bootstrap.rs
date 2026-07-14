@@ -281,7 +281,7 @@ fn resolve_from_system(system: SystemNode) -> Result<ResolvedNode> {
         .unwrap_or_default();
     let version = system
         .version
-        .trim_start_matches(|c: char| c == 'v' || c == 'V')
+        .trim_start_matches(['v', 'V'])
         .trim()
         .to_string();
     build_resolved(bin_dir, version, NodeSource::System)

@@ -1,9 +1,10 @@
 use crate::openhuman::file_state;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Write file contents with path sandboxing
 pub struct FileWriteTool {
@@ -81,6 +82,25 @@ impl Tool for FileWriteTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, context).await
+    }
+}
+
+impl FileWriteTool {
+    async fn execute_in_context(
+        &self,
+        args: serde_json::Value,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let path = args
             .get("path")
             .and_then(|v| v.as_str())
@@ -106,7 +126,8 @@ impl Tool for FileWriteTool {
         // Security check first: validate path string, resolve symlinks, confirm workspace
         // containment. validate_parent_path walks up to the deepest existing ancestor so
         // it does not require the parent directory to exist yet.
-        let resolved_target = match self.security.validate_parent_path(path).await {
+        let path_policy = super::security_for_tool_context(&self.security, context, "file_write");
+        let resolved_target = match path_policy.validate_parent_path(path).await {
             Ok(p) => p,
             Err(msg) => return Ok(ToolResult::error(msg)),
         };
@@ -390,7 +411,8 @@ mod tests {
         // The readonly block must carry the hard-reject marker so the agent
         // harness recognizes it and halts on a verbatim repeat instead of
         // grinding. Ties this tool's literal to the marker const — the
-        // const→detector half is covered by tool_loop's guard tests.
+        // const→detector half lives in `RepeatedToolFailureMiddleware` and is
+        // covered by its tests (`src/openhuman/tinyagents/middleware.rs`).
         assert!(
             result
                 .output()

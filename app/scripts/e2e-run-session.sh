@@ -174,6 +174,8 @@ export CEF_CDP_PORT
 # rest of the mock backend.  The core reads this at TelegramChannel::new() time,
 # which runs after the config is fully loaded.
 export OPENHUMAN_TELEGRAM_BOT_API_BASE="http://127.0.0.1:${E2E_MOCK_PORT}"
+export OPENHUMAN_COMPOSIO_DIRECT_BASE_V2="http://127.0.0.1:${E2E_MOCK_PORT}"
+export OPENHUMAN_COMPOSIO_DIRECT_BASE_V3="http://127.0.0.1:${E2E_MOCK_PORT}"
 
 echo "[runner] Killing any running OpenHuman instances..."
 case "$OS" in
@@ -251,7 +253,7 @@ default_model = "e2e-mock-model"
 TOMLEOF
 echo "[runner] Wrote E2E config.toml routing inference to mock at http://127.0.0.1:${E2E_MOCK_PORT}"
 
-DIST_JS="$(ls dist/assets/index-*.js 2>/dev/null | head -1)"
+DIST_JS="$(find dist/assets -maxdepth 1 -name 'index-*.js' -print -quit 2>/dev/null || true)"
 if [ -z "$DIST_JS" ]; then
   echo "ERROR: No frontend bundle found at dist/assets/index-*.js." >&2
   echo "       Run 'pnpm test:e2e:build' first." >&2

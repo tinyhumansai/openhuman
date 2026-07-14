@@ -167,6 +167,17 @@ pub fn all_tools_with_runtime(
         // `agent::harness::subagent_runner` for the dispatch path.
         Box::new(SpawnSubagentTool::new()),
         Box::new(SpawnAsyncSubagentTool::new()),
+        // Interactive clarification early-exit. Sub-agents pause on this tool
+        // (checkpoint → `AwaitingUser`, see `subagent_runner::ops::graph`) and
+        // the orchestrator resumes them via `continue_subagent` (#4291).
+        // Several agent scopes (orchestrator, crypto, markets, scheduler,
+        // mcp_setup, desktop control) name it, so it must exist in the base
+        // registry or none of them can actually ask the user anything.
+        Box::new(AskClarificationTool::new()),
+        // Read-only project overview (git status, recent commits, top-level
+        // tree) rooted at the agent action dir. Named by the orchestrator and
+        // planner scopes.
+        Box::new(WorkspaceStateTool::new(action_dir.to_path_buf())),
         // "Plan mode as a subagent": runs the read-only `context_scout`
         // inline and returns a bounded context bundle + recommended next
         // tool calls. Visible only to agents that allowlist it
@@ -183,6 +194,11 @@ pub fn all_tools_with_runtime(
         Box::new(ContinueSubagentTool::new()),
         Box::new(SpawnParallelAgentsTool::new()),
         Box::new(DelegateToPersonalityTool::new()),
+        // Multi-stage durable delegation (issue #4249, Phase 3): runs the chosen
+        // sub-agent through the tinyagents plan→execute→review→finalize graph,
+        // checkpointed to the session DB. Heavier than spawn_subagent; for
+        // sub-tasks that benefit from a self-review/revision loop.
+        Box::new(DelegateGraphTool::new()),
         // Coding-harness control flow (issue #1205): a process-global
         // todo registry the agent can rewrite end-to-end, plus the
         // `plan_exit` marker that hands a plan-mode pass off to a
@@ -202,7 +218,7 @@ pub fn all_tools_with_runtime(
         // subagent and (by default) waits on its result like a function call;
         // `await_workflow` re-attaches to a run that outlived its inline wait.
         // Both wrap `skill_runtime::spawn_workflow_run_background` +
-        // `await_run_outcome` — the same spawn path `openhuman.workflows_run`
+        // `await_run_outcome` — the same spawn path `openhuman.skills_run`
         // JSON-RPC uses, so RPC and tool callers stay in sync.
         Box::new(RunWorkflowTool::new().with_skill_allowlist(skill_allowlist.cloned())),
         Box::new(AwaitWorkflowTool::new()),
@@ -242,12 +258,74 @@ pub fn all_tools_with_runtime(
         )),
         Box::new(DetectToolsTool::new()),
         Box::new(InstallToolTool::new(security.clone())),
+        // Orchestration session-history read tools — browse persisted
+        // OpenHuman↔agent transcripts. Read-only; workspace-internal store access.
+        Box::new(crate::openhuman::orchestration::tools::ListSessionsTool::new(config.clone())),
+        Box::new(crate::openhuman::orchestration::tools::ReadSessionTool::new(config.clone())),
+        // List the agent's tiny.place contacts (browse-loop entry point).
+        Box::new(crate::openhuman::orchestration::tools::ListContactsTool),
+        // Send-on-behalf: DM another agent for the user. Linked-peers-only,
+        // reuse-or-mint per-peer session id; Write-class external effect.
+        Box::new(crate::openhuman::orchestration::tools::SendToAgentTool::new(config.clone())),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
         Box::new(CronListTool::new(config.clone())),
         Box::new(CronRemoveTool::new(config.clone())),
         Box::new(CronUpdateTool::new(config.clone(), security.clone())),
         Box::new(CronRunTool::new(config.clone())),
         Box::new(CronRunsTool::new(config.clone())),
+        // Agent-first Workflow authoring (issue B4): validates a candidate
+        // graph and returns a proposal summary — never creates/enables a
+        // flow itself. Only the chat UI's WorkflowProposalCard "Save &
+        // enable" action calls `flows_create`.
+        Box::new(ProposeWorkflowTool::new(config.clone())),
+        // workflow-builder agent tool belt (Phase 5b). A deliberately narrow,
+        // propose-or-read surface: revise a draft (validate-only), read saved
+        // flows/runs/connections, ground tool_call slugs in the real catalog,
+        // and dry-run a draft against MOCK capabilities. None of these persist
+        // or enable a flow (only the user's own `flows_create` click does); the
+        // read tools are `PermissionLevel::None`, and `dry_run_workflow` is
+        // autonomy-tier gated + wired to deterministic mock capabilities.
+        Box::new(ReviseWorkflowTool::new(config.clone())),
+        Box::new(ListFlowsTool::new(config.clone())),
+        Box::new(GetFlowTool::new(config.clone())),
+        Box::new(GetFlowRunTool::new(config.clone())),
+        Box::new(ListFlowConnectionsTool::new(config.clone())),
+        Box::new(SearchToolCatalogTool::new(config.clone())),
+        // Full live contract (schemas, real required_args/output_fields,
+        // primary_array_path) for one action slug found via
+        // search_tool_catalog — the grounding step before WIRING a node's
+        // args/downstream bindings (systemic tool-contract fix, Part 1).
+        Box::new(GetToolContractTool::new(config.clone())),
+        // B12: ONE bounded, READ-ONLY, REAL Composio call to derive the real
+        // primary_array_path/output_fields when the live listing publishes no
+        // output schema at all (verified for every GitHub action) — overrides
+        // get_tool_contract's schema-derived hint for that slug from then on.
+        // Read-scope actions only (hard-refused otherwise), connected
+        // toolkits only — see builder_tools.rs's module doc for the carve-out
+        // this makes in the workflow-builder agent's "no composio_execute"
+        // invariant.
+        Box::new(GetToolOutputSampleTool::new(config.clone())),
+        // Ground an `agent` node's `agent_ref` in real registered agent-kind ids
+        // (researcher / code_executor / …) — the agent analogue of
+        // search_tool_catalog. Read-only.
+        Box::new(ListAgentProfilesTool::new()),
+        Box::new(DryRunWorkflowTool::new(security.clone(), config.clone())),
+        // Real end-to-end test run of a SAVED flow (Write / external-effect). The
+        // workflow-builder prompt requires it to ask the user for confirmation
+        // first, and the flow's own approval gate still pauses outbound nodes.
+        Box::new(RunFlowTool::new(config.clone())),
+        // Persist a built graph onto an EXISTING saved flow (Write). Used only
+        // when the USER explicitly asks the agent to save; the seeded build
+        // turn from the Flows prompt bar is propose-only (see #4596) — Accept
+        // + the canvas's own Save persist the graph. The tool itself can
+        // never create a flow or change enabled/require_approval.
+        Box::new(SaveWorkflowTool::new(config.clone())),
+        // Flow Scout discovery: the `flow_discovery` agent's terminal emit
+        // sink. Read-only reasoning over the user's data ends by calling
+        // `suggest_workflows`, which persists workflow ideas for the Flows page
+        // "Suggested for you" section. `PermissionLevel::None`, no external
+        // effect — writes only to the agent's own suggestions store.
+        Box::new(SuggestWorkflowsTool::new(config.clone())),
         // Wallet tools — expose wallet operations to the agent tool-call pipeline
         // so the crypto sub-agent can prepare transfers, check status, etc.
         Box::new(WalletStatusTool::new()),
@@ -259,6 +337,19 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
+        // #4458: the memory read→dedupe→write→update-index protocol
+        // (`agent::harness::memory_protocol`) can only close its write cycle via a
+        // successful `update_memory_md` call, and the archivist's `[tools] named`
+        // allowlist selects it — but subagents only filter the *parent* tool set,
+        // so if this tool is absent from the registry the archivist silently loses
+        // it and the model hits a permanent unsatisfiable "call update_memory_md"
+        // nag loop (unknown-tool error → the tracker never sees IndexUpdate). It is
+        // always registered here (same as the other memory tools); per-agent
+        // visibility is governed by each agent's `named` allowlist. Targets the
+        // workspace `MEMORY.md`/`SKILL.md` (where `channels_prompt`/`session_memory`
+        // read them from), and prefers the live TinyAgents workspace descriptor at
+        // execution time when one is present.
+        Box::new(UpdateMemoryMdTool::new(root_config.workspace_dir.clone())),
         // #002: read-only self-diagnosis of the memory pipeline so the agent
         // can explain an empty/stalled wiki + the fix.
         Box::new(MemoryDoctorTool::new(config.clone())),
@@ -311,11 +402,17 @@ pub fn all_tools_with_runtime(
             security.clone(),
             action_dir.to_path_buf(),
         )),
+        // Audio-toolkit podcast tools — gated with the `voice` feature (they
+        // live in the `audio_toolkit` domain, which is compiled out when voice
+        // is disabled).
+        #[cfg(feature = "voice")]
         Box::new(AudioGeneratePodcastTool::new(
             config.clone(),
             security.clone(),
         )),
+        #[cfg(feature = "voice")]
         Box::new(AudioEmailPodcastTool::new(config.clone(), security.clone())),
+        #[cfg(feature = "voice")]
         Box::new(AudioGenerateAndEmailPodcastTool::new(
             config.clone(),
             security.clone(),
@@ -752,6 +849,13 @@ pub fn all_tools_with_runtime(
         action_dir,
     ));
 
+    // Managed cloud file storage (S3 via the backend). Skipped when no
+    // integration client is configured; downloads land under `action_dir`.
+    tools.extend(crate::openhuman::file_storage::build_file_storage_tools(
+        root_config,
+        action_dir,
+    ));
+
     // High-level web3 tools (swaps / bridges / dapp calls) built on the wallet.
     // They call the backend deBridge proxy per-invocation and error gracefully
     // when the user is not signed in, so they register unconditionally.
@@ -928,7 +1032,179 @@ pub fn all_tools_with_runtime(
         tracing::debug!("[lsp] capability gate off (set OPENHUMAN_LSP_ENABLED=1 to register)");
     }
 
-    tools
+    // Language-workflow `rhai_workflows` tool (`.ragsh` REPL, `openhuman::rhai_workflows`): lets
+    // the orchestrator author and run its own Rhai workflow cells (fan-out,
+    // loops, dedup/verify pipelines). Registered on the `supervised`/`full`
+    // tiers only — dark on `readonly` (it can drive effectful tools/sub-agents)
+    // and behind the `OPENHUMAN_RHAI_WORKFLOWS=0` kill switch. Every effectful inner call
+    // still re-gates itself in the Rhai bridge, so this surface adds no new
+    // ungated capability.
+    let rhai_workflows_enabled = std::env::var("OPENHUMAN_RHAI_WORKFLOWS")
+        .or_else(|_| std::env::var("OPENHUMAN_RHAI"))
+        .or_else(|_| std::env::var("OPENHUMAN_RLM"))
+        .map(|v| v != "0")
+        .unwrap_or(true);
+    if rhai_workflows_enabled
+        && security.autonomy != crate::openhuman::security::policy::AutonomyLevel::ReadOnly
+    {
+        tools.push(Box::new(crate::openhuman::rhai_workflows::RhaiTool::new()));
+        tracing::debug!("[rhai_workflows] registered rhai_workflows language-workflow tool");
+    } else {
+        tracing::debug!(
+            rhai_workflows_enabled,
+            tier = ?security.autonomy,
+            "[rhai_workflows] rhai_workflows tool not registered (readonly tier or OPENHUMAN_RHAI_WORKFLOWS=0)"
+        );
+    }
+
+    // DomainSet post-filter (#4796): drop tools whose DomainGroup is disabled
+    // under the ambient CoreContext. With no active context, or under
+    // `DomainSet::full()`, every tool is kept (byte-identical). Under
+    // `harness()` the gate-family tools (web3/mcp/skills/flows/media/voice/meet)
+    // are dropped so agent turns can't call a domain that isn't live; only the
+    // memory + threads tools survive (the mapped harness families) — see
+    // `tool_group` for the classification and its Platform-default caveat.
+    let domains = crate::core::runtime::context::CoreContext::current().map(|c| c.domains());
+    if let Some(set) = domains {
+        let before = tools.len();
+        let filtered: Vec<Box<dyn Tool>> = tools
+            .into_iter()
+            .filter(|t| set.allows(tool_group(t.name())))
+            .collect();
+        log::debug!(
+            "[tools::ops][domain-filter] ambient DomainSet active — {} of {before} tools retained",
+            filtered.len()
+        );
+        filtered
+    } else {
+        // No ambient context (unit tests / pre-boot) ⇒ no filtering.
+        tools
+    }
+}
+
+/// Classify an agent tool into its [`DomainGroup`](crate::core::all::DomainGroup)
+/// by its `name()`, so [`all_tools_with_runtime`] can drop tools whose family is
+/// disabled under the ambient [`DomainSet`](crate::core::runtime::DomainSet).
+///
+/// Only the gate families (Web3/Mcp/Skills/Flows/Media/Voice/Meet) and the two
+/// mapped harness families (Memory/Threads) are matched; **everything else
+/// defaults to `Platform`**. Consequence under `harness()` (platform off): the
+/// gate-family tools drop AND the generic Platform tools (shell/file/grep/edit/
+/// screen/billing/team/cron/config/security/agent-orchestration/…) drop too —
+/// only memory + thread/todo tools remain. This is the strict #4796 harness
+/// surface; an embedder that wants a broader tool set can widen its DomainSet.
+/// (Names verified against each Tool impl's `fn name()` on 2026-07-13.)
+fn tool_group(name: &str) -> crate::core::all::DomainGroup {
+    use crate::core::all::DomainGroup;
+
+    // Gate families with a domain-exclusive name prefix are matched by prefix
+    // (not an exact list) so a NEW tool in the family auto-gates instead of
+    // silently defaulting to Platform and leaking under a custom DomainSet
+    // (#4808 maintainer review). Web3 = wallet_/web3_/x402_, Media = media_,
+    // Mcp = mcp_ (below). Families without a clean prefix (Skills/Flows) keep
+    // their exact lists; `no_gate_family_tool_silently_defaults_to_platform`
+    // guards the prefix families.
+    const SKILLS: &[&str] = &[
+        "run_workflow",
+        "await_workflow",
+        "list_workflows",
+        "create_workflow",
+        "describe_workflow",
+        "read_workflow_resource",
+        "list_workflow_runs",
+        "read_workflow_run_log",
+        "install_workflow_from_url",
+        "uninstall_workflow",
+        "skill_registry_browse",
+        "skill_registry_search",
+        "skill_registry_install",
+        "skill_registry_sources",
+        "skill_registry_uninstall",
+        "skill_runtime_resolve_runtimes",
+    ];
+    const FLOWS: &[&str] = &[
+        "propose_workflow",
+        "revise_workflow",
+        "dry_run_workflow",
+        "save_workflow",
+        "suggest_workflows",
+        "run_flow",
+        "list_flows",
+        "get_flow",
+        "get_flow_run",
+        "list_flow_connections",
+        "search_tool_catalog",
+        "get_tool_contract",
+        "get_tool_output_sample",
+        "list_agent_profiles",
+    ];
+    // Voice family agent tools (audio_toolkit) — no `voice_`/`tts_`/`stt_`
+    // prefix, so they must be listed explicitly or they fall through to
+    // Platform and stay callable when Voice is gated off (#4808 review).
+    const VOICE: &[&str] = &[
+        "audio_generate_podcast",
+        "audio_email_podcast",
+        "audio_generate_and_email_podcast",
+    ];
+    // Threads: thread_* / todo_* handled by prefix below; these are the extras.
+    const THREADS_EXTRA: &[&str] = &["transcript_search", "goal_get", "goal_set", "goal_complete"];
+    // Memory extras not covered by the `memory_`/`goals_` prefixes.
+    const MEMORY_EXTRA: &[&str] = &[
+        "remember_preference",
+        "save_preference",
+        "update_memory_md",
+        "tool_stats",
+    ];
+
+    // MCP: every MCP tool name is `mcp_` prefixed (mcp_registry_*, mcp_setup_*,
+    // mcp_call_tool, mcp_list_servers, mcp_list_tools).
+    if name.starts_with("mcp_") {
+        return DomainGroup::Mcp;
+    }
+    // Web3: wallet_/web3_/x402_ are all Web3-exclusive prefixes.
+    if name.starts_with("wallet_") || name.starts_with("web3_") || name.starts_with("x402_") {
+        return DomainGroup::Web3;
+    }
+    if SKILLS.contains(&name) {
+        return DomainGroup::Skills;
+    }
+    if FLOWS.contains(&name) {
+        return DomainGroup::Flows;
+    }
+    // Media generation: `media_` prefix (media_generate_image/video, media_list_models).
+    if name.starts_with("media_") {
+        return DomainGroup::Media;
+    }
+    // Channels family agent tools: read-only WhatsApp data surface. Gated with
+    // the other channel/webview domains; without this they fall to Platform and
+    // stay callable when Channels is gated off (#4808 review).
+    if name.starts_with("whatsapp_data_") {
+        return DomainGroup::Channels;
+    }
+    // Voice family: explicit audio_* podcast tools plus the defensive
+    // voice_/tts_/stt_ prefixes for any future tool. Meet has no agent tools in
+    // the current surface, but the `meet_` prefix is mapped defensively.
+    if VOICE.contains(&name)
+        || name.starts_with("voice_")
+        || name.starts_with("tts_")
+        || name.starts_with("stt_")
+    {
+        return DomainGroup::Voice;
+    }
+    if name.starts_with("meet_") {
+        return DomainGroup::Meet;
+    }
+    // Memory family (harness-kept): memory_* store/search/etc + goals_* + extras.
+    if name.starts_with("memory_") || name.starts_with("goals_") || MEMORY_EXTRA.contains(&name) {
+        return DomainGroup::Memory;
+    }
+    // Threads family (harness-kept): thread_* + todo_* + per-thread goal + search.
+    if name.starts_with("thread_") || name.starts_with("todo_") || THREADS_EXTRA.contains(&name) {
+        return DomainGroup::Threads;
+    }
+    // Everything else — shell/file/screen/config/security/agent/billing/… — is
+    // Platform: present under full(), absent under harness()/none().
+    DomainGroup::Platform
 }
 
 #[cfg(test)]

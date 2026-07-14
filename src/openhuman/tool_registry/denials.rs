@@ -48,7 +48,7 @@ pub fn record(tool_name: &str, policy: &str, action: &str, reason: &str) {
 }
 
 pub fn list(limit: usize) -> Vec<RecentPolicyDenial> {
-    let limit = limit.min(MAX_DENIALS).max(0);
+    let limit = limit.min(MAX_DENIALS);
     let buf = RECENT_DENIALS.lock().unwrap_or_else(|p| p.into_inner());
     buf.iter().take(limit).cloned().collect()
 }

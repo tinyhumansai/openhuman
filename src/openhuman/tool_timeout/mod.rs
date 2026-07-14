@@ -152,6 +152,43 @@ pub fn explicit_call_timeout_duration(requested: Option<u64>, cap: u64) -> Optio
     explicit_call_timeout_secs(requested, cap).map(Duration::from_secs)
 }
 
+/// Extra slack added on top of an explicit per-call budget before the hard
+/// `tokio::time::timeout` fires, so a tool that finishes right at its requested
+/// deadline isn't killed by scheduler jitter. The user-facing `timeout_secs`
+/// reported on a timeout is the un-padded request.
+const TOOL_TIMEOUT_GRACE_SECS: u64 = 5;
+
+/// Resolve a tool's [`ToolTimeout`] policy into the `(deadline, timeout_secs)`
+/// pair the agent tool-execution loop enforces:
+/// - `Inherit` → the global config-driven timeout (a finite deadline).
+/// - `Secs(req)` → the clamped request, padded by [`TOOL_TIMEOUT_GRACE_SECS`]
+///   for the actual deadline while `timeout_secs` reports the un-padded budget.
+/// - `Unbounded` → `(None, 0)`: no deadline; the tool runs to completion.
+///
+/// Moved out of the retired legacy `engine::tools` module during the tinyagents
+/// migration (issue #4249); it lives here next to the timeout constants it uses.
+pub fn resolve_tool_deadline(
+    policy: crate::openhuman::tools::traits::ToolTimeout,
+) -> (Option<Duration>, u64) {
+    use crate::openhuman::tools::traits::ToolTimeout;
+    match policy {
+        ToolTimeout::Inherit => {
+            let s = tool_execution_timeout_secs();
+            (Some(Duration::from_secs(s)), s)
+        }
+        ToolTimeout::Secs(req) => {
+            let s = req.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
+            (
+                Some(Duration::from_secs(
+                    s.saturating_add(TOOL_TIMEOUT_GRACE_SECS),
+                )),
+                s,
+            )
+        }
+        ToolTimeout::Unbounded => (None, 0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

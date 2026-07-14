@@ -16,6 +16,31 @@ const log = debug('skillRegistryApi');
  */
 const CATALOG_RPC_TIMEOUT_MS = 120_000;
 
+/**
+ * In-memory, session-scoped cache for the unfiltered `browse()` catalog.
+ *
+ * The backend already single-flights the upstream ~90k-entry fetch, so warm
+ * backend reads are fast — but the FRONTEND still re-pulls and re-parses that
+ * whole payload (tens of MB) over RPC on every Skills-page mount, which is the
+ * recurring slowness users feel when clicking around. Holding the parsed result
+ * here makes repeat visits within a session instant and de-dupes concurrent
+ * mounts via a shared in-flight promise.
+ *
+ * Deliberately NOT persisted to localStorage: the payload far exceeds the ~5MB
+ * quota, so a cold restart re-fetches (and the backend serves it warm). A TTL
+ * bounds staleness for very long-lived sessions; `force_refresh` and
+ * `invalidateSkillBrowseCache()` both drop it on demand.
+ */
+const BROWSE_CACHE_TTL_MS = 30 * 60 * 1000;
+let browseCache: { fetchedAt: number; entries: CatalogEntry[] } | null = null;
+let browseInflight: Promise<CatalogEntry[]> | null = null;
+
+/** Drop the in-memory browse cache (e.g. after an install changes the list). */
+export function invalidateSkillBrowseCache(): void {
+  browseCache = null;
+  browseInflight = null;
+}
+
 export interface CatalogEntry {
   id: string;
   name: string;
@@ -82,16 +107,43 @@ function unwrap<T>(response: Envelope<T> | T): T {
 export const skillRegistryApi = {
   browse: async (forceRefresh = false): Promise<CatalogEntry[]> => {
     log('browse: forceRefresh=%s', forceRefresh);
-    const response = await callCoreRpc<
-      Envelope<{ entries: CatalogEntry[] }> | { entries: CatalogEntry[] }
-    >({
-      method: 'openhuman.skill_registry_browse',
-      params: { force_refresh: forceRefresh },
-      timeoutMs: CATALOG_RPC_TIMEOUT_MS,
-    });
-    const result = unwrap(response);
-    log('browse: count=%d', result.entries.length);
-    return result.entries;
+    if (forceRefresh) {
+      // Explicit refresh: drop any cache / in-flight join so we hit the backend.
+      invalidateSkillBrowseCache();
+    } else {
+      if (browseCache && Date.now() - browseCache.fetchedAt < BROWSE_CACHE_TTL_MS) {
+        log('browse: served from in-memory cache count=%d', browseCache.entries.length);
+        return browseCache.entries;
+      }
+      // Concurrent mounts share a single fetch instead of each firing the RPC.
+      if (browseInflight) {
+        log('browse: joining in-flight request');
+        return browseInflight;
+      }
+    }
+
+    const fetchPromise = (async () => {
+      const response = await callCoreRpc<
+        Envelope<{ entries: CatalogEntry[] }> | { entries: CatalogEntry[] }
+      >({
+        method: 'openhuman.skill_registry_browse',
+        params: { force_refresh: forceRefresh },
+        timeoutMs: CATALOG_RPC_TIMEOUT_MS,
+      });
+      const result = unwrap(response);
+      log('browse: count=%d', result.entries.length);
+      browseCache = { fetchedAt: Date.now(), entries: result.entries };
+      return result.entries;
+    })();
+
+    browseInflight = fetchPromise;
+    try {
+      return await fetchPromise;
+    } finally {
+      // Only clear the slot if it's still ours (a concurrent invalidate may have
+      // already reset it).
+      if (browseInflight === fetchPromise) browseInflight = null;
+    }
   },
 
   search: async (query: string, source?: string, category?: string): Promise<CatalogEntry[]> => {

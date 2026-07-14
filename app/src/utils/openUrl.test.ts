@@ -11,6 +11,7 @@ const isTauriMock = vi.fn();
 const tauriOpenUrlMock = vi.fn();
 const revealItemInDirMock = vi.fn();
 const addBreadcrumbMock = vi.fn();
+const platformMock = vi.fn();
 
 vi.mock('./tauriCommands/common', () => ({ isTauri: () => isTauriMock() }));
 
@@ -18,6 +19,8 @@ vi.mock('@tauri-apps/plugin-opener', () => ({
   openUrl: (url: string) => tauriOpenUrlMock(url),
   revealItemInDir: (path: string) => revealItemInDirMock(path),
 }));
+
+vi.mock('@tauri-apps/plugin-os', () => ({ platform: () => platformMock() }));
 
 vi.mock('@sentry/react', () => ({
   addBreadcrumb: (...args: unknown[]) => addBreadcrumbMock(...args),
@@ -29,6 +32,9 @@ describe('openUrl', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default this device to macOS so existing POSIX-path reveal tests pass; the
+    // #4278 cross-host tests override per-case.
+    platformMock.mockResolvedValue('macos');
     originalWindowOpen = window.open;
     windowOpenMock = vi.fn();
     window.open = windowOpenMock as unknown as typeof window.open;
@@ -152,6 +158,46 @@ describe('openUrl', () => {
 
     const { revealPath } = await import('./openUrl');
     await expect(revealPath('/Users/me/Vault')).rejects.toThrow('reveal failed');
+  });
+
+  // #4278: a shared openhuman-core on a different OS serves its own absolute
+  // path; revealing it locally must fail with a clear error, not cryptically.
+  it('revealPath rejects a foreign-OS path instead of revealing it (#4278)', async () => {
+    isTauriMock.mockReturnValue(true);
+    platformMock.mockResolvedValue('windows'); // core served a POSIX path to a Windows frontend
+    revealItemInDirMock.mockResolvedValue(undefined);
+
+    const { revealPath } = await import('./openUrl');
+    await expect(revealPath('/home/leigh/OHvault')).rejects.toThrow(/openhuman-core host/);
+    expect(revealItemInDirMock).not.toHaveBeenCalled();
+  });
+
+  it('revealPath still reveals a path native to this device (#4278 regression)', async () => {
+    isTauriMock.mockReturnValue(true);
+    platformMock.mockResolvedValue('windows');
+    revealItemInDirMock.mockResolvedValue(undefined);
+
+    const { revealPath } = await import('./openUrl');
+    await revealPath('C:\\Users\\me\\Vault');
+
+    expect(revealItemInDirMock).toHaveBeenCalledWith('C:\\Users\\me\\Vault');
+  });
+
+  describe('isForeignFsPath', () => {
+    it('flags a POSIX path on Windows and a Windows path on POSIX', async () => {
+      const { isForeignFsPath } = await import('./openUrl');
+      expect(isForeignFsPath('/home/leigh/OHvault', 'windows')).toBe(true);
+      expect(isForeignFsPath('C:\\Users\\me\\Vault', 'macos')).toBe(true);
+      expect(isForeignFsPath('\\\\server\\share', 'linux')).toBe(true);
+    });
+
+    it('treats same-family paths as local and is permissive on unknown OS', async () => {
+      const { isForeignFsPath } = await import('./openUrl');
+      expect(isForeignFsPath('/Users/me/Vault', 'macos')).toBe(false);
+      expect(isForeignFsPath('C:\\x', 'windows')).toBe(false);
+      expect(isForeignFsPath('/home/x', undefined)).toBe(false);
+      expect(isForeignFsPath('', 'windows')).toBe(false);
+    });
   });
 
   it('trims surrounding whitespace before classifying an http URL for fallback', async () => {

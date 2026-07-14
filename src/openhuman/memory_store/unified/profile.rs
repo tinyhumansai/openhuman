@@ -373,7 +373,7 @@ pub fn profile_upsert_full(
         .cue_families
         .as_ref()
         .filter(|m| !m.is_empty())
-        .map(|m| serde_json::to_string(m))
+        .map(serde_json::to_string)
         .transpose()?;
 
     // Derive class from the facet's own class field or fall back to key prefix.

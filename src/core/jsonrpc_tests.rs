@@ -8,8 +8,75 @@ use tokio_util::sync::CancellationToken;
 use super::{
     build_http_schema_dump, default_state, escape_html, invoke_method, is_param_validation_error,
     is_session_expired_error, is_unconfirmed_unauthorized_error, is_wallet_not_configured_error,
-    params_to_object, parse_json_params, rpc_handler, type_name,
+    params_to_object, parse_json_params, rpc_handler, type_name, DomainSubscriberPlan,
 };
+
+// ---- domain-subscriber gating (#4796 DoD item 3) ----------------------------
+// `register_domain_subscribers` registers on the process-global event bus behind
+// a `Once`, so its gating is proven via the pure `DomainSubscriberPlan` the
+// registrar consumes — no real subscribers, no bus mutation.
+
+#[test]
+fn domain_subscriber_plan_full_registers_every_gated_subscriber() {
+    let plan = DomainSubscriberPlan::for_domains(crate::core::runtime::DomainSet::full());
+    assert_eq!(
+        plan,
+        DomainSubscriberPlan {
+            platform: true,
+            channels: true,
+            flows: true,
+            memory: true,
+            meet: true,
+            agent: true,
+            mcp: true,
+        },
+        "full() must register every gated domain subscriber"
+    );
+}
+
+#[test]
+fn domain_subscriber_plan_none_registers_no_gated_subscriber() {
+    let plan = DomainSubscriberPlan::for_domains(crate::core::runtime::DomainSet::none());
+    assert_eq!(
+        plan,
+        DomainSubscriberPlan {
+            platform: false,
+            channels: false,
+            flows: false,
+            memory: false,
+            meet: false,
+            agent: false,
+            mcp: false,
+        },
+        "none() must register no gated domain subscriber (core infra still runs, ungated)"
+    );
+}
+
+#[test]
+fn domain_subscriber_plan_harness_gates_by_owning_group() {
+    let plan = DomainSubscriberPlan::for_domains(crate::core::runtime::DomainSet::harness());
+    // harness() = agent + memory + threads + config + security.
+    assert!(
+        plan.agent,
+        "harness keeps agent + orchestration subscribers"
+    );
+    assert!(
+        plan.memory,
+        "harness keeps memory conversation-persistence + sync bridge"
+    );
+    // Platform / Channels / Flows / Meet / Mcp are NOT in harness.
+    assert!(
+        !plan.platform,
+        "harness must skip webhook/notification/composio/task-sources/device-tunnel"
+    );
+    assert!(
+        !plan.channels,
+        "harness must skip channel-inbound + web-only proactive"
+    );
+    assert!(!plan.flows, "harness must skip flows trigger dispatch");
+    assert!(!plan.meet, "harness must skip agent_meetings subscribers");
+    assert!(!plan.mcp, "harness must skip mcp_registry bus init");
+}
 
 struct EnvVarGuard {
     old_values: Vec<(&'static str, Option<OsString>)>,
@@ -174,6 +241,41 @@ async fn invoke_doctor_models_rejects_unknown_param() {
     .await
     .expect_err("unknown param should fail");
     assert!(err.contains("unknown param 'invalid'"));
+}
+
+#[tokio::test]
+async fn gated_method_is_unknown_at_transport_even_with_malformed_params() {
+    // #4808 review (CodeRabbit): prove the schema-gate fix at the JSON-RPC
+    // TRANSPORT layer (`invoke_method`), not only via direct dispatch. Under a
+    // harness() ambient context a gated method must return an unknown-method
+    // error for BOTH well-formed and malformed params — never the controller's
+    // param-validation error, which would leak that the hidden method exists.
+    use crate::core::runtime::context::CoreContext;
+    use crate::core::runtime::DomainSet;
+
+    let gated_method = crate::core::all::all_registered_controllers()
+        .into_iter()
+        .find(|c| c.schema.namespace == "flows")
+        .map(|c| c.rpc_method_name())
+        .expect("a flows.* method exists in the full registry");
+
+    for params in [json!({}), json!({ "obviously_not_a_real_param_xyz": true })] {
+        let ctx = CoreContext::for_test(DomainSet::harness(), None);
+        let err = CoreContext::scope(
+            ctx,
+            invoke_method(default_state(), &gated_method, params.clone()),
+        )
+        .await
+        .expect_err("gated flows method must error under harness()");
+        assert!(
+            err.contains("unknown method"),
+            "gated `{gated_method}` with params {params} must be unknown-method at transport, got: {err}"
+        );
+        assert!(
+            !err.contains("param"),
+            "gated `{gated_method}` must NOT leak a param-validation error (surface leak), got: {err}"
+        );
+    }
 }
 
 #[tokio::test]

@@ -34,6 +34,7 @@ describe('composioApi trigger wrappers', () => {
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.composio_list_available_triggers',
       params: { toolkit: 'gmail', connection_id: 'conn_1' },
+      suppressAuthExpiredEvent: true,
     });
     expect(out.triggers).toHaveLength(1);
     expect(out.triggers[0].scope).toBe('static');
@@ -45,6 +46,7 @@ describe('composioApi trigger wrappers', () => {
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.composio_list_available_triggers',
       params: { toolkit: 'gmail' },
+      suppressAuthExpiredEvent: true,
     });
   });
 
@@ -54,6 +56,7 @@ describe('composioApi trigger wrappers', () => {
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.composio_list_triggers',
       params: {},
+      suppressAuthExpiredEvent: true,
     });
   });
 
@@ -63,6 +66,7 @@ describe('composioApi trigger wrappers', () => {
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.composio_list_triggers',
       params: { toolkit: 'gmail' },
+      suppressAuthExpiredEvent: true,
     });
   });
 

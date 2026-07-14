@@ -3,7 +3,7 @@
  * ---------------------------
  *
  * Small centered confirm modal for destructive uninstall of a user-scope
- * SKILL.md skill. Wraps `workflowsApi.uninstallWorkflow` which calls
+ * SKILL.md skill. Wraps `skillsApi.uninstallWorkflow` which calls
  * `openhuman.skill_registry_uninstall` on the Rust side — that RPC only accepts
  * user-scope installs (`~/.openhuman/skills/<name>/`) and refuses project
  * and legacy scopes. The card that opens this dialog is responsible for
@@ -31,9 +31,9 @@ import { useT } from '../../lib/i18n/I18nContext';
 import { trackEvent } from '../../services/analytics';
 import {
   type UninstallWorkflowResult,
-  workflowsApi,
+  skillsApi,
   type WorkflowSummary,
-} from '../../services/api/workflowsApi';
+} from '../../services/api/skillsApi';
 import Button from '../ui/Button';
 
 const log = debug('skills:uninstall-dialog');
@@ -83,7 +83,7 @@ export default function UninstallSkillConfirmDialog({ skill, onClose, onUninstal
       // `skill.id` is the on-disk slug (directory under ~/.openhuman/skills/).
       // `skill.name` is the frontmatter display name and may diverge from the
       // slug — the backend resolves by slug, so pass `id`.
-      const result = await workflowsApi.uninstallWorkflow(skill.id);
+      const result = await skillsApi.uninstallWorkflow(skill.id);
       log('confirm: done removedPath=%s', result.removedPath);
       trackEvent('skill_uninstall', { skill_id: skill.id });
       onUninstalled(result);

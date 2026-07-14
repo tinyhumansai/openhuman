@@ -14,16 +14,34 @@ pub struct Web3SwapQuoteTool;
 pub struct Web3SwapExecuteTool;
 pub struct Web3SwapRoutesTool;
 
+impl Default for Web3SwapQuoteTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Web3SwapQuoteTool {
     pub fn new() -> Self {
         Self
     }
 }
+impl Default for Web3SwapExecuteTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Web3SwapExecuteTool {
     pub fn new() -> Self {
         Self
     }
 }
+impl Default for Web3SwapRoutesTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Web3SwapRoutesTool {
     pub fn new() -> Self {
         Self

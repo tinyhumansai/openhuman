@@ -1,5 +1,6 @@
 import * as Sentry from '@sentry/react';
 import { revealItemInDir, openUrl as tauriOpenUrl } from '@tauri-apps/plugin-opener';
+import { platform } from '@tauri-apps/plugin-os';
 
 import { isTauri } from './tauriCommands/common';
 
@@ -71,6 +72,27 @@ export const openUrl = async (url: string): Promise<void> => {
 };
 
 /**
+ * Detects a filesystem path that belongs to a different OS family than the one
+ * running this frontend — a Windows path (`C:\…` or a `\\UNC` share) on a POSIX
+ * host, or a POSIX absolute path (`/…`) on Windows.
+ *
+ * This is the cross-host guard for issue #4278: `openhuman-core` can serve a
+ * path that lives on its own (possibly different-OS) host, and revealing such a
+ * path locally would fail with a cryptic opener error. Returns `false` when the
+ * OS is unknown so we never block a legitimate same-host reveal.
+ */
+export const isForeignFsPath = (path: string, clientOs: string | undefined): boolean => {
+  const p = path.trim();
+  if (!p) return false;
+  const looksWindows = /^[a-zA-Z]:[\\/]/.test(p) || /^\\\\/.test(p);
+  const looksPosixAbs = p.startsWith('/');
+  const os = (clientOs ?? '').toLowerCase();
+  if (os === 'windows') return looksPosixAbs && !looksWindows;
+  if (os === 'macos' || os === 'linux') return looksWindows;
+  return false;
+};
+
+/**
  * Reveals a filesystem path in the host OS file manager
  * (Finder on macOS, Explorer on Windows, the default file manager on
  * Linux). Used as a guaranteed-works fallback when a third-party
@@ -78,8 +100,23 @@ export const openUrl = async (url: string): Promise<void> => {
  * target app isn't installed.
  *
  * Outside Tauri this is a no-op — there's no OS shell to drive.
+ *
+ * Rejects with a clear error when `path` belongs to a different OS than this
+ * device (issue #4278) — e.g. a shared `openhuman-core` running on another OS
+ * served its own absolute path — instead of letting the opener fail cryptically.
  */
 export const revealPath = async (path: string): Promise<void> => {
   if (!isTauri()) return;
+  let clientOs: string | undefined;
+  try {
+    clientOs = await platform();
+  } catch {
+    clientOs = undefined;
+  }
+  if (isForeignFsPath(path, clientOs)) {
+    throw new Error(
+      `Cannot reveal "${path}" on this device — it is a path on the openhuman-core host's filesystem (a different OS). Open it on the machine running the core.`
+    );
+  }
   await revealItemInDir(path);
 };

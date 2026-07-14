@@ -154,13 +154,17 @@ pub async fn collect_recall_citations(
     limit: usize,
     min_relevance_score: f64,
 ) -> anyhow::Result<Vec<MemoryCitation>> {
-    let entries = memory
-        .recall(
-            user_message,
-            limit.max(1),
-            crate::openhuman::memory::RecallOpts::default(),
-        )
-        .await?;
+    // Routed through the tinyagents retrieval facade (issue #4249, 09.2): the
+    // facade wraps `Memory::recall` verbatim (ranking engine unchanged) so the
+    // citation set stays byte-identical, while making retrieval swappable and
+    // emitting `MemoryLoaded`.
+    let entries = crate::openhuman::tinyagents::retriever::recall_through_facade(
+        memory,
+        user_message,
+        limit.max(1),
+        crate::openhuman::memory::RecallOpts::default(),
+    )
+    .await?;
 
     let citations = entries
         .into_iter()
@@ -212,14 +216,14 @@ impl MemoryLoader for DefaultMemoryLoader {
         };
 
         let working_query = format!("working.user {user_message}");
-        let working_entries = memory
-            .recall(
-                &working_query,
-                WORKING_MEMORY_LIMIT + 2,
-                crate::openhuman::memory::RecallOpts::default(),
-            )
-            .await
-            .unwrap_or_default();
+        let working_entries = crate::openhuman::tinyagents::retriever::recall_through_facade(
+            memory,
+            &working_query,
+            WORKING_MEMORY_LIMIT + 2,
+            crate::openhuman::memory::RecallOpts::default(),
+        )
+        .await
+        .unwrap_or_default();
         let mut appended_working_header = false;
         for entry in working_entries
             .into_iter()
@@ -269,17 +273,17 @@ impl MemoryLoader for DefaultMemoryLoader {
         // prior agent conversations (`include_agent_conversations = false`).
         if self.include_agent_conversations {
             let prior_query = format!("{} {}", CONVERSATION_MEMORY_NAMESPACE, user_message);
-            let prior_entries = memory
-                .recall(
-                    &prior_query,
-                    PRIOR_CONVERSATION_LIMIT * 4,
-                    crate::openhuman::memory::RecallOpts {
-                        namespace: Some(CONVERSATION_MEMORY_NAMESPACE),
-                        ..Default::default()
-                    },
-                )
-                .await
-                .unwrap_or_default();
+            let prior_entries = crate::openhuman::tinyagents::retriever::recall_through_facade(
+                memory,
+                &prior_query,
+                PRIOR_CONVERSATION_LIMIT * 4,
+                crate::openhuman::memory::RecallOpts {
+                    namespace: Some(CONVERSATION_MEMORY_NAMESPACE),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_or_default();
 
             let mut appended_prior_header = false;
             let mut prior_added = 0usize;
@@ -396,10 +400,14 @@ impl MemoryLoader for DefaultMemoryLoader {
                     min_score: Some(self.min_relevance_score),
                     ..Default::default()
                 };
-                let entries = memory
-                    .recall(user_message, CROSS_CHAT_LIMIT * 3, cross_session_opts)
-                    .await
-                    .unwrap_or_default();
+                let entries = crate::openhuman::tinyagents::retriever::recall_through_facade(
+                    memory,
+                    user_message,
+                    CROSS_CHAT_LIMIT * 3,
+                    cross_session_opts,
+                )
+                .await
+                .unwrap_or_default();
                 entries
                     .into_iter()
                     .filter(|e| e.id.starts_with("episodic-cross:"))

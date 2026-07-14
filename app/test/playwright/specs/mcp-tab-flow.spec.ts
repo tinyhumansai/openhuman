@@ -75,6 +75,13 @@ const STATUS_CONNECTED = {
   tool_count: 5,
 };
 
+// Tools a connected server exposes — returned by the mocked connect so the
+// detail's tool list (and the execution playground) have something to drive.
+const MOCK_TOOLS = [
+  { name: 'create_memory', description: 'Create a memory', input_schema: {} },
+  { name: 'list_memories', description: 'List all memories', input_schema: {} },
+];
+
 const GITHUB_DETAIL = {
   ...REGISTRY_SERVERS[1],
   connections: [{ type: 'stdio', published: true }],
@@ -100,7 +107,9 @@ const GITHUB_INSTALLED = {
 
 interface MockState {
   installed: (typeof INSTALLED_DEFAULT)[];
-  statuses: (typeof STATUS_CONNECTED)[];
+  // `status` is broadened to a string so tests can seed non-connected states
+  // (e.g. `error`) that keep the status poll active.
+  statuses: Array<Omit<typeof STATUS_CONNECTED, 'status'> & { status: string }>;
 }
 
 function rpcOk(id: number, result: unknown) {
@@ -197,15 +206,47 @@ async function setupMockRpc(page: Page, state: MockState) {
         state.installed.push(GITHUB_INSTALLED);
         return route.fulfill(rpcOk(id, { server: GITHUB_INSTALLED }));
 
-      case 'openhuman.mcp_clients_connect':
-        state.statuses.push({
-          server_id: params.server_id,
-          qualified_name: 'io.github.test/github-tools',
-          display_name: 'GitHub Tools',
-          status: 'connected',
-          tool_count: 3,
-        });
-        return route.fulfill(rpcOk(id, { status: 'connected', tools: [] }));
+      // Auth probe for the upfront connect modal — these test servers need no
+      // credentials, so report `none` and the modal shows a single Connect button.
+      case 'openhuman.mcp_clients_detect_auth':
+        return route.fulfill(rpcOk(id, { kind: 'none' }));
+
+      case 'openhuman.mcp_clients_connect': {
+        const sid = params.server_id;
+        const inst = state.installed.find(s => s.server_id === sid);
+        // Reject unknown server ids so the test can't pass while wired to the
+        // wrong server.
+        if (!inst) {
+          return route.fulfill(rpcError(id, `server not installed: ${sid}`));
+        }
+        // Mark the server connected for subsequent status polls and hand back
+        // its tool list (what `onConnected` feeds into the detail's tool list).
+        state.statuses = [
+          ...state.statuses.filter(s => s.server_id !== sid),
+          {
+            server_id: sid,
+            qualified_name: inst.qualified_name,
+            display_name: inst.display_name,
+            status: 'connected',
+            tool_count: MOCK_TOOLS.length,
+          },
+        ];
+        return route.fulfill(rpcOk(id, { status: 'connected', tools: MOCK_TOOLS }));
+      }
+
+      // Tool execution — what the playground's "Run tool" calls. Unknown tools
+      // come back as a tool error so the spec can't pass on a wrong tool name.
+      case 'openhuman.mcp_clients_tool_call': {
+        const known = MOCK_TOOLS.some(t => t.name === params.tool_name);
+        if (!known) {
+          return route.fulfill(
+            rpcOk(id, { result: `unknown tool: ${params.tool_name}`, is_error: true })
+          );
+        }
+        return route.fulfill(
+          rpcOk(id, { result: `ran ${params.tool_name}: memory created id=42`, is_error: false })
+        );
+      }
 
       case 'openhuman.mcp_clients_disconnect':
         state.statuses = state.statuses.filter(s => s.server_id !== params.server_id);
@@ -467,6 +508,69 @@ test.describe('MCP Tab — Manage & Uninstall Lifecycle', () => {
     await expect(page.locator('button:has-text("Go back")')).toBeVisible({ timeout: 5_000 });
     await page.locator('button:has-text("Go back")').click();
     await expect(page.locator('table')).toBeVisible({ timeout: 5_000 });
+  });
+});
+
+test.describe('MCP Tab — Connect & Tool Execution', () => {
+  let state: MockState;
+
+  test.beforeEach(async ({ page }) => {
+    // Seed the installed server in `error` status: the detail offers a Connect
+    // affordance AND the status poll stays active (error is non-terminal), so
+    // the status flips to connected once the modal connects.
+    state = {
+      installed: [makeInstalledServer()],
+      statuses: [
+        {
+          server_id: 'srv_installed_1',
+          qualified_name: 'io.github.test/memory-server',
+          display_name: 'Memory Server',
+          status: 'error',
+          tool_count: 0,
+        },
+      ],
+    };
+    await seedLocalStorage(page);
+    await setupMockRpc(page, state);
+    await navigateToMcpTab(page);
+  });
+
+  test('connect a server, then run one of its tools and see the result', async ({ page }) => {
+    // Open the installed server's detail view.
+    const row = page.locator('table tbody tr', {
+      has: page.locator('td:first-child:has-text("Memory Server")'),
+    });
+    await row.click();
+    await expect(page.locator('button:has-text("Go back")')).toBeVisible({ timeout: 5_000 });
+
+    // Connect via the upfront auth modal (no-auth server → a single Connect
+    // button). `exact` avoids the "Connections" sidebar nav button.
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    const connectDialog = page.getByRole('dialog');
+    await expect(connectDialog).toBeVisible({ timeout: 5_000 });
+    await connectDialog.getByRole('button', { name: /^Connect$/ }).click();
+
+    // The status poll flips the server to connected → its (collapsed) tool list
+    // appears. Expand it, then open the execution playground for a tool. This is
+    // the connect → tool step of the install→connect→tool path.
+    const toolsToggle = page.getByRole('button', { name: /tools available/ });
+    await expect(toolsToggle).toBeVisible({ timeout: 15_000 });
+    await toolsToggle.click();
+
+    const tryButton = page.getByRole('button', {
+      name: 'Open execution playground for create_memory',
+    });
+    await expect(tryButton).toBeVisible({ timeout: 5_000 });
+    await tryButton.click();
+
+    // The Tool Execution Playground opens; run the tool and assert the result
+    // surfaced from the mocked `mcp_clients_tool_call`.
+    const playground = page.getByRole('dialog');
+    await expect(playground.getByText('Run create_memory')).toBeVisible({ timeout: 5_000 });
+    await playground.getByRole('button', { name: 'Run tool' }).click();
+    await expect(page.getByTestId('mcp-playground-result')).toContainText('memory created id=42', {
+      timeout: 10_000,
+    });
   });
 });
 

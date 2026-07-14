@@ -31,8 +31,9 @@ use chrono::{DateTime, TimeZone, Utc};
 use tempfile::tempdir;
 
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::inference::provider::traits::Provider;
 use openhuman_core::openhuman::memory_tree::tree_runtime::{engine, store};
+use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
+use tinyagents::TinyAgentsError;
 
 // ── Env isolation ─────────────────────────────────────────────────────────
 
@@ -73,7 +74,7 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 
 // ── Mock provider helpers ─────────────────────────────────────────────────
 
-/// A provider whose `chat_with_system` returns scripted responses in order.
+/// A provider whose `invoke` returns scripted responses in order.
 /// Thread-safe via a `Mutex<VecDeque>`. Each pop returns the next scripted
 /// response; once the queue is exhausted, every subsequent call returns an
 /// error so missing a setup step is caught immediately.
@@ -100,24 +101,28 @@ impl ScriptedProvider {
 }
 
 #[async_trait]
-impl Provider for ScriptedProvider {
-    async fn chat_with_system(
+impl ChatModel<()> for ScriptedProvider {
+    async fn invoke(
         &self,
-        system_prompt: Option<&str>,
-        message: &str,
-        model: &str,
-        _temperature: f64,
-    ) -> anyhow::Result<String> {
+        _state: &(),
+        request: ModelRequest,
+    ) -> tinyagents::Result<ModelResponse> {
         let mut count = self.call_count.lock().expect("call_count lock");
         *count += 1;
         let call_n = *count;
         drop(count);
 
+        let message_len: usize = request
+            .messages
+            .iter()
+            .map(|message| format!("{message:?}").len())
+            .sum();
         log::debug!(
-            "[memory_tree_summarizer_e2e] ScriptedProvider.chat_with_system call #{call_n}: \
-             model={model} system_prompt_len={} msg_len={}",
-            system_prompt.map(|s| s.len()).unwrap_or(0),
-            message.len()
+            "[memory_tree_summarizer_e2e] ScriptedProvider.invoke call #{call_n}: \
+             model={:?} message_count={} msg_len={}",
+            request.model,
+            request.messages.len(),
+            message_len
         );
 
         let mut q = self.responses.lock().expect("responses lock");
@@ -127,19 +132,19 @@ impl Provider for ScriptedProvider {
                     "[memory_tree_summarizer_e2e] call #{call_n} → scripted Ok ({} chars)",
                     text.len()
                 );
-                Ok(text)
+                Ok(ModelResponse::assistant(text))
             }
             Some(Err(msg)) => {
                 log::debug!("[memory_tree_summarizer_e2e] call #{call_n} → scripted Err: {msg}");
-                Err(anyhow::anyhow!("{msg}"))
+                Err(TinyAgentsError::Model(msg))
             }
             None => {
                 log::debug!(
                     "[memory_tree_summarizer_e2e] call #{call_n} → queue exhausted (fallback error)"
                 );
-                Err(anyhow::anyhow!(
+                Err(TinyAgentsError::Model(format!(
                     "ScriptedProvider queue exhausted at call #{call_n}"
-                ))
+                )))
             }
         }
     }
@@ -233,7 +238,7 @@ async fn builds_hour_day_month_year_chain() {
     ]);
 
     log::debug!("[memory_tree_summarizer_e2e] running summarization");
-    let result = engine::run_summarization(&config, &provider, "test-model", NS, Utc::now()).await;
+    let result = engine::run_summarization(&config, &provider, NS, Utc::now()).await;
 
     log::debug!(
         "[memory_tree_summarizer_e2e] run_summarization returned: {:?}",
@@ -379,7 +384,7 @@ async fn merges_into_existing_hour_node() {
     )]);
 
     log::debug!("[memory_tree_summarizer_e2e] first run");
-    let r1 = engine::run_summarization(&config, &provider1, "test-model", NS, Utc::now())
+    let r1 = engine::run_summarization(&config, &provider1, NS, Utc::now())
         .await
         .expect("first run_summarization");
     assert!(r1.is_some(), "first run should yield a node");
@@ -415,7 +420,7 @@ async fn merges_into_existing_hour_node() {
     )]);
 
     log::debug!("[memory_tree_summarizer_e2e] second run (same hour)");
-    let r2 = engine::run_summarization(&config, &provider2, "test-model", NS, Utc::now())
+    let r2 = engine::run_summarization(&config, &provider2, NS, Utc::now())
         .await
         .expect("second run_summarization");
     assert!(r2.is_some(), "second run should yield a node");
@@ -504,7 +509,7 @@ async fn survives_llm_error_with_partial_progress() {
     ]);
 
     log::debug!("[memory_tree_summarizer_e2e] running summarization expecting partial failure");
-    let result = engine::run_summarization(&config, &provider, "test-model", NS, Utc::now()).await;
+    let result = engine::run_summarization(&config, &provider, NS, Utc::now()).await;
 
     log::debug!(
         "[memory_tree_summarizer_e2e] run_summarization result: is_ok={}",

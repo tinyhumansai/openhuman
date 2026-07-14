@@ -358,6 +358,29 @@ describe('InstalledServerDetail', () => {
     await waitFor(() => expect(screen.getByText('bad token')).toBeInTheDocument());
   });
 
+  it('surfaces actionable auth copy (not the raw 401) when reconfigure hits a 401 (#4289)', async () => {
+    // update_env now returns status=unauthorized + a reason code; the raw 401
+    // message is withheld, so the reconfigure form must map the code to copy.
+    mockUpdateEnv.mockResolvedValue({
+      server_id: 'srv-1',
+      status: 'unauthorized',
+      env_keys: ['API_KEY', 'DB_URL'],
+      auth_hint: 'oauth_required',
+    });
+    render(
+      <InstalledServerDetail server={BASE_SERVER} connStatus={undefined} onUninstalled={() => {}} />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Reconfigure' }));
+    fireEvent.change(screen.getByLabelText('API_KEY'), { target: { value: 'k' } });
+    fireEvent.change(screen.getByLabelText('DB_URL'), { target: { value: 'u' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save & reconnect' }));
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/pasted token will not be accepted/i)).toBeInTheDocument()
+    );
+  });
+
   // ----------------------------------------------------------------------
   // Tool Execution Playground gating (PR review fix)
   // ----------------------------------------------------------------------

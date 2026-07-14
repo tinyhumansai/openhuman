@@ -138,7 +138,7 @@ impl Tool for MemoryDiffTool {
 
         let counts: Vec<(String, String, String, usize)> =
             tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-                let ledger = super::git_store::Ledger::open(&workspace_dir)?;
+                let ledger = tinycortex::memory::diff::Ledger::open(&workspace_dir)?;
                 let mut out = Vec::new();
                 for (sid, label, kind) in &source_ids {
                     let count = ledger.snapshot_count_for_source(sid)?;

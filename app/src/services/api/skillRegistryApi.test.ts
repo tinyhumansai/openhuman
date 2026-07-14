@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { skillRegistryApi } from './skillRegistryApi';
+import { invalidateSkillBrowseCache, skillRegistryApi } from './skillRegistryApi';
 
 const mockCallCoreRpc = vi.fn();
 vi.mock('../coreRpcClient', () => ({ callCoreRpc: (...a: unknown[]) => mockCallCoreRpc(...a) }));
@@ -8,6 +8,8 @@ vi.mock('../coreRpcClient', () => ({ callCoreRpc: (...a: unknown[]) => mockCallC
 describe('skillRegistryApi', () => {
   beforeEach(() => {
     mockCallCoreRpc.mockReset();
+    // The browse cache is module-level; clear it so each test starts cold.
+    invalidateSkillBrowseCache();
   });
 
   it('normalizes install new_skills to newSkills', async () => {
@@ -162,5 +164,59 @@ describe('skillRegistryApi', () => {
       params: { force_refresh: false },
       timeoutMs: 120_000,
     });
+  });
+
+  it('browse serves the second call from the in-memory cache (one RPC)', async () => {
+    mockCallCoreRpc.mockResolvedValue({ entries: [{ id: 'a', name: 'A' }] });
+
+    const first = await skillRegistryApi.browse();
+    const second = await skillRegistryApi.browse();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledTimes(1);
+    expect(second).toBe(first); // same cached array reference
+    expect(second[0].id).toBe('a');
+  });
+
+  it('browse de-dupes concurrent callers into a single in-flight RPC', async () => {
+    let resolveRpc: (v: { entries: { id: string }[] }) => void = () => {};
+    mockCallCoreRpc.mockReturnValue(
+      new Promise(res => {
+        resolveRpc = res;
+      })
+    );
+
+    const a = skillRegistryApi.browse();
+    const b = skillRegistryApi.browse();
+    resolveRpc({ entries: [{ id: 'x' }] });
+    const [ra, rb] = await Promise.all([a, b]);
+
+    expect(mockCallCoreRpc).toHaveBeenCalledTimes(1);
+    expect(ra).toBe(rb);
+  });
+
+  it('browse(forceRefresh=true) bypasses the cache and re-fetches', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ entries: [{ id: 'old' }] });
+    await skillRegistryApi.browse(); // populates cache
+    mockCallCoreRpc.mockResolvedValueOnce({ entries: [{ id: 'new' }] });
+
+    const refreshed = await skillRegistryApi.browse(true);
+
+    expect(mockCallCoreRpc).toHaveBeenCalledTimes(2);
+    expect(refreshed[0].id).toBe('new');
+
+    // Subsequent default call now serves the refreshed value from cache.
+    const cached = await skillRegistryApi.browse();
+    expect(mockCallCoreRpc).toHaveBeenCalledTimes(2);
+    expect(cached[0].id).toBe('new');
+  });
+
+  it('invalidateSkillBrowseCache forces the next browse to re-fetch', async () => {
+    mockCallCoreRpc.mockResolvedValue({ entries: [{ id: 'a' }] });
+    await skillRegistryApi.browse();
+    expect(mockCallCoreRpc).toHaveBeenCalledTimes(1);
+
+    invalidateSkillBrowseCache();
+    await skillRegistryApi.browse();
+    expect(mockCallCoreRpc).toHaveBeenCalledTimes(2);
   });
 });

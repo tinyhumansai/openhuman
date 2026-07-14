@@ -15,6 +15,7 @@ import { CoreStateContext } from '../providers/coreStateContext';
 import accountsReducer from '../store/accountsSlice';
 import backendMeetReducer from '../store/backendMeetSlice';
 import channelConnectionsReducer from '../store/channelConnectionsSlice';
+import chatRuntimeReducer from '../store/chatRuntimeSlice';
 import companionReducer from '../store/companionSlice';
 import connectivityReducer from '../store/connectivitySlice';
 import coreModeReducer from '../store/coreModeSlice';
@@ -43,6 +44,7 @@ const testRootReducer = combineReducers({
   accounts: accountsReducer,
   backendMeet: backendMeetReducer,
   channelConnections: channelConnectionsReducer,
+  chatRuntime: chatRuntimeReducer,
   companion: companionReducer,
   connectivity: connectivityReducer,
   coreMode: coreModeReducer,

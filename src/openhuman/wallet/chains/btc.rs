@@ -277,7 +277,7 @@ pub async fn execute_btc_quote(mut quote: PreparedTransaction) -> Result<Executi
         witness.push(public_key.to_bytes());
         witnesses.push(witness);
     }
-    for (input, witness) in tx.input.iter_mut().zip(witnesses.into_iter()) {
+    for (input, witness) in tx.input.iter_mut().zip(witnesses) {
         input.witness = witness;
     }
 

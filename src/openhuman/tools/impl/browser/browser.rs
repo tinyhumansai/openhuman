@@ -1,8 +1,9 @@
 //! Browser automation tool with pluggable backends.
 //!
 //! By default this uses Vercel's `agent-browser` tool for automation.
-//! Optionally, a Rust-native backend can be enabled at build time via
-//! `--features browser-native` and selected through config.
+//! Playwright is also supported as a local Node-backed backend. Optionally, a
+//! Rust-native backend can be enabled at build time via `--features
+//! browser-native` and selected through config.
 //! Computer-use (OS-level) actions are supported via an optional sidecar endpoint.
 
 #[path = "action_parser.rs"]
@@ -15,6 +16,7 @@ mod security;
 #[path = "types.rs"]
 mod types;
 
+use super::playwright_backend;
 #[allow(unused_imports)]
 pub(super) use action_parser::{
     backend_name, is_computer_use_only_action, is_supported_browser_action, parse_browser_action,
@@ -50,6 +52,7 @@ pub struct BrowserTool {
     native_webdriver_url: String,
     native_chrome_path: Option<String>,
     computer_use: ComputerUseConfig,
+    playwright_state: tokio::sync::Mutex<playwright_backend::PlaywrightBrowserState>,
     #[cfg(feature = "browser-native")]
     native_state: tokio::sync::Mutex<native_backend::NativeBrowserState>,
 }
@@ -92,6 +95,9 @@ impl BrowserTool {
             native_webdriver_url,
             native_chrome_path,
             computer_use,
+            playwright_state: tokio::sync::Mutex::new(
+                playwright_backend::PlaywrightBrowserState::default(),
+            ),
             #[cfg(feature = "browser-native")]
             native_state: tokio::sync::Mutex::new(native_backend::NativeBrowserState::default()),
         }
@@ -112,6 +118,11 @@ impl BrowserTool {
     /// Backward-compatible alias.
     pub async fn is_available() -> bool {
         Self::is_agent_browser_available().await
+    }
+
+    /// Check if the local Playwright package is available to Node.js.
+    pub async fn is_playwright_available() -> bool {
+        playwright_backend::PlaywrightBrowserState::is_available().await
     }
 
     fn configured_backend(&self) -> anyhow::Result<BrowserBackendKind> {
@@ -197,6 +208,15 @@ impl BrowserTool {
                     )
                 }
             }
+            BrowserBackendKind::Playwright => {
+                if Self::is_playwright_available().await {
+                    Ok(ResolvedBackend::Playwright)
+                } else {
+                    anyhow::bail!(
+                        "browser.backend='playwright' but Playwright is unavailable. Ensure app/node_modules is installed, run `pnpm --filter openhuman-app exec playwright install chromium-headless-shell`, or set OPENHUMAN_PLAYWRIGHT_CWD."
+                    )
+                }
+            }
             BrowserBackendKind::RustNative => {
                 if !Self::rust_native_compiled() {
                     anyhow::bail!(
@@ -222,6 +242,9 @@ impl BrowserTool {
                 if Self::rust_native_compiled() && self.rust_native_available() {
                     return Ok(ResolvedBackend::RustNative);
                 }
+                if Self::is_playwright_available().await {
+                    return Ok(ResolvedBackend::Playwright);
+                }
                 if Self::is_agent_browser_available().await {
                     return Ok(ResolvedBackend::AgentBrowser);
                 }
@@ -235,22 +258,22 @@ impl BrowserTool {
                 if Self::rust_native_compiled() {
                     if let Some(err) = computer_use_err {
                         anyhow::bail!(
-                            "browser.backend='auto' found no usable backend (agent-browser missing, rust-native unavailable, computer-use invalid: {err})"
+                            "browser.backend='auto' found no usable backend (playwright missing, agent-browser missing, rust-native unavailable, computer-use invalid: {err})"
                         );
                     }
                     anyhow::bail!(
-                        "browser.backend='auto' found no usable backend (agent-browser missing, rust-native unavailable, computer-use sidecar unreachable)"
+                        "browser.backend='auto' found no usable backend (playwright missing, agent-browser missing, rust-native unavailable, computer-use sidecar unreachable)"
                     )
                 }
 
                 if let Some(err) = computer_use_err {
                     anyhow::bail!(
-                        "browser.backend='auto' needs agent-browser tool, browser-native, or valid computer-use sidecar (error: {err})"
+                        "browser.backend='auto' needs Playwright, agent-browser tool, browser-native, or valid computer-use sidecar (error: {err})"
                     );
                 }
 
                 anyhow::bail!(
-                    "browser.backend='auto' needs agent-browser tool, browser-native, or computer-use sidecar"
+                    "browser.backend='auto' needs Playwright, agent-browser tool, browser-native, or computer-use sidecar"
                 )
             }
         }
@@ -515,6 +538,30 @@ impl BrowserTool {
         }
     }
 
+    async fn execute_playwright_action(&self, action: BrowserAction) -> anyhow::Result<ToolResult> {
+        if let BrowserAction::Open { url } = &action {
+            debug!("[browser] validating playwright open url before dispatch");
+            self.validate_url(url)?;
+        }
+
+        let mut state = self.playwright_state.lock().await;
+        let output = state
+            .execute_action(
+                action,
+                self.native_headless,
+                Some(playwright_backend::BrowserUrlPolicy {
+                    allowed_domains: self.allowed_domains.clone(),
+                    allow_all: allow_all_browser_domains(),
+                }),
+            )
+            .await
+            .context("Playwright browser action failed")?;
+
+        Ok(ToolResult::success(
+            serde_json::to_string_pretty(&output).unwrap_or_default(),
+        ))
+    }
+
     fn validate_coordinate(&self, key: &str, value: i64, max: Option<i64>) -> anyhow::Result<()> {
         if value < 0 {
             anyhow::bail!("'{key}' must be >= 0")
@@ -679,6 +726,7 @@ impl BrowserTool {
     ) -> anyhow::Result<ToolResult> {
         match backend {
             ResolvedBackend::AgentBrowser => self.execute_agent_browser_action(action).await,
+            ResolvedBackend::Playwright => self.execute_playwright_action(action).await,
             ResolvedBackend::RustNative => self.execute_rust_native_action(action).await,
             ResolvedBackend::ComputerUse => anyhow::bail!(
                 "Internal error: computer_use backend must be handled before BrowserAction parsing"
@@ -708,7 +756,7 @@ impl Tool for BrowserTool {
 
     fn description(&self) -> &str {
         concat!(
-            "Web/browser automation with pluggable backends (agent-browser, rust-native, computer_use). ",
+            "Web/browser automation with pluggable backends (playwright, agent-browser, rust-native, computer_use). ",
             "Supports DOM actions plus optional OS-level actions (mouse_move, mouse_click, mouse_drag, ",
             "key_type, key_press, screen_capture) through a computer-use sidecar. Use 'snapshot' to map ",
             "interactive elements to refs (@e1, @e2). Enforces browser.allowed_domains for open actions."

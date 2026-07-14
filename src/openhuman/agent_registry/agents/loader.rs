@@ -1,7 +1,6 @@
 //! Built-in agent definitions.
 //!
-//! Every built-in agent lives in its own subfolder here, with exactly
-//! two files:
+//! Every built-in agent lives in its own subfolder here, with these files:
 //!
 //! * `agent.toml`  — id, when_to_use, model, tool allowlist, sandbox,
 //!   iteration cap, and the `omit_*` flags. Parsed
@@ -10,11 +9,13 @@
 //!   -> anyhow::Result<String>` that returns the sub-agent's system
 //!   prompt body. Dynamic: may branch on available tools, user profile,
 //!   connected integrations, model hint, etc.
+//! * `graph.rs`    — optional, only for agents with a bespoke
+//!   [`AgentGraph`] runner. Agents without one use [`AgentGraph::Default`].
 //!
-//! Adding a new built-in agent = creating a new subfolder with those two
-//! files, declaring the module, and appending one entry to [`BUILTINS`]
-//! below. There are no match arms to update, no enum variants to add,
-//! and no `include_str!` paths scattered across the harness.
+//! Adding a new built-in agent = creating a new subfolder with the required
+//! metadata/prompt files, declaring the module, and appending one entry to
+//! [`BUILTINS`] below. There are no match arms to update, no enum variants to
+//! add, and no `include_str!` paths scattered across the harness.
 //!
 //! ## Flow
 //!
@@ -34,6 +35,7 @@
 //! into the global registry, where they replace built-ins on `id`
 //! collision.
 
+use crate::openhuman::agent::harness::agent_graph::AgentGraph;
 use crate::openhuman::agent::harness::definition::{
     validate_tier_transition, AgentDefinition, AgentTier, DefinitionSource, PromptBuilder,
     PromptSource, SubagentEntry,
@@ -53,6 +55,10 @@ pub struct BuiltinAgent {
     /// with a populated [`crate::openhuman::agent::harness::definition::PromptContext`]
     /// so the returned body can branch on runtime state.
     pub prompt_fn: PromptBuilder,
+    /// Optional turn-graph selector. `None` means [`AgentGraph::Default`].
+    /// Bespoke agents expose a `graph.rs::graph()` returning
+    /// [`AgentGraph::Custom`] and set this field to `Some(...)`.
+    pub graph_fn: Option<fn() -> AgentGraph>,
 }
 
 /// Every built-in agent, in stable display order.
@@ -63,186 +69,244 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         id: "orchestrator",
         toml: include_str!("orchestrator/agent.toml"),
         prompt_fn: super::orchestrator::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "planner",
         toml: include_str!("planner/agent.toml"),
         prompt_fn: super::planner::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "code_executor",
         toml: include_str!("code_executor/agent.toml"),
         prompt_fn: super::code_executor::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "integrations_agent",
         toml: include_str!("integrations_agent/agent.toml"),
         prompt_fn: super::integrations_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "crypto_agent",
         toml: include_str!("crypto_agent/agent.toml"),
         prompt_fn: super::crypto_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "markets_agent",
         toml: include_str!("markets_agent/agent.toml"),
         prompt_fn: super::markets_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "tinyplace_agent",
         toml: include_str!("../../tinyplace/agent/agent.toml"),
         prompt_fn: crate::openhuman::tinyplace::agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "tools_agent",
         toml: include_str!("tools_agent/agent.toml"),
         prompt_fn: super::tools_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "task_manager_agent",
         toml: include_str!("task_manager_agent/agent.toml"),
         prompt_fn: super::task_manager_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "settings_agent",
         toml: include_str!("settings_agent/agent.toml"),
         prompt_fn: super::settings_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "profile_memory_agent",
         toml: include_str!("profile_memory_agent/agent.toml"),
         prompt_fn: super::profile_memory_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "account_admin_agent",
         toml: include_str!("account_admin_agent/agent.toml"),
         prompt_fn: super::account_admin_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "screen_awareness_agent",
         toml: include_str!("screen_awareness_agent/agent.toml"),
         prompt_fn: super::screen_awareness_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "scheduler_agent",
         toml: include_str!("scheduler_agent/agent.toml"),
         prompt_fn: super::scheduler_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "presentation_agent",
         toml: include_str!("presentation_agent/agent.toml"),
         prompt_fn: super::presentation_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "desktop_control_agent",
         toml: include_str!("desktop_control_agent/agent.toml"),
         prompt_fn: super::desktop_control_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "tool_maker",
         toml: include_str!("tool_maker/agent.toml"),
         prompt_fn: super::tool_maker::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "skill_creator",
         toml: include_str!("skill_creator/agent.toml"),
         prompt_fn: super::skill_creator::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "researcher",
         toml: include_str!("researcher/agent.toml"),
         prompt_fn: super::researcher::prompt::build,
+        graph_fn: Some(super::researcher::graph::graph),
     },
     BuiltinAgent {
         id: "context_scout",
         toml: include_str!("context_scout/agent.toml"),
         prompt_fn: super::context_scout::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "critic",
         toml: include_str!("critic/agent.toml"),
         prompt_fn: super::critic::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "vision_agent",
         toml: include_str!("vision_agent/agent.toml"),
         prompt_fn: super::vision_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "image_agent",
         toml: include_str!("image_agent/agent.toml"),
         prompt_fn: super::image_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "video_agent",
         toml: include_str!("video_agent/agent.toml"),
         prompt_fn: super::video_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "archivist",
         toml: include_str!("archivist/agent.toml"),
         prompt_fn: super::archivist::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "goals_agent",
         toml: include_str!("goals_agent/agent.toml"),
         prompt_fn: super::goals_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "trigger_triage",
         toml: include_str!("trigger_triage/agent.toml"),
         prompt_fn: super::trigger_triage::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "trigger_reactor",
         toml: include_str!("trigger_reactor/agent.toml"),
         prompt_fn: super::trigger_reactor::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "morning_briefing",
         toml: include_str!("morning_briefing/agent.toml"),
         prompt_fn: super::morning_briefing::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "summarizer",
         toml: include_str!("summarizer/agent.toml"),
         prompt_fn: super::summarizer::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "help",
         toml: include_str!("help/agent.toml"),
         prompt_fn: super::help::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "mcp_setup",
         toml: include_str!("mcp_setup/agent.toml"),
         prompt_fn: super::mcp_setup::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "mcp_agent",
         toml: include_str!("mcp_agent/agent.toml"),
         prompt_fn: super::mcp_agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "skill_setup",
         toml: include_str!("../../skill_registry/agent/skill_setup/agent.toml"),
         prompt_fn: crate::openhuman::skill_registry::agent::skill_setup::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "skill_executor",
         toml: include_str!("../../skill_runtime/agent/skill_executor/agent.toml"),
         prompt_fn: crate::openhuman::skill_runtime::agent::skill_executor::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "agent_memory",
         toml: include_str!("../../agent_memory/agent/agent.toml"),
         prompt_fn: crate::openhuman::agent_memory::agent::prompt::build,
+        graph_fn: None,
     },
     BuiltinAgent {
         id: "subconscious",
         toml: include_str!("../../subconscious/agent/agent.toml"),
         prompt_fn: crate::openhuman::subconscious::agent::prompt::build,
+        graph_fn: None,
+    },
+    // Workflow-authoring specialist (Phase 5a): builds tinyflows automation
+    // graphs from natural language and returns a validated PROPOSAL — it never
+    // persists or enables a flow. Deliberately narrow propose-or-read tool belt.
+    BuiltinAgent {
+        id: "workflow_builder",
+        toml: include_str!("../../flows/agents/workflow_builder/agent.toml"),
+        prompt_fn: crate::openhuman::flows::agents::workflow_builder::prompt::build,
+        graph_fn: None,
+    },
+    // Workflow-discovery specialist (the "Flow Scout"): reads the user's
+    // memory/threads/people/connections/flows read-only and ends by calling
+    // `suggest_workflows` to record concrete, buildable automation ideas for
+    // the Flows page "Suggested for you" section. It never persists or enables
+    // a flow — the read-only counterpart to `workflow_builder`, which turns a
+    // picked suggestion into a real graph proposal.
+    BuiltinAgent {
+        id: "flow_discovery",
+        toml: include_str!("../../flows/agents/flow_discovery/agent.toml"),
+        prompt_fn: crate::openhuman::flows::agents::flow_discovery::prompt::build,
+        graph_fn: None,
     },
 ];
 
@@ -347,6 +411,11 @@ fn parse_builtin(b: &BuiltinAgent) -> Result<AgentDefinition> {
     def.system_prompt = PromptSource::Dynamic(b.prompt_fn);
     def.source = DefinitionSource::Builtin;
 
+    // Install the agent's turn-graph selection (issue #4249) — the runtime
+    // analogue of the prompt builder above. Default agents leave `graph_fn`
+    // unset and use `AgentGraph::Default` from `AgentDefinition`.
+    def.graph = b.graph_fn.map(|graph| graph()).unwrap_or_default();
+
     // Sanity check: file layout id must match declared TOML id. This
     // catches copy-paste mistakes where someone forgets to update the
     // `id` field after duplicating a folder.
@@ -428,6 +497,27 @@ mod tests {
             !def.omit_memory_context,
             "trigger_reactor needs global memory/context"
         );
+    }
+
+    #[test]
+    fn orchestrator_can_resume_paused_subagents_via_continue_subagent() {
+        // #4291: when a delegated sub-agent (e.g. mcp_setup) pauses on
+        // ask_user_clarification, the orchestrator gets a
+        // [SUBAGENT_AWAITING_USER] envelope and must resume that exact
+        // checkpoint with `continue_subagent`. Without the tool in scope the
+        // only continuation is to re-delegate a fresh, stateless sub-agent
+        // that asks again — the infinite re-spawn loop. Lock the tool in.
+        let def = find("orchestrator");
+        match &def.tools {
+            ToolScope::Named(tools) => assert!(
+                tools.iter().any(|t| t == "continue_subagent"),
+                "orchestrator must expose continue_subagent to resume paused \
+                 sub-agents instead of re-spawning them (#4291)"
+            ),
+            ToolScope::Wildcard => {
+                panic!("orchestrator must have a Named tool scope")
+            }
+        }
     }
 
     #[test]
@@ -570,15 +660,45 @@ mod tests {
     }
 
     #[test]
+    fn low_context_workers_use_burst_hint() {
+        for id in [
+            "researcher",
+            "context_scout",
+            "integrations_agent",
+            "tools_agent",
+            "crypto_agent",
+            "scheduler_agent",
+            "tinyplace_agent",
+        ] {
+            let def = find(id);
+            assert!(
+                matches!(def.model, ModelSpec::Hint(ref h) if h == "burst"),
+                "{id} should use the burst worker tier"
+            );
+        }
+    }
+
+    #[test]
     fn orchestrator_has_chat_hint_and_named_tools() {
         let def = find("orchestrator");
         assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "chat"));
         match def.tools {
             ToolScope::Named(tools) => {
-                // spawn_subagent was removed in #1141; spawn_worker_thread is the replacement
+                // spawn_subagent was removed in #1141. spawn_worker_thread is
+                // disabled pending its UI (#1624) and unregistered, so the
+                // named scope must not advertise it.
                 assert!(
-                    tools.iter().any(|t| t == "spawn_worker_thread"),
-                    "orchestrator must have spawn_worker_thread"
+                    !tools.iter().any(|t| t == "spawn_worker_thread"),
+                    "spawn_worker_thread is disabled (#1624) and must not be named"
+                );
+                // Async sub-agent control surface taught by prompt.md.
+                assert!(
+                    tools.iter().any(|t| t == "steer_subagent"),
+                    "orchestrator must have steer_subagent to steer async workers"
+                );
+                assert!(
+                    tools.iter().any(|t| t == "wait_subagent"),
+                    "orchestrator must have wait_subagent to collect async results"
                 );
                 assert!(
                     tools.iter().any(|t| t == "spawn_async_subagent"),
@@ -597,8 +717,62 @@ mod tests {
                     "spawn_subagent must not appear — removed in #1141"
                 );
                 assert!(!tools.iter().any(|t| t == "call_memory_agent"));
-                assert!(!tools.iter().any(|t| t == "shell"));
-                assert!(!tools.iter().any(|t| t == "file_write"));
+                // Write tools and shell stay OUT — the chat-tier
+                // orchestrator must not mutate files or run commands; all
+                // modification is deferred to `run_code` / owning
+                // specialists where edits live next to build/test/verify.
+                for forbidden in [
+                    "shell",
+                    "edit",
+                    "file_write",
+                    "apply_patch",
+                    "curl",
+                    "storage_set_visibility",
+                    "storage_delete_file",
+                ] {
+                    assert!(
+                        !tools.iter().any(|t| t == forbidden),
+                        "orchestrator must NOT have write/exec/lifecycle tool `{forbidden}`"
+                    );
+                }
+                // Basic READ-ONLY direct surface: quick lookups without
+                // spawning a sub-agent per touch.
+                for direct in [
+                    "file_read",
+                    "grep",
+                    "glob",
+                    "list",
+                    "web_search_tool",
+                    "web_fetch",
+                    "http_request",
+                ] {
+                    assert!(
+                        tools.iter().any(|t| t == direct),
+                        "orchestrator must have read-only direct tool `{direct}`"
+                    );
+                }
+                // Direct memory surface (#4762): recall/store are the product's
+                // core and must be first-class direct tools, not a sub-agent
+                // spawn — a trivial recall or a single "remember this" must not
+                // pay a blocking agentic round-trip (over-delegation, #4744) that
+                // can hang or return a 0-char result with persistence unconfirmed.
+                // Deep tree walks / reconciliation still delegate to
+                // `retrieve_memory` / `manage_profile_memory`.
+                for direct in ["memory_recall", "memory_store", "save_preference"] {
+                    assert!(
+                        tools.iter().any(|t| t == direct),
+                        "orchestrator must have direct memory tool `{direct}` (#4762)"
+                    );
+                }
+                // Memory-protocol close-out (#4116): a direct `memory_store` write
+                // obliges an `update_memory_md` index reconcile, so the tool that
+                // performs it must be in scope — otherwise the protocol's guidance
+                // is unsatisfiable and MEMORY.md (loaded here) drifts from the store.
+                assert!(
+                    tools.iter().any(|t| t == "update_memory_md"),
+                    "orchestrator must have `update_memory_md` to reconcile MEMORY.md \
+                     after a direct memory_store (#4762)"
+                );
             }
             ToolScope::Wildcard => panic!("orchestrator must have named tool allowlist"),
         }
@@ -658,6 +832,35 @@ mod tests {
             def.effective_tokenjuice_compression(),
             AgentTokenjuiceCompression::Light
         );
+    }
+
+    #[test]
+    fn broad_agent_surfaces_expose_storage_transfer_not_lifecycle_tools() {
+        for id in ["code_executor", "integrations_agent", "orchestrator"] {
+            let def = find(id);
+            match &def.tools {
+                ToolScope::Named(tools) => {
+                    for required in [
+                        "storage_upload_file",
+                        "storage_download_file",
+                        "storage_list_files",
+                        "storage_get_link",
+                    ] {
+                        assert!(
+                            tools.iter().any(|t| t == required),
+                            "{id} must expose storage transfer tool `{required}`"
+                        );
+                    }
+                    for forbidden in ["storage_set_visibility", "storage_delete_file"] {
+                        assert!(
+                            !tools.iter().any(|t| t == forbidden),
+                            "{id} must not expose storage lifecycle tool `{forbidden}`"
+                        );
+                    }
+                }
+                ToolScope::Wildcard => panic!("{id} must have Named tool scope"),
+            }
+        }
     }
 
     #[test]
@@ -798,9 +1001,181 @@ mod tests {
     }
 
     #[test]
+    fn workflow_builder_is_registered_worker_with_narrow_propose_or_read_scope() {
+        // Phase 5a/5b: the workflow-builder must be a Worker-tier leaf whose
+        // tool scope is EXACTLY the propose-or-read + Composio discovery/connect
+        // + confirmed test-run + save-onto-existing belt — no flow creation
+        // (flows_create/set_enabled), no shell, no file writes, no channel
+        // sends, and no composio_execute. It can list toolkits/connections,
+        // raise the inline connect card, `run_flow` a flow the user already
+        // SAVED to test it (a real run the prompt gates behind user
+        // confirmation), and `save_workflow` a built graph onto a flow the host
+        // ALREADY created (the prompt bar's instant-create path) — but it can
+        // never create/enable a flow or perform an arbitrary raw integration
+        // action. One narrow, deliberate carve-out (B12): `get_tool_output_sample`
+        // DOES make a real Composio call, but only ever a Read-scope one
+        // (hard-refused otherwise, regardless of the user's scope preference)
+        // against an already-connected toolkit — see `builder_tools.rs`'s
+        // module doc. This pins the invariant in the agent definition itself,
+        // not just the tool implementations.
+        let def = find("workflow_builder");
+        assert_eq!(def.agent_tier, AgentTier::Worker);
+        assert_eq!(def.delegate_name.as_deref(), Some("build_workflow"));
+        assert_eq!(def.sandbox_mode, SandboxMode::None);
+        // Graph authoring is multi-step structured reasoning — reasoning tier.
+        assert!(
+            matches!(def.model, ModelSpec::Hint(ref h) if h == "reasoning"),
+            "workflow_builder should use the reasoning tier"
+        );
+        // Worker leaf: no onward delegation.
+        assert!(
+            def.subagents.is_empty(),
+            "workflow_builder is a leaf and must not list subagents"
+        );
+        match &def.tools {
+            ToolScope::Named(names) => {
+                let expected = [
+                    "propose_workflow",
+                    "revise_workflow",
+                    "save_workflow",
+                    "list_flows",
+                    "get_flow",
+                    "get_flow_run",
+                    "list_flow_connections",
+                    "search_tool_catalog",
+                    "get_tool_contract",
+                    "get_tool_output_sample",
+                    "list_agent_profiles",
+                    "dry_run_workflow",
+                    "run_flow",
+                    "composio_list_toolkits",
+                    "composio_list_connections",
+                    "composio_connect",
+                ];
+                for required in expected {
+                    assert!(
+                        names.iter().any(|n| n == required),
+                        "workflow_builder tool list missing `{required}`"
+                    );
+                }
+                assert_eq!(
+                    names.len(),
+                    expected.len(),
+                    "workflow_builder scope must be EXACTLY the propose-or-read belt (got {names:?})"
+                );
+                // Hard exclusions: nothing that creates/enables a flow,
+                // executes raw integration actions, or touches the host.
+                // (Persistence onto an EXISTING flow is the deliberate
+                // `save_workflow` carve-out above; raw `flows_update` — which
+                // could also rename/re-gate arbitrary flows — stays out.)
+                for forbidden in [
+                    "flows_create",
+                    "flows_update",
+                    "flows_set_enabled",
+                    "shell",
+                    "file_write",
+                    "edit",
+                    "apply_patch",
+                    "composio_execute",
+                    "spawn_subagent",
+                ] {
+                    assert!(
+                        !names.iter().any(|n| n == forbidden),
+                        "workflow_builder must NOT have `{forbidden}` — propose/read only"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("workflow_builder must have a Named tool scope"),
+        }
+
+        // Reachable by delegation from the orchestrator (Phase 5 routing).
+        let orchestrator = find("orchestrator");
+        assert!(
+            orchestrator.subagents.iter().any(
+                |entry| matches!(entry, SubagentEntry::AgentId(id) if id == "workflow_builder")
+            ),
+            "orchestrator must allow `workflow_builder` so build_workflow can spawn it"
+        );
+    }
+
+    #[test]
+    fn flow_discovery_is_registered_readonly_reasoning_scout() {
+        // The Flow Scout must be a read-only reasoning leaf: it reads the
+        // user's data and ends by emitting `suggest_workflows`. It must NOT
+        // carry any tool that persists/enables/runs a flow, sends a message,
+        // writes memory, or mutates the workspace — it can run on
+        // prompt-injectable content, so a write tool would be an injection
+        // foothold.
+        let def = find("flow_discovery");
+        assert_eq!(def.agent_tier, AgentTier::Reasoning);
+        assert_eq!(def.delegate_name.as_deref(), Some("discover_workflows"));
+        assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
+        assert!(
+            def.subagents.is_empty(),
+            "flow_discovery is a leaf and must not list subagents"
+        );
+        match &def.tools {
+            ToolScope::Named(names) => {
+                // The one write it is allowed: its terminal emit sink.
+                assert!(
+                    names.iter().any(|n| n == "suggest_workflows"),
+                    "flow_discovery must have its `suggest_workflows` emit sink"
+                );
+                // A representative slice of the read-only gathering surface.
+                for required in [
+                    "memory_recall",
+                    "transcript_search",
+                    "thread_list",
+                    "list_flows",
+                    "list_flow_connections",
+                    "search_tool_catalog",
+                    "web_search_tool",
+                ] {
+                    assert!(
+                        names.iter().any(|n| n == required),
+                        "flow_discovery tool list missing read tool `{required}`"
+                    );
+                }
+                // Hard exclusions: nothing that persists, executes, sends, or
+                // writes user data.
+                for forbidden in [
+                    "flows_create",
+                    "flows_update",
+                    "flows_set_enabled",
+                    "flows_run",
+                    "propose_workflow",
+                    "shell",
+                    "file_write",
+                    "edit",
+                    "memory_store",
+                    "thread_message_append",
+                    "spawn_subagent",
+                ] {
+                    assert!(
+                        !names.iter().any(|n| n == forbidden),
+                        "flow_discovery must NOT have `{forbidden}` — read + suggest only"
+                    );
+                }
+            }
+            ToolScope::Wildcard => panic!("flow_discovery must have a Named tool scope"),
+        }
+
+        // Reachable by delegation from the orchestrator so `discover_workflows`
+        // can spawn it.
+        let orchestrator = find("orchestrator");
+        assert!(
+            orchestrator
+                .subagents
+                .iter()
+                .any(|entry| matches!(entry, SubagentEntry::AgentId(id) if id == "flow_discovery")),
+            "orchestrator must allow `flow_discovery` so discover_workflows can spawn it"
+        );
+    }
+
+    #[test]
     fn tinyplace_agent_is_registered_and_narrow() {
         let def = find("tinyplace_agent");
-        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "agentic"));
+        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "burst"));
         assert_eq!(def.sandbox_mode, SandboxMode::None);
         assert!(!def.omit_safety_preamble);
         assert_eq!(def.delegate_name.as_deref(), Some("use_tinyplace"));
@@ -855,6 +1230,7 @@ mod tests {
     #[test]
     fn specialist_agents_are_registered_with_narrow_tools() {
         let scheduler = find("scheduler_agent");
+        assert!(matches!(scheduler.model, ModelSpec::Hint(ref h) if h == "burst"));
         match &scheduler.tools {
             ToolScope::Named(names) => {
                 for required in ["current_time", "cron_add", "cron_list", "cron_remove"] {
@@ -1077,17 +1453,27 @@ mod tests {
     }
 
     #[test]
-    fn researcher_has_curl_for_artifact_downloads() {
+    fn researcher_is_bounded_to_search_and_fetch() {
         let def = find("researcher");
+        assert_eq!(
+            def.max_iterations, 10,
+            "researcher keeps enough turns to recover from bad search results without broadening its tool surface"
+        );
+        assert_eq!(
+            def.max_turn_output_tokens,
+            Some(4096),
+            "researcher must cap each model turn so verbose research loops cannot flood context"
+        );
+        assert!(
+            def.extra_tools.is_empty(),
+            "researcher must not widen its tool surface via extra_tools"
+        );
         match &def.tools {
             ToolScope::Named(tools) => {
-                assert!(
-                    tools.iter().any(|t| t == "curl"),
-                    "researcher needs curl for artifact downloads"
-                );
-                assert!(
-                    tools.iter().any(|t| t == "http_request"),
-                    "researcher still needs http_request"
+                assert_eq!(
+                    tools,
+                    &vec!["web_search_tool".to_string(), "web_fetch".to_string()],
+                    "researcher must stay limited to search+fetch so simple lookups do not fan out into deep research loops"
                 );
             }
             ToolScope::Wildcard => panic!("researcher must have Named tool scope"),
@@ -1112,7 +1498,7 @@ mod tests {
     fn orchestrator_does_not_get_curl() {
         // Per design: curl is a `Write` permission tool that writes
         // to the workspace. The orchestrator delegates rather than
-        // executing — code_executor / researcher own actual downloads.
+        // executing — code_executor / tools_agent own actual downloads.
         let def = find("orchestrator");
         if let ToolScope::Named(tools) = &def.tools {
             assert!(
@@ -1130,9 +1516,9 @@ mod tests {
     #[test]
     fn crypto_agent_has_narrow_wallet_market_tools_and_safety_on() {
         let def = find("crypto_agent");
-        // Hint must be agentic — the agent reasons about quotes vs.
-        // executes across multiple tool calls per turn.
-        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "agentic"));
+        // Hint must be burst — latency matters for the narrow quote/execute
+        // workflow and provider routing still preserves explicit agentic BYOK.
+        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "burst"));
         assert_eq!(def.sandbox_mode, SandboxMode::None);
         // Financial-risk agent — global safety preamble stays ON.
         assert!(
@@ -1222,9 +1608,11 @@ mod tests {
                     "spawn_subagent",
                     "spawn_worker_thread",
                     "delegate_to_integrations_agent",
-                    "delegate_run_code",
-                    "delegate_research",
-                    "delegate_plan",
+                    // Synthesised delegation tools use the unprefixed
+                    // `delegate_name` overrides — forbid those names too.
+                    "run_code",
+                    "research",
+                    "plan",
                 ] {
                     assert!(
                         !tools.iter().any(|t| t == forbidden),
@@ -1318,9 +1706,11 @@ mod tests {
                     "spawn_subagent",
                     "spawn_worker_thread",
                     "delegate_to_integrations_agent",
-                    "delegate_run_code",
-                    "delegate_research",
-                    "delegate_plan",
+                    // Synthesised delegation tools use the unprefixed
+                    // `delegate_name` overrides — forbid those names too.
+                    "run_code",
+                    "research",
+                    "plan",
                     "wallet_execute_prepared",
                     "wallet_prepare_transfer",
                     "web3_swap_execute",
@@ -1596,13 +1986,16 @@ mod tests {
     #[test]
     fn other_builtins_default_to_worker_tier() {
         for def in load_builtins().unwrap() {
-            if def.id == "orchestrator" || def.id == "planner" || def.id == "subconscious" {
+            if matches!(
+                def.id.as_str(),
+                "orchestrator" | "planner" | "subconscious" | "flow_discovery"
+            ) {
                 continue;
             }
             assert_eq!(
                 def.agent_tier,
                 AgentTier::Worker,
-                "{} should default to worker tier (only orchestrator/planner/subconscious are non-worker today)",
+                "{} should default to worker tier (only orchestrator/planner/subconscious/flow_discovery are non-worker today)",
                 def.id
             );
         }

@@ -8,7 +8,6 @@
 //! resume the same sub-agent from its checkpoint with the user's response
 //! appended to the conversation history.
 
-use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{
@@ -16,9 +15,10 @@ use crate::openhuman::agent::harness::subagent_runner::{
 };
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::inference::provider::ChatMessage;
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 pub struct ContinueSubagentTool;
 
@@ -74,6 +74,16 @@ impl Tool for ContinueSubagentTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let task_id = args
             .get("task_id")
             .and_then(|v| v.as_str())
@@ -196,13 +206,13 @@ impl Tool for ContinueSubagentTool {
         let progress_sink = parent.on_progress.clone();
 
         // Publish resumed event (reuse SubagentSpawned with a note)
-        publish_global(DomainEvent::SubagentSpawned {
-            parent_session: parent_session.clone(),
-            agent_id: agent_id.clone(),
-            mode: "typed".to_string(),
-            task_id: task_id.clone(),
-            prompt_chars: message.chars().count(),
-        });
+        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_spawned(
+            parent_session.clone(),
+            agent_id.clone(),
+            "typed".to_string(),
+            task_id.clone(),
+            message.chars().count(),
+        );
 
         if let Some(ref tx) = progress_sink {
             let _ = tx
@@ -212,6 +222,7 @@ impl Tool for ContinueSubagentTool {
                     mode: "typed".to_string(),
                     dedicated_thread: false,
                     prompt_chars: message.chars().count(),
+                    prompt: message.to_string(),
                     worker_thread_id: checkpoint.worker_thread_id.clone(),
                     display_name: definition.display_name.clone(),
                 })
@@ -219,6 +230,19 @@ impl Tool for ContinueSubagentTool {
         }
 
         // Build options with initial_history for replay
+        let workspace_descriptor = tool_context.and_then(|ctx| ctx.workspace.clone());
+        let worktree_action_dir = workspace_descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.root.clone());
+        if let Some(descriptor) = workspace_descriptor.as_ref() {
+            tracing::debug!(
+                task_id = %task_id,
+                agent_id = %agent_id,
+                workspace_root = %descriptor.root.display(),
+                policy_id = %descriptor.policy_id,
+                "[continue_subagent] using ToolExecutionContext workspace root"
+            );
+        }
         let options = SubagentRunOptions {
             skill_filter_override: checkpoint.skill_filter_override,
             toolkit_override: checkpoint.toolkit_override,
@@ -228,7 +252,8 @@ impl Tool for ContinueSubagentTool {
             worker_thread_id: checkpoint.worker_thread_id.clone(),
             initial_history: Some(history),
             checkpoint_dir: Some(checkpoint_dir.clone()),
-            worktree_action_dir: None,
+            worktree_action_dir,
+            workspace_descriptor,
             run_queue: None,
         };
 
@@ -241,12 +266,12 @@ impl Tool for ContinueSubagentTool {
                         options: _,
                     } => {
                         // Another round of clarification
-                        publish_global(DomainEvent::SubagentAwaitingUser {
+                        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_awaiting_user(
                             parent_session,
-                            task_id: outcome.task_id.clone(),
-                            agent_id: outcome.agent_id.clone(),
-                            question: question.clone(),
-                        });
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            question.clone(),
+                        );
                         if let Some(ref tx) = progress_sink {
                             let _ = tx
                                 .send(AgentProgress::SubagentAwaitingUser {
@@ -288,14 +313,14 @@ impl Tool for ContinueSubagentTool {
                             );
                         }
 
-                        publish_global(DomainEvent::SubagentCompleted {
+                        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
                             parent_session,
-                            task_id: outcome.task_id.clone(),
-                            agent_id: outcome.agent_id.clone(),
-                            elapsed_ms: outcome.elapsed.as_millis() as u64,
-                            output_chars: outcome.output.chars().count(),
-                            iterations: outcome.iterations,
-                        });
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            outcome.elapsed.as_millis() as u64,
+                            outcome.output.chars().count(),
+                            outcome.iterations,
+                        );
                         if let Some(ref tx) = progress_sink {
                             let _ = tx
                                 .send(AgentProgress::SubagentCompleted {
@@ -304,6 +329,7 @@ impl Tool for ContinueSubagentTool {
                                     elapsed_ms: outcome.elapsed.as_millis() as u64,
                                     iterations: outcome.iterations as u32,
                                     output_chars: outcome.output.chars().count(),
+                                    output: outcome.output.clone(),
                                     worktree_path: None,
                                     changed_files: Vec::new(),
                                     dirty_status: None,
@@ -311,6 +337,62 @@ impl Tool for ContinueSubagentTool {
                                 .await;
                         }
                         Ok(ToolResult::success(outcome.output))
+                    }
+                    SubagentRunStatus::Incomplete { reason } => {
+                        // The continued sub-agent stopped short again (stuck halt
+                        // / iteration cap). Hand back the partial progress framed
+                        // as incomplete rather than a clean success (#4096).
+                        // The run is no longer awaiting input, so the checkpoint
+                        // written for the prior AwaitingUser pause is stale —
+                        // clean it up best-effort, mirroring the Completed arm.
+                        if let Err(e) = std::fs::remove_file(&checkpoint_path) {
+                            tracing::debug!(
+                                task_id = %task_id,
+                                error = %e,
+                                "[continue_subagent] failed to remove checkpoint after incomplete (best-effort)"
+                            );
+                        }
+                        tracing::info!(
+                            agent_id = %outcome.agent_id,
+                            task_id = %outcome.task_id,
+                            reason = %reason,
+                            "[continue_subagent] sub-agent stopped incomplete after continue"
+                        );
+                        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
+                            parent_session,
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            outcome.elapsed.as_millis() as u64,
+                            outcome.output.chars().count(),
+                            outcome.iterations,
+                        );
+                        if let Some(ref tx) = progress_sink {
+                            let _ = tx
+                                .send(AgentProgress::SubagentCompleted {
+                                    agent_id: outcome.agent_id.clone(),
+                                    task_id: outcome.task_id.clone(),
+                                    elapsed_ms: outcome.elapsed.as_millis() as u64,
+                                    iterations: outcome.iterations as u32,
+                                    output_chars: outcome.output.chars().count(),
+                                    output: outcome.output.clone(),
+                                    worktree_path: None,
+                                    changed_files: Vec::new(),
+                                    dirty_status: None,
+                                })
+                                .await;
+                        }
+                        Ok(ToolResult::success(format!(
+                            "[SUBAGENT_INCOMPLETE]\n\
+                             task_id: {}\n\
+                             agent_id: {}\n\
+                             reason: the sub-agent {reason}\n\
+                             progress:\n{}\n\
+                             [/SUBAGENT_INCOMPLETE]\n\n\
+                             The sub-agent did NOT finish. Above is its partial progress. Do NOT \
+                             report this as done; relay the partial result and the blocker to the \
+                             user, or take a different approach.",
+                            outcome.task_id, outcome.agent_id, outcome.output,
+                        )))
                     }
                 }
             }
@@ -321,12 +403,12 @@ impl Tool for ContinueSubagentTool {
                     agent_id = %agent_id,
                     "[continue_subagent] sub-agent execution failed"
                 );
-                publish_global(DomainEvent::SubagentFailed {
+                crate::openhuman::agent_orchestration::subagent_events::publish_subagent_failed(
                     parent_session,
-                    task_id: task_id.clone(),
-                    agent_id: agent_id.clone(),
-                    error: message.clone(),
-                });
+                    task_id.clone(),
+                    agent_id.clone(),
+                    message.clone(),
+                );
                 if let Some(ref tx) = progress_sink {
                     let _ = tx
                         .send(AgentProgress::SubagentFailed {

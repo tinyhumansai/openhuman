@@ -30,6 +30,8 @@
 //! I/O orchestrator ([`run_council`]) so the deliberation logic is unit-tested
 //! without any network or provider.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 use crate::openhuman::agent::Agent;
@@ -252,10 +254,15 @@ pub async fn run_council(
         temperature
     );
 
-    let member_futures = models
-        .iter()
-        .map(|model| run_member_answer_inner(config, question, model, temperature));
-    let members: Vec<CouncilMemberResult> = futures_util::future::join_all(member_futures).await;
+    // Fan out the member seats on the tinyagents graph (StateGraph + parallel
+    // super-step + reducer) rather than a hand-rolled `join_all` (issue #4249).
+    let members: Vec<CouncilMemberResult> = super::graph::run_council_members_via_graph(
+        Arc::new(config.clone()),
+        Arc::from(question),
+        models.clone(),
+        temperature,
+    )
+    .await?;
 
     let success_count = members.iter().filter(|m| m.response.is_some()).count();
     log::debug!(
@@ -347,7 +354,7 @@ pub async fn synthesize_members(
     ))
 }
 
-async fn run_member_answer_inner(
+pub(super) async fn run_member_answer_inner(
     config: &Config,
     question: &str,
     model: &str,

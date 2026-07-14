@@ -13,8 +13,8 @@
 //! spawned command runs sandboxed.
 
 use super::types::{
-    DockerOverrides, SandboxBackendHandle, SandboxBackendKind, SandboxExecRequest,
-    SandboxExecResult, SandboxPolicy, SandboxStatus,
+    SandboxBackendHandle, SandboxBackendKind, SandboxExecRequest, SandboxExecResult, SandboxPolicy,
+    SandboxStatus,
 };
 use std::process::Stdio;
 use tokio::process::Command;
@@ -288,6 +288,7 @@ pub fn validate_docker_policy(policy: &SandboxPolicy) -> Result<(), Vec<String>>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::sandbox::types::DockerOverrides;
     use std::path::PathBuf;
 
     fn test_policy() -> SandboxPolicy {

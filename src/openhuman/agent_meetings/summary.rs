@@ -14,8 +14,10 @@
 use serde::Deserialize;
 
 use crate::core::event_bus::BackendMeetTurn;
-use crate::openhuman::config::Config;
-use crate::openhuman::inference::provider::create_chat_provider;
+use crate::openhuman::config::{AutoSummarizePolicy, Config};
+use crate::openhuman::inference::provider::create_chat_model;
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::{ChatModel, ModelRequest};
 
 use super::types::{ActionItem, ActionItemKind, MeetingSummary};
 
@@ -98,6 +100,35 @@ pub struct GeneratedSummary {
     pub summary: MeetingSummary,
 }
 
+/// Call-end action derived from the user's post-call summary policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostCallSummaryDecision {
+    /// Generate immediately after the transcript is recorded.
+    Generate,
+    /// Leave the transcript intact and surface an explicit prompt instead.
+    Prompt,
+    /// Do not generate or prompt automatically.
+    Skip,
+}
+
+/// Map the persisted setting to the call-end behavior. Kept pure so the bus
+/// and manual paths can share the policy contract without duplicating matches.
+pub fn post_call_summary_decision(policy: AutoSummarizePolicy) -> PostCallSummaryDecision {
+    match policy {
+        AutoSummarizePolicy::Always => PostCallSummaryDecision::Generate,
+        AutoSummarizePolicy::Ask => PostCallSummaryDecision::Prompt,
+        AutoSummarizePolicy::Never => PostCallSummaryDecision::Skip,
+    }
+}
+
+/// Render the lightweight Ask-mode prompt appended to the meeting thread.
+pub fn format_summary_prompt_markdown(meeting_id: &str) -> String {
+    format!(
+        "## Meeting ended\n\nWant me to summarize this call? Use the Generate summary action for meeting `{}`.",
+        meeting_id.trim()
+    )
+}
+
 /// Generate a structured summary + context label from a finished call's turns.
 ///
 /// `correlation_id` (when present) becomes the summary's `meeting_id`.
@@ -113,13 +144,20 @@ pub async fn generate_meeting_summary(
     let config = Config::load_or_init()
         .await
         .map_err(|e| format!("config load failed: {e}"))?;
-    let (provider, model) = create_chat_provider(SUMMARIZATION_ROLE, &config)
+    let model = create_chat_model(SUMMARIZATION_ROLE, &config, 0.3)
         .map_err(|e| format!("summarisation provider init failed: {e}"))?;
 
-    let reply = provider
-        .chat_with_system(Some(SYSTEM_PROMPT), &transcript, &model, 0.3)
+    // One user turn under a fixed system prompt — the crate model interface's
+    // native shape. Equivalent to the former `chat_with_system` one-shot call.
+    let request = ModelRequest::new(vec![
+        Message::system(SYSTEM_PROMPT),
+        Message::user(transcript),
+    ]);
+    let reply = model
+        .invoke(&(), request)
         .await
-        .map_err(|e| format!("summarisation LLM call failed: {e}"))?;
+        .map_err(|e| format!("summarisation LLM call failed: {e}"))?
+        .text();
 
     let raw = parse_summary_json(&reply)
         .ok_or_else(|| "model reply did not contain parseable summary JSON".to_string())?;
@@ -584,5 +622,23 @@ mod tests {
         assert!(!md.contains("### Key points"));
         assert!(!md.contains("### Action items"));
         assert!(!md.contains("**Topic:**"));
+    }
+
+    #[test]
+    fn post_call_summary_decision_maps_user_policy() {
+        use crate::openhuman::config::AutoSummarizePolicy;
+
+        assert_eq!(
+            post_call_summary_decision(AutoSummarizePolicy::Always),
+            PostCallSummaryDecision::Generate
+        );
+        assert_eq!(
+            post_call_summary_decision(AutoSummarizePolicy::Ask),
+            PostCallSummaryDecision::Prompt
+        );
+        assert_eq!(
+            post_call_summary_decision(AutoSummarizePolicy::Never),
+            PostCallSummaryDecision::Skip
+        );
     }
 }

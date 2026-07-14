@@ -94,7 +94,7 @@ fn make_test_context(
 
     Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels),
-        provider,
+        provider: Some(provider),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -116,6 +116,7 @@ fn make_test_context(
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     })
 }
 
@@ -468,9 +469,7 @@ async fn telegram_dispatch_routes_through_agent_run_turn_bus_handler() {
                 req.history.len() >= 2,
                 "history should include at least the system prompt and user message"
             );
-            Ok(AgentTurnResponse {
-                text: "CANNED_TELEGRAM_RESPONSE".to_string(),
-            })
+            Ok(AgentTurnResponse::new("CANNED_TELEGRAM_RESPONSE"))
         }
     })
     .await;

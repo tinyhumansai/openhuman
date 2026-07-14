@@ -159,6 +159,19 @@ pub(super) fn tool_call_payload() -> String {
         .to_string()
 }
 
+/// Like [`tool_call_payload`] but embeds the iteration index as an extra `step`
+/// argument so successive calls have DISTINCT `(tool, args)` signatures.
+/// `mock_price` only reads `symbol`, so the extra field is ignored at execution
+/// but keeps the harness repeat-CALL guard — which hashes args, not narration —
+/// from treating a legitimate multi-step loop as a no-progress repeat.
+pub(super) fn tool_call_payload_for_iteration(step: usize) -> String {
+    format!(
+        r#"<tool_call>
+{{"name":"mock_price","arguments":{{"symbol":"BTC","step":{step}}}}}
+</tool_call>"#
+    )
+}
+
 pub(super) fn tool_call_payload_with_alias_tag() -> String {
     r#"<toolcall>
 {"name":"mock_price","arguments":{"symbol":"BTC"}}
@@ -269,7 +282,7 @@ impl Provider for IterativeToolProvider {
             // degeneration signature) should trip the harness repeat guard.
             Ok(format!(
                 "Progress update {completed_iterations}.\n{}",
-                tool_call_payload()
+                tool_call_payload_for_iteration(completed_iterations)
             ))
         }
     }

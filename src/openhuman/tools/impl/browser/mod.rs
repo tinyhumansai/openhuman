@@ -3,6 +3,7 @@ mod browser;
 mod browser_open;
 mod image_info;
 mod image_output;
+mod playwright_backend;
 mod screenshot;
 
 pub use browser::{BrowserAction, BrowserTool, ComputerUseConfig};

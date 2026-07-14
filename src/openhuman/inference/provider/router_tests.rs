@@ -222,6 +222,7 @@ fn resolve_translates_openhuman_tier_aliases_via_route_table() {
         vec![
             ("reasoning", "smart", "gpt-5.5"),
             ("chat", "smart", "gpt-5.5-mini"),
+            ("burst", "smart", "gpt-5.5-burst"),
             ("summarization", "smart", "gpt-4.1-nano"),
             ("vision", "smart", "gpt-5.5-vision"),
         ],
@@ -234,6 +235,10 @@ fn resolve_translates_openhuman_tier_aliases_via_route_table() {
     let (chat_idx, chat_model) = router.resolve("chat-v1");
     assert_eq!(chat_idx, 1);
     assert_eq!(chat_model, "gpt-5.5-mini");
+
+    let (burst_idx, burst_model) = router.resolve("burst-v1");
+    assert_eq!(burst_idx, 1);
+    assert_eq!(burst_model, "gpt-5.5-burst");
 
     let (summary_idx, summary_model) = router.resolve("summarization-v1");
     assert_eq!(summary_idx, 1);
@@ -431,6 +436,30 @@ async fn chat_with_system_passes_system_prompt() {
         .unwrap();
     assert_eq!(result, "response");
     assert_eq!(mock.call_count(), 1);
+}
+
+#[tokio::test]
+async fn records_resolved_route_after_hint_resolution() {
+    let (router, mocks) = make_router(
+        vec![("fast", "fast-response"), ("smart", "smart-response")],
+        vec![("reasoning", "smart", "claude-opus")],
+    );
+
+    let recorded =
+        crate::openhuman::inference::provider::with_resolved_provider_route_scope(async {
+            let result = router
+                .chat_with_system(Some("system"), "think", "hint:reasoning", 0.5)
+                .await
+                .unwrap();
+            assert_eq!(result, "smart-response");
+            crate::openhuman::inference::provider::current_resolved_provider_route()
+        })
+        .await
+        .expect("router should record the concrete provider route");
+
+    assert_eq!(recorded.provider, "smart");
+    assert_eq!(recorded.model, "claude-opus");
+    assert_eq!(mocks[1].last_model(), "claude-opus");
 }
 
 #[tokio::test]

@@ -41,6 +41,8 @@ Every connected provider that runs as a hosted web app gets its own child CEF we
 * LinkedIn
 * Gmail
 * Zoom
+* WeChat
+* Google Messages
 * browserscan
 
 Per-account storage is isolated to `{app_local_data_dir}/webview_accounts/{id}/`. Two Slack workspaces, two browser profiles. Code: [`app/src-tauri/src/webview_accounts/mod.rs`](../../app/src-tauri/src/webview_accounts/mod.rs).
@@ -56,6 +58,8 @@ Each provider has a **scanner module** in [`app/src-tauri/src/`](https://github.
 | `slack_scanner`    | 30s IDB walk                    | Pure IDB - no DOM scrape needed                                      |
 | `discord_scanner`  | Periodic                        | Channel + DM state via CDP                                           |
 | `meet_scanner`     | Periodic                        | Live captions + participant state during calls                       |
+| `wechat_scanner`   | Periodic                        | WeChat Web chat list + active conversation DOM scrape via CDP        |
+| `gmessages_scanner`| Periodic                        | Google Messages Web read-only IndexedDB walk                         |
 | `imessage_scanner` | Periodic                        | **No webview.** Reads `~/Library/Messages/chat.db` directly on macOS |
 
 Each scan emits `webview:event` payloads and POSTs `openhuman.memory_doc_ingest` straight to the core RPC, so memory grows whether the UI window is open or backgrounded.
@@ -117,6 +121,20 @@ for these details in the issue:
 For Windows Insider builds, also confirm whether the same installer launches on
 the current stable Windows release. That separates a profile/cache problem from
 an OS/runtime compatibility regression in CEF startup.
+
+If the logs point to a GPU-process startup failure rather than a stale CEF
+profile lock, set `OPENHUMAN_DISABLE_GPU=1` before launching OpenHuman. On
+Windows this pins CEF to the pure-software ANGLE/SwiftShader GL backend
+(`--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader
+--disable-gpu-compositing`) rather than bare `--disable-gpu`: on NVIDIA Blackwell
+/ RTX 50-series stacks the GPU process fails to initialise and `--disable-gpu`
+alone leaves CEF with no working software GL path, so `cef::initialize` still
+returns 0 (#4294, #4385). SwiftShader needs no hardware driver, so it lets CEF
+start on GPUs the bundled Chromium (currently CEF 146.4.1) doesn't yet support.
+On other platforms the same env var passes `--disable-gpu` and
+`--disable-gpu-compositing` without forwarding arbitrary Chromium flags. Leave it
+unset for normal use because forcing software rendering slows WebGL-heavy surfaces.
+
 ## Linux shell fallback for CEF startup crashes
 
 On some Linux desktops, especially NVIDIA proprietary driver setups under Wayland/XWayland, the Tauri/CEF shell can fail during native window configuration before the React app becomes usable. One known symptom is an X11 `BadWindow` error after CEF reports the main browser context.
@@ -173,5 +191,4 @@ Each connected account gets its own profile and its own IDB. CDP can snapshot on
 
 ## See also
 
-* [`docs/TAURI_CEF_FINDINGS_AND_CHANGES.md`](../../docs/TAURI_CEF_FINDINGS_AND_CHANGES.md). the notification-permission deep dive.
 * [`CLAUDE.md`](../../CLAUDE.md). the canonical "no new JS injection" rule.

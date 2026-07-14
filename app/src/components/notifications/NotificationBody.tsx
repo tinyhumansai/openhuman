@@ -10,7 +10,7 @@
  *
  * **Why this lives here and not in a global shared spot:** the chat-side
  * `OpenhumanLinkPill` is a non-exported function inside `AgentMessageBubble.tsx`
- * (`app/src/pages/conversations/`). Extracting from chat would change the chat
+ * (`app/src/features/conversations/`). Extracting from chat would change the chat
  * render path — out of scope for this fix. Instead, we keep the grammar / parsing
  * shared (reuses `parseBubbleSegments` from conversations) but reimplement the
  * pill locally. Both notification surfaces share *this* file so the diff stays
@@ -22,7 +22,7 @@
  * allowlists `path` values before routing. See `OpenhumanLinkModal.tsx`
  * `ALLOWED_PATHS_SET`.
  */
-import { parseBubbleSegments } from '../../pages/conversations/utils/format';
+import { parseBubbleSegments } from '../../features/conversations/utils/format';
 import { OPENHUMAN_LINK_EVENT } from '../OpenhumanLinkModal';
 
 function NotificationLinkPill({ path, label }: { path: string; label: string }) {

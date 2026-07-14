@@ -205,6 +205,90 @@ PY
   printf '%s\n' "$url"
 }
 
+linux_package_preference() {
+  if [ "${OS:-}" != "linux" ]; then
+    printf 'appimage\n'
+    return 0
+  fi
+
+  case "${OPENHUMAN_INSTALLER_LINUX_PACKAGE:-auto}" in
+    deb)
+      printf 'deb\n'
+      return 0
+      ;;
+    appimage)
+      printf 'appimage\n'
+      return 0
+      ;;
+    auto|"")
+      ;;
+    *)
+      printf 'appimage\n'
+      return 0
+      ;;
+  esac
+
+  if command -v apt-get >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1; then
+    printf 'deb\n'
+  else
+    printf 'appimage\n'
+  fi
+}
+
+resolve_release_asset_metadata() {
+  local json_path="$1" os_name="$2" arch="$3" linux_asset_kind="${4:-appimage}"
+  python3 - "$json_path" "$os_name" "$arch" "$linux_asset_kind" <<'PY'
+import json, re, sys
+path, os_name, arch, linux_asset_kind = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+tag = (data.get("tag_name") or "").lstrip("v")
+assets = data.get("assets", [])
+
+def first_matching(names, pattern):
+    for name in names:
+        if re.search(pattern, name):
+            return name
+    return None
+
+def choose_asset():
+    names = [a.get("name", "") for a in assets]
+    chosen = None
+    if os_name == "darwin" and arch == "aarch64":
+        chosen = first_matching(names, r"aarch64.*\.app\.tar\.gz$")
+        if not chosen:
+            chosen = first_matching(names, r"aarch64\.dmg$")
+    elif os_name == "darwin" and arch == "x86_64":
+        chosen = first_matching(names, r"(x86_64-apple-darwin|x64).*\.app\.tar\.gz$")
+        if not chosen:
+            chosen = first_matching(names, r"x64\.dmg$")
+    elif os_name == "linux" and arch == "x86_64":
+        if linux_asset_kind == "deb":
+            chosen = first_matching(names, r"OpenHuman_.*_amd64\.deb$")
+        else:
+            chosen = first_matching(names, r"amd64\.AppImage$")
+    elif os_name == "linux" and arch == "aarch64":
+        if linux_asset_kind == "deb":
+            chosen = first_matching(names, r"OpenHuman_.*_(arm64|aarch64)\.deb$")
+        else:
+            chosen = first_matching(names, r"(arm64|aarch64)\.AppImage$")
+    if not chosen:
+        return "", "", ""
+    for asset in assets:
+        if asset.get("name") == chosen:
+            return chosen, asset.get("browser_download_url", ""), (asset.get("digest", "") or "").replace("sha256:", "")
+    return "", "", ""
+
+name, url, digest = choose_asset()
+if not name or not url:
+    sys.exit(2)
+print(tag)
+print(name)
+print(url)
+print(digest)
+PY
+}
+
 # curl can fail on GitHub/CDN HTTP/2 framing issues on some networks while the
 # same URL succeeds over HTTP/1.1. Try the normal path first, then a
 # compatibility retry before surfacing the failure.
@@ -302,62 +386,14 @@ resolve_from_release_api() {
     return 1
   fi
 
-  local parsed
-  parsed="$(python3 - "${RELEASE_JSON_PATH}" "${OS}" "${ARCH}" <<'PY'
-import json, re, sys
-path, os_name, arch = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path, "r", encoding="utf-8") as f:
-    data = json.load(f)
-tag = (data.get("tag_name") or "").lstrip("v")
-assets = data.get("assets", [])
-
-def choose_asset():
-    names = [a.get("name", "") for a in assets]
-    chosen = None
-    if os_name == "darwin" and arch == "aarch64":
-        for n in names:
-            if re.search(r"aarch64.*\.app\.tar\.gz$", n):
-                chosen = n
-                break
-        if not chosen:
-            for n in names:
-                if re.search(r"aarch64\.dmg$", n):
-                    chosen = n
-                    break
-    elif os_name == "darwin" and arch == "x86_64":
-        for n in names:
-            if re.search(r"(x86_64-apple-darwin|x64).*\.app\.tar\.gz$", n):
-                chosen = n
-                break
-        if not chosen:
-            for n in names:
-                if re.search(r"x64\.dmg$", n):
-                    chosen = n
-                    break
-    elif os_name == "linux" and arch == "x86_64":
-        for n in names:
-            if re.search(r"amd64\.AppImage$", n):
-                chosen = n
-                break
-    elif os_name == "linux" and arch == "aarch64":
-        for n in names:
-            if re.search(r"(arm64|aarch64)\.AppImage$", n):
-                chosen = n
-                break
-    if not chosen:
-        return "", "", ""
-    for asset in assets:
-        if asset.get("name") == chosen:
-            return chosen, asset.get("browser_download_url", ""), (asset.get("digest", "") or "").replace("sha256:", "")
-    return "", "", ""
-
-name, url, digest = choose_asset()
-print(tag)
-print(name)
-print(url)
-print(digest)
-PY
-)" || return 1
+  local parsed linux_kind rc
+  linux_kind="${LINUX_PACKAGE_KIND:-$(linux_package_preference)}"
+  if parsed="$(resolve_release_asset_metadata "${RELEASE_JSON_PATH}" "${OS}" "${ARCH}" "${linux_kind}")"; then
+    rc=0
+  else
+    rc=$?
+    return "${rc}"
+  fi
 
   if [ -z "${LATEST_VERSION}" ]; then
     LATEST_VERSION="$(echo "${parsed}" | sed -n '1p')"
@@ -404,70 +440,6 @@ PY
   fi
 }
 
-if [[ "${SOURCE_ONLY}" == "1" ]]; then
-  return 0 2>/dev/null || exit 0
-fi
-
-if resolve_from_latest_json; then
-  log_ok "Resolved latest release via latest.json (${LATEST_VERSION})"
-else
-  log_warn "latest.json lookup failed. Falling back to releases API."
-  # Wrap the call so `set -e` can't abort before rc is captured. Without the
-  # `if`-guard, `resolve_from_release_api` returning a non-zero rc (e.g. 2 for
-  # "no compatible asset") trips `set -euo pipefail` and exits the script
-  # before the handler below can decide dry-run vs real-install behavior.
-  if resolve_from_release_api; then
-    resolve_rc=0
-  else
-    resolve_rc=$?
-  fi
-  if [ "${resolve_rc}" -ne 0 ]; then
-    # Dry-run is a "what would happen?" query, not an install. If the release
-    # metadata says no compatible asset exists (or the metadata itself can't
-    # be reached), surface a warning and exit 0 so installer smoke checks on
-    # platforms without a current build don't fail the whole CI matrix. Real
-    # installs (non-dry-run) still hard-fail below.
-    if [ "${DRY_RUN}" = true ]; then
-      case "${resolve_rc}" in
-        2)
-          log_warn "No compatible release asset published yet for ${OS}/${ARCH}."
-          ;;
-        *)
-          log_warn "Could not reach release metadata (rc=${resolve_rc}) for ${OS}/${ARCH}."
-          ;;
-      esac
-      echo "DRY RUN: skipping install for ${OS}/${ARCH} — no asset resolved."
-      exit 0
-    fi
-    log_err "Could not resolve a compatible asset for ${OS}/${ARCH}."
-    log_err "Check https://github.com/${REPO}/releases/latest for available assets."
-    exit 1
-  fi
-  log_ok "Resolved latest release via releases API (${LATEST_VERSION})"
-fi
-
-resolve_release_digest
-
-if [ -z "${ASSET_URL}" ]; then
-  log_err "Could not determine download URL for ${OS}/${ARCH}."
-  exit 1
-fi
-
-if [ "${DRY_RUN}" = true ]; then
-  echo "DRY RUN: verify asset reachable ${ASSET_URL}"
-elif ! verify_asset_reachable "${ASSET_URL}"; then
-  log_err "Asset URL is not reachable for ${OS}/${ARCH}: ${ASSET_URL}"
-  exit 4
-fi
-
-DOWNLOAD_PATH="${TMP_DIR}/${ASSET_NAME}"
-log_info "Downloading ${ASSET_NAME}"
-if [ "${DRY_RUN}" = true ]; then
-  echo "DRY RUN: curl -fL ${ASSET_URL} -o ${DOWNLOAD_PATH} (retrying with --http1.1 on failure)"
-else
-  curl_download_file "${ASSET_URL}" "${DOWNLOAD_PATH}"
-fi
-
 compute_sha256() {
   local file="$1"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -480,26 +452,6 @@ compute_sha256() {
     return 1
   fi
 }
-
-if [ -n "${ASSET_SHA256}" ]; then
-  if [ "${DRY_RUN}" = true ]; then
-    echo "DRY RUN: verify sha256 ${ASSET_SHA256} for ${DOWNLOAD_PATH}"
-  else
-    actual_sha256="$(compute_sha256 "${DOWNLOAD_PATH}" || true)"
-    if [ -z "${actual_sha256}" ]; then
-      log_warn "No checksum command available; skipping digest verification."
-    elif [ "${actual_sha256}" != "${ASSET_SHA256}" ]; then
-      log_err "SHA256 mismatch for ${ASSET_NAME}"
-      log_err "Expected: ${ASSET_SHA256}"
-      log_err "Actual:   ${actual_sha256}"
-      exit 1
-    else
-      log_ok "Integrity verified (sha256)"
-    fi
-  fi
-else
-  log_warn "No SHA256 digest available for ${ASSET_NAME}; skipping integrity verification."
-fi
 
 ensure_local_bin_path() {
   local bin_dir="${HOME}/.local/bin"
@@ -529,6 +481,38 @@ ensure_local_bin_path() {
       echo 'export PATH="$HOME/.local/bin:$PATH"'
     } >> "${config_file}"
     log_ok "Added ~/.local/bin to ${config_file}"
+  fi
+}
+
+apt_get_command_prefix() {
+  if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+    printf 'apt-get'
+  else
+    printf 'sudo apt-get'
+  fi
+}
+
+install_linux_deb() {
+  if [ "${DRY_RUN}" = true ]; then
+    echo "DRY RUN: $(apt_get_command_prefix) install -y --no-install-recommends ${DOWNLOAD_PATH}"
+    return 0
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    log_err "apt-get is required to install ${ASSET_NAME} and resolve dependencies."
+    log_err "Set OPENHUMAN_INSTALLER_LINUX_PACKAGE=appimage to force the AppImage path."
+    exit 1
+  fi
+
+  if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+    apt-get install -y --no-install-recommends "${DOWNLOAD_PATH}"
+  else
+    if ! command -v sudo >/dev/null 2>&1; then
+      log_err "sudo is required to install ${ASSET_NAME} with apt-get."
+      log_err "Re-run as root or install the .deb manually with apt-get."
+      exit 1
+    fi
+    sudo apt-get install -y --no-install-recommends "${DOWNLOAD_PATH}"
   fi
 }
 
@@ -590,10 +574,21 @@ install_linux() {
   local desktop_dir="${HOME}/.local/share/applications"
   local desktop_file="${desktop_dir}/openhuman.desktop"
 
+  if [[ "${ASSET_NAME}" =~ \.deb$ ]]; then
+    log_info "Installing Debian package with apt-get so system dependencies resolve"
+    install_linux_deb
+    log_ok "Installed Debian package ${ASSET_NAME}"
+    echo ""
+    echo "OpenHuman is ready."
+    echo "Launch: openhuman"
+    echo "Uninstall: $(apt_get_command_prefix) remove openhuman"
+    return 0
+  fi
+
   mkdir -p "${bin_dir}" "${desktop_dir}"
 
   if [[ ! "${ASSET_NAME}" =~ \.AppImage$ ]]; then
-    log_err "Expected AppImage for Linux install, got: ${ASSET_NAME}"
+    log_err "Expected AppImage or .deb for Linux install, got: ${ASSET_NAME}"
     exit 1
   fi
 
@@ -626,12 +621,129 @@ EOF
   echo ""
   echo "OpenHuman is ready."
   echo "Launch: ${app_path}"
-  echo "If the AppImage prints 'Interpreter not found!' or unshare/uid_map errors,"
-  echo "try the .deb package from https://github.com/${REPO}/releases/latest"
-  echo "(Debian/Ubuntu) or report at https://github.com/${REPO}/issues with your"
+  echo "If the AppImage prints 'Interpreter not found!', unshare/uid_map errors,"
+  echo "or missing system-library errors such as libgbm.so.1, use the .deb package"
+  echo "from https://github.com/${REPO}/releases/latest on Debian/Ubuntu."
+  echo "For other distros, report at https://github.com/${REPO}/issues with your"
   echo "distro, kernel (uname -a), GPU driver (lspci), dmesg excerpt, and asset: ${ASSET_NAME}."
   echo "Uninstall: rm -f \"${app_path}\" \"${desktop_file}\""
 }
+
+if [[ "${SOURCE_ONLY}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+resolve_rc=0
+linux_package_request="${OPENHUMAN_INSTALLER_LINUX_PACKAGE:-auto}"
+
+if [ "${OS}" = "linux" ] && [ "$(linux_package_preference)" = "deb" ]; then
+  LINUX_PACKAGE_KIND="deb"
+  log_info "Debian/Ubuntu package tooling detected; resolving .deb release asset."
+  if resolve_from_release_api; then
+    log_ok "Resolved latest release via releases API (${LATEST_VERSION})"
+  else
+    resolve_rc=$?
+    if [ "${linux_package_request}" = "deb" ]; then
+      if [ "${DRY_RUN}" = true ]; then
+        log_warn "Could not resolve requested .deb release asset (rc=${resolve_rc}) for ${OS}/${ARCH}."
+        echo "DRY RUN: skipping install for ${OS}/${ARCH} - no .deb asset resolved."
+        exit 0
+      fi
+      log_err "Could not resolve requested .deb release asset for ${OS}/${ARCH}."
+      log_err "Set OPENHUMAN_INSTALLER_LINUX_PACKAGE=appimage to use the AppImage fallback."
+      exit 1
+    fi
+    case "${resolve_rc}" in
+      2)
+        log_warn "No .deb release asset published yet for ${OS}/${ARCH}; falling back to AppImage metadata."
+        ;;
+      *)
+        log_warn "Could not resolve .deb via releases API (rc=${resolve_rc}); falling back to AppImage metadata."
+        ;;
+    esac
+    LINUX_PACKAGE_KIND="appimage"
+  fi
+fi
+
+if [ -z "${ASSET_URL}" ] && resolve_from_latest_json; then
+  log_ok "Resolved latest release via latest.json (${LATEST_VERSION})"
+elif [ -z "${ASSET_URL}" ]; then
+  log_warn "latest.json lookup failed. Falling back to releases API."
+  # Wrap the call so `set -e` can't abort before rc is captured. Without the
+  # `if`-guard, `resolve_from_release_api` returning a non-zero rc (e.g. 2 for
+  # "no compatible asset") trips `set -euo pipefail` and exits the script
+  # before the handler below can decide dry-run vs real-install behavior.
+  if resolve_from_release_api; then
+    resolve_rc=0
+  else
+    resolve_rc=$?
+  fi
+  if [ "${resolve_rc}" -ne 0 ]; then
+    # Dry-run is a "what would happen?" query, not an install. If the release
+    # metadata says no compatible asset exists (or the metadata itself can't
+    # be reached), surface a warning and exit 0 so installer smoke checks on
+    # platforms without a current build don't fail the whole CI matrix. Real
+    # installs (non-dry-run) still hard-fail below.
+    if [ "${DRY_RUN}" = true ]; then
+      case "${resolve_rc}" in
+        2)
+          log_warn "No compatible release asset published yet for ${OS}/${ARCH}."
+          ;;
+        *)
+          log_warn "Could not reach release metadata (rc=${resolve_rc}) for ${OS}/${ARCH}."
+          ;;
+      esac
+      echo "DRY RUN: skipping install for ${OS}/${ARCH} — no asset resolved."
+      exit 0
+    fi
+    log_err "Could not resolve a compatible asset for ${OS}/${ARCH}."
+    log_err "Check https://github.com/${REPO}/releases/latest for available assets."
+    exit 1
+  fi
+  log_ok "Resolved latest release via releases API (${LATEST_VERSION})"
+fi
+
+resolve_release_digest
+
+if [ -z "${ASSET_URL}" ]; then
+  log_err "Could not determine download URL for ${OS}/${ARCH}."
+  exit 1
+fi
+
+if [ "${DRY_RUN}" = true ]; then
+  echo "DRY RUN: verify asset reachable ${ASSET_URL}"
+elif ! verify_asset_reachable "${ASSET_URL}"; then
+  log_err "Asset URL is not reachable for ${OS}/${ARCH}: ${ASSET_URL}"
+  exit 4
+fi
+
+DOWNLOAD_PATH="${TMP_DIR}/${ASSET_NAME}"
+log_info "Downloading ${ASSET_NAME}"
+if [ "${DRY_RUN}" = true ]; then
+  echo "DRY RUN: curl -fL ${ASSET_URL} -o ${DOWNLOAD_PATH} (retrying with --http1.1 on failure)"
+else
+  curl_download_file "${ASSET_URL}" "${DOWNLOAD_PATH}"
+fi
+
+if [ -n "${ASSET_SHA256}" ]; then
+  if [ "${DRY_RUN}" = true ]; then
+    echo "DRY RUN: verify sha256 ${ASSET_SHA256} for ${DOWNLOAD_PATH}"
+  else
+    actual_sha256="$(compute_sha256 "${DOWNLOAD_PATH}" || true)"
+    if [ -z "${actual_sha256}" ]; then
+      log_warn "No checksum command available; skipping digest verification."
+    elif [ "${actual_sha256}" != "${ASSET_SHA256}" ]; then
+      log_err "SHA256 mismatch for ${ASSET_NAME}"
+      log_err "Expected: ${ASSET_SHA256}"
+      log_err "Actual:   ${actual_sha256}"
+      exit 1
+    else
+      log_ok "Integrity verified (sha256)"
+    fi
+  fi
+else
+  log_warn "No SHA256 digest available for ${ASSET_NAME}; skipping integrity verification."
+fi
 
 if [ "${OS}" = "darwin" ]; then
   install_macos

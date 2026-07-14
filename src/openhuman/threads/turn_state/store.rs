@@ -1,13 +1,27 @@
 //! Filesystem-backed snapshot store for [`super::types::TurnState`].
 //!
-//! One JSON file per thread under
-//! `<workspace>/memory/conversations/turn_states/<hex(thread_id)>.json`.
-//! Whole-file overwrite (latest snapshot wins). The presence of a file
-//! means the turn was non-terminal at last write.
+//! **Per-turn ring layout.** One JSON file per *turn* under a per-thread
+//! directory:
+//! `<workspace>/memory/conversations/turn_states/<hex(thread_id)>/<hex(request_id)>.json`.
+//! Each turn keeps its own snapshot so a multi-turn thread retains every turn's
+//! tool timeline (the "Agentic task insights" trail), not just the latest.
+//! Completed turns are pruned to the newest [`COMPLETED_RETENTION`] per thread so
+//! history stays bounded.
 //!
-//! Mutations are serialised through a single process-wide mutex so the
-//! progress consumer cannot interleave a flush against an RPC handler
-//! reading the same file.
+//! The `get(thread_id)` / `list()` / `delete(thread_id)` / `clear_all` /
+//! `mark_all_interrupted` surface is unchanged so existing callers (RPC layer,
+//! mirror, cold-boot) keep working: `get`/`list` resolve the *latest* turn per
+//! thread. New `get_turn(thread_id, request_id)` and `list_thread(thread_id)`
+//! expose the per-turn history.
+//!
+//! **Legacy migration.** Snapshots written by older cores live as flat files
+//! `turn_states/<hex(thread_id)>.json`. They are migrated in place — read once,
+//! rewritten under `<hex(thread_id)>/<hex(request_id)>.json`, and the flat file
+//! removed — on first access. Migration is idempotent.
+//!
+//! Mutations are serialised through a single process-wide mutex so the progress
+//! consumer cannot interleave a flush against an RPC handler reading the same
+//! file.
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -23,6 +37,10 @@ use super::types::{TurnLifecycle, TurnState};
 const LOG_PREFIX: &str = "[threads:turn_state]";
 const TURN_STATE_DIR: &str = "turn_states";
 const SNAPSHOT_EXTENSION: &str = "json";
+/// Newest completed turns retained per thread. Older completed turns are pruned
+/// on the next completed write so a long-lived thread's history stays bounded
+/// (mirrors the timeline registry's soft-cap philosophy — never unbounded).
+const COMPLETED_RETENTION: usize = 20;
 static TURN_STATE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Workspace-rooted handle that reads and writes per-thread turn snapshots.
@@ -36,11 +54,16 @@ impl TurnStateStore {
         Self { workspace_dir }
     }
 
-    /// Atomically overwrite the snapshot for `state.thread_id`.
+    /// Atomically write the snapshot for `state.request_id` under
+    /// `state.thread_id`. On a `Completed` write, prune the thread's completed
+    /// turns to the newest [`COMPLETED_RETENTION`].
     pub fn put(&self, state: &TurnState) -> Result<(), String> {
         let _guard = TURN_STATE_LOCK.lock();
-        let dir = self.ensure_dir()?;
-        let path = self.snapshot_path(&state.thread_id);
+        // Fold any pre-existing flat file for this thread into the per-turn
+        // layout first so the directory is the single source of truth.
+        self.migrate_thread_locked(&state.thread_id);
+        let dir = self.ensure_thread_dir(&state.thread_id)?;
+        let path = self.turn_path(&state.thread_id, &state.request_id);
         let mut tmp = NamedTempFile::new_in(&dir)
             .map_err(|e| format!("create turn-state tempfile in {}: {e}", dir.display()))?;
         let bytes =
@@ -52,89 +75,109 @@ impl TurnStateStore {
             .map_err(|e| format!("fsync turn-state tempfile: {e}"))?;
         tmp.persist(&path)
             .map_err(|e| format!("persist turn-state file {}: {e}", path.display()))?;
-        // Sync the directory entry created by the rename — without
-        // this a crash or power loss between persist() and the next
-        // fs flush can drop the snapshot, defeating the cold-boot
-        // recovery guarantee. Best-effort on platforms where opening
-        // a directory for sync is not supported (Windows). The fsync
-        // failure is logged but not fatal.
+        // Sync the directory entry created by the rename — without this a crash
+        // or power loss between persist() and the next fs flush can drop the
+        // snapshot, defeating the cold-boot recovery guarantee. Best-effort on
+        // platforms where opening a directory for sync is not supported.
         if let Err(err) = sync_dir(&dir) {
             log::warn!("{LOG_PREFIX} failed to fsync {}: {err}", dir.display());
         }
         debug!(
-            "{LOG_PREFIX} wrote snapshot thread={} lifecycle={:?} iter={}/{} timeline={}",
+            "{LOG_PREFIX} wrote snapshot thread={} request={} lifecycle={:?} iter={}/{} timeline={}",
             state.thread_id,
+            state.request_id,
             state.lifecycle,
             state.iteration,
             state.max_iterations,
             state.tool_timeline.len()
         );
+        if state.lifecycle == TurnLifecycle::Completed {
+            self.prune_completed_locked(&state.thread_id);
+        }
         Ok(())
     }
 
-    /// Return the snapshot for `thread_id`, or `None` if no file exists.
+    /// Return the latest turn for `thread_id`, or `None` if none exists.
+    /// "Latest" is the turn with the greatest `started_at` (ties broken by
+    /// `updated_at`) — the in-flight or most-recent turn.
     pub fn get(&self, thread_id: &str) -> Result<Option<TurnState>, String> {
         let _guard = TURN_STATE_LOCK.lock();
-        let path = self.snapshot_path(thread_id);
+        self.migrate_thread_locked(thread_id);
+        Ok(latest_turn(self.read_thread_turns(thread_id)?))
+    }
+
+    /// Return a specific turn by `request_id`, or `None` if absent.
+    pub fn get_turn(&self, thread_id: &str, request_id: &str) -> Result<Option<TurnState>, String> {
+        let _guard = TURN_STATE_LOCK.lock();
+        self.migrate_thread_locked(thread_id);
+        let path = self.turn_path(thread_id, request_id);
         if !path.exists() {
             return Ok(None);
         }
         read_snapshot(&path).map(Some)
     }
 
-    /// Delete the snapshot for `thread_id`. Returns `true` if a file was
-    /// removed, `false` if none existed.
+    /// Delete every turn for `thread_id` (and any legacy flat file). Returns
+    /// `true` if anything was removed.
     pub fn delete(&self, thread_id: &str) -> Result<bool, String> {
         let _guard = TURN_STATE_LOCK.lock();
-        let path = self.snapshot_path(thread_id);
-        if !path.exists() {
-            return Ok(false);
+        let mut removed = false;
+        let flat = self.legacy_flat_path(thread_id);
+        if flat.exists() {
+            fs::remove_file(&flat)
+                .map_err(|e| format!("remove legacy turn-state {}: {e}", flat.display()))?;
+            removed = true;
         }
-        fs::remove_file(&path)
-            .map_err(|e| format!("remove turn-state file {}: {e}", path.display()))?;
-        debug!("{LOG_PREFIX} deleted snapshot thread={}", thread_id);
-        Ok(true)
+        let dir = self.thread_dir(thread_id);
+        if dir.exists() {
+            fs::remove_dir_all(&dir)
+                .map_err(|e| format!("remove turn-state dir {}: {e}", dir.display()))?;
+            removed = true;
+        }
+        if removed {
+            debug!("{LOG_PREFIX} deleted snapshots thread={}", thread_id);
+        }
+        Ok(removed)
     }
 
-    /// List every persisted snapshot. Used by the UI to surface
-    /// interrupted turns on cold boot.
+    /// List the latest turn for every thread. Used by the UI on cold boot to
+    /// surface interrupted turns from a previous process (one entry per thread,
+    /// preserving the pre-ring-store contract).
     pub fn list(&self) -> Result<Vec<TurnState>, String> {
         let _guard = TURN_STATE_LOCK.lock();
+        self.migrate_all_legacy_locked();
         let dir = self.dir();
         if !dir.exists() {
             return Ok(Vec::new());
         }
         let mut snapshots = Vec::new();
-        for entry in
-            fs::read_dir(&dir).map_err(|e| format!("read turn-state dir {}: {e}", dir.display()))?
-        {
-            let entry = entry.map_err(|e| format!("read turn-state entry: {e}"))?;
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some(SNAPSHOT_EXTENSION) {
-                continue;
-            }
-            match read_snapshot(&path) {
-                Ok(snapshot) => snapshots.push(snapshot),
-                Err(err) => warn!(
-                    "{LOG_PREFIX} skip unreadable snapshot {}: {err}",
-                    path.display()
-                ),
+        for thread_id in self.thread_ids()? {
+            if let Some(latest) = latest_turn(self.read_thread_turns(&thread_id)?) {
+                snapshots.push(latest);
             }
         }
         Ok(snapshots)
     }
 
-    /// Remove every snapshot file in the turn-state directory,
-    /// regardless of whether the contents are readable. Used by
-    /// `threads_purge` to guarantee no stale or corrupted snapshot
-    /// survives a destructive cleanup — `list()` only returns parseable
-    /// snapshots, so iterating list+delete would silently leave
-    /// half-written or schema-skewed files behind.
-    ///
-    /// Returns the count of files removed. Failures on individual
-    /// entries propagate as the first error encountered (the rest of
-    /// the directory is not touched once an error occurs, so a retry
-    /// can pick up where this left off).
+    /// List every turn for one thread, newest first (by `started_at`).
+    pub fn list_thread(&self, thread_id: &str) -> Result<Vec<TurnState>, String> {
+        let _guard = TURN_STATE_LOCK.lock();
+        self.migrate_thread_locked(thread_id);
+        let mut turns = self.read_thread_turns(thread_id)?;
+        turns.sort_by(|a, b| {
+            b.started_at
+                .cmp(&a.started_at)
+                .then_with(|| b.updated_at.cmp(&a.updated_at))
+        });
+        Ok(turns)
+    }
+
+    /// Remove every snapshot file, readable or not (per-turn files, thread
+    /// directories, and any legacy flat files). Used by `threads_purge` to
+    /// guarantee a destructive cleanup leaves nothing — `list()` only returns
+    /// parseable snapshots, so iterating list+delete would silently leave
+    /// half-written or schema-skewed files behind. Returns the count of JSON
+    /// files removed.
     pub fn clear_all(&self) -> Result<usize, String> {
         let _guard = TURN_STATE_LOCK.lock();
         let dir = self.dir();
@@ -147,12 +190,32 @@ impl TurnStateStore {
         {
             let entry = entry.map_err(|e| format!("read turn-state entry: {e}"))?;
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some(SNAPSHOT_EXTENSION) {
-                continue;
+            let file_type = entry
+                .file_type()
+                .map_err(|e| format!("stat turn-state entry {}: {e}", path.display()))?;
+            if file_type.is_dir() {
+                // A per-thread directory: count and remove its JSON files, then
+                // drop the (now empty) directory.
+                for sub in fs::read_dir(&path)
+                    .map_err(|e| format!("read thread dir {}: {e}", path.display()))?
+                {
+                    let sub = sub.map_err(|e| format!("read thread entry: {e}"))?;
+                    let sub_path = sub.path();
+                    if sub_path.extension().and_then(|s| s.to_str()) == Some(SNAPSHOT_EXTENSION) {
+                        fs::remove_file(&sub_path).map_err(|e| {
+                            format!("remove turn-state file {}: {e}", sub_path.display())
+                        })?;
+                        removed += 1;
+                    }
+                }
+                fs::remove_dir_all(&path)
+                    .map_err(|e| format!("remove thread dir {}: {e}", path.display()))?;
+            } else if path.extension().and_then(|s| s.to_str()) == Some(SNAPSHOT_EXTENSION) {
+                // A legacy flat snapshot.
+                fs::remove_file(&path)
+                    .map_err(|e| format!("remove turn-state file {}: {e}", path.display()))?;
+                removed += 1;
             }
-            fs::remove_file(&path)
-                .map_err(|e| format!("remove turn-state file {}: {e}", path.display()))?;
-            removed += 1;
         }
         if removed > 0 {
             debug!(
@@ -163,17 +226,19 @@ impl TurnStateStore {
         Ok(removed)
     }
 
-    /// Mark every persisted snapshot as `Interrupted`. Intended to be
-    /// invoked from the web-channel provider on startup so the UI can
-    /// distinguish stale turns left behind by a previous process from
-    /// turns that are currently being driven in this session.
+    /// Mark every non-terminal turn as `Interrupted`. Intended to run on startup
+    /// so the UI can distinguish stale turns left behind by a previous process
+    /// from turns currently being driven. `Completed`/`Interrupted` turns are
+    /// left as-is (idempotent; completed turns are intentionally kept so the
+    /// processing panel can replay a finished turn after a reboot).
     pub fn mark_all_interrupted(&self, now_rfc3339: &str) -> Result<usize, String> {
-        let snapshots = self.list()?;
+        let turns = {
+            let _guard = TURN_STATE_LOCK.lock();
+            self.migrate_all_legacy_locked();
+            self.all_turns_locked()?
+        };
         let mut count = 0usize;
-        for mut snapshot in snapshots {
-            // Already-terminal snapshots are left as-is: `Interrupted` is
-            // idempotent, and `Completed` snapshots are intentionally kept so
-            // the processing panel can replay a finished turn after a reboot.
+        for mut snapshot in turns {
             if matches!(
                 snapshot.lifecycle,
                 TurnLifecycle::Interrupted | TurnLifecycle::Completed
@@ -193,10 +258,12 @@ impl TurnStateStore {
         Ok(count)
     }
 
-    fn ensure_dir(&self) -> Result<PathBuf, String> {
-        let dir = self.dir();
+    // --- internals -------------------------------------------------------
+
+    fn ensure_thread_dir(&self, thread_id: &str) -> Result<PathBuf, String> {
+        let dir = self.thread_dir(thread_id);
         fs::create_dir_all(&dir)
-            .map_err(|e| format!("create turn-state dir {}: {e}", dir.display()))?;
+            .map_err(|e| format!("create thread turn-state dir {}: {e}", dir.display()))?;
         Ok(dir)
     }
 
@@ -207,19 +274,234 @@ impl TurnStateStore {
             .join(TURN_STATE_DIR)
     }
 
-    fn snapshot_path(&self, thread_id: &str) -> PathBuf {
+    fn thread_dir(&self, thread_id: &str) -> PathBuf {
+        self.dir().join(hex::encode(thread_id.as_bytes()))
+    }
+
+    fn turn_path(&self, thread_id: &str, request_id: &str) -> PathBuf {
+        self.thread_dir(thread_id).join(format!(
+            "{}.{}",
+            hex::encode(request_id.as_bytes()),
+            SNAPSHOT_EXTENSION
+        ))
+    }
+
+    fn legacy_flat_path(&self, thread_id: &str) -> PathBuf {
         self.dir().join(format!(
             "{}.{}",
             hex::encode(thread_id.as_bytes()),
             SNAPSHOT_EXTENSION
         ))
     }
+
+    /// Read every parseable turn snapshot in one thread's directory.
+    /// Unreadable files are logged and skipped (mirrors `list()`'s resilience).
+    fn read_thread_turns(&self, thread_id: &str) -> Result<Vec<TurnState>, String> {
+        let dir = self.thread_dir(thread_id);
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut turns = Vec::new();
+        for entry in fs::read_dir(&dir)
+            .map_err(|e| format!("read thread turn-state dir {}: {e}", dir.display()))?
+        {
+            let entry = entry.map_err(|e| format!("read thread turn-state entry: {e}"))?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some(SNAPSHOT_EXTENSION) {
+                continue;
+            }
+            match read_snapshot(&path) {
+                Ok(snapshot) => turns.push(snapshot),
+                Err(err) => warn!(
+                    "{LOG_PREFIX} skip unreadable snapshot {}: {err}",
+                    path.display()
+                ),
+            }
+        }
+        Ok(turns)
+    }
+
+    /// hex(thread_id) directory names under the root, decoded back to the
+    /// thread-id string. Skips legacy flat files (handled by migration).
+    fn thread_ids(&self) -> Result<Vec<String>, String> {
+        let dir = self.dir();
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut ids = Vec::new();
+        for entry in
+            fs::read_dir(&dir).map_err(|e| format!("read turn-state dir {}: {e}", dir.display()))?
+        {
+            let entry = entry.map_err(|e| format!("read turn-state entry: {e}"))?;
+            if !entry
+                .file_type()
+                .map_err(|e| format!("stat turn-state entry: {e}"))?
+                .is_dir()
+            {
+                continue;
+            }
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            match hex::decode(name)
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+            {
+                Some(thread_id) => ids.push(thread_id),
+                None => warn!("{LOG_PREFIX} skip non-hex thread dir {name}"),
+            }
+        }
+        Ok(ids)
+    }
+
+    /// Every turn across every thread. Caller holds the lock.
+    fn all_turns_locked(&self) -> Result<Vec<TurnState>, String> {
+        let mut turns = Vec::new();
+        for thread_id in self.thread_ids()? {
+            turns.append(&mut self.read_thread_turns(&thread_id)?);
+        }
+        Ok(turns)
+    }
+
+    /// If a legacy flat file exists for `thread_id`, fold it into the per-turn
+    /// layout and remove the flat file. Best-effort; failures are logged. Caller
+    /// holds the lock.
+    fn migrate_thread_locked(&self, thread_id: &str) {
+        let flat = self.legacy_flat_path(thread_id);
+        if !flat.exists() {
+            return;
+        }
+        match read_snapshot(&flat) {
+            Ok(state) => {
+                if let Err(err) = self.write_turn_file(&state) {
+                    warn!(
+                        "{LOG_PREFIX} legacy migrate write failed thread={thread_id}: {err} (flat file kept)"
+                    );
+                    return;
+                }
+                if let Err(err) = fs::remove_file(&flat) {
+                    warn!(
+                        "{LOG_PREFIX} legacy migrate: removed-into-dir but flat delete failed {}: {err}",
+                        flat.display()
+                    );
+                } else {
+                    debug!(
+                        "{LOG_PREFIX} migrated legacy snapshot thread={thread_id} request={}",
+                        state.request_id
+                    );
+                }
+            }
+            Err(err) => warn!(
+                "{LOG_PREFIX} legacy migrate: unreadable flat file {} left in place: {err}",
+                flat.display()
+            ),
+        }
+    }
+
+    /// Migrate every legacy flat file under the root. Caller holds the lock.
+    fn migrate_all_legacy_locked(&self) {
+        let dir = self.dir();
+        if !dir.exists() {
+            return;
+        }
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                warn!("{LOG_PREFIX} migrate scan failed {}: {err}", dir.display());
+                return;
+            }
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some(SNAPSHOT_EXTENSION) {
+                continue; // directories and non-json files
+            }
+            match read_snapshot(&path) {
+                Ok(state) => {
+                    if self.write_turn_file(&state).is_ok() {
+                        let _ = fs::remove_file(&path);
+                        debug!(
+                            "{LOG_PREFIX} migrated legacy snapshot thread={} request={}",
+                            state.thread_id, state.request_id
+                        );
+                    }
+                }
+                Err(err) => warn!(
+                    "{LOG_PREFIX} migrate: unreadable flat file {} left in place: {err}",
+                    path.display()
+                ),
+            }
+        }
+    }
+
+    /// Atomic per-turn write without migration/retention side effects. Used by
+    /// migration to relocate a snapshot. Caller holds the lock.
+    fn write_turn_file(&self, state: &TurnState) -> Result<(), String> {
+        let dir = self.ensure_thread_dir(&state.thread_id)?;
+        let path = self.turn_path(&state.thread_id, &state.request_id);
+        let mut tmp = NamedTempFile::new_in(&dir)
+            .map_err(|e| format!("create turn-state tempfile in {}: {e}", dir.display()))?;
+        let bytes =
+            serde_json::to_vec_pretty(state).map_err(|e| format!("serialize turn state: {e}"))?;
+        tmp.write_all(&bytes)
+            .map_err(|e| format!("write turn-state tempfile: {e}"))?;
+        tmp.as_file()
+            .sync_all()
+            .map_err(|e| format!("fsync turn-state tempfile: {e}"))?;
+        tmp.persist(&path)
+            .map_err(|e| format!("persist turn-state file {}: {e}", path.display()))?;
+        if let Err(err) = sync_dir(&dir) {
+            log::warn!("{LOG_PREFIX} failed to fsync {}: {err}", dir.display());
+        }
+        Ok(())
+    }
+
+    /// Prune a thread's `Completed` turns to the newest [`COMPLETED_RETENTION`]
+    /// by `updated_at`. Non-completed turns (at most the one live turn) are kept.
+    /// Caller holds the lock. Best-effort — failures are logged, not fatal.
+    fn prune_completed_locked(&self, thread_id: &str) {
+        let turns = match self.read_thread_turns(thread_id) {
+            Ok(turns) => turns,
+            Err(err) => {
+                warn!("{LOG_PREFIX} prune read failed thread={thread_id}: {err}");
+                return;
+            }
+        };
+        let mut completed: Vec<TurnState> = turns
+            .into_iter()
+            .filter(|t| t.lifecycle == TurnLifecycle::Completed)
+            .collect();
+        if completed.len() <= COMPLETED_RETENTION {
+            return;
+        }
+        // Newest first, then drop everything past the retention window.
+        completed.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        for stale in completed.into_iter().skip(COMPLETED_RETENTION) {
+            let path = self.turn_path(&stale.thread_id, &stale.request_id);
+            if let Err(err) = fs::remove_file(&path) {
+                warn!("{LOG_PREFIX} prune remove failed {}: {err}", path.display());
+            } else {
+                debug!(
+                    "{LOG_PREFIX} pruned completed turn thread={thread_id} request={}",
+                    stale.request_id
+                );
+            }
+        }
+    }
 }
 
-/// Best-effort `fsync` of a directory entry. On Unix, opens the
-/// directory for read and calls `sync_all` on the file handle. On
-/// Windows this is a no-op — directory fsync is not exposed by the
-/// platform and the rename's durability is provided by NTFS journaling.
+/// Pick the latest turn (greatest `started_at`, ties broken by `updated_at`).
+fn latest_turn(turns: Vec<TurnState>) -> Option<TurnState> {
+    turns.into_iter().max_by(|a, b| {
+        a.started_at
+            .cmp(&b.started_at)
+            .then_with(|| a.updated_at.cmp(&b.updated_at))
+    })
+}
+
+/// Best-effort `fsync` of a directory entry. On Unix, opens the directory for
+/// read and calls `sync_all` on the file handle. On Windows this is a no-op —
+/// directory fsync is not exposed by the platform and the rename's durability is
+/// provided by NTFS journaling.
 #[cfg(unix)]
 fn sync_dir(dir: &Path) -> std::io::Result<()> {
     File::open(dir)?.sync_all()
@@ -250,12 +532,24 @@ pub fn get(workspace_dir: PathBuf, thread_id: &str) -> Result<Option<TurnState>,
     TurnStateStore::new(workspace_dir).get(thread_id)
 }
 
+pub fn get_turn(
+    workspace_dir: PathBuf,
+    thread_id: &str,
+    request_id: &str,
+) -> Result<Option<TurnState>, String> {
+    TurnStateStore::new(workspace_dir).get_turn(thread_id, request_id)
+}
+
 pub fn delete(workspace_dir: PathBuf, thread_id: &str) -> Result<bool, String> {
     TurnStateStore::new(workspace_dir).delete(thread_id)
 }
 
 pub fn list(workspace_dir: PathBuf) -> Result<Vec<TurnState>, String> {
     TurnStateStore::new(workspace_dir).list()
+}
+
+pub fn list_thread(workspace_dir: PathBuf, thread_id: &str) -> Result<Vec<TurnState>, String> {
+    TurnStateStore::new(workspace_dir).list_thread(thread_id)
 }
 
 pub fn clear_all(workspace_dir: PathBuf) -> Result<usize, String> {

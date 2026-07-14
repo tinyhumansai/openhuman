@@ -49,13 +49,13 @@ pub mod inject;
 
 /// Idle mascot SVG (calm, eyes-forward). Rasterized into the canvas
 /// during the bridge's `ready` promise.
-const MASCOT_IDLE_SVG: &str = include_str!("../../../../remotion/public/idelMascot.svg");
+const MASCOT_IDLE_SVG: &str = include_str!("idelMascot.svg");
 
 /// Thinking mascot SVG (book-reading pose) — toggled in/out as the
 /// agent's "thinking" state. Picked over `Cupholding`/`syicsmile` for
 /// the most legible mood difference; revisit when phase 2 swaps the
 /// static SVG for a live Remotion-driven OSR feed.
-const MASCOT_THINKING_SVG: &str = include_str!("../../../../remotion/public/Bookreading.svg");
+const MASCOT_THINKING_SVG: &str = include_str!("Bookreading.svg");
 
 /// Bridge JS template. Two `__OPENHUMAN_MASCOT_*_DATAURI__` tokens are
 /// substituted at install time with base64'd SVG data URIs.

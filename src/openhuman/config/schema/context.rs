@@ -27,10 +27,8 @@ pub struct ContextConfig {
     #[serde(default = "default_true")]
     pub microcompact_enabled: bool,
 
-    /// Enable stage 4 (autocompact) — dispatch the summarizer when
-    /// microcompact cannot free enough tokens. Disabling this makes the
-    /// pipeline return `PipelineOutcome::NoOp` at the soft threshold and
-    /// trust the caller to surface the situation via the guard.
+    /// Enable stage 4 (autocompact) — install the TinyAgents summarization
+    /// middleware when the transcript approaches the model context window.
     #[serde(default = "default_true")]
     pub autocompact_enabled: bool,
 
@@ -40,7 +38,7 @@ pub struct ContextConfig {
     pub microcompact_keep_recent: usize,
 
     /// Maximum byte length of a single tool-result body before the
-    /// context pipeline's tool-result budget stage truncates it.
+    /// TinyAgents tool-output middleware budget stage truncates it.
     /// `0` disables the cap. Applied inline at tool-execution time
     /// before the result enters history, so it is cache-safe.
     ///
@@ -83,7 +81,7 @@ pub struct ContextConfig {
     )]
     pub summarizer_max_payload_tokens: usize,
 
-    /// Session-memory extraction thresholds (stage 5 of the pipeline).
+    /// Session-memory extraction thresholds.
     #[serde(default)]
     pub session_memory: SessionMemoryConfig,
 
@@ -130,11 +128,11 @@ pub struct ContextConfig {
     ///
     /// Read once at session/thread construction, so toggling it only
     /// affects threads started afterwards (the value is baked into the
-    /// frozen turn-1 context). Default: `true`. Env override:
-    /// `OPENHUMAN_SUPER_CONTEXT` (set to `0` to opt out). Surfaced in the
-    /// UI as the "super context" toggle next to the chat composer's
-    /// Quick/Reasoning mode switch, shown only on a fresh thread.
-    #[serde(default = "default_true")]
+    /// frozen turn-1 context). Default: `false` — it's an expensive pass, so
+    /// it's opt-in. Env override: `OPENHUMAN_SUPER_CONTEXT` (set to `1` to opt
+    /// in). Surfaced in the UI as the "super context" toggle next to the chat
+    /// composer's Quick/Reasoning mode switch, shown only on a fresh thread.
+    #[serde(default = "default_false")]
     pub super_context_enabled: bool,
 }
 
@@ -144,6 +142,10 @@ fn default_enabled() -> bool {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_false() -> bool {
+    false
 }
 
 fn default_microcompact_keep_recent() -> usize {
@@ -180,7 +182,7 @@ impl Default for ContextConfig {
             summarizer_model: None,
             prefer_markdown_tool_output: default_true(),
             compaction_enabled: default_true(),
-            super_context_enabled: default_true(),
+            super_context_enabled: default_false(),
         }
     }
 }

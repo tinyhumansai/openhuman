@@ -116,6 +116,37 @@ async fn local_used_when_healthy_and_lightweight() {
 }
 
 #[tokio::test]
+async fn records_local_route_for_lightweight_task() {
+    let local = MockProvider::new("local", "Great reaction!");
+    let remote = MockProvider::new("remote", "remote-resp");
+    let health = LocalHealthChecker::seeded(true);
+
+    let r = router(
+        Arc::clone(&local),
+        Arc::clone(&remote),
+        health,
+        RoutingHints::default(),
+    );
+
+    let recorded =
+        crate::openhuman::inference::provider::with_resolved_provider_route_scope(async {
+            let result = r
+                .chat_with_system(None, "React to this", "hint:reaction", 0.7)
+                .await
+                .unwrap();
+            assert_eq!(result, "Great reaction!");
+            crate::openhuman::inference::provider::current_resolved_provider_route()
+        })
+        .await
+        .expect("intelligent routing should record the selected local route");
+
+    assert_eq!(recorded.provider, "local");
+    assert_eq!(recorded.model, "gemma3:4b-it-qat");
+    assert_eq!(local.calls(), 1);
+    assert_eq!(remote.calls(), 0);
+}
+
+#[tokio::test]
 async fn medium_without_hints_uses_remote() {
     let local = MockProvider::new("local", "Here is a summary.");
     let remote = MockProvider::new("remote", "remote-resp");

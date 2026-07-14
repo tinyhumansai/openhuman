@@ -5,9 +5,7 @@
 //! in the order it wants — so the output IS what the LLM sees, no
 //! post-processing in the runner.
 
-use crate::openhuman::context::prompt::{
-    render_tools, render_user_files, render_workspace, PromptContext,
-};
+use crate::openhuman::context::prompt::{render_tools, render_user_files, PromptContext};
 use anyhow::Result;
 
 const ARCHETYPE: &str = include_str!("prompt.md");
@@ -27,12 +25,6 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     if !tools.trim().is_empty() {
         out.push_str(tools.trim_end());
         out.push_str("\n\n");
-    }
-
-    let workspace = render_workspace(ctx)?;
-    if !workspace.trim().is_empty() {
-        out.push_str(workspace.trim_end());
-        out.push('\n');
     }
 
     Ok(out)
@@ -69,5 +61,9 @@ mod tests {
         };
         let body = build(&ctx).unwrap();
         assert!(!body.is_empty());
+        assert!(
+            !body.contains("file_read") && !body.contains("file_write"),
+            "researcher must not advertise workspace tools outside its search+fetch allowlist"
+        );
     }
 }

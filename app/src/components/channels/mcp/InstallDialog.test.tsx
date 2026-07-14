@@ -62,8 +62,30 @@ describe('InstallDialog', () => {
       expect(screen.getByText('Test Server')).toBeInTheDocument();
     });
     expect(screen.getByText('A test server')).toBeInTheDocument();
-    expect(screen.getByText('Requires configuration')).toBeInTheDocument();
-    expect(screen.getByText('Runs locally')).toBeInTheDocument();
+    // Transport badge uses the same Stdio/Hosted vocabulary as the catalog list
+    // (the old separate "Cloud hosted"/"Requires configuration" pills were
+    // dropped — the env-vars section below already conveys configuration).
+    // Derived from the connection type (stdio here), NOT the detail DTO's
+    // absent `is_deployed`.
+    expect(screen.getByText('Stdio')).toBeInTheDocument();
+  });
+
+  it('labels a server with an http connection as Hosted', async () => {
+    mockRegistryGet.mockResolvedValue({
+      ...DETAIL,
+      qualified_name: 'acme/hosted-server',
+      display_name: 'Hosted Server',
+      connections: [{ type: 'http', deployment_url: 'https://x.example/mcp', published: true }],
+    });
+    render(
+      <InstallDialog qualifiedName="acme/hosted-server" onSuccess={() => {}} onCancel={() => {}} />
+    );
+
+    await waitFor(() => expect(screen.getByText('Hosted Server')).toBeInTheDocument());
+    // The detail DTO carries no `is_deployed`; the badge must derive from the
+    // http connection (this regressed to always-"Stdio" before the fix).
+    expect(screen.getByText('Hosted')).toBeInTheDocument();
+    expect(screen.queryByText('Stdio')).not.toBeInTheDocument();
   });
 
   it('shows env key preview badges on detail step', async () => {

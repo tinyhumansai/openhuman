@@ -3,7 +3,7 @@
  * ----------------
  *
  * Centered white modal that scaffolds a new SKILL.md skill via the
- * `openhuman.workflows_create` JSON-RPC method. Matches the settings-modal
+ * `openhuman.skills_create` JSON-RPC method. Matches the settings-modal
  * design rules (clean white, 520px desktop, 16px radius, backdrop + blur,
  * Escape/click-out to close, focus capture) — see
  * `.claude/rules/15-settings-modal-system.md`.
@@ -20,7 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import { type WorkflowSummary } from '../../services/api/workflowsApi';
+import { type WorkflowSummary } from '../../services/api/skillsApi';
 import Button from '../ui/Button';
 import CreateWorkflowForm from './CreateWorkflowForm';
 

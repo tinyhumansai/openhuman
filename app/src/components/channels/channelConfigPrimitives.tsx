@@ -101,7 +101,13 @@ export function ChannelAuthFields({
           <ChannelFieldInput
             key={field.key}
             field={mapped}
-            value={fieldValues[compositeKey]?.[field.key] ?? ''}
+            value={
+              fieldValues[compositeKey]?.[field.key] ??
+              // Seed a boolean's checkbox from its declared default so the
+              // visible state matches what persists when left untouched
+              // (e.g. smtp_tls defaults on). Non-booleans default to blank.
+              (field.field_type === 'boolean' ? String(field.default_bool ?? false) : '')
+            }
             onChange={val => onChange(compositeKey, field.key, val)}
             disabled={disabled}
           />

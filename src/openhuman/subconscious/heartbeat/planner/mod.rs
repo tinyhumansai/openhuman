@@ -44,7 +44,8 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
 
     if !(config.heartbeat.notify_meetings
         || config.heartbeat.notify_reminders
-        || config.heartbeat.notify_relevant_events)
+        || config.heartbeat.notify_relevant_events
+        || config.meet.watch_calendar)
     {
         tracing::debug!("[heartbeat:planner] all categories disabled; skipping tick");
         return summary;
@@ -56,7 +57,10 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
         events.extend(collect_cron_reminders(config, now));
     }
 
-    if config.heartbeat.notify_meetings {
+    // Calendar collection drives BOTH meeting reminder cards (notify_meetings)
+    // and calendar auto-join / ask prompts (meet.watch_calendar). Poll when
+    // either is on; the per-event handling below decides what to surface.
+    if config.heartbeat.notify_meetings || config.meet.watch_calendar {
         events.extend(collect_calendar_meetings(config, now).await);
     }
 
@@ -161,6 +165,9 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
                         // candidate handler resolves the reply anchor from the
                         // signed-in account identity.
                         None,
+                        // Pass the stable source event id so the per-event policy
+                        // tier can apply overrides set via meet_set_event_policy.
+                        Some(event.source_event_id.clone()),
                     )
                     .await;
                 if owns_notification {
@@ -183,6 +190,20 @@ pub async fn evaluate_and_dispatch(config: &Config, now: DateTime<Utc>) -> Plann
                     "[heartbeat:planner] imminent meeting has no join URL; auto-join skipped"
                 );
             }
+        }
+
+        // Watch-calendar-only mode: the calendar was polled solely to drive
+        // auto-join / ask (handled above). The user has NOT enabled meeting
+        // reminders, so don't emit the plain reminder card for meetings.
+        if event.category == types::HeartbeatCategory::Meetings && !config.heartbeat.notify_meetings
+        {
+            tracing::debug!(
+                source = %event.source,
+                source_event_id = %event.source_event_id,
+                "[heartbeat:planner] watch_calendar-only; suppressing plain meeting reminder card"
+            );
+            summary.deliveries_sent += 1;
+            continue;
         }
 
         publish_core_notification(CoreNotificationEvent {

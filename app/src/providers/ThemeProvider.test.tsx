@@ -19,6 +19,21 @@ describe('<ThemeProvider />', () => {
     }
   );
 
+  it('applies a fine-tuned custom px size over the preset (issue #4246)', () => {
+    renderWithProviders(
+      <ThemeProvider>
+        <span>child</span>
+      </ThemeProvider>,
+      {
+        preloadedState: {
+          theme: { mode: 'light', tabBarLabels: 'hover', fontSize: 'medium', customFontSizePx: 23 },
+        },
+      }
+    );
+
+    expect(document.documentElement.style.fontSize).toBe('23px');
+  });
+
   it('renders its children', () => {
     const { getByText } = renderWithProviders(
       <ThemeProvider>

@@ -25,7 +25,7 @@ How you plan to solve it — scope (core / app / both), approach, tradeoffs. Ski
 - [ ] **Feature 1** — TODO
 - [ ] **Feature 2** — TODO
 - [ ] **Feature 3** — TODO
-- [ ] **Diff coverage ≥ 80%** — the implementing PR meets the changed-lines coverage gate (Vitest + cargo-llvm-cov, enforced by [`.github/workflows/pr-ci.yml`](../../.github/workflows/pr-ci.yml)).
+- [ ] **Diff coverage ≥ 80%** — the implementing PR meets the changed-lines coverage gate (Vitest + cargo-llvm-cov, enforced by [`.github/workflows/ci-lite.yml`](../../.github/workflows/ci-lite.yml)).
 
 - …
 

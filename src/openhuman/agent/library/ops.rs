@@ -143,6 +143,7 @@ mod tests {
             max_iterations: 8,
             iteration_policy: Default::default(),
             max_result_chars: None,
+            max_turn_output_tokens: None,
             timeout_secs: None,
             sandbox_mode: SandboxMode::ReadOnly,
             background: false,
@@ -157,6 +158,7 @@ mod tests {
             delegate_name: None,
             agent_tier: AgentTier::Worker,
             source: DefinitionSource::Builtin,
+            graph: Default::default(),
         }
     }
 

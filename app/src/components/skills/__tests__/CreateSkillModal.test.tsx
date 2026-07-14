@@ -6,7 +6,7 @@
  * - Escape key closes (but not while submitting).
  * - Backdrop click closes (but not while submitting).
  * - Submit is disabled when name or description is empty.
- * - Submit rekeys `allowedTools` → `'allowed-tools'` via workflowsApi.createWorkflow.
+ * - Submit rekeys `allowedTools` → `'allowed-tools'` via skillsApi.createWorkflow.
  * - Submit calls `onCreated` with the returned skill.
  * - Submit failure surfaces an error banner and re-enables the button.
  * - Slug preview updates as the name changes.
@@ -14,11 +14,11 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { WorkflowSummary } from '../../../services/api/workflowsApi';
+import type { WorkflowSummary } from '../../../services/api/skillsApi';
 import CreateSkillModal from '../CreateSkillModal';
 
-vi.mock('../../../services/api/workflowsApi', () => ({
-  workflowsApi: {
+vi.mock('../../../services/api/skillsApi', () => ({
+  skillsApi: {
     createWorkflow: vi.fn(),
     updateWorkflow: vi.fn(),
     describeWorkflow: vi
@@ -51,8 +51,8 @@ function builtSkill(overrides: Partial<WorkflowSummary> = {}): WorkflowSummary {
 
 describe('CreateSkillModal', () => {
   beforeEach(async () => {
-    const { workflowsApi } = await import('../../../services/api/workflowsApi');
-    vi.mocked(workflowsApi.createWorkflow).mockReset();
+    const { skillsApi } = await import('../../../services/api/skillsApi');
+    vi.mocked(skillsApi.createWorkflow).mockReset();
   });
 
   it('renders title and required fields', () => {
@@ -96,13 +96,13 @@ describe('CreateSkillModal', () => {
     // form is now Name + Description + the `[[inputs]]` editor only — see
     // ScheduledCronCard / CreateWorkflowForm.tsx), so the inputs are no longer
     // collectable from the modal UI. The rekey itself still happens in
-    // `workflowsApi.createWorkflow` (services/api/workflowsApi.ts → params build) and
-    // is covered by the workflowsApi unit tests; this test now just guards the
+    // `skillsApi.createWorkflow` (services/api/skillsApi.ts → params build) and
+    // is covered by the skillsApi unit tests; this test now just guards the
     // modal's submit-pipeline shape: name + description → createWorkflow →
     // onCreated.
-    const { workflowsApi } = await import('../../../services/api/workflowsApi');
+    const { skillsApi } = await import('../../../services/api/skillsApi');
     const created = builtSkill();
-    vi.mocked(workflowsApi.createWorkflow).mockResolvedValueOnce(created);
+    vi.mocked(skillsApi.createWorkflow).mockResolvedValueOnce(created);
 
     const onCreated = vi.fn();
     const onClose = vi.fn();
@@ -116,15 +116,15 @@ describe('CreateSkillModal', () => {
       fireEvent.click(submit);
     });
 
-    expect(vi.mocked(workflowsApi.createWorkflow)).toHaveBeenCalledWith(
+    expect(vi.mocked(skillsApi.createWorkflow)).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'My Skill', description: 'does stuff', scope: 'user' })
     );
     expect(onCreated).toHaveBeenCalledWith(created);
   });
 
   it('surfaces error and re-enables submit on failure', async () => {
-    const { workflowsApi } = await import('../../../services/api/workflowsApi');
-    vi.mocked(workflowsApi.createWorkflow).mockRejectedValueOnce(new Error('slug already exists'));
+    const { skillsApi } = await import('../../../services/api/skillsApi');
+    vi.mocked(skillsApi.createWorkflow).mockRejectedValueOnce(new Error('slug already exists'));
 
     render(<CreateSkillModal onClose={vi.fn()} onCreated={vi.fn()} />);
     fireEvent.change(screen.getByLabelText(/Name/), { target: { value: 'dup' } });

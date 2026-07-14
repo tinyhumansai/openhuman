@@ -44,10 +44,10 @@ pub async fn tree_summarizer_run(
 ) -> Result<RpcOutcome<Value>, String> {
     store::validate_namespace(namespace)?;
 
-    let (provider, model) = create_provider(config)?;
+    let (provider, _model) = create_provider(config)?;
     let ts = Utc::now();
 
-    match engine::run_summarization(config, provider.as_ref(), &model, namespace.trim(), ts).await {
+    match engine::run_summarization(config, provider.as_ref(), namespace.trim(), ts).await {
         Ok(Some(node)) => Ok(RpcOutcome::single_log(
             serde_json::to_value(&node).map_err(|e| e.to_string())?,
             format!(
@@ -126,9 +126,9 @@ pub async fn tree_summarizer_rebuild(
 ) -> Result<RpcOutcome<Value>, String> {
     store::validate_namespace(namespace)?;
 
-    let (provider, model) = create_provider(config)?;
+    let (provider, _model) = create_provider(config)?;
 
-    let status = engine::rebuild_tree(config, provider.as_ref(), &model, namespace.trim())
+    let status = engine::rebuild_tree(config, provider.as_ref(), namespace.trim())
         .await
         .map_err(|e| format!("rebuild failed: {e:#}"))?;
 
@@ -161,32 +161,48 @@ pub async fn tree_summarizer_rebuild(
 ///    explicitly acknowledged that memory summaries will be sent to an
 ///    external provider.
 /// 3. Error otherwise — "Build Summary Trees" is local-only by default;
-///    the user must opt in to cloud summarization in Settings → AI → Memory.
+///    the user must opt in to cloud summarization via the
+///    `memory_tree.cloud_summarization_opt_in` setting.
 fn create_provider(
     config: &Config,
 ) -> Result<
     (
-        Box<dyn crate::openhuman::inference::provider::traits::Provider>,
+        std::sync::Arc<dyn tinyagents::harness::model::ChatModel<()>>,
         String,
     ),
     String,
 > {
+    // The summarizer applies its own temperature per request
+    // (`SUMMARIZATION_TEMP` in `engine`), so the construction temperature here is
+    // just a default the per-call value overrides.
     if config.local_ai.runtime_enabled {
-        // Local path: Ollama + the user's local chat model.
-        let provider = create_local_ai_provider(config)?;
-        return Ok((provider, config.local_ai.chat_model_id.clone()));
+        let model = config.local_ai.chat_model_id.clone();
+        let provider_string = format!("ollama:{model}");
+        tracing::debug!(
+            model = %model,
+            "[tree_summarizer] building crate-native local Ollama model"
+        );
+        return crate::openhuman::inference::provider::factory::create_local_chat_model_from_string(
+            &provider_string,
+            config,
+        )
+        .map_err(|e| format!("tree summarizer: failed to build local model: {e:#}"));
     }
 
     if !config.memory_tree.cloud_summarization_opt_in {
-        return Err("no summarization provider — enable local AI, or enable \
-             cloud summarization in Settings → AI → Memory"
+        return Err("no summarization provider — enable local AI, or opt in to \
+             cloud summarization via the memory_tree.cloud_summarization_opt_in setting"
             .to_string());
     }
 
     // Cloud path — user has explicitly opted in. Build the configured
     // provider for the summarization role (`memory_provider` hint).
-    crate::openhuman::inference::provider::factory::create_chat_provider("summarization", config)
-        .map_err(|e| format!("tree summarizer: failed to build cloud provider: {e:#}"))
+    crate::openhuman::inference::provider::create_chat_model_with_model_id(
+        "summarization",
+        config,
+        config.default_temperature,
+    )
+    .map_err(|e| format!("tree summarizer: failed to build cloud provider: {e:#}"))
 }
 
 /// Whether a summarization provider can be resolved for "Build Summary Trees"
@@ -199,7 +215,7 @@ fn create_provider(
 ///   available iff the configured summarization-role provider resolves.
 /// - local AI off + opt-in `false` (default) ⇒ unavailable — explicit
 ///   consent required before routing workspace memory summaries to a cloud
-///   provider. Enable in Settings → AI → Memory.
+///   provider. Enable via the `memory_tree.cloud_summarization_opt_in` setting.
 ///
 /// The provider built for the `Ok` check is dropped — construction is cheap
 /// (no network) and confirming by build beats guessing.
@@ -216,45 +232,9 @@ pub fn summarizer_available(config: &Config) -> (bool, &'static str) {
         ),
         Err(_) => (
             false,
-            "no summarization provider available — enable local AI or configure a cloud provider in Settings → AI",
+            "no summarization provider available — enable local AI, or opt in to cloud summarization (memory_tree.cloud_summarization_opt_in) with a provider set in Connections → API keys → LLM",
         ),
     }
-}
-
-/// Create a provider backed by the local Ollama instance for summarization,
-/// wrapped in `ReliableProvider` for retry/backoff on transient failures.
-fn create_local_ai_provider(
-    config: &Config,
-) -> Result<Box<dyn crate::openhuman::inference::provider::traits::Provider>, String> {
-    use crate::openhuman::inference::local::OLLAMA_BASE_URL;
-    use crate::openhuman::inference::provider::compatible::{AuthStyle, OpenAiCompatibleProvider};
-    use crate::openhuman::inference::provider::reliable::ReliableProvider;
-
-    let base_url = format!("{}/v1", OLLAMA_BASE_URL);
-    let inner = OpenAiCompatibleProvider::new_no_responses_fallback(
-        "ollama-local",
-        &base_url,
-        None,
-        AuthStyle::None,
-    );
-
-    let providers: Vec<(
-        String,
-        Box<dyn crate::openhuman::inference::provider::traits::Provider>,
-    )> = vec![("ollama-local".to_string(), Box::new(inner))];
-    let reliable = ReliableProvider::new(
-        providers,
-        config.reliability.provider_retries,
-        config.reliability.provider_backoff_ms,
-    );
-
-    tracing::debug!(
-        "[tree_summarizer] using local Ollama provider at {} with model '{}'",
-        base_url,
-        config.local_ai.chat_model_id
-    );
-
-    Ok(Box::new(reliable))
 }
 
 #[cfg(test)]
@@ -335,14 +315,6 @@ mod tests {
             !model.trim().is_empty(),
             "cloud fallback must resolve a model"
         );
-    }
-
-    #[test]
-    fn create_local_ai_provider_uses_ollama_local_label() {
-        let mut cfg = Config::default();
-        cfg.local_ai.runtime_enabled = true;
-        let provider = create_local_ai_provider(&cfg).expect("provider");
-        let _ = provider;
     }
 
     #[tokio::test]

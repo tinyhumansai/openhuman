@@ -1,14 +1,13 @@
 //! Session persistence: transcript loading, checkpointing, and background tasks.
 
 use super::super::transcript;
-use super::super::turn_checkpoint::MAX_ITER_CHECKPOINT_INSTRUCTION;
 use super::super::types::Agent;
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::ARCHIVIST_EXTRACTION_PROMPT;
-use crate::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ProviderDelta, UsageInfo, AGENT_TURN_MAX_OUTPUT_TOKENS,
-};
+use crate::openhuman::inference::provider::{ChatMessage, UsageInfo, AGENT_TURN_MAX_OUTPUT_TOKENS};
+use futures::StreamExt;
+use tinyagents::harness::model::{ModelRequest, ModelStreamItem};
 
 impl Agent {
     // ─────────────────────────────────────────────────────────────────
@@ -35,6 +34,11 @@ impl Agent {
                         }
                         let loaded_count = session.messages.len();
                         log::info!("[transcript] loaded {} messages for resume", loaded_count);
+                        // Best-effort store-backed shadow read (issue #4249,
+                        // 04.2 phase 2). Observes + logs divergence only; the
+                        // legacy transcript just loaded stays authoritative and
+                        // is what feeds the resume below. Gated OFF by default.
+                        self.maybe_shadow_read_session_store(&path, &session);
                         let bounded = self.bound_cached_transcript_messages(session.messages);
                         if bounded.len() < loaded_count {
                             log::warn!(
@@ -63,104 +67,107 @@ impl Agent {
         }
     }
 
-    /// Ask the provider for a resumable checkpoint summary when a turn
-    /// hits the tool-call iteration cap, with native tools **disabled** so
-    /// the model returns prose rather than another tool call. Streams text
-    /// deltas to the progress sink (when attached) so the checkpoint
+    /// Ask the provider for a short wrap-up message with native tools
+    /// **disabled** so the model returns prose rather than another tool call.
+    /// Streams text deltas to the progress sink (when attached) so the summary
     /// appears in the UI like any other reply.
     ///
+    /// `instruction` is the synthetic user turn that steers the wrap-up — the
+    /// tool-call-cap checkpoint (`MAX_ITER_CHECKPOINT_INSTRUCTION`) or the
+    /// no-final-answer close (`FINAL_ANSWER_INSTRUCTION`, issue #4093).
+    ///
     /// Returns the summary text (empty when the provider call fails or
-    /// yields nothing — the caller then falls back to
-    /// [`build_deterministic_checkpoint`] so the thread is never left on an
-    /// unterminated tool cycle, bug-report-2026-05-26 A1) **paired with the
-    /// provider usage** for this extra call, so the caller can fold it into
-    /// the turn's cumulative token/cost accounting instead of silently
-    /// dropping it.
-    pub(super) async fn summarize_iteration_checkpoint(
+    /// yields nothing — the caller then falls back to a deterministic builder
+    /// so the turn is never left without a well-formed assistant message,
+    /// bug-report-2026-05-26 A1 / issue #4093) **paired with the provider
+    /// usage** for this extra call, so the caller can fold it into the turn's
+    /// cumulative token/cost accounting instead of silently dropping it.
+    pub(super) async fn summarize_turn_wrapup(
         &self,
         base_messages: &[ChatMessage],
         effective_model: &str,
         iteration_for_stream: u32,
+        instruction: &str,
     ) -> (String, Option<UsageInfo>) {
         let mut messages = base_messages.to_vec();
-        messages.push(ChatMessage::user(MAX_ITER_CHECKPOINT_INSTRUCTION));
+        messages.push(ChatMessage::user(instruction));
 
-        // Mirror the main loop's streaming sink so the checkpoint renders
-        // incrementally. Only text deltas are relevant here (tools are
-        // disabled for this call).
-        let (delta_tx_opt, delta_forwarder) = if self.on_progress.is_some() {
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(128);
-            let progress_tx = self.on_progress.clone();
-            let forwarder = tokio::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    let Some(ref sink) = progress_tx else {
-                        continue;
-                    };
-                    if let ProviderDelta::TextDelta { delta } = event {
-                        if sink
-                            .send(AgentProgress::TextDelta {
-                                delta,
-                                iteration: iteration_for_stream,
-                            })
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                }
-            });
-            (Some(tx), Some(forwarder))
-        } else {
-            (None, None)
+        let chat_model = match self
+            .turn_model_source
+            .build_summarizer(effective_model, self.temperature)
+        {
+            Ok(model) => model,
+            Err(error) => {
+                tracing::error!(
+                    error = %error,
+                    model = effective_model,
+                    "[agent::session] failed to build wrap-up model"
+                );
+                return (String::new(), None);
+            }
+        };
+        let request = ModelRequest::new(
+            messages
+                .iter()
+                .map(crate::openhuman::tinyagents::chat_message_to_message)
+                .collect(),
+        )
+        .with_model(effective_model)
+        .with_temperature(self.temperature)
+        .with_max_tokens(AGENT_TURN_MAX_OUTPUT_TOKENS);
+        let mut stream = match chat_model.stream(&(), request).await {
+            Ok(stream) => stream,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    model = effective_model,
+                    "[agent::session] wrap-up stream failed to start"
+                );
+                return (String::new(), None);
+            }
         };
 
-        let result = self
-            .provider
-            .chat(
-                ChatRequest {
-                    messages: &messages,
-                    tools: None,
-                    stream: delta_tx_opt.as_ref(),
-                    // Reservation-pricing pre-flight budget cap (TAURI-RUST-C62).
-                    max_tokens: Some(AGENT_TURN_MAX_OUTPUT_TOKENS),
-                },
-                effective_model,
-                self.temperature,
-            )
-            .await;
-        drop(delta_tx_opt);
-        if let Some(handle) = delta_forwarder {
-            let _ = handle.await;
-        }
-
-        match result {
-            Ok(resp) => {
-                let usage = resp.usage.clone();
-                // Strip any stray tool-call XML a text-mode model may have
-                // emitted; keep only the prose.
-                let (text, calls) = self.tool_dispatcher.parse_response(&resp);
-                let checkpoint = if !text.trim().is_empty() {
-                    text
-                } else if calls.is_empty() {
-                    // No tool-call markup was present, so the raw text (if
-                    // any) is genuine prose — safe to use.
-                    resp.text.unwrap_or_default()
-                } else {
-                    // `parse_response` stripped tool-call markup and left no
-                    // prose. Do NOT re-emit `resp.text` here: it would persist
-                    // the raw `<tool_call>…` markup verbatim as the checkpoint.
-                    // Return empty so the caller uses the deterministic
-                    // fallback instead (bug-report-2026-05-26 A1).
-                    String::new()
-                };
-                (checkpoint, usage)
-            }
-            Err(e) => {
-                log::warn!("[agent_loop] checkpoint summary call failed: {e:#}");
-                (String::new(), None)
+        let mut streamed_text = String::new();
+        let mut completed = None;
+        while let Some(item) = stream.next().await {
+            match item {
+                ModelStreamItem::MessageDelta(delta) if !delta.text.is_empty() => {
+                    streamed_text.push_str(&delta.text);
+                    if let Some(sink) = &self.on_progress {
+                        let _ = sink
+                            .send(AgentProgress::TextDelta {
+                                delta: delta.text,
+                                iteration: iteration_for_stream,
+                            })
+                            .await;
+                    }
+                }
+                ModelStreamItem::Completed(response) => completed = Some(response),
+                ModelStreamItem::Failed(error) => {
+                    tracing::warn!(%error, "[agent::session] wrap-up stream failed");
+                    return (String::new(), None);
+                }
+                ModelStreamItem::ProviderFailed(error) => {
+                    tracing::warn!(error = %error.message, "[agent::session] wrap-up provider failed");
+                    return (String::new(), None);
+                }
+                _ => {}
             }
         }
+        let Some(response) = completed else {
+            tracing::warn!("[agent::session] wrap-up stream ended without completion");
+            return (String::new(), None);
+        };
+        let usage = crate::openhuman::tinyagents::model::usage_info_from_response(&response);
+        let text = response.text();
+        let checkpoint = if !text.trim().is_empty() {
+            text
+        } else if response.tool_calls().is_empty() {
+            streamed_text
+        } else {
+            String::new()
+        };
+        (checkpoint, usage)
     }
 
     /// Persist the exact provider messages as a session transcript.
@@ -236,16 +243,145 @@ impl Agent {
             task_id: None,
         };
 
-        if let Err(err) = transcript::write_transcript(path, messages, &meta, turn_usage) {
-            log::warn!(
-                "[transcript] failed to write transcript {}: {err}",
-                path.display()
-            );
+        match transcript::write_transcript(path, messages, &meta, turn_usage) {
+            Ok(()) => {
+                // Best-effort, non-fatal dual-write into the TinyAgents store.
+                // Gated by the default-ON session dual-write flag
+                // (`OPENHUMAN_SESSION_DUAL_WRITE` is a kill switch). Only runs
+                // after the legacy JSONL append above succeeds; the legacy path
+                // is primary and untouched (issue #4249, 04.1).
+                self.maybe_dual_write_session_store(path, messages, &meta, turn_usage);
+            }
+            Err(err) => {
+                log::warn!(
+                    "[transcript] failed to write transcript {}: {err}",
+                    path.display()
+                );
+            }
         }
     }
 
+    /// Mirror the just-persisted turn into the TinyAgents session store.
+    ///
+    /// Additive and gated on the default-ON session dual-write flag
+    /// (`OPENHUMAN_SESSION_DUAL_WRITE` is a kill switch): when killed this is a
+    /// cheap early return — no store handle is constructed and behavior is
+    /// byte-identical to the legacy-only path. When on (the default), the
+    /// store write is fired best-effort on a background task and any error is
+    /// logged (`[session-store]`) and swallowed, so it can never fail or alter a
+    /// chat turn. Records reuse the importer's normalization
+    /// ([`crate::openhuman::session_import`]) so live and imported records are
+    /// shape-identical. Reads stay 100% legacy until 04.2.
+    fn maybe_dual_write_session_store(
+        &self,
+        path: &std::path::Path,
+        messages: &[ChatMessage],
+        meta: &transcript::TranscriptMeta,
+        turn_usage: Option<&transcript::TurnUsage>,
+    ) {
+        use crate::openhuman::session_import::live;
+
+        // Config flag (default ON) gates the mirror; the env kill switch can
+        // still force it off. `self.config` is the effective per-agent config.
+        if !live::dual_write_enabled(self.config.session_dual_write) {
+            return;
+        }
+
+        // The session key is the transcript stem — the same value the importer
+        // reads off the on-disk filename, so `stream_name`/descriptor keys match.
+        let Some(stem) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+        else {
+            log::warn!(
+                "[session-store] dual-write skipped: no file stem for {}",
+                path.display()
+            );
+            return;
+        };
+
+        // Rebuild the exact message shape the importer sees after a JSONL
+        // round-trip: attach this turn's usage to the last assistant message so
+        // its `openhuman_turn_usage` metadata matches an imported record.
+        let mut msgs = messages.to_vec();
+        if let Some(usage) = turn_usage {
+            if let Some(idx) = msgs.iter().rposition(|m| m.role == "assistant") {
+                transcript::attach_turn_usage_metadata(&mut msgs[idx], usage);
+            }
+        }
+        let session_transcript = transcript::SessionTranscript {
+            meta: meta.clone(),
+            messages: msgs,
+        };
+        let workspace = self.workspace_dir.clone();
+
+        log::debug!(
+            "[session-store] dual-write scheduled stem={stem} workspace={}",
+            workspace.display()
+        );
+        tokio::spawn(async move {
+            if let Err(err) = live::write_live_turn(&workspace, &stem, &session_transcript).await {
+                log::warn!("[session-store] dual-write failed stem={stem}: {err:#}");
+            }
+        });
+    }
+
+    /// Store-backed **shadow read** of a just-loaded session transcript.
+    ///
+    /// Beside the legacy authoritative reader (`try_load_session_transcript`),
+    /// read the same session back from the TinyAgents journal store, normalize
+    /// both sides through the importer's `session_import::convert` machinery,
+    /// compare, and log any divergence (`[session_shadow_read]`, issue #4249,
+    /// 04.2 phase 2). Additive and gated on the default-**OFF**
+    /// `AgentConfig::session_shadow_reads` flag
+    /// (`OPENHUMAN_SESSION_SHADOW_READS` is a kill switch): when disabled this
+    /// is a cheap early return.
+    ///
+    /// The legacy transcript stays authoritative — this only observes. The
+    /// comparison runs on a spawned background task so it never slows the
+    /// authoritative read, and every store-read error is treated as "no shadow
+    /// available" (logged at debug), never propagated.
+    fn maybe_shadow_read_session_store(
+        &self,
+        path: &std::path::Path,
+        session: &transcript::SessionTranscript,
+    ) {
+        use crate::openhuman::session_import::live;
+
+        // Config flag (default OFF) gates the shadow read; the env kill switch
+        // can still force it off. `self.config` is the effective per-agent config.
+        if !live::shadow_reads_enabled(self.config.session_shadow_reads) {
+            return;
+        }
+
+        // Same session key the write side / importer use: the transcript stem.
+        let Some(stem) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+        else {
+            log::debug!(
+                "[session_shadow_read] skipped: no file stem for {}",
+                path.display()
+            );
+            return;
+        };
+
+        let workspace = self.workspace_dir.clone();
+        let transcript = session.clone();
+        log::debug!(
+            "[session_shadow_read] scheduled stem={stem} workspace={} legacy_messages={}",
+            workspace.display(),
+            transcript.messages.len()
+        );
+        tokio::spawn(async move {
+            let _ = live::shadow_read_compare(&workspace, &stem, &transcript).await;
+        });
+    }
+
     // ─────────────────────────────────────────────────────────────────
-    // Session-memory extraction (stage 5 of the context pipeline)
+    // Session-memory extraction.
     // ─────────────────────────────────────────────────────────────────
 
     /// Spawn a background archivist sub-agent to extract durable facts
@@ -254,7 +390,10 @@ impl Agent {
     /// Gated by [`context_pipeline::SessionMemoryState::should_extract`]
     /// — see its docs for the threshold invariants. Safe to call from
     /// inside `turn()` after the turn body has settled.
-    pub(in super::super) async fn spawn_session_memory_extraction(&mut self) {
+    pub(in super::super) async fn spawn_session_memory_extraction(
+        &mut self,
+        parent_ctx: harness::ParentExecutionContext,
+    ) {
         // ── Flush the trailing open segment before the session winds down ──
         //
         // The ArchivistHook manages per-turn segment lifecycle but cannot
@@ -288,11 +427,6 @@ impl Agent {
             return;
         };
 
-        // Build a dedicated ParentExecutionContext for the background
-        // task. The in-progress turn's context has already been
-        // consumed by the `with_parent_context` scope above, so this is
-        // a fresh snapshot.
-        let parent_ctx = self.build_parent_execution_context();
         let extraction_prompt = ARCHIVIST_EXTRACTION_PROMPT.to_string();
 
         // Flip the extraction state to "in-progress" so future

@@ -24,12 +24,13 @@
 //! beyond what the readers already permit.
 
 use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use glob::Pattern;
 use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
+use tinyagents::harness::tool::ToolExecutionContext;
 use walkdir::WalkDir;
 
 const DEFAULT_MAX_RESULTS: usize = 500;
@@ -90,6 +91,25 @@ impl Tool for GlobTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, context).await
+    }
+}
+
+impl GlobTool {
+    async fn execute_in_context(
+        &self,
+        args: serde_json::Value,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let pattern_str = args
             .get("pattern")
             .and_then(|v| v.as_str())
@@ -124,6 +144,8 @@ impl Tool for GlobTool {
             Err(e) => return Ok(ToolResult::error(format!("Invalid glob pattern: {e}"))),
         };
 
+        let path_policy = super::security_for_tool_context(&self.security, context, "glob");
+
         log::debug!(
             "[tools:glob] search start: pattern='{pattern_str}' path='{search_path}' max_results={max_results}"
         );
@@ -132,7 +154,7 @@ impl Tool for GlobTool {
         // seam. A disallowed or missing root yields a clear, path-naming error
         // instead of the opaque "No such file or directory" the old workspace_dir
         // root produced (#3357).
-        let base = match self.security.validate_path(search_path).await {
+        let base = match path_policy.validate_path(search_path).await {
             Ok(p) => p,
             Err(e) => {
                 log::debug!("[tools:glob] search path rejected: path='{search_path}' error={e}");
@@ -165,7 +187,7 @@ impl Tool for GlobTool {
         log::debug!(
             "[tools:glob] resolved search root: '{}' (action_dir='{}')",
             base.display(),
-            self.security.action_dir.display()
+            path_policy.action_dir.display()
         );
 
         // Canonical action sandbox, used to decide whether a hit is rendered
@@ -175,19 +197,18 @@ impl Tool for GlobTool {
         // fallback fires the two roots become asymmetric and strip_prefix below
         // may miss for an in-sandbox hit, rendering it absolute. Harmless: the
         // absolute path is still readable and the per-hit filter still applies.
-        let action_root = tokio::fs::canonicalize(&self.security.action_dir)
+        let action_root = tokio::fs::canonicalize(&path_policy.action_dir)
             .await
             .unwrap_or_else(|e| {
                 log::trace!(
                     "[tools:glob] action_dir canonicalize fallback: path='{}' error={e}",
-                    self.security.action_dir.display()
+                    path_policy.action_dir.display()
                 );
-                self.security.action_dir.clone()
+                path_policy.action_dir.clone()
             });
 
-        let security = self.security.clone();
         let result = tokio::task::spawn_blocking(move || {
-            collect_matches(&base, &action_root, &security, &pattern, max_results)
+            collect_matches(&base, &action_root, &path_policy, &pattern, max_results)
         })
         .await
         .map_err(|e| anyhow::anyhow!("scan task failed: {e}"))?;

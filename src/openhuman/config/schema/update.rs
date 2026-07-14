@@ -6,17 +6,13 @@ use serde::{Deserialize, Serialize};
 /// How `update.run` should complete after staging a new binary.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum UpdateRestartStrategy {
     /// Request an in-process self-restart immediately after staging.
+    #[default]
     SelfReplace,
     /// Stage the new binary and leave restart to an external supervisor.
     Supervisor,
-}
-
-impl Default for UpdateRestartStrategy {
-    fn default() -> Self {
-        Self::SelfReplace
-    }
 }
 
 /// Configuration for periodic self-update checks against GitHub Releases.

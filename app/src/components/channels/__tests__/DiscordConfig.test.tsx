@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FALLBACK_DEFINITIONS } from '../../../lib/channels/definitions';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
+import { callCoreRpc } from '../../../services/coreRpcClient';
 import { upsertChannelConnection } from '../../../store/channelConnectionsSlice';
 import { createTestStore, renderWithProviders } from '../../../test/test-utils';
+import { openUrl } from '../../../utils/openUrl';
 import DiscordConfig from '../DiscordConfig';
 
 const coreStateMock = vi.hoisted(() => vi.fn(() => ({ snapshot: { sessionToken: 'jwt-abc' } })));
@@ -181,5 +183,49 @@ describe('DiscordConfig', () => {
     expect(screen.queryByText('OAuth Sign-in')).not.toBeInTheDocument();
     expect(screen.queryByText('Login with OpenHuman')).not.toBeInTheDocument();
     expect(screen.getAllByText('Bot Token').length).toBeGreaterThanOrEqual(1);
+  });
+
+  // #4299: an OAuth init failure (oauth_connect throws, or returns no URL) must
+  // surface as an error instead of leaving the badge pinned at `connecting`.
+  it('surfaces an error when oauth_connect throws', async () => {
+    const store = createTestStore();
+    vi.mocked(channelConnectionsApi.connectChannel).mockResolvedValue({
+      status: 'pending_auth',
+      auth_action: 'discord_oauth',
+      restart_required: false,
+    });
+    vi.mocked(callCoreRpc).mockRejectedValue(new Error('rpc boom'));
+
+    renderWithProviders(<DiscordConfig definition={discordDef} />, { store });
+
+    // Auth modes render in definition order: bot_token (0), oauth (1).
+    fireEvent.click(screen.getAllByRole('button', { name: 'Connect' })[1]);
+
+    await waitFor(() => {
+      const oauth = store.getState().channelConnections.connections.discord.oauth;
+      expect(oauth?.status).toBe('error');
+      expect(oauth?.lastError).toMatch(/Couldn't start Discord sign-in/);
+    });
+  });
+
+  it('surfaces an error when oauth_connect returns no oauthUrl', async () => {
+    const store = createTestStore();
+    vi.mocked(channelConnectionsApi.connectChannel).mockResolvedValue({
+      status: 'pending_auth',
+      auth_action: 'discord_oauth',
+      restart_required: false,
+    });
+    vi.mocked(callCoreRpc).mockResolvedValue({ result: {} });
+
+    renderWithProviders(<DiscordConfig definition={discordDef} />, { store });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Connect' })[1]);
+
+    await waitFor(() => {
+      const oauth = store.getState().channelConnections.connections.discord.oauth;
+      expect(oauth?.status).toBe('error');
+      expect(oauth?.lastError).toMatch(/Couldn't start Discord sign-in/);
+    });
+    expect(openUrl).not.toHaveBeenCalled();
   });
 });

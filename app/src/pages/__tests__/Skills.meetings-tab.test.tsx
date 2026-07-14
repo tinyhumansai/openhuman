@@ -5,7 +5,7 @@ import '../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../test/test-utils';
 import Skills from '../Skills';
 
-vi.mock('../../components/skills/MeetingBotsCard', () => ({
+vi.mock('../../components/meetings/MeetingsPage', () => ({
   default: () => <div data-testid="meeting-bots-card">Meeting bot CTA</div>,
 }));
 
@@ -13,13 +13,13 @@ vi.mock('../../hooks/useChannelDefinitions', () => ({
   useChannelDefinitions: () => ({ definitions: [], loading: false, error: null }),
 }));
 
-vi.mock('../../services/api/workflowsApi', async () => {
-  const actual = await vi.importActual<typeof import('../../services/api/workflowsApi')>(
-    '../../services/api/workflowsApi'
+vi.mock('../../services/api/skillsApi', async () => {
+  const actual = await vi.importActual<typeof import('../../services/api/skillsApi')>(
+    '../../services/api/skillsApi'
   );
   return {
     ...actual,
-    workflowsApi: { ...actual.workflowsApi, listWorkflows: vi.fn().mockResolvedValue([]) },
+    skillsApi: { ...actual.skillsApi, listWorkflows: vi.fn().mockResolvedValue([]) },
   };
 });
 

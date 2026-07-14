@@ -48,12 +48,20 @@ const proceduralVisemesMock = vi.fn(
   }
 );
 
-vi.mock('./voice/ttsClient', () => ({
-  synthesizeSpeech: vi.fn(),
-  visemesFromAlignment: (alignment: { char: string; start_ms: number; end_ms: number }[]) =>
-    alignment.map(a => ({ viseme: 'aa', start_ms: a.start_ms, end_ms: a.end_ms })),
-  proceduralVisemes: (text: string, durationMs: number) => proceduralVisemesMock(text, durationMs),
-}));
+vi.mock('./voice/ttsClient', async importOriginal => {
+  // Keep the real pure helpers (normalizeVisemeTimeline, hasUsableStarts, …) so
+  // startTtsPlayback doesn't blow up on undefined imports; only stub the network
+  // call and the two frame builders the tests want to control.
+  const actual = await importOriginal<typeof import('./voice/ttsClient')>();
+  return {
+    ...actual,
+    synthesizeSpeech: vi.fn(),
+    visemesFromAlignment: (alignment: { char: string; start_ms: number; end_ms: number }[]) =>
+      alignment.map(a => ({ viseme: 'aa', start_ms: a.start_ms, end_ms: a.end_ms })),
+    proceduralVisemes: (text: string, durationMs: number) =>
+      proceduralVisemesMock(text, durationMs),
+  };
+});
 
 class FakeAudioStoppedError extends Error {
   readonly stopped = true;

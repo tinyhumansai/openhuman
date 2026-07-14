@@ -661,6 +661,19 @@ fn derive_pipeline_status(
             Some(format!("scheduler gate mode = {}", mode.as_str())),
         );
     }
+    // Host storage is unusable (EIO/ENOSPC/EROFS on the memory_tree path). This
+    // is a foundational, unrecoverable error — the DB can't even open, so it
+    // outranks the per-content recall/structure degradation below AND fires
+    // regardless of `total_chunks` (on a dead disk we may not be able to count
+    // chunks at all). Only the user can fix it (reseat/replace/free storage);
+    // the actionable remediation text rides the `StorageUnavailable`
+    // remediation key surfaced by the doctor's `first_blocking_cause`.
+    if degraded.storage {
+        return (
+            "error".to_string(),
+            Some("memory storage unavailable — check your disk / SD card".to_string()),
+        );
+    }
     // #3365: split the failed bucket by class. Only an UNRECOVERABLE failure
     // (budget / auth / dim-mismatch) is a hard `error` the user must act on —
     // it stays parked and can't self-heal. Transient failures are auto-requeued
@@ -1093,12 +1106,20 @@ mod tests {
         let recall_degraded = DegradedState {
             semantic_recall: true,
             structure: false,
+            storage: false,
             cause: Some(PipelineFailure::new(FailureCode::EmbeddingsUnconfigured)),
         };
         let structure_degraded = DegradedState {
             semantic_recall: false,
             structure: true,
+            storage: false,
             cause: Some(PipelineFailure::new(FailureCode::ExtractionTimeout)),
+        };
+        let storage_degraded = DegradedState {
+            semantic_recall: false,
+            structure: false,
+            storage: true,
+            cause: Some(PipelineFailure::new(FailureCode::StorageUnavailable)),
         };
 
         // Args: (is_paused, mode, is_syncing, failed, failed_unrecoverable,
@@ -1116,6 +1137,49 @@ mod tests {
         );
         assert_eq!(s, "paused");
         assert!(reason.unwrap().contains("off"));
+
+        // paused still beats a storage failure (user explicitly stood the
+        // worker down; the flag won't be freshly set anyway).
+        let (s, _) = derive_pipeline_status(
+            true,
+            SchedulerGateMode::Off,
+            false,
+            0,
+            0,
+            0,
+            &storage_degraded,
+        );
+        assert_eq!(s, "paused", "paused beats storage");
+
+        // storage failure → error, and it fires even with ZERO chunks (unlike
+        // recall/structure degradation, which is content-relative) — a dead
+        // disk is broken regardless of how much content exists.
+        let (s, reason) = derive_pipeline_status(
+            false,
+            SchedulerGateMode::Auto,
+            false,
+            0,
+            0,
+            0, // no chunks — must still surface
+            &storage_degraded,
+        );
+        assert_eq!(
+            s, "error",
+            "storage failure is a hard error at any chunk count"
+        );
+        assert!(reason.unwrap().contains("storage"));
+
+        // storage outranks transient-failed degradation too.
+        let (s, _) = derive_pipeline_status(
+            false,
+            SchedulerGateMode::Auto,
+            true,
+            3,
+            0,
+            100,
+            &storage_degraded,
+        );
+        assert_eq!(s, "error", "storage beats transient-degraded");
 
         // error beats degraded / syncing / running / idle — but ONLY for
         // unrecoverable failures (#3365).

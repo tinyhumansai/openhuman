@@ -27,6 +27,10 @@ pub enum AgentTurnOrigin {
     WebChat {
         thread_id: String,
         client_id: String,
+        /// Per-turn request id, when the caller has one. Used by internal
+        /// observers to correlate a live progress bridge with the durable
+        /// tinyagents journal stream for the same turn.
+        request_id: Option<String>,
     },
     /// Inbound message from a non-web channel (Telegram / Discord / Slack /
     /// Yuanbao / etc.). External-effect tools must persist a
@@ -78,6 +82,25 @@ pub enum TrustedAutomationSource {
     /// Autonomous continuation of a thread goal: the heartbeat injected a turn
     /// to keep working an idle `active` goal the user explicitly created.
     GoalContinuation,
+    /// A saved, enabled `flows::Flow` (tinyflows workflow) executing via
+    /// `flows::ops::flows_run` / `flows_resume` (issue B2, see
+    /// `my_docs/ohxtf/b2-triggers-trust/01-triggers-and-trust.md` §3). The
+    /// flow's `tool_call`/`http_request` nodes were pre-declared (their
+    /// `slug`/`url` are static graph config, never `=`-expression evaluated
+    /// in tinyflows 0.2 — see `my_docs/ohxtf/commons/12-node-catalog-0.2.md`)
+    /// and validated when the flow was saved, so the *action* carries a trust
+    /// root the same way a user-authored cron job's prompt does. The runtime
+    /// trigger payload (webhook body, Composio event, …) stays untrusted —
+    /// nothing in it can introduce a *new* action, only feed the pre-declared
+    /// one's arguments.
+    Workflow {
+        /// Mirrors `Flow::require_approval`: when `true` the gate does NOT
+        /// auto-allow this trust root — every external_effect call still
+        /// parks for a real decision (same shape as `GoalContinuation`),
+        /// letting a user force human review on a specific flow's outbound
+        /// actions regardless of the trust root above.
+        require_approval: bool,
+    },
 }
 
 tokio::task_local! {
@@ -142,6 +165,7 @@ mod tests {
             AgentTurnOrigin::WebChat {
                 thread_id: "outer".into(),
                 client_id: "c-outer".into(),
+                request_id: Some("req-outer".into()),
             },
             async {
                 with_origin(

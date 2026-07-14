@@ -276,6 +276,7 @@ mod tests {
             max_iterations: 8,
             iteration_policy: Default::default(),
             max_result_chars: None,
+            max_turn_output_tokens: None,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,
             background: false,
@@ -285,6 +286,7 @@ mod tests {
             delegate_name: delegate_name.map(String::from),
             agent_tier: crate::openhuman::agent::harness::definition::AgentTier::Worker,
             source: DefinitionSource::Builtin,
+            graph: Default::default(),
         }
     }
 
@@ -587,13 +589,6 @@ mod tests {
         assert_eq!(slugs, vec!["google_calendar", "slack_bot"]);
     }
 
-    /// Two upstream toolkits whose names sanitise to the same slug
-    /// must not silently both land in the collapsed enum — the second
-    /// arrival is dropped (with a warn log) so the orchestrator's
-    /// routing handle stays unambiguous. Without this guard,
-    /// `Slack.Bot` and `Slack-Bot` would both render as `slack_bot`
-    /// in the enum and the orchestrator could no longer distinguish
-    /// them.
     /// An integration with an empty description must not render as a
     /// bare ` - slug` line in the collapsed tool description — the
     /// orchestrator LLM would have no signal about what the toolkit
@@ -629,6 +624,13 @@ mod tests {
         assert!(desc.contains("Email."));
     }
 
+    /// Two upstream toolkits whose names sanitise to the same slug
+    /// must not silently both land in the collapsed enum — the second
+    /// arrival is dropped (with a warn log) so the orchestrator's
+    /// routing handle stays unambiguous. Without this guard,
+    /// `Slack.Bot` and `Slack-Bot` would both render as `slack_bot`
+    /// in the enum and the orchestrator could no longer distinguish
+    /// them.
     #[test]
     fn duplicate_sanitised_slug_drops_later_collisions() {
         let mut orch = def("orchestrator", "t", None);

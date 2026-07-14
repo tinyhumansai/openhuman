@@ -14,16 +14,16 @@ use std::sync::{Mutex, OnceLock};
 
 /// One finished background sub-agent's deliverable result.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CompletedBackgroundAgent {
+pub(crate) struct CompletedBackgroundAgent {
     /// Spawn process id (`sub-…`) — the tag the agent uses to reference it.
-    pub task_id: String,
+    pub(crate) task_id: String,
     /// Sub-agent definition id (e.g. `researcher`).
-    pub agent_id: String,
+    pub(crate) agent_id: String,
     /// The sub-agent's final output / summary.
-    pub summary: String,
+    pub(crate) summary: String,
     /// Parent chat thread id to stream the delivery turn into (captured at
     /// spawn). `None` for a headless spawn with no originating thread.
-    pub parent_thread_id: Option<String>,
+    pub(crate) parent_thread_id: Option<String>,
 }
 
 /// Upper bound on the cancelled-thread tombstone set. A thread id is a one-shot
@@ -32,6 +32,12 @@ pub struct CompletedBackgroundAgent {
 /// than the number of sub-agents that could realistically be mid-flight when a
 /// batch of threads is deleted.
 const CANCELLED_TOMBSTONE_CAP: usize = 512;
+
+/// Upper bound on the collected-task tombstone set. A completion records within
+/// seconds of the parent collecting it inline, so only recently collected task
+/// ids can still be racing a late record; older tombstones are evicted in
+/// insertion order.
+const COLLECTED_TOMBSTONE_CAP: usize = 512;
 
 /// Shared state behind a single mutex so the cancellation check in
 /// [`record_completion`] is atomic against the tombstone+sweep in
@@ -49,6 +55,15 @@ struct QueueState {
     cancelled_threads: HashSet<String>,
     /// Insertion order for `cancelled_threads`, used to bound the set.
     cancelled_order: VecDeque<String>,
+    /// Task ids the parent already collected inline via `wait_subagent` and will
+    /// present in its own turn. A completion for a collected task is dropped by
+    /// [`record_completion`] (closing the wait/record ordering race) and any
+    /// already-queued entry is swept by [`mark_collected`], so background
+    /// delivery never re-answers a result the master already surfaced (the
+    /// duplicate-response bug).
+    collected_tasks: HashSet<String>,
+    /// Insertion order for `collected_tasks`, used to bound the set.
+    collected_order: VecDeque<String>,
 }
 
 impl QueueState {
@@ -59,6 +74,19 @@ impl QueueState {
             while self.cancelled_order.len() > CANCELLED_TOMBSTONE_CAP {
                 if let Some(evicted) = self.cancelled_order.pop_front() {
                     self.cancelled_threads.remove(&evicted);
+                }
+            }
+        }
+    }
+
+    /// Tombstone `task_id` so a completion that records after the parent
+    /// collected it inline is dropped rather than delivered again.
+    fn tombstone_collected(&mut self, task_id: &str) {
+        if self.collected_tasks.insert(task_id.to_string()) {
+            self.collected_order.push_back(task_id.to_string());
+            while self.collected_order.len() > COLLECTED_TOMBSTONE_CAP {
+                if let Some(evicted) = self.collected_order.pop_front() {
+                    self.collected_tasks.remove(&evicted);
                 }
             }
         }
@@ -77,7 +105,7 @@ fn queue() -> &'static Mutex<QueueState> {
 /// Drops the result outright if its parent thread has been tombstoned by
 /// [`discard_for_thread`] — closing the race where a detached sub-agent finishes
 /// (and records) concurrently with its parent thread being deleted.
-pub fn record_completion(
+pub(crate) fn record_completion(
     parent_session: impl Into<String>,
     task_id: impl Into<String>,
     agent_id: impl Into<String>,
@@ -104,6 +132,18 @@ pub fn record_completion(
             return;
         }
     }
+    // The parent already collected this result inline (`wait_subagent`) and
+    // presents it in its own turn, so a background-delivery turn for it would
+    // just re-answer the same thing. Drop it (closes the wait-before-record
+    // race; the record-before-wait order is handled by the sweep in
+    // `mark_collected`).
+    if state.collected_tasks.contains(&entry.task_id) {
+        log::debug!(
+            "[background_completions] dropping completion task_id={} already collected inline",
+            entry.task_id
+        );
+        return;
+    }
     let pending = state.pending.entry(parent_session).or_default();
     if pending.iter().any(|c| c.task_id == entry.task_id) {
         return;
@@ -112,7 +152,7 @@ pub fn record_completion(
 }
 
 /// Is anything waiting to be delivered for this session? Cheap idle-loop check.
-pub fn has_pending(parent_session: &str) -> bool {
+pub(crate) fn has_pending(parent_session: &str) -> bool {
     queue()
         .lock()
         .expect("background_completions queue poisoned")
@@ -122,7 +162,7 @@ pub fn has_pending(parent_session: &str) -> bool {
 }
 
 /// Number of results pending for a session.
-pub fn pending_count(parent_session: &str) -> usize {
+pub(crate) fn pending_count(parent_session: &str) -> usize {
     queue()
         .lock()
         .expect("background_completions queue poisoned")
@@ -134,7 +174,7 @@ pub fn pending_count(parent_session: &str) -> usize {
 /// Drain **all** results currently ready for this session — the "batch
 /// everything ready at that moment" step. Returns them in completion order and
 /// clears them so they're never re-delivered.
-pub fn take_pending(parent_session: &str) -> Vec<CompletedBackgroundAgent> {
+pub(crate) fn take_pending(parent_session: &str) -> Vec<CompletedBackgroundAgent> {
     queue()
         .lock()
         .expect("background_completions queue poisoned")
@@ -149,7 +189,7 @@ pub fn take_pending(parent_session: &str) -> Vec<CompletedBackgroundAgent> {
 /// [`record_completion`] rather than delivered into a thread that no longer
 /// exists. Called when that thread is deleted. Returns the number of queued
 /// completions removed.
-pub fn discard_for_thread(thread_id: &str) -> usize {
+pub(crate) fn discard_for_thread(thread_id: &str) -> usize {
     let mut state = queue()
         .lock()
         .expect("background_completions queue poisoned");
@@ -172,12 +212,39 @@ pub fn discard_for_thread(thread_id: &str) -> usize {
     removed
 }
 
+/// Mark `task_id` as collected inline by the parent (via `wait_subagent`) so its
+/// background completion is not independently delivered as a second, duplicate
+/// answer. Tombstones the id — bounded — so a completion that records *after*
+/// this call (the wait-before-record ordering) is dropped by
+/// [`record_completion`], and sweeps any entry already queued for it across all
+/// sessions (the record-before-wait ordering). Both orderings resolve
+/// atomically under the single queue mutex. Returns whether a queued entry was
+/// removed.
+pub(crate) fn mark_collected(task_id: &str) -> bool {
+    let mut state = queue()
+        .lock()
+        .expect("background_completions queue poisoned");
+    state.tombstone_collected(task_id);
+    let mut removed = false;
+    for pending in state.pending.values_mut() {
+        let before = pending.len();
+        pending.retain(|c| c.task_id != task_id);
+        removed |= pending.len() != before;
+    }
+    // Drop now-empty session buckets so the map doesn't accumulate keys.
+    state.pending.retain(|_, v| !v.is_empty());
+    log::debug!(
+        "[background_completions] mark_collected task_id={task_id} removed_queued={removed}"
+    );
+    removed
+}
+
 /// Wipe every queued completion across all sessions. Called on a full thread
 /// purge. Tombstones are left intact (the per-thread protection set by
 /// [`discard_for_thread`]); the purge path tombstones each in-flight sub-agent's
 /// thread before calling this, so stragglers are still dropped. Returns the
 /// number of queued completions removed.
-pub fn clear_all() -> usize {
+pub(crate) fn clear_all() -> usize {
     let mut state = queue()
         .lock()
         .expect("background_completions queue poisoned");
@@ -188,7 +255,7 @@ pub fn clear_all() -> usize {
 }
 
 /// The thread id to deliver a batch into — the first record that carries one.
-pub fn batch_thread_id(completed: &[CompletedBackgroundAgent]) -> Option<String> {
+pub(crate) fn batch_thread_id(completed: &[CompletedBackgroundAgent]) -> Option<String> {
     completed.iter().find_map(|c| c.parent_thread_id.clone())
 }
 
@@ -197,7 +264,7 @@ pub fn batch_thread_id(completed: &[CompletedBackgroundAgent]) -> Option<String>
 /// `<background_agent_result id="…">` tag carrying its sub-agent process id, so
 /// the agent can reference / present them individually. Returns `None` for an
 /// empty batch.
-pub fn build_batched_notice(completed: &[CompletedBackgroundAgent]) -> Option<String> {
+pub(crate) fn build_batched_notice(completed: &[CompletedBackgroundAgent]) -> Option<String> {
     if completed.is_empty() {
         return None;
     }
@@ -400,5 +467,68 @@ mod tests {
         assert!(!has_pending("sess-c1"));
         assert!(!has_pending("sess-c2"));
         assert_eq!(clear_all(), 0);
+    }
+
+    #[test]
+    fn mark_collected_sweeps_the_queued_entry() {
+        let _guard = test_guard();
+        let s = "sess-mc-sweep";
+        record_completion(s, "mc-sub-1", "researcher", "collected", None);
+        record_completion(s, "mc-sub-2", "researcher", "keep", None);
+
+        // The parent collected sub-1 inline, so it must not be delivered again;
+        // sub-2 (never waited on) survives for normal idle delivery.
+        assert!(mark_collected("mc-sub-1"), "swept the queued entry");
+        assert_eq!(pending_count(s), 1);
+        let drained = take_pending(s);
+        assert_eq!(drained[0].task_id, "mc-sub-2");
+    }
+
+    #[test]
+    fn record_after_mark_collected_is_dropped_by_tombstone() {
+        let _guard = test_guard();
+        // Collecting inline tombstones the task id...
+        assert!(
+            !mark_collected("mc-late"),
+            "nothing queued yet, so nothing swept"
+        );
+        // ...so a completion that records *after* (the wait-before-record order)
+        // is dropped rather than queued for a duplicate delivery turn.
+        record_completion("sess-mc-race", "mc-late", "researcher", "stale", None);
+        assert_eq!(
+            pending_count("sess-mc-race"),
+            0,
+            "a completion collected inline must not be re-delivered"
+        );
+    }
+
+    #[test]
+    fn mark_collected_is_task_scoped() {
+        let _guard = test_guard();
+        let s = "sess-mc-scope";
+        // Only the collected task is suppressed; an un-waited sibling still
+        // surfaces (the genuinely-later fire-and-forget feature is preserved).
+        mark_collected("mc-scope-1");
+        record_completion(s, "mc-scope-2", "researcher", "later", None);
+        assert_eq!(pending_count(s), 1);
+        assert!(has_pending(s));
+        take_pending(s);
+    }
+
+    #[test]
+    fn collected_tombstone_is_bounded() {
+        let _guard = test_guard();
+        for i in 0..(COLLECTED_TOMBSTONE_CAP + 50) {
+            mark_collected(&format!("mc-bound-{i}"));
+        }
+        let len = queue()
+            .lock()
+            .expect("queue poisoned")
+            .collected_tasks
+            .len();
+        assert!(
+            len <= COLLECTED_TOMBSTONE_CAP,
+            "collected tombstone must stay bounded, got {len}"
+        );
     }
 }

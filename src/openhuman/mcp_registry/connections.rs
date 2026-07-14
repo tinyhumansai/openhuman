@@ -211,29 +211,76 @@ fn connections() -> &'static RwLock<HashMap<String, Arc<Connection>>> {
 /// observe a torn snapshot — e.g. the message updated but the auth flag stale,
 /// which a two-map design would allow if `all_status` interleaved between the
 /// two writes (#3719).
+/// Why an MCP HTTP 401 happened, refining `ServerStatus::Unauthorized` so the UI
+/// can tell the user what to actually DO. Derived purely from two signals — the
+/// server's `WWW-Authenticate` challenge (does it advertise OAuth?) and whether
+/// the user supplied any credential — so it never leaks the OAuth metadata URL.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AuthFailureKind {
+    /// Server advertised an OAuth `resource_metadata` challenge. The right path
+    /// is the browser Sign-in flow; a pasted static token won't be accepted
+    /// (the Notion-style case in #4289).
+    OauthRequired,
+    /// A static credential WAS sent but the server refused it — wrong/expired.
+    TokenRejected,
+    /// 401 with no credential supplied and no OAuth challenge — plain auth that
+    /// the user simply hasn't filled in yet.
+    CredentialRequired,
+}
+
+impl AuthFailureKind {
+    /// Stable wire code consumed by the frontend (maps to localized copy). Kept
+    /// in sync with the FE `auth_hint` switch — see ConnectAuthModal.
+    fn as_code(self) -> &'static str {
+        match self {
+            Self::OauthRequired => "oauth_required",
+            Self::TokenRejected => "token_rejected",
+            Self::CredentialRequired => "credential_required",
+        }
+    }
+}
+
+/// Pure 401-reason decision, factored out so it's unit-testable without a live
+/// dial. `oauth_advertised` dominates: an OAuth-only server commonly 401s a
+/// pasted static bearer, and telling the user "token wrong" would misdirect
+/// them — the real action is Sign in.
+fn classify_auth_failure(oauth_advertised: bool, has_credential: bool) -> AuthFailureKind {
+    if oauth_advertised {
+        AuthFailureKind::OauthRequired
+    } else if has_credential {
+        AuthFailureKind::TokenRejected
+    } else {
+        AuthFailureKind::CredentialRequired
+    }
+}
+
+/// Classify a connect error: `Some(kind)` only when the root cause is a typed
+/// MCP HTTP 401 (`McpUnauthorizedError`), `None` for any generic transport
+/// error. Walks the whole `anyhow` chain so the classification survives
+/// `?`/`.context()` wrapping, and reads the typed `resource_metadata` field
+/// (not the message string) to decide whether OAuth was advertised.
+fn auth_failure_kind(err: &anyhow::Error, has_credential: bool) -> Option<AuthFailureKind> {
+    let unauthorized = err.chain().find_map(|cause| {
+        cause.downcast_ref::<crate::openhuman::mcp_client::McpUnauthorizedError>()
+    })?;
+    let oauth_advertised = unauthorized.resource_metadata.is_some();
+    Some(classify_auth_failure(oauth_advertised, has_credential))
+}
+
 #[derive(Clone)]
 struct ConnectFailure {
     message: String,
-    /// `true` when the failure was an MCP HTTP 401 → drives
+    /// `Some(kind)` when the failure was an MCP HTTP 401 → drives
     /// `ServerStatus::Unauthorized` so the UI offers a re-auth path instead of
-    /// a raw error blob.
-    unauthorized: bool,
+    /// a raw error blob, with `kind` refining which re-auth affordance to show.
+    /// `None` for a generic (non-401) transport error.
+    auth: Option<AuthFailureKind>,
 }
 
 static LAST_ERRORS: OnceLock<RwLock<HashMap<String, ConnectFailure>>> = OnceLock::new();
 
 fn last_errors() -> &'static RwLock<HashMap<String, ConnectFailure>> {
     LAST_ERRORS.get_or_init(|| RwLock::new(HashMap::new()))
-}
-
-/// Whether a connect failure's root cause was an MCP HTTP 401 (auth required).
-/// Uses a typed `downcast` on the `anyhow` chain — not string matching — so the
-/// classification can't drift from the message wording.
-fn is_unauthorized_error(err: &anyhow::Error) -> bool {
-    // Walk the whole source chain (not just the outermost error) so the
-    // classification survives any `?`/`.context()` wrapping a caller may add.
-    err.chain()
-        .any(|cause| cause.is::<crate::openhuman::mcp_client::McpUnauthorizedError>())
 }
 
 /// Read the most recent connect-failure message for `server_id`. `None` when
@@ -246,13 +293,27 @@ pub async fn last_error_for(server_id: &str) -> Option<String> {
         .map(|f| f.message.clone())
 }
 
+/// The stable auth-failure reason code for `server_id`'s most recent connect,
+/// or `None` when the last failure wasn't a 401 (or there was none). Reads the
+/// classification recorded by [`connect`] so callers (e.g. `update_env`) can
+/// surface actionable copy WITHOUT re-leaking the raw 401 message / OAuth
+/// metadata URL (#3719, #4289).
+pub async fn auth_hint_for(server_id: &str) -> Option<&'static str> {
+    last_errors()
+        .read()
+        .await
+        .get(server_id)
+        .and_then(|f| f.auth)
+        .map(AuthFailureKind::as_code)
+}
+
 /// Whether `server_id`'s most recent connect failed due to HTTP 401.
 pub async fn needs_auth(server_id: &str) -> bool {
     last_errors()
         .read()
         .await
         .get(server_id)
-        .is_some_and(|f| f.unauthorized)
+        .is_some_and(|f| f.auth.is_some())
 }
 
 /// Drop any recorded error (generic or auth-required) for `server_id`. Called on
@@ -288,20 +349,32 @@ pub async fn connect(config: &Config, server: &InstalledServer) -> anyhow::Resul
             );
         }
         Err(err) => {
+            // Re-derive whether the user supplied a credential the SAME way the
+            // dial did (`build_http_auth` over stored env) so the 401 reason has
+            // one source of truth. Cold failure path — one extra store read is
+            // negligible.
+            let has_credential = {
+                let env: Vec<(String, String)> = store::load_env_values(config, &server.server_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                !matches!(build_http_auth(&env), McpAuthConfig::None)
+            };
+            let auth = auth_failure_kind(err, has_credential);
             // Record the raw diagnostic AND the 401 classification together in a
             // single record under one lock, so a concurrent `all_status` can't
             // observe a torn snapshot (message set but auth flag stale).
-            let unauthorized = is_unauthorized_error(err);
             last_errors().write().await.insert(
                 server.server_id.clone(),
                 ConnectFailure {
                     message: err.to_string(),
-                    unauthorized,
+                    auth,
                 },
             );
             tracing::debug!(
-                "[mcp-registry] last_error recorded server_id={} unauthorized={unauthorized} err={err}",
-                server.server_id
+                "[mcp-registry] last_error recorded server_id={} auth={:?} err={err}",
+                server.server_id,
+                auth.map(AuthFailureKind::as_code),
             );
         }
     }
@@ -538,19 +611,21 @@ pub async fn call_tool(
 fn classify_server_status(
     enabled: bool,
     connected_tool_count: Option<u32>,
-    auth_required: bool,
+    auth_failure: Option<AuthFailureKind>,
     generic_error: Option<String>,
-) -> (ServerStatus, u32, Option<String>) {
+) -> (ServerStatus, u32, Option<String>, Option<&'static str>) {
     if !enabled {
-        (ServerStatus::Disabled, 0, None)
+        (ServerStatus::Disabled, 0, None, None)
     } else if let Some(n) = connected_tool_count {
-        (ServerStatus::Connected, n, None)
-    } else if auth_required {
-        (ServerStatus::Unauthorized, 0, None)
+        (ServerStatus::Connected, n, None, None)
+    } else if let Some(kind) = auth_failure {
+        // 401: surface the stable reason CODE (not the raw message) so the UI
+        // shows the right re-auth affordance without leaking the metadata URL.
+        (ServerStatus::Unauthorized, 0, None, Some(kind.as_code()))
     } else if let Some(err) = generic_error {
-        (ServerStatus::Error, 0, Some(err))
+        (ServerStatus::Error, 0, Some(err), None)
     } else {
-        (ServerStatus::Disconnected, 0, None)
+        (ServerStatus::Disconnected, 0, None, None)
     }
 }
 
@@ -583,14 +658,14 @@ pub async fn all_status(config: &Config) -> Vec<ConnStatus> {
         };
 
         let failure = failures_snapshot.get(&s.server_id);
-        let (status, tool_count, last_error) = classify_server_status(
+        let (status, tool_count, last_error, auth_hint) = classify_server_status(
             s.enabled,
             connected_tool_count,
-            failure.is_some_and(|f| f.unauthorized),
+            failure.and_then(|f| f.auth),
             // Only a generic (non-401) failure carries a surfaced message; the
             // 401 message is withheld (it leaks the OAuth metadata URL).
             failure
-                .filter(|f| !f.unauthorized)
+                .filter(|f| f.auth.is_none())
                 .map(|f| f.message.clone()),
         );
 
@@ -601,6 +676,7 @@ pub async fn all_status(config: &Config) -> Vec<ConnStatus> {
             status,
             tool_count,
             last_error,
+            auth_hint: auth_hint.map(str::to_string),
         });
     }
     out
@@ -689,7 +765,8 @@ mod tests {
     // Live-connection tests require a real MCP subprocess and live in
     // tests/json_rpc_e2e.rs. Keep this slot for sync helper tests.
     use super::{
-        build_http_auth, classify_server_status, credential_safe_dial_url, is_unauthorized_error,
+        auth_failure_kind, build_http_auth, classify_auth_failure, classify_server_status,
+        credential_safe_dial_url, AuthFailureKind,
     };
     use crate::openhuman::config::McpAuthConfig;
     use crate::openhuman::mcp_client::McpUnauthorizedError;
@@ -697,52 +774,101 @@ mod tests {
 
     #[test]
     fn classify_server_status_priority_order() {
+        let oauth = Some(AuthFailureKind::OauthRequired);
         // Disabled wins over everything (even a live connection / 401 / error).
         assert_eq!(
-            classify_server_status(false, Some(3), true, Some("boom".into())),
-            (ServerStatus::Disabled, 0, None)
+            classify_server_status(false, Some(3), oauth, Some("boom".into())),
+            (ServerStatus::Disabled, 0, None, None)
         );
-        // Connected → tool count surfaced, no error.
+        // Connected → tool count surfaced, no error, no hint.
         assert_eq!(
-            classify_server_status(true, Some(5), true, Some("boom".into())),
-            (ServerStatus::Connected, 5, None)
+            classify_server_status(true, Some(5), oauth, Some("boom".into())),
+            (ServerStatus::Connected, 5, None, None)
         );
-        // Not connected + 401 → Unauthorized, and NO raw error is leaked even
-        // when a generic error is also recorded.
+        // Not connected + 401 → Unauthorized + reason CODE, and NO raw error is
+        // leaked even when a generic error is also recorded.
         assert_eq!(
-            classify_server_status(true, None, true, Some("MCP unauthorized … HTTP 401".into())),
-            (ServerStatus::Unauthorized, 0, None)
+            classify_server_status(
+                true,
+                None,
+                Some(AuthFailureKind::TokenRejected),
+                Some("MCP unauthorized … HTTP 401".into())
+            ),
+            (ServerStatus::Unauthorized, 0, None, Some("token_rejected"))
         );
-        // Not connected + generic error (no 401) → Error + message.
+        // Not connected + generic error (no 401) → Error + message, no hint.
         assert_eq!(
-            classify_server_status(true, None, false, Some("timed out".into())),
-            (ServerStatus::Error, 0, Some("timed out".into()))
+            classify_server_status(true, None, None, Some("timed out".into())),
+            (ServerStatus::Error, 0, Some("timed out".into()), None)
         );
         // Not connected, no error → Disconnected.
         assert_eq!(
-            classify_server_status(true, None, false, None),
-            (ServerStatus::Disconnected, 0, None)
+            classify_server_status(true, None, None, None),
+            (ServerStatus::Disconnected, 0, None, None)
         );
     }
 
     #[test]
-    fn is_unauthorized_error_classifies_typed_401_only() {
-        // A typed 401 from the transport → auth required (regardless of the
-        // message wording, since we downcast rather than string-match).
-        let unauth = anyhow::Error::new(McpUnauthorizedError {
+    fn classify_auth_failure_oauth_dominates() {
+        // OAuth advertised → Sign-in, regardless of whether a token was pasted
+        // (a static bearer on an OAuth-only server is the #4289 repro).
+        assert_eq!(
+            classify_auth_failure(true, false),
+            AuthFailureKind::OauthRequired
+        );
+        assert_eq!(
+            classify_auth_failure(true, true),
+            AuthFailureKind::OauthRequired
+        );
+        // No OAuth, credential sent → it was refused (wrong/expired).
+        assert_eq!(
+            classify_auth_failure(false, true),
+            AuthFailureKind::TokenRejected
+        );
+        // No OAuth, no credential → user just hasn't authenticated yet.
+        assert_eq!(
+            classify_auth_failure(false, false),
+            AuthFailureKind::CredentialRequired
+        );
+    }
+
+    #[test]
+    fn auth_failure_kind_reads_typed_401_only() {
+        // Typed 401 advertising OAuth resource metadata → OauthRequired even
+        // though a credential was supplied.
+        let oauth = anyhow::Error::new(McpUnauthorizedError {
             endpoint: "https://example.com".into(),
             resource_metadata: Some("https://example.com/.well-known/x".into()),
         });
-        assert!(is_unauthorized_error(&unauth));
+        assert_eq!(
+            auth_failure_kind(&oauth, true),
+            Some(AuthFailureKind::OauthRequired)
+        );
 
-        // A 401 survives `?`-style context wrapping (anyhow keeps the root
-        // downcastable), matching how the error reaches `connect`.
-        let wrapped = unauth.context("connecting to MCP server");
-        assert!(is_unauthorized_error(&wrapped));
+        // Plain 401 (no OAuth challenge) + a supplied credential → TokenRejected,
+        // and the classification survives `?`-style context wrapping.
+        let plain = anyhow::Error::new(McpUnauthorizedError {
+            endpoint: "https://example.com".into(),
+            resource_metadata: None,
+        })
+        .context("connecting to MCP server");
+        assert_eq!(
+            auth_failure_kind(&plain, true),
+            Some(AuthFailureKind::TokenRejected)
+        );
+        // Same plain 401 with NO credential → CredentialRequired.
+        let plain2 = anyhow::Error::new(McpUnauthorizedError {
+            endpoint: "https://example.com".into(),
+            resource_metadata: None,
+        });
+        assert_eq!(
+            auth_failure_kind(&plain2, false),
+            Some(AuthFailureKind::CredentialRequired)
+        );
 
-        // Any other transport failure → NOT auth required (stays generic Error).
+        // Any other transport failure → None (stays a generic Error).
         let other = anyhow::anyhow!("MCP HTTP 500 — upstream exploded");
-        assert!(!is_unauthorized_error(&other));
+        assert_eq!(auth_failure_kind(&other, true), None);
     }
 
     fn kv(pairs: &[(&str, &str)]) -> Vec<(String, String)> {

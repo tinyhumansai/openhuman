@@ -3,9 +3,7 @@
 //!
 //! Issue: #2400.
 
-mod ingest;
 mod provider;
-mod source;
 mod sync;
 #[cfg(test)]
 mod tests;

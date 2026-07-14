@@ -163,25 +163,26 @@ describe('useDaemonLifecycle', () => {
       const uid = freshUser('stable-effect');
       resetUser(uid);
       setAutoStartEnabled(uid, true);
-      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      // Observe the visibilitychange listener registration directly — it is
+      // the real proxy for "the lifecycle effect ran exactly once and cleaned
+      // up exactly once". (Previously this also pinned exact console.log
+      // strings as an effect-rerun proxy; those are brittle to copy edits and
+      // the listener counts already carry the signal — plan.md §3.)
       const addEventListenerSpy = vi.spyOn(document, 'addEventListener');
       const removeEventListenerSpy = vi.spyOn(document, 'removeEventListener');
 
       try {
         const { unmount } = renderHook(() => useDaemonLifecycle(uid));
 
-        const lifecycleLogCount = (message: string) =>
-          logSpy.mock.calls.filter(([logged]) => logged === message).length;
         const visibilityAddCount = () =>
           addEventListenerSpy.mock.calls.filter(([event]) => event === 'visibilitychange').length;
         const visibilityRemoveCount = () =>
           removeEventListenerSpy.mock.calls.filter(([event]) => event === 'visibilitychange')
             .length;
 
-        expect(lifecycleLogCount('[DaemonLifecycle] Setting up daemon lifecycle management')).toBe(
-          1
-        );
+        // Effect ran once: one listener added, none removed yet.
         expect(visibilityAddCount()).toBe(1);
+        expect(visibilityRemoveCount()).toBe(0);
 
         act(() => {
           setDaemonStatus(uid, 'starting');
@@ -191,23 +192,16 @@ describe('useDaemonLifecycle', () => {
           setIsRecovering(uid, false);
         });
 
-        expect(lifecycleLogCount('[DaemonLifecycle] Setting up daemon lifecycle management')).toBe(
-          1
-        );
-        expect(lifecycleLogCount('[DaemonLifecycle] Cleaning up daemon lifecycle management')).toBe(
-          0
-        );
+        // Daemon-state churn must NOT re-run the effect: still one add, no
+        // teardown.
         expect(visibilityAddCount()).toBe(1);
         expect(visibilityRemoveCount()).toBe(0);
 
         unmount();
 
-        expect(lifecycleLogCount('[DaemonLifecycle] Cleaning up daemon lifecycle management')).toBe(
-          1
-        );
+        // Unmount tears the single listener down exactly once.
         expect(visibilityRemoveCount()).toBe(1);
       } finally {
-        logSpy.mockRestore();
         addEventListenerSpy.mockRestore();
         removeEventListenerSpy.mockRestore();
       }

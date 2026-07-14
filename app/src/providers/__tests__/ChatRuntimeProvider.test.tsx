@@ -1,7 +1,7 @@
 import { render, waitFor } from '@testing-library/react';
 import { act } from 'react';
 import { Provider } from 'react-redux';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as chatService from '../../services/chatService';
 import { threadApi } from '../../services/api/threadApi';
@@ -9,13 +9,14 @@ import { store } from '../../store';
 import {
   clearAllChatRuntime,
   enqueueFollowup,
+  findPendingDelegationContext,
   registerParallelRequest,
   resetSessionTokenUsage,
   setPendingPlanReviewForThread,
 } from '../../store/chatRuntimeSlice';
 import { setStatusForUser } from '../../store/socketSlice';
 import { clearAllThreads, loadThreads, setSelectedThread } from '../../store/threadSlice';
-import ChatRuntimeProvider, { findPendingDelegationContext } from '../ChatRuntimeProvider';
+import ChatRuntimeProvider from '../ChatRuntimeProvider';
 
 vi.mock('../../services/chatService', async () => {
   const actual = await vi.importActual<typeof chatService>('../../services/chatService');
@@ -161,6 +162,66 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(timeline).toHaveLength(1);
       expect(timeline[0]?.name).toBe('search');
       expect(timeline[0]?.status).toBe('running');
+    });
+
+    it('attaches the tool_result output to the timeline row as its result', () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onToolCall?.({
+          thread_id: 't-res',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'web_search',
+          skill_id: 'web_channel',
+          args: {},
+          tool_call_id: 'call-res',
+        });
+        listeners.onToolResult?.({
+          thread_id: 't-res',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'web_search',
+          skill_id: 'web_channel',
+          output: 'Top hit: openhuman.dev',
+          success: true,
+          tool_call_id: 'call-res',
+        });
+      });
+
+      const row = store.getState().chatRuntime.toolTimelineByThread['t-res']?.[0];
+      expect(row?.status).toBe('success');
+      expect(row?.result).toBe('Top hit: openhuman.dev');
+    });
+
+    it('leaves result unset when the tool_result carries no output text', () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onToolCall?.({
+          thread_id: 't-res2',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'web_search',
+          skill_id: 'web_channel',
+          args: {},
+          tool_call_id: 'call-res2',
+        });
+        listeners.onToolResult?.({
+          thread_id: 't-res2',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'web_search',
+          skill_id: 'web_channel',
+          output: '',
+          success: true,
+          tool_call_id: 'call-res2',
+        });
+      });
+
+      const row = store.getState().chatRuntime.toolTimelineByThread['t-res2']?.[0];
+      expect(row?.status).toBe('success');
+      expect(row?.result).toBeUndefined();
     });
 
     it('collapses a spawn_subagent tool-call row into the subagent row', () => {
@@ -364,6 +425,31 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(after.streamingAssistantByThread['t-par']?.content).toBe('P');
     });
 
+    it('bumps the heartbeat counter only for the primary turn, never a parallel branch (#4282)', () => {
+      const listeners = renderProvider();
+
+      // Primary turn's heartbeat advances the thread's liveness counter.
+      act(() => {
+        listeners.onInferenceHeartbeat?.({ thread_id: 't-par', request_id: 'primary' });
+      });
+      expect(store.getState().chatRuntime.inferenceHeartbeatByThread['t-par']).toBe(1);
+
+      // A registered parallel branch's heartbeat must NOT rearm the primary
+      // silence timer — otherwise a sibling would mask a stalled primary turn.
+      act(() => {
+        store.dispatch(registerParallelRequest({ threadId: 't-par', requestId: 'branch' }));
+        listeners.onInferenceHeartbeat?.({ thread_id: 't-par', request_id: 'branch' });
+        listeners.onInferenceHeartbeat?.({ thread_id: 't-par', request_id: 'branch' });
+      });
+      expect(store.getState().chatRuntime.inferenceHeartbeatByThread['t-par']).toBe(1);
+
+      // The primary turn keeps beating independently.
+      act(() => {
+        listeners.onInferenceHeartbeat?.({ thread_id: 't-par', request_id: 'primary' });
+      });
+      expect(store.getState().chatRuntime.inferenceHeartbeatByThread['t-par']).toBe(2);
+    });
+
     it('drops duplicate chat_done events with the same thread/request', async () => {
       const listeners = renderProvider();
 
@@ -486,6 +572,34 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         )
       );
       expect(store.getState().chatRuntime.queuedFollowupsByThread['t-fup']).toBeUndefined();
+    });
+
+    it('stamps the assistant answer with the producing turn requestId on chat_done', async () => {
+      const listeners = renderProvider();
+
+      await act(async () => {
+        listeners.onDone?.({
+          thread_id: 't-rid',
+          request_id: 'req-abc',
+          full_response: 'the answer',
+          rounds_used: 1,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        });
+      });
+
+      // The persisted answer carries requestId in extraMetadata so the timeline
+      // projection can group it with its per-turn process trail (Phase 4).
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-rid',
+          expect.objectContaining({
+            content: 'the answer',
+            sender: 'agent',
+            extraMetadata: expect.objectContaining({ requestId: 'req-abc' }),
+          })
+        )
+      );
     });
 
     it('processes tool_call for different rounds as distinct events', () => {
@@ -904,6 +1018,67 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(streaming?.content).toBe('bbb');
     });
 
+    it('persists interim narration as a bubble and clears it from the live preview', async () => {
+      const listeners = renderProvider();
+
+      // Round-0 narration streams into the live preview…
+      act(() => {
+        listeners.onTextDelta?.({
+          thread_id: 't-interim',
+          request_id: 'r1',
+          round: 0,
+          delta: 'Let me check your calendar first.',
+        });
+      });
+      expect(store.getState().chatRuntime.streamingAssistantByThread['t-interim']?.content).toBe(
+        'Let me check your calendar first.'
+      );
+
+      // …then a tool call closes the round → interim flush.
+      act(() => {
+        listeners.onInterim?.({
+          thread_id: 't-interim',
+          request_id: 'r1',
+          round: 0,
+          full_response: 'Let me check your calendar first.',
+        });
+      });
+
+      // The narration is persisted as its own bubble…
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          't-interim',
+          expect.objectContaining({ content: 'Let me check your calendar first.', sender: 'agent' })
+        )
+      );
+      // …and cleared from the live preview so it isn't shown twice.
+      expect(store.getState().chatRuntime.streamingAssistantByThread['t-interim']?.content).toBe(
+        ''
+      );
+    });
+
+    it('dedupes a re-delivered interim event by round', async () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onInterim?.({
+          thread_id: 't-interim-dup',
+          request_id: 'r1',
+          round: 1,
+          full_response: 'Working on it now — pulling the data.',
+        });
+        // Reconnect/replay re-delivers the same round.
+        listeners.onInterim?.({
+          thread_id: 't-interim-dup',
+          request_id: 'r1',
+          round: 1,
+          full_response: 'Working on it now — pulling the data.',
+        });
+      });
+
+      await waitFor(() => expect(threadApi.appendMessage).toHaveBeenCalledTimes(1));
+    });
+
     it('sets inference status to thinking on inference_start and clears it on chat_done', () => {
       const listeners = renderProvider();
 
@@ -1180,6 +1355,74 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       });
     });
 
+    it('stores the structured failure on a failed subagent tool call (#4459)', () => {
+      const listeners = renderProvider();
+      const threadId = 'tsa-fail';
+
+      act(() => {
+        listeners.onSubagentSpawned?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          tool_name: 'researcher',
+          skill_id: 'sub-1',
+          message: 'spawned',
+          round: 1,
+          subagent: { mode: 'typed', dedicated_thread: false, prompt_chars: 42 },
+        });
+        listeners.onSubagentToolCall?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 1,
+          tool_name: 'shell',
+          skill_id: 'sub-1',
+          tool_call_id: 'cc-1',
+          subagent: { agent_id: 'researcher', task_id: 'sub-1', child_iteration: 1 },
+        });
+      });
+
+      act(() => {
+        listeners.onSubagentToolResult?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 1,
+          tool_name: 'shell',
+          skill_id: 'sub-1',
+          tool_call_id: 'cc-1',
+          success: false,
+          failure: {
+            class: 'denied',
+            category: 'user_declined',
+            cause_plain: 'You declined this action.',
+            next_action: 'Ask again if you change your mind.',
+            recoverable: false,
+          },
+          subagent: { agent_id: 'researcher', task_id: 'sub-1', child_iteration: 1, elapsed_ms: 5 },
+        });
+      });
+
+      const timeline = store.getState().chatRuntime.toolTimelineByThread[threadId] ?? [];
+      const call = timeline[0]?.subagent?.toolCalls[0];
+      expect(call).toMatchObject({ callId: 'cc-1', status: 'error' });
+      // The structured why/next survives live rather than being dropped until a
+      // snapshot reload (#4459).
+      expect(call?.failure).toMatchObject({
+        class: 'denied',
+        category: 'user_declined',
+        recoverable: false,
+        causePlain: 'You declined this action.',
+        nextAction: 'Ask again if you change your mind.',
+      });
+      // The rendered live path uses `subagent.transcript`, so the failure must
+      // also land on the transcript tool item, not just the fallback list.
+      const transcriptTool = timeline[0]?.subagent?.transcript?.find(
+        i => i.kind === 'tool' && i.callId === 'cc-1'
+      );
+      expect(transcriptTool).toMatchObject({
+        status: 'error',
+        failure: { class: 'denied', category: 'user_declined' },
+      });
+    });
+
     it('ignores subagent_tool_call events that arrive before subagent_spawned', () => {
       const listeners = renderProvider();
       const threadId = 'tsa-orphan';
@@ -1200,6 +1443,52 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       // than synthesising a partial subagent row from incomplete data.
       const timeline = store.getState().chatRuntime.toolTimelineByThread[threadId] ?? [];
       expect(timeline).toHaveLength(0);
+    });
+
+    // Regression: the Flows canvas copilot delegates to the `workflow_builder`
+    // subagent, which can emit 50+ progress events. The progress channel is
+    // bounded and `try_send`s, so under that volume the `subagent_spawned`/
+    // `subagent_tool_call` events that create the timeline row can be dropped
+    // before `subagent_tool_result` arrives. Proposal extraction must not be
+    // gated on that timeline row existing, or the Accept/Reject
+    // `WorkflowProposalCard` silently never renders.
+    it('surfaces a workflow proposal from a delegated subagent even with no matching timeline row', () => {
+      const listeners = renderProvider();
+      const threadId = 'tsa-no-row';
+
+      act(() => {
+        listeners.onSubagentToolResult?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 1,
+          tool_name: 'revise_workflow',
+          skill_id: 'sub-missing',
+          tool_call_id: 'cc-1',
+          success: true,
+          output: JSON.stringify({
+            type: 'workflow_proposal',
+            name: 'Notify on new signup',
+            graph: { nodes: [], edges: [] },
+            require_approval: true,
+            summary: { trigger: 'signup.created', steps: [] },
+          }),
+          // No `subagent` block and no prior `onSubagentSpawned`/`onSubagentToolCall`
+          // — so no timeline row exists for this call, mirroring the drop.
+        });
+      });
+
+      // No timeline row was ever created for this call.
+      const timeline = store.getState().chatRuntime.toolTimelineByThread[threadId] ?? [];
+      expect(timeline).toHaveLength(0);
+
+      // The proposal still reaches the parent thread so the Accept/Reject
+      // card renders.
+      const proposal = store.getState().chatRuntime.pendingWorkflowProposalsByThread[threadId];
+      expect(proposal).toMatchObject({
+        name: 'Notify on new signup',
+        requireApproval: true,
+        summary: { trigger: 'signup.created' },
+      });
     });
   });
 
@@ -1416,5 +1705,115 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         )
       );
     });
+  });
+});
+
+describe('ChatRuntimeProvider — skill tool-chain latency (#4273 AC3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetRuntimeState();
+    vi.mocked(threadApi.appendMessage).mockImplementation(async (_tid, msg) => msg);
+    vi.mocked(threadApi.getThreads).mockResolvedValue({ threads: [], count: 0 });
+    vi.mocked(threadApi.generateTitleIfNeeded).mockResolvedValue({
+      id: 'tid',
+      title: 'new',
+    } as never);
+  });
+
+  afterEach(() => {
+    // Restore the console.warn spy + real timers in shared cleanup so a failing
+    // assertion can't leave a mocked console for the next test (PR #4288).
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const toolCall = (thread: string): chatService.ChatToolCallEvent => ({
+    thread_id: thread,
+    request_id: 'r1',
+    round: 0,
+    tool_name: 'composio_execute',
+    skill_id: 'gmail',
+    args: {},
+    tool_call_id: `${thread}-call-1`,
+  });
+
+  const done = (thread: string): chatService.ChatDoneEvent =>
+    ({
+      thread_id: thread,
+      request_id: 'r1',
+      full_response: '',
+      rounds_used: 1,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+    }) as chatService.ChatDoneEvent;
+
+  it('warns when a tool chain overruns the 60s target', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const listeners = renderProvider();
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-29T00:00:00.000Z'));
+      act(() => {
+        listeners.onToolCall?.(toolCall('t-slow'));
+      });
+      // 61s later — past the 60s budget.
+      vi.setSystemTime(new Date('2026-06-29T00:01:01.000Z'));
+      act(() => {
+        listeners.onDone?.(done('t-slow'));
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[skill-latency]'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('exceeds the 60000ms target'));
+  });
+
+  it('does not warn for a chain that completes within the target', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const listeners = renderProvider();
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-29T00:00:00.000Z'));
+      act(() => {
+        listeners.onToolCall?.(toolCall('t-fast'));
+      });
+      vi.setSystemTime(new Date('2026-06-29T00:00:02.000Z')); // 2s
+      act(() => {
+        listeners.onDone?.(done('t-fast'));
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(warnSpy.mock.calls.some(args => String(args[0]).includes('[skill-latency]'))).toBe(
+      false
+    );
+  });
+
+  it('closes the latency window on chat_error without warning', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const listeners = renderProvider();
+
+    act(() => {
+      listeners.onToolCall?.(toolCall('t-err'));
+    });
+    expect(() => {
+      act(() => {
+        listeners.onError?.({
+          thread_id: 't-err',
+          request_id: 'r1',
+          error_type: 'provider_error',
+          message: 'boom',
+        } as chatService.ChatErrorEvent);
+      });
+    }).not.toThrow();
+
+    // Error path logs structured latency but never emits the overrun warning.
+    expect(warnSpy.mock.calls.some(args => String(args[0]).includes('[skill-latency]'))).toBe(
+      false
+    );
   });
 });

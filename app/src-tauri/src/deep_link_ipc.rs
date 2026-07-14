@@ -32,12 +32,27 @@ pub(crate) fn socket_path() -> PathBuf {
     std::env::temp_dir().join(format!("com_openhuman_app_deeplink_{uid}.sock"))
 }
 
+/// Filter `openhuman://` URLs out of an argv-style iterator. Split out from
+/// `extract_deep_link_urls` so the real filtering logic is unit-testable
+/// without mutating the process-global `std::env::args()` — mirrors the
+/// Windows sibling `collect_deep_link_urls_from_args`.
+pub(crate) fn collect_deep_link_urls_from_args<I, S>(args: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter()
+        .skip(1)
+        .filter_map(|arg| {
+            let arg = arg.as_ref();
+            arg.starts_with("openhuman://").then(|| arg.to_string())
+        })
+        .collect()
+}
+
 /// Collect any `openhuman://` URLs from the process argv.
 pub(crate) fn extract_deep_link_urls() -> Vec<String> {
-    std::env::args()
-        .skip(1)
-        .filter(|a| a.starts_with("openhuman://"))
-        .collect()
+    collect_deep_link_urls_from_args(std::env::args())
 }
 
 /// Result of `try_forward_deep_links`.
@@ -328,22 +343,20 @@ mod tests {
 
     #[test]
     fn extract_deep_link_urls_filters_correctly() {
-        // We can't mutate std::env::args(), so test the filtering logic directly.
-        let args = vec![
-            "OpenHuman".to_string(),
-            "openhuman://auth?token=abc".to_string(),
-            "--some-flag".to_string(),
-            "openhuman://other".to_string(),
-            "https://example.com".to_string(),
-        ];
-        let urls: Vec<String> = args
-            .into_iter()
-            .skip(1)
-            .filter(|a| a.starts_with("openhuman://"))
-            .collect();
-        assert_eq!(urls.len(), 2);
-        assert_eq!(urls[0], "openhuman://auth?token=abc");
-        assert_eq!(urls[1], "openhuman://other");
+        // Exercise the REAL production filter through the args-slice seam
+        // (mirrors the Windows sibling test) instead of re-implementing the
+        // predicate inline — so a regression in the filter actually fails here.
+        let urls = collect_deep_link_urls_from_args([
+            "OpenHuman",
+            "openhuman://auth?token=abc",
+            "--some-flag",
+            "openhuman://other",
+            "https://example.com",
+        ]);
+        assert_eq!(
+            urls,
+            vec!["openhuman://auth?token=abc", "openhuman://other"]
+        );
     }
 
     #[test]
@@ -384,22 +397,8 @@ mod tests {
         assert_eq!(got[0], "openhuman://auth?token=testtoken123");
     }
 
-    #[test]
-    fn no_primary_returns_appropriate_result() {
-        // Remove socket file to guarantee no primary.
-        std::env::remove_var("XDG_RUNTIME_DIR");
-        let _ = std::fs::remove_file(socket_path());
-
-        // The "extract_deep_link_urls" function reads actual argv which has
-        // no openhuman:// URLs during tests, so try_forward_deep_links()
-        // returns NoUrls. We test the NoPrimary branch directly by
-        // testing that connect to a missing socket fails.
-        let non_existent = PathBuf::from("/tmp/openhuman_test_nonexistent_socket.sock");
-        let _ = std::fs::remove_file(&non_existent);
-        let result = UnixStream::connect(&non_existent);
-        assert!(
-            result.is_err(),
-            "Expected connection failure for missing socket"
-        );
-    }
+    // NOTE: `no_primary_returns_appropriate_result` removed (plan.md §2.1) —
+    // its own comment admitted it couldn't reach the production NoPrimary
+    // branch and instead asserted that stdlib `UnixStream::connect` errors on
+    // a bogus path, which verifies nothing about our code.
 }

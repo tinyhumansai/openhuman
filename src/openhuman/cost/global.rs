@@ -18,7 +18,7 @@ use crate::openhuman::config::CostConfig;
 use crate::openhuman::inference::provider::traits::UsageInfo;
 
 use super::tracker::CostTracker;
-use super::types::TokenUsage;
+use super::types::{CostSource, TokenUsage};
 
 static GLOBAL_TRACKER: OnceCell<Arc<CostTracker>> = OnceCell::new();
 
@@ -135,18 +135,105 @@ pub(super) fn build_token_usage(model: &str, usage: &UsageInfo) -> Option<TokenU
         return None;
     }
     let total_tokens = usage.input_tokens.saturating_add(usage.output_tokens);
+    let provider_charged = usage.charged_amount_usd.is_finite() && usage.charged_amount_usd > 0.0;
     Some(TokenUsage {
         model: model.to_string(),
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         total_tokens,
+        cached_input_tokens: usage.cached_input_tokens.min(usage.input_tokens),
+        cache_creation_tokens: usage.cache_creation_tokens,
+        reasoning_tokens: usage.reasoning_tokens,
         cost_usd: if usage.charged_amount_usd.is_finite() && usage.charged_amount_usd >= 0.0 {
             usage.charged_amount_usd
         } else {
             0.0
         },
+        cost_source: if provider_charged {
+            CostSource::ProviderCharged
+        } else {
+            CostSource::Estimated
+        },
+        // Lineage groundwork (06-cost step 3): the provider-usage build site
+        // does not yet carry a run_id/root_run_id from the observation stream.
+        // Leave `None` until the run-tree rollup (06.3, gated) threads run
+        // lineage through `record_provider_usage` / the observation bridge in
+        // `tinyagents/observability.rs`.
+        run_id: None,
+        root_run_id: None,
         timestamp: chrono::Utc::now(),
     })
+}
+
+/// Best-effort embedding cost recording (06-cost step 4 / 09-embeddings step 4).
+///
+/// Emits a [`CostRecord`](super::types::CostRecord) for a successful embedding
+/// batch, priced via the unified pricing catalog. The record uses the
+/// `"<provider>/<model>"` model key so it matches the embedding `CostRecord`
+/// shape used elsewhere (e.g. `voyage/voyage-3`).
+///
+/// Pricing resolution: [`catalog::estimate_cost_usd`] prices `input_tokens` at
+/// the catalogued per-token input rate. Embedding models are frequently **not**
+/// in the pricing catalog; in that case `estimate_cost_usd` returns `0.0` and
+/// we record the usage with **zero** cost (and log it) rather than fabricating a
+/// rate. Output tokens are always zero for embeddings.
+///
+/// This path is **non-fatal**: it must never fail an embed or a recall turn.
+/// A missing global tracker, or a tracker write error, is logged under
+/// `[cost][embed]` and swallowed.
+///
+/// - `provider` — embedding provider slug (e.g. `voyage`, `openai`, `ollama`).
+/// - `model` — provider model id (e.g. `voyage-3`).
+/// - `input_tokens` — approximate input token count for the batch.
+/// - `dimensions` — embedding vector dimensionality (logging context only).
+/// - `vector_count` — number of vectors produced (logging context only).
+pub fn record_embedding_usage(
+    provider: &str,
+    model: &str,
+    input_tokens: u64,
+    dimensions: usize,
+    vector_count: u64,
+) {
+    let Some(tracker) = try_global() else {
+        log::debug!(
+            "[cost][embed] tracker not initialised; skipping embedding cost record \
+             provider={provider} model={model} vectors={vector_count}"
+        );
+        return;
+    };
+    let cost_usd = super::catalog::estimate_cost_usd(model, input_tokens, 0, 0);
+    if cost_usd == 0.0 {
+        log::debug!(
+            "[cost][embed] no catalog embedding rate for model={model}; recording usage with \
+             zero cost (provider={provider} dims={dimensions} vectors={vector_count} \
+             input_tokens={input_tokens})"
+        );
+    }
+    let usage = TokenUsage {
+        // `<provider>/<model>` bucket key, matching the embedding CostRecord
+        // shape used in the dashboard/RPC layer (e.g. `voyage/voyage-3`).
+        model: format!("{provider}/{model}"),
+        input_tokens,
+        output_tokens: 0,
+        total_tokens: input_tokens,
+        cached_input_tokens: 0,
+        cache_creation_tokens: 0,
+        reasoning_tokens: 0,
+        cost_usd,
+        cost_source: CostSource::Estimated,
+        run_id: None,
+        root_run_id: None,
+        timestamp: chrono::Utc::now(),
+    };
+    log::debug!(
+        "[cost][embed] recording embedding usage provider={provider} model={model} \
+         input_tokens={input_tokens} dims={dimensions} vectors={vector_count} cost_usd={cost_usd}"
+    );
+    if let Err(err) = tracker.record_usage_unconditional(usage) {
+        log::debug!(
+            "[cost][embed] record_embedding_usage failed provider={provider} model={model}: {err}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -160,6 +247,8 @@ mod tests {
             output_tokens: output,
             context_window: 0,
             cached_input_tokens: 0,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             charged_amount_usd: charged,
         }
     }

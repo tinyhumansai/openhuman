@@ -2,7 +2,9 @@
 //!
 //! The agent domain publishes one native request handler, `agent.run_turn`,
 //! which executes a single end-to-end agentic turn (LLM call → tool calls →
-//! loop until final text) using the full `run_tool_call_loop` machinery.
+//! loop until final text) on the tinyagents harness via
+//! [`run_channel_turn_via_graph`](crate::openhuman::agent::harness::run_channel_turn_via_graph)
+//! (issue #4249; the legacy `run_tool_call_loop` was removed).
 //!
 //! Consumers call it via [`crate::core::event_bus::request_native_global`]
 //! with an [`AgentTurnRequest`] and receive an [`AgentTurnResponse`]. The
@@ -22,14 +24,16 @@ use crate::core::event_bus::register_native_global;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::turn_origin::{self, AgentTurnOrigin};
 use crate::openhuman::config::MultimodalConfig;
-use crate::openhuman::inference::provider::{ChatMessage, Provider};
+use crate::openhuman::inference::provider::{
+    current_resolved_provider_route, with_resolved_provider_route_scope, ChatMessage,
+};
 use crate::openhuman::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
 };
 use crate::openhuman::tools::Tool;
 
 use super::harness::definition::{AgentDefinitionRegistry, SandboxMode};
-use super::harness::{run_tool_call_loop, with_current_sandbox_mode};
+use super::harness::{run_channel_turn_via_graph, with_current_sandbox_mode};
 use crate::openhuman::file_state::with_file_state_agent_id;
 
 /// Method name used to dispatch an agentic turn through the native bus.
@@ -42,9 +46,11 @@ pub const AGENT_RUN_TURN_METHOD: &str = "agent.run_turn";
 /// therefore pass trait objects (`Arc<dyn Provider>`, tool trait-object
 /// registries) and streaming senders (`on_delta`) through unchanged.
 pub struct AgentTurnRequest {
-    /// LLM provider, already constructed and warmed up by the caller.
-    /// Shared via Arc to allow sub-agents to reuse the same connection pool.
-    pub provider: Arc<dyn Provider>,
+    /// The turn's model source — the seam handle that builds this turn's tiered
+    /// crate `ChatModel` set (issue #4249, Phase 3 / Motion A). Replaces the raw
+    /// `Arc<dyn Provider>`: the bus/harness path names crate model types only,
+    /// and the `Provider` stays confined to the inference factory + seam.
+    pub turn_model_source: crate::openhuman::tinyagents::TurnModelSource,
 
     /// Full conversation history including system prompt and the incoming
     /// user message. The handler mutates an internal clone of this during
@@ -144,6 +150,219 @@ pub struct AgentTurnRequest {
 pub struct AgentTurnResponse {
     /// Final assistant text after all tool calls resolved and the loop terminated.
     pub text: String,
+    /// Provider that actually produced the final response, after any routing,
+    /// retry, or fallback layer. `None` means the provider stack did not expose
+    /// resolved-route metadata and callers should fall back to the requested
+    /// provider.
+    pub resolved_provider: Option<String>,
+    /// Model that actually produced the final response, after any routing,
+    /// retry, or fallback layer. `None` means callers should fall back to the
+    /// requested model.
+    pub resolved_model: Option<String>,
+}
+
+impl AgentTurnResponse {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            resolved_provider: None,
+            resolved_model: None,
+        }
+    }
+
+    pub fn with_resolved_route(
+        text: impl Into<String>,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            text: text.into(),
+            resolved_provider: Some(provider.into()),
+            resolved_model: Some(model.into()),
+        }
+    }
+}
+
+async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnResponse, String> {
+    let AgentTurnRequest {
+        turn_model_source,
+        mut history,
+        tools_registry,
+        provider_name,
+        model,
+        temperature,
+        silent,
+        channel_name,
+        multimodal,
+        multimodal_files,
+        max_tool_iterations,
+        on_delta,
+        target_agent_id,
+        visible_tool_names,
+        extra_tools,
+        on_progress,
+        origin,
+    } = req;
+
+    tracing::debug!(
+        channel = %channel_name,
+        target_agent = target_agent_id.as_deref().unwrap_or("<unset>"),
+        provider = %provider_name,
+        model = %model,
+        history_len = history.len(),
+        tool_count = tools_registry.len(),
+        extra_tool_count = extra_tools.len(),
+        visible_tool_count = visible_tool_names.as_ref().map(|s| s.len()).unwrap_or(0),
+        filter_active = visible_tool_names.is_some(),
+        streaming = on_delta.is_some(),
+        progress_subscribed = on_progress.is_some(),
+        "[agent::bus] dispatching {AGENT_RUN_TURN_METHOD}"
+    );
+
+    if let Some(user_prompt) = history
+        .iter()
+        .rev()
+        .find(|msg| msg.role.eq_ignore_ascii_case("user"))
+        .map(|msg| msg.content.as_str())
+    {
+        let decision = enforce_prompt_input(
+            user_prompt,
+            PromptEnforcementContext {
+                source: "agent.bus.run_turn",
+                request_id: None,
+                user_id: Some(channel_name.as_str()),
+                session_id: target_agent_id.as_deref(),
+            },
+        );
+        if !matches!(decision.action, PromptEnforcementAction::Allow) {
+            tracing::warn!(
+                channel = %channel_name,
+                target_agent = target_agent_id.as_deref().unwrap_or("<unset>"),
+                action = match decision.action {
+                    PromptEnforcementAction::Allow => "allow",
+                    PromptEnforcementAction::Blocked => "block",
+                    PromptEnforcementAction::ReviewBlocked => "review_blocked",
+                },
+                score = decision.score,
+                reasons = %decision
+                    .reasons
+                    .iter()
+                    .map(|r| r.code.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                prompt_hash = %decision.prompt_hash,
+                prompt_chars = decision.prompt_chars,
+                "[agent::bus] prompt rejected before run_tool_call_loop"
+            );
+            let msg = match decision.action {
+                PromptEnforcementAction::Allow => "Message accepted.",
+                PromptEnforcementAction::Blocked => "Prompt blocked by security policy.",
+                PromptEnforcementAction::ReviewBlocked => {
+                    "Prompt flagged for security review and was not processed."
+                }
+            };
+            return Err(msg.to_string());
+        }
+    }
+
+    // Resolve the target agent's declared sandbox mode so any
+    // tool executed inside the loop can read it via the
+    // `CURRENT_AGENT_SANDBOX_MODE` task-local. Falls back to
+    // `SandboxMode::None` when the request doesn't pin an agent
+    // id (legacy "generic unfiltered turn" path) or when the
+    // global registry hasn't been initialised (tests that stub
+    // the bus without bootstrapping definitions).
+    let sandbox_mode = target_agent_id
+        .as_deref()
+        .and_then(|id| AgentDefinitionRegistry::global().and_then(|reg| reg.get(id)))
+        .map(|def| def.sandbox_mode)
+        .unwrap_or(SandboxMode::None);
+
+    // Scope the caller-supplied origin around the tool loop so
+    // the approval gate (and any other origin-aware policy) sees
+    // the same trust label the entry point intended. Native-bus
+    // dispatch crosses a `tokio::spawn` boundary inside the
+    // registry, so re-scoping here is mandatory — the
+    // task-local does NOT propagate across that boundary
+    // implicitly.
+    let file_state_id = format!(
+        "bus:{}:{}",
+        channel_name,
+        target_agent_id.as_deref().unwrap_or("root")
+    );
+    let (text, resolved_route) = with_resolved_provider_route_scope(async {
+        let text = turn_origin::with_origin(
+            origin,
+            with_file_state_agent_id(
+                file_state_id,
+                with_current_sandbox_mode(sandbox_mode, async {
+                    // Channel/CLI turns run through the tinyagents harness
+                    // (issue #4249); the legacy `run_tool_call_loop` is removed.
+                    // `on_progress` mirrors the harness event stream (tool
+                    // timeline, text deltas, cost footer) — production channel
+                    // dispatch always supplies it and now expects it live.
+                    // `on_delta` (raw Sender<String>) is superseded by
+                    // `on_progress` text deltas, so it's intentionally unused.
+                    let _ = (&provider_name, silent, &channel_name, on_delta);
+                    run_channel_turn_via_graph(
+                        turn_model_source.clone(),
+                        &mut history,
+                        tools_registry.clone(),
+                        extra_tools,
+                        visible_tool_names.as_ref(),
+                        &model,
+                        temperature,
+                        max_tool_iterations,
+                        multimodal.clone(),
+                        multimodal_files.clone(),
+                        on_progress,
+                    )
+                    .await
+                }),
+            ),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let resolved_route = current_resolved_provider_route();
+        Ok::<_, String>((text, resolved_route))
+    })
+    .await?;
+
+    tracing::debug!(
+        channel = %channel_name,
+        text_chars = text.chars().count(),
+        "[agent::bus] {AGENT_RUN_TURN_METHOD} completed"
+    );
+
+    Ok(match resolved_route {
+        Some(route) => AgentTurnResponse::with_resolved_route(text, route.provider, route.model),
+        None => AgentTurnResponse::new(text),
+    })
+}
+
+#[cfg(test)]
+async fn handle_agent_run_turn_on_large_stack(
+    req: AgentTurnRequest,
+) -> Result<AgentTurnResponse, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let handle = std::thread::Builder::new()
+        .name("agent-run-turn-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build agent run_turn test runtime");
+            let result = runtime.block_on(handle_agent_run_turn(req));
+            let _ = tx.send(result);
+        })
+        .map_err(|error| format!("failed to spawn large-stack agent handler: {error}"))?;
+
+    let result = rx.await;
+    handle
+        .join()
+        .map_err(|_| "large-stack agent handler panicked".to_string())?;
+    result.map_err(|_| "large-stack agent handler exited without a result".to_string())?
 }
 
 /// Register the agent domain's native request handlers on the global
@@ -155,158 +374,15 @@ pub struct AgentTurnResponse {
 pub fn register_agent_handlers() {
     register_native_global::<AgentTurnRequest, AgentTurnResponse, _, _>(
         AGENT_RUN_TURN_METHOD,
-        |req| async move {
-            let AgentTurnRequest {
-                provider,
-                mut history,
-                tools_registry,
-                provider_name,
-                model,
-                temperature,
-                silent,
-                channel_name,
-                multimodal,
-                multimodal_files,
-                max_tool_iterations,
-                on_delta,
-                target_agent_id,
-                visible_tool_names,
-                extra_tools,
-                on_progress,
-                origin,
-            } = req;
-
-            tracing::debug!(
-                channel = %channel_name,
-                target_agent = target_agent_id.as_deref().unwrap_or("<unset>"),
-                provider = %provider_name,
-                model = %model,
-                history_len = history.len(),
-                tool_count = tools_registry.len(),
-                extra_tool_count = extra_tools.len(),
-                visible_tool_count = visible_tool_names.as_ref().map(|s| s.len()).unwrap_or(0),
-                filter_active = visible_tool_names.is_some(),
-                streaming = on_delta.is_some(),
-                progress_subscribed = on_progress.is_some(),
-                "[agent::bus] dispatching {AGENT_RUN_TURN_METHOD}"
-            );
-
-            if let Some(user_prompt) = history
-                .iter()
-                .rev()
-                .find(|msg| msg.role.eq_ignore_ascii_case("user"))
-                .map(|msg| msg.content.as_str())
+        |req| {
+            #[cfg(test)]
             {
-                let decision = enforce_prompt_input(
-                    user_prompt,
-                    PromptEnforcementContext {
-                        source: "agent.bus.run_turn",
-                        request_id: None,
-                        user_id: Some(channel_name.as_str()),
-                        session_id: target_agent_id.as_deref(),
-                    },
-                );
-                if !matches!(decision.action, PromptEnforcementAction::Allow) {
-                    tracing::warn!(
-                        channel = %channel_name,
-                        target_agent = target_agent_id.as_deref().unwrap_or("<unset>"),
-                        action = match decision.action {
-                            PromptEnforcementAction::Allow => "allow",
-                            PromptEnforcementAction::Blocked => "block",
-                            PromptEnforcementAction::ReviewBlocked => "review_blocked",
-                        },
-                        score = decision.score,
-                        reasons = %decision
-                            .reasons
-                            .iter()
-                            .map(|r| r.code.as_str())
-                            .collect::<Vec<_>>()
-                            .join(","),
-                        prompt_hash = %decision.prompt_hash,
-                        prompt_chars = decision.prompt_chars,
-                        "[agent::bus] prompt rejected before run_tool_call_loop"
-                    );
-                    let msg = match decision.action {
-                        PromptEnforcementAction::Allow => "Message accepted.",
-                        PromptEnforcementAction::Blocked => "Prompt blocked by security policy.",
-                        PromptEnforcementAction::ReviewBlocked => {
-                            "Prompt flagged for security review and was not processed."
-                        }
-                    };
-                    return Err(msg.to_string());
-                }
+                handle_agent_run_turn_on_large_stack(req)
             }
-
-            // Resolve the target agent's declared sandbox mode so any
-            // tool executed inside the loop can read it via the
-            // `CURRENT_AGENT_SANDBOX_MODE` task-local. Falls back to
-            // `SandboxMode::None` when the request doesn't pin an agent
-            // id (legacy "generic unfiltered turn" path) or when the
-            // global registry hasn't been initialised (tests that stub
-            // the bus without bootstrapping definitions).
-            let sandbox_mode = target_agent_id
-                .as_deref()
-                .and_then(|id| AgentDefinitionRegistry::global().and_then(|reg| reg.get(id)))
-                .map(|def| def.sandbox_mode)
-                .unwrap_or(SandboxMode::None);
-
-            // Scope the caller-supplied origin around the tool loop so
-            // the approval gate (and any other origin-aware policy) sees
-            // the same trust label the entry point intended. Native-bus
-            // dispatch crosses a `tokio::spawn` boundary inside the
-            // registry, so re-scoping here is mandatory — the
-            // task-local does NOT propagate across that boundary
-            // implicitly.
-            let file_state_id = format!(
-                "bus:{}:{}",
-                channel_name,
-                target_agent_id.as_deref().unwrap_or("root")
-            );
-            let text = turn_origin::with_origin(
-                origin,
-                with_file_state_agent_id(
-                    file_state_id,
-                    with_current_sandbox_mode(sandbox_mode, async {
-                        run_tool_call_loop(
-                            provider.as_ref(),
-                            &mut history,
-                            tools_registry.as_ref(),
-                            &provider_name,
-                            &model,
-                            temperature,
-                            silent,
-                            &channel_name,
-                            &multimodal,
-                            &multimodal_files,
-                            max_tool_iterations,
-                            on_delta,
-                            visible_tool_names.as_ref(),
-                            &extra_tools,
-                            on_progress,
-                            // Bus path runs ad-hoc agent turns without an Agent
-                            // handle, so we pass None — payload summarization is
-                            // wired into the orchestrator session via Agent::turn,
-                            // not the bus dispatcher.
-                            None,
-                            // Use the default (allow-all) tool policy. Custom
-                            // policies can be wired in via AgentTurnRequest when
-                            // per-channel policy configuration is added (#2134).
-                            &crate::openhuman::tools::policy::DefaultToolPolicy,
-                        )
-                        .await
-                    }),
-                ),
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-
-            tracing::debug!(
-                channel = %channel_name,
-                text_chars = text.chars().count(),
-                "[agent::bus] {AGENT_RUN_TURN_METHOD} completed"
-            );
-
-            Ok(AgentTurnResponse { text })
+            #[cfg(not(test))]
+            {
+                handle_agent_run_turn(req)
+            }
         },
     );
     tracing::debug!("[agent::bus] registered native handler `{AGENT_RUN_TURN_METHOD}`");
@@ -346,7 +422,7 @@ pub fn register_agent_handlers() {
 ///         async move {
 ///             calls.fetch_add(1, Ordering::SeqCst);
 ///             assert_eq!(req.channel_name, "discord");
-///             Ok(AgentTurnResponse { text: "CANNED".into() })
+///             Ok(AgentTurnResponse::new("CANNED"))
 ///         }
 ///     })
 ///     .await;
@@ -395,10 +471,11 @@ pub async fn use_real_agent_handler() -> tokio::sync::MutexGuard<'static, ()> {
 mod tests {
     use super::*;
     use crate::core::event_bus::NativeRegistry;
+    use crate::openhuman::inference::provider::Provider;
     use async_trait::async_trait;
 
-    /// Minimal `Provider` implementation used only to satisfy the
-    /// `Arc<dyn Provider>` type in [`AgentTurnRequest`]. The tests below
+    /// Minimal `Provider` implementation used only to build the
+    /// [`TurnModelSource`] in [`AgentTurnRequest`]. The tests below
     /// override the bus handler with a stub that never calls any
     /// provider methods, so this no-op is sufficient — the only required
     /// trait method is `chat_with_system`, everything else has a default.
@@ -425,7 +502,9 @@ mod tests {
     /// invoked — it only needs to satisfy the type.
     fn test_request() -> AgentTurnRequest {
         AgentTurnRequest {
-            provider: Arc::new(NoopProvider),
+            turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(Arc::new(
+                NoopProvider,
+            )),
             history: vec![
                 ChatMessage::system("you are a test bot"),
                 ChatMessage::user("hello"),
@@ -459,9 +538,10 @@ mod tests {
                 assert_eq!(req.provider_name, "fake-provider");
                 assert_eq!(req.channel_name, "test-channel");
                 assert_eq!(req.history.len(), 2);
-                Ok(AgentTurnResponse {
-                    text: format!("handled({})", req.history.len()),
-                })
+                Ok(AgentTurnResponse::new(format!(
+                    "handled({})",
+                    req.history.len()
+                )))
             },
         );
 
@@ -487,9 +567,7 @@ mod tests {
                     .expect("streaming test must supply an on_delta sender");
                 tx.send("chunk1".into()).await.map_err(|e| e.to_string())?;
                 tx.send("chunk2".into()).await.map_err(|e| e.to_string())?;
-                Ok(AgentTurnResponse {
-                    text: "streamed".into(),
-                })
+                Ok(AgentTurnResponse::new("streamed"))
             },
         );
 

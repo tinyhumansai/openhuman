@@ -79,7 +79,7 @@ SQLite DB at `{workspace_dir}/approval/approval.db`, table `pending_approvals` (
 
 - `src/core/jsonrpc.rs` — installs the global gate (`ApprovalGate::init_global`) at startup; wires the approval RPCs.
 - `src/core/all.rs` — registers the controller schemas.
-- `src/openhuman/agent/harness/tool_loop.rs` (+ subagent_runner) — routes external-effect tool calls through the gate before `execute()`.
+- `src/openhuman/tinyagents/middleware.rs` (`ApprovalSecurityMiddleware`, a `wrap_tool` middleware on every turn path) — routes external-effect tool calls through the gate before `execute()` and records the terminal audit row.
 - `src/openhuman/channels/providers/web.rs` — sets `APPROVAL_CHAT_CONTEXT`, hosts `ApprovalSurfaceSubscriber`, and routes typed yes/no replies to `approval_decide`.
 - `src/openhuman/channels/proactive.rs`, `src/openhuman/agent/triage/escalation.rs`, `src/openhuman/tools/impl/system/install_tool.rs`, `src/openhuman/wallet/execution.rs` — interact with the gate / approval types.
 

@@ -80,12 +80,133 @@ async fn get_authed_value(
         .map_err(crate::api::flatten_authed_error)
 }
 
+/// How long a *failed* usage fetch is short-circuited before the backend is
+/// probed again. `get_usage` is hammered from two surfaces — the frontend usage
+/// poll (the `team_get_usage` RPC) and the pre-call budget gate
+/// (`managed_tool_budget_exhausted`) — so a *persistent* non-2xx (a misrouted
+/// `BACKEND_URL`, a backend outage) otherwise re-fires on every poll and every
+/// managed tool call, re-reporting to Sentry each time. That is the
+/// `/teams/me/usage` flood in GH #4153 (TAURI-RUST-BSF/-8C/-HDS/-HW1/-JJ5).
+///
+/// This window collapses a persistent fault to ~one backend probe (and so
+/// ~one Sentry event) per minute per process while staying responsive: the
+/// FIRST failure of a streak still hits the backend and still reports (real
+/// signal preserved — backpressure, not silent drop), and any success clears
+/// the window immediately. This is defense-in-depth flood control; the actual
+/// misroute fix lives in `effective_backend_api_url` (see GH #4153).
+const USAGE_FAILURE_BACKOFF: Duration = Duration::from_secs(60);
+
+/// Process-global anchor of the most recent *reportable* `get_usage` failure.
+/// Session-expiry (401) failures are intentionally NOT recorded here — they are
+/// handled by their own RPC arm and must keep driving auth recovery.
+struct UsageFailureCache {
+    /// Backend identity + `Instant` of the last reported failure for that
+    /// backend, if a streak is active. Keying on the backend URL means a
+    /// changed `config.api_url` (e.g. after the user fixes a misrouted
+    /// `BACKEND_URL`, or auth/session context that re-points the backend) no
+    /// longer matches the stored key, so the next probe hits the new backend
+    /// immediately instead of inheriting the old backend's backoff (GH #4153).
+    inner: RwLock<Option<(String, Instant)>>,
+}
+
+impl UsageFailureCache {
+    const fn new() -> Self {
+        Self {
+            inner: RwLock::new(None),
+        }
+    }
+
+    /// True when a failure for `key` was recorded within `ttl` of `now`. A
+    /// failure anchored under a different backend key never counts as fresh.
+    fn is_fresh(&self, key: &str, now: Instant, ttl: Duration) -> bool {
+        let guard = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        guard
+            .as_ref()
+            .is_some_and(|(k, at)| k == key && now.duration_since(*at) < ttl)
+    }
+
+    /// Anchor a fresh failure for `key` (start / keep a streak).
+    fn record(&self, key: &str, now: Instant) {
+        let mut guard = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        *guard = Some((key.to_string(), now));
+    }
+
+    /// Clear the streak — the endpoint recovered.
+    fn clear(&self) {
+        let mut guard = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        *guard = None;
+    }
+}
+
+static USAGE_FAILURE_CACHE: UsageFailureCache = UsageFailureCache::new();
+
 pub async fn get_usage(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    let data = get_authed_value(config, Method::GET, "/teams/me/usage", None).await?;
-    Ok(RpcOutcome::single_log(
-        data,
-        "team usage fetched from backend",
-    ))
+    // Key the failure backoff by the effective backend URL so a failure on one
+    // backend never suppresses probes after the backend is re-pointed (#4153).
+    let backend_key = effective_backend_api_url(&config.api_url);
+    get_usage_with_cache(
+        &USAGE_FAILURE_CACHE,
+        &backend_key,
+        USAGE_FAILURE_BACKOFF,
+        Instant::now(),
+        || async { get_authed_value(config, Method::GET, "/teams/me/usage", None).await },
+    )
+    .await
+}
+
+/// Cache-aware usage fetch. Mirrors the backoff/backpressure shape of
+/// [`budget_exhausted_with_cache`] but for *failures*:
+///
+/// - Within `ttl` of a recorded failure → short-circuit WITHOUT calling
+///   `fetch` (network backpressure) and return the
+///   [`crate::core::observability::USAGE_PROBE_BACKOFF_PREFIX`] sentinel, which
+///   the JSON-RPC boundary demotes (no re-report).
+/// - Otherwise call `fetch`: `Ok` clears the streak; a non-session-expiry `Err`
+///   anchors a fresh streak and propagates verbatim (first-of-streak reports);
+///   a session-expiry `Err` propagates verbatim WITHOUT anchoring (its own RPC
+///   arm handles it / drives auth recovery).
+async fn get_usage_with_cache<F, Fut>(
+    cache: &UsageFailureCache,
+    key: &str,
+    ttl: Duration,
+    now: Instant,
+    fetch: F,
+) -> Result<RpcOutcome<Value>, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
+    if cache.is_fresh(key, now, ttl) {
+        tracing::debug!(
+            "[team] usage probe in failure-backoff window — skipping backend call (suppressing repeat report)"
+        );
+        return Err(format!(
+            "{} recent /teams/me/usage failure suppressed (backoff)",
+            crate::core::observability::USAGE_PROBE_BACKOFF_PREFIX
+        ));
+    }
+
+    match fetch().await {
+        Ok(data) => {
+            cache.clear();
+            Ok(RpcOutcome::single_log(
+                data,
+                "team usage fetched from backend",
+            ))
+        }
+        Err(err) => {
+            if crate::core::observability::is_session_expired_message(&err) {
+                // Session lapse — handled by the session-expired RPC arm and
+                // drives local session cleanup. Never enter the failure window.
+                tracing::debug!(
+                    "[team] usage probe failed with session-expiry — not anchoring backoff"
+                );
+            } else {
+                cache.record(key, now);
+            }
+            Err(err)
+        }
+    }
 }
 
 fn usage_number(data: &Value, key: &str) -> f64 {
@@ -399,6 +520,180 @@ mod tests {
     fn budget_cache_get_returns_none_when_empty() {
         let cache = BudgetProbeCache::new();
         assert_eq!(cache.get(Instant::now(), Duration::from_secs(30)), None);
+    }
+
+    // ── GH #4153: `/teams/me/usage` failure backoff ──────────────────────────
+
+    use crate::core::observability::is_suppressed_usage_probe_backoff;
+
+    const TTL: Duration = Duration::from_secs(60);
+    const FAIL_KEY: &str = "backend-under-test";
+
+    #[test]
+    fn usage_failure_cache_freshness_window() {
+        let cache = UsageFailureCache::new();
+        let base = Instant::now();
+        assert!(
+            !cache.is_fresh(FAIL_KEY, base, TTL),
+            "empty cache is never fresh"
+        );
+        cache.record(FAIL_KEY, base);
+        assert!(cache.is_fresh(FAIL_KEY, base + Duration::from_secs(5), TTL));
+        assert!(!cache.is_fresh(FAIL_KEY, base + Duration::from_secs(61), TTL));
+        cache.clear();
+        assert!(
+            !cache.is_fresh(FAIL_KEY, base, TTL),
+            "cleared cache is never fresh"
+        );
+    }
+
+    // GH #4153: a failure anchored under one backend key must NOT suppress a
+    // probe for a different backend (e.g. after the user fixes BACKEND_URL or
+    // the session re-points the backend) — otherwise the new route never gets
+    // tested for up to the backoff window.
+    #[test]
+    fn failure_backoff_is_keyed_per_backend() {
+        let cache = UsageFailureCache::new();
+        let base = Instant::now();
+        cache.record("https://old.example/api/v1", base);
+        assert!(cache.is_fresh("https://old.example/api/v1", base, TTL));
+        assert!(
+            !cache.is_fresh("https://new.example/api/v1", base, TTL),
+            "a different backend key must not inherit the old backend's backoff"
+        );
+    }
+
+    // T1 — first failure of a streak hits the backend, reports verbatim, anchors.
+    #[tokio::test]
+    async fn first_failure_reports_and_anchors() {
+        let cache = UsageFailureCache::new();
+        let base = Instant::now();
+        let calls = AtomicUsize::new(0);
+        let err = get_usage_with_cache(&cache, FAIL_KEY, TTL, base, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Err("GET /teams/me/usage failed (500 Internal Server Error): ".to_string()) }
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "backend probed once");
+        assert!(
+            !is_suppressed_usage_probe_backoff(&err),
+            "first failure must NOT be the backoff sentinel (it reports): {err}"
+        );
+        assert!(cache.is_fresh(FAIL_KEY, base, TTL), "streak anchored");
+    }
+
+    // T2 — a repeat inside the window short-circuits WITHOUT touching the
+    // backend and returns the demote sentinel.
+    #[tokio::test]
+    async fn repeat_within_window_suppressed_and_skips_backend() {
+        let cache = UsageFailureCache::new();
+        let base = Instant::now();
+        cache.record(FAIL_KEY, base);
+        let calls = AtomicUsize::new(0);
+        let err =
+            get_usage_with_cache(&cache, FAIL_KEY, TTL, base + Duration::from_secs(5), || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async { panic!("fetch must not run inside the backoff window") }
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "backend NOT probed (backpressure)"
+        );
+        assert!(
+            is_suppressed_usage_probe_backoff(&err),
+            "repeat must carry the backoff sentinel: {err}"
+        );
+    }
+
+    // T3 — once the window expires the backend is probed again (≤1 report/min).
+    #[tokio::test]
+    async fn window_expiry_reprobes_and_reports() {
+        let cache = UsageFailureCache::new();
+        let base = Instant::now();
+        cache.record(FAIL_KEY, base);
+        let later = base + Duration::from_secs(61);
+        let calls = AtomicUsize::new(0);
+        let err = get_usage_with_cache(&cache, FAIL_KEY, TTL, later, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Err("GET /teams/me/usage failed (500 Internal Server Error): ".to_string()) }
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "stale window re-probes");
+        assert!(
+            !is_suppressed_usage_probe_backoff(&err),
+            "re-probe failure reports"
+        );
+        assert!(
+            cache.is_fresh(FAIL_KEY, later, TTL),
+            "streak re-anchored at the new probe"
+        );
+    }
+
+    // T4 — a success clears the streak so the next failure reports immediately.
+    #[tokio::test]
+    async fn success_clears_streak() {
+        let cache = UsageFailureCache::new();
+        let base = Instant::now();
+        cache.record(FAIL_KEY, base);
+        let later = base + Duration::from_secs(61); // stale → fetch runs
+        let outcome = get_usage_with_cache(&cache, FAIL_KEY, TTL, later, || async {
+            Ok(serde_json::json!({"remainingUsd": 5.0}))
+        })
+        .await
+        .expect("success");
+        assert_eq!(outcome.value["remainingUsd"], 5.0);
+        assert!(
+            !cache.is_fresh(FAIL_KEY, later, TTL),
+            "success cleared the streak"
+        );
+    }
+
+    // T5 — session-expiry must flow verbatim and must NOT anchor the window
+    // (its own RPC arm drives auth recovery).
+    #[tokio::test]
+    async fn session_expiry_bypasses_backoff() {
+        let cache = UsageFailureCache::new();
+        let base = Instant::now();
+        let err = get_usage_with_cache(&cache, FAIL_KEY, TTL, base, || async {
+            Err(
+                "SESSION_EXPIRED: backend rejected session token on GET /teams/me/usage"
+                    .to_string(),
+            )
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            err.contains("SESSION_EXPIRED"),
+            "propagated verbatim: {err}"
+        );
+        assert!(!is_suppressed_usage_probe_backoff(&err));
+        assert!(
+            !cache.is_fresh(FAIL_KEY, base, TTL),
+            "session-expiry must not start a backoff streak"
+        );
+    }
+
+    // T6 — the producer's sentinel and the classifier are coupled (no drift).
+    #[tokio::test]
+    async fn produced_sentinel_is_classified() {
+        let cache = UsageFailureCache::new();
+        let base = Instant::now();
+        cache.record(FAIL_KEY, base);
+        let err = get_usage_with_cache(&cache, FAIL_KEY, TTL, base, || async {
+            unreachable!("fresh window short-circuits")
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            err.starts_with(crate::core::observability::USAGE_PROBE_BACKOFF_PREFIX),
+            "sentinel built from the shared prefix constant: {err}"
+        );
+        assert!(is_suppressed_usage_probe_backoff(&err));
     }
 
     #[test]

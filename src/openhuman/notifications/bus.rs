@@ -291,14 +291,14 @@ mod tests {
         let ev = DomainEvent::ProviderApiKeyRejected {
             provider: "openrouter".into(),
             message: "openrouter rejected the API key (HTTP 401). Update your openrouter \
-                      API key in Settings → AI to restore it."
+                      API key in Connections → API keys → LLM to restore it."
                 .into(),
         };
         let n = event_to_notification(&ev).expect("should produce notification");
         assert_eq!(n.category, CoreNotificationCategory::System);
         assert_eq!(n.title, "API key rejected");
         assert!(n.body.contains("openrouter"));
-        assert!(n.body.contains("Settings"));
+        assert!(n.body.contains("Connections"));
         assert_eq!(n.deep_link.as_deref(), Some("/connections?tab=llm"));
         assert!(n.id.starts_with("provider-key-rejected:openrouter:"));
     }

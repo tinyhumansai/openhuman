@@ -5,7 +5,7 @@ use crate::openhuman::config::LocalAiConfig;
 use crate::openhuman::inference::local::lm_studio::lm_studio_base_url_from_local_ai;
 use crate::openhuman::inference::local::ollama_base_url;
 use crate::openhuman::inference::local::provider::normalize_provider;
-use crate::openhuman::inference::provider::compatible::{AuthStyle, OpenAiCompatibleProvider};
+use crate::openhuman::inference::provider::auth::AuthStyle;
 use crate::openhuman::inference::provider::Provider;
 
 use super::health::LocalHealthChecker;
@@ -115,9 +115,25 @@ pub fn new_provider(
     } else {
         AuthStyle::None
     };
+    let model =
+        crate::openhuman::inference::provider::crate_openai::make_crate_local_runtime_chat_model(
+            provider_label,
+            &local_base,
+            local_api_key.unwrap_or(""),
+            local_auth_style,
+            &local_ai_config.chat_model_id,
+            temperature_unsupported_models,
+            None,
+            (provider_label == "ollama")
+                .then_some(local_ai_config.num_ctx)
+                .flatten(),
+        );
     let local: Box<dyn Provider> = Box::new(
-        OpenAiCompatibleProvider::new(provider_label, &local_base, local_api_key, local_auth_style)
-            .with_temperature_unsupported_models(temperature_unsupported_models.to_vec()),
+        crate::openhuman::inference::provider::crate_provider::CrateBackedProvider::new(
+            model,
+            provider_label,
+        )
+        .with_local(),
     );
 
     IntelligentRoutingProvider::new(
@@ -186,45 +202,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn factory_constructs_without_panic_when_runtime_enabled() {
-        let mut cfg = LocalAiConfig::default();
-        cfg.runtime_enabled = true;
-        cfg.chat_model_id = "gemma3:4b-it-qat".to_string();
-        let _p = make_provider(&cfg);
-    }
-
-    #[test]
-    fn factory_llamacpp_provider_constructs_without_panic() {
-        // When provider is "llamacpp" the health probe URL must be
-        // `{base}/models` (OpenAI-compat), not `{base}/api/tags` (Ollama).
-        // We verify construction does not panic and the routing provider
-        // is usable.
-        let mut cfg = LocalAiConfig::default();
-        cfg.runtime_enabled = true;
-        cfg.provider = "llamacpp".to_string();
-        cfg.base_url = Some("http://127.0.0.1:8080/v1".to_string());
-        let _p = make_provider(&cfg);
-    }
-
-    #[test]
-    fn factory_custom_openai_provider_constructs_without_panic() {
-        let mut cfg = LocalAiConfig::default();
-        cfg.runtime_enabled = true;
-        cfg.provider = "custom_openai".to_string();
-        cfg.base_url = Some("http://127.0.0.1:1234/v1".to_string());
-        let _p = make_provider(&cfg);
-    }
-
-    #[test]
-    fn factory_lm_studio_provider_constructs_without_panic() {
-        let mut cfg = LocalAiConfig::default();
-        cfg.runtime_enabled = true;
-        cfg.provider = "lm-studio".to_string();
-        cfg.base_url = Some("http://127.0.0.1:1234/v1".to_string());
-        cfg.chat_model_id = "local-model".to_string();
-        let _p = make_provider(&cfg);
-    }
+    // NOTE: four `factory_*_constructs_without_panic` smoke tests were removed
+    // here (plan.md §2.1) — construction is pure struct init that cannot fail,
+    // and private fields blocked any real probe-URL/capability assertion, so
+    // they verified nothing. The behavioural branches that DO assert
+    // (local-disabled streaming, llama-server alias, env-override precedence)
+    // are retained below.
 
     #[test]
     fn factory_llama_server_alias_is_recognised() {

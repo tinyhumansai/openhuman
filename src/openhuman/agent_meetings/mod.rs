@@ -23,6 +23,7 @@ pub mod schemas;
 pub mod store;
 pub mod summary;
 pub mod types;
+pub mod upcoming;
 
 pub use schemas::{
     all_controller_schemas as all_agent_meetings_controller_schemas,

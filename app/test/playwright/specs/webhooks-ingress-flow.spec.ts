@@ -56,22 +56,4 @@ test.describe('Webhooks ingress surface (stub-level)', () => {
       // The load-bearing part is that the read-only surface above remains stable.
     }
   });
-
-  test('renders the webhooks debug panel empty states', async ({ page }) => {
-    await page.goto('/#/settings/webhooks-debug');
-    await waitForAppReady(page);
-
-    await expect
-      .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
-      .toContain('/settings/webhooks-debug');
-
-    // Panel title dropped in the PanelPage migration; assert the panel's stable
-    // test id, then check the section copy below.
-    await expect(page.getByTestId('webhooks-debug-panel')).toBeVisible();
-    const text = await page.locator('#root').innerText();
-    expect(text.includes('Registered Webhooks')).toBe(true);
-    expect(text.includes('Captured Requests')).toBe(true);
-    expect(text.includes('No active registrations.')).toBe(true);
-    expect(text.includes('No webhook requests captured yet.')).toBe(true);
-  });
 });

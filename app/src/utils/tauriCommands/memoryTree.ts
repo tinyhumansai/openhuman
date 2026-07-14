@@ -436,6 +436,12 @@ export interface GraphNode {
   id: string;
   /** Display-friendly label (scope, preview snippet, or surface form). */
   label: string;
+  /**
+   * Optional UI-only fill override (hex). The backend never sets this; reuses
+   * of the graph (e.g. the orchestration overview dimming offline agents) use
+   * it to colour a node independent of its `kind`.
+   */
+  color?: string;
 
   // Summary-only ──
   tree_id?: string;
@@ -638,6 +644,13 @@ export interface ObsidianVaultStatus {
   config_found: boolean;
   /** Absolute filesystem path to `<workspace>/memory_tree/content/`. */
   content_root_abs: string;
+  /**
+   * OS of the core host (`"macos"` / `"linux"` / `"windows"`). `content_root_abs`
+   * is a path on that host; when the frontend runs on a different OS the vault
+   * cannot be opened/registered locally (issue #4278). Optional for backward
+   * compatibility with cores that predate this field.
+   */
+  host_os?: string;
 }
 
 /**
@@ -687,6 +700,13 @@ export interface VaultHealthCheck {
   pipeline_healthy: boolean;
   /** Epoch ms of newest chunk timestamp; zero when no chunks exist yet. */
   last_sync_ms: number;
+  /**
+   * OS of the core host (`"macos"` / `"linux"` / `"windows"`). `exists` /
+   * `readable` / `writable` describe that host's filesystem; a frontend on a
+   * different OS cannot open `content_root_abs` locally even when they report
+   * healthy (issue #4278). Optional for backward compatibility.
+   */
+  host_os?: string;
 }
 
 /**

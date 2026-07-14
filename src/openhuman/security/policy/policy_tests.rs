@@ -399,6 +399,37 @@ fn classify_writes_are_write() {
 }
 
 #[test]
+fn classify_find_file_write_actions_are_write() {
+    let p = default_policy();
+    // -fprintf / -fprint / -fprint0 / -fls write find's output to a named
+    // file (an arbitrary-path write side-channel), so they must be gated as
+    // Write rather than slipping through as a read-only search.
+    for c in [
+        "find . -maxdepth 0 -fprintf /tmp/out.txt '%p\\n'",
+        "find . -name '*.rs' -fprint /tmp/list.txt",
+        "find . -fprint0 /tmp/list0.txt",
+        "find . -fls /tmp/ls.txt",
+        "find . -delete",
+    ] {
+        assert_eq!(p.classify_command(c), CommandClass::Write, "{c}");
+    }
+    // Quoting the predicate must not slip the write past the gate — the shell
+    // strips the quotes before find runs, so `'-fprint'` is the same write.
+    for c in [
+        "find . '-fprint' /tmp/list.txt",
+        "find . \"-fprintf\" /tmp/out.txt '%p\\n'",
+        "find . '-delete'",
+    ] {
+        assert_eq!(p.classify_command(c), CommandClass::Write, "{c}");
+    }
+    // A plain search stays read-only.
+    assert_eq!(
+        p.classify_command("find . -name '*.rs' -print"),
+        CommandClass::Read
+    );
+}
+
+#[test]
 fn classify_network_is_network() {
     let p = default_policy();
     for c in [

@@ -17,6 +17,7 @@ fn default_diagram_viewer_refresh_interval_seconds() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
+#[derive(Default)]
 pub struct DashboardConfig {
     #[serde(default)]
     pub event_stream: EventStreamConfig,
@@ -24,16 +25,6 @@ pub struct DashboardConfig {
     pub model_health: ModelHealthConfig,
     #[serde(default)]
     pub diagram_viewer: DiagramViewerConfig,
-}
-
-impl Default for DashboardConfig {
-    fn default() -> Self {
-        Self {
-            event_stream: EventStreamConfig::default(),
-            model_health: ModelHealthConfig::default(),
-            diagram_viewer: DiagramViewerConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

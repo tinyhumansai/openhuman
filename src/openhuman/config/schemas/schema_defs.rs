@@ -227,6 +227,22 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
+        "get_privacy_mode" => ControllerSchema {
+            namespace: "config",
+            function: "get_privacy_mode",
+            description: "Get the active Privacy Mode (data-egress posture): local_only | standard | sensitive. Distinct from the autonomy access mode.",
+            inputs: vec![],
+            outputs: vec![json_output("mode", "Current privacy mode: local_only | standard | sensitive.")],
+        },
+        "set_privacy_mode" => ControllerSchema {
+            namespace: "config",
+            function: "set_privacy_mode",
+            description: "Set the Privacy Mode (data-egress posture). local_only blocks external model calls at the inference chokepoint. Applies live to active sessions without a restart.",
+            inputs: vec![
+                optional_string("mode", "Privacy mode: local_only | standard | sensitive."),
+            ],
+            outputs: vec![json_output("mode", "Updated privacy mode.")],
+        },
         "get_agent_settings" => ControllerSchema {
             namespace: "config",
             function: "get_agent_settings",
@@ -253,7 +269,13 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "config",
             function: "update_browser_settings",
             description: "Update browser automation settings.",
-            inputs: vec![optional_bool("enabled", "Enable browser integration.")],
+            inputs: vec![
+                optional_bool("enabled", "Enable browser integration."),
+                optional_string(
+                    "backend",
+                    "Browser backend: agent_browser, playwright, rust_native, computer_use, or auto.",
+                ),
+            ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "update_local_ai_settings" => ControllerSchema {
@@ -448,6 +470,24 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "ingest_backend_transcripts",
                     "When true, backend-bot meeting transcripts are ingested into memory.",
                 ),
+                FieldSchema {
+                    name: "platform_auto_join_policies",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Per-platform auto-join overrides: { gmeet|zoom|teams|webex: ask_each_time | always | never }.",
+                    required: false,
+                },
+                optional_bool(
+                    "watch_calendar",
+                    "When true, the heartbeat watches the connected calendar to drive auto-join / ask-to-join, independent of meeting reminder notifications.",
+                ),
+                optional_string(
+                    "calendar_provider",
+                    "Calendar detection source for Google Meet: composio | recall.",
+                ),
+                optional_string(
+                    "reply_display_name",
+                    "The user's meeting display name, reused as the bot's reply anchor on join.",
+                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
@@ -486,6 +526,30 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     ty: TypeSchema::Bool,
                     comment: "Whether backend-bot transcripts are ingested into memory.",
                     required: true,
+                },
+                FieldSchema {
+                    name: "platform_auto_join_policies",
+                    ty: TypeSchema::Json,
+                    comment: "Per-platform auto-join overrides keyed by platform slug.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "watch_calendar",
+                    ty: TypeSchema::Bool,
+                    comment: "Whether the heartbeat watches the calendar to drive auto-join / ask.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "calendar_provider",
+                    ty: TypeSchema::String,
+                    comment: "Calendar detection source for Google Meet: composio | recall.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "reply_display_name",
+                    ty: TypeSchema::String,
+                    comment: "The user's meeting display name, reused as the bot's reply anchor on join.",
+                    required: false,
                 },
             ],
         },

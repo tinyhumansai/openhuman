@@ -35,6 +35,31 @@ describe('classifyUserActionableError', () => {
     expect(a?.kind).toBe('budget_exceeded');
   });
 
+  it('classifies a configured provider with no API key (cron user_error kind token)', () => {
+    // Core emits the stable kind token in error_type — classify must accept it.
+    const a = classifyUserActionableError({ errorType: 'api_key_missing', scope: 'cron' });
+    expect(a?.kind).toBe('api_key_missing');
+    expect(a?.scope).toBe('cron');
+    expect(a?.action).toBe('open_provider_settings');
+    expect(a?.titleKey).toBe('userErrors.apiKeyMissing.title');
+
+    // …and the verbatim credential-guard prose (mirrors Rust is_api_key_unset_message).
+    for (const msg of [
+      'openrouter: API key not set',
+      'Missing API key for provider',
+      'No API key is configured',
+      'no api key supplied',
+    ]) {
+      expect(classifyUserActionableError({ message: msg })?.kind).toBe('api_key_missing');
+    }
+  });
+
+  it('does NOT classify an invalid/rejected API key (401) as missing-key', () => {
+    // A present-but-rejected key is a different state — must not be promoted.
+    expect(classifyUserActionableError({ message: 'Invalid API key (401)' })).toBeNull();
+    expect(classifyUserActionableError({ message: 'Incorrect API key provided' })).toBeNull();
+  });
+
   it('returns null for generic / non-actionable errors and empty input', () => {
     expect(classifyUserActionableError({ message: GENERIC_MSG })).toBeNull();
     expect(classifyUserActionableError({ message: '', errorType: 'inference' })).toBeNull();

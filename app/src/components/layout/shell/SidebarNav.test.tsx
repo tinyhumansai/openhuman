@@ -35,6 +35,24 @@ describe('SidebarNav active matching', () => {
     expect(tabButton('Chat')).toHaveAttribute('aria-current', 'page');
   });
 
+  it('keeps Workflows active on the /flows list route', () => {
+    renderWithProviders(<SidebarNav />, { initialEntries: ['/flows'] });
+
+    expect(tabButton('Workflows')).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('keeps Workflows active on a nested /flows/* sub-route', () => {
+    renderWithProviders(<SidebarNav />, { initialEntries: ['/flows/some-flow-id'] });
+
+    expect(tabButton('Workflows')).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('does not mark Workflows active on an unrelated route', () => {
+    renderWithProviders(<SidebarNav />, { initialEntries: ['/chat'] });
+
+    expect(tabButton('Workflows')).not.toHaveAttribute('aria-current');
+  });
+
   it('gives the active tab a visible brand-accent fill (not the white sidebar background)', () => {
     renderWithProviders(<SidebarNav />, { initialEntries: ['/chat'] });
 

@@ -142,7 +142,7 @@ test.describe('Harness - Search tool-flow', () => {
           {
             id: 'call_memory_recall_1',
             name: 'memory_recall',
-            arguments: JSON.stringify({ query: 'project Atlas' }),
+            arguments: JSON.stringify({ namespace: 'global', query: 'project Atlas' }),
           },
         ],
       },

@@ -19,7 +19,7 @@
  * (Flatpak/Snap/portable). "Open anyway" and the config-dir override are the
  * escape hatches for that case; a false "not registered" never blocks the user.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
@@ -31,6 +31,7 @@ import {
 } from '../../utils/tauriCommands/workspacePaths';
 import Button from '../ui/Button';
 import { MEMORY_CONTENT_WORKSPACE_PATH } from './memoryWorkspacePaths';
+import { resolveVaultHostMatch } from './vaultHostMatch';
 
 /** localStorage key for the optional Obsidian config-dir override. */
 const CONFIG_DIR_KEY = 'openhuman.obsidian.configDir';
@@ -58,6 +59,38 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
   const [configFound, setConfigFound] = useState<boolean | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [configDir, setConfigDir] = useState<string>(readConfigDirOverride);
+  // #4278: set to the core host OS when the vault lives on a different-OS core
+  // host, so local actions (Reveal / Open in Obsidian) are disabled + explained.
+  const [crossHostOs, setCrossHostOs] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const closePanel = useCallback(() => setExpanded(false), []);
+
+  // The guidance panel is a floating popover, so it needs explicit dismissal:
+  // click outside the section or press Escape to close it. (Clicking the View
+  // Vault button itself stays inside `containerRef`, so it re-runs the check
+  // rather than dismissing — matching the panel's "click View Vault again" copy.)
+  useEffect(() => {
+    if (!expanded) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        console.debug('[ui-flow][obsidian-vault] dismiss: outside click');
+        setExpanded(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        console.debug('[ui-flow][obsidian-vault] dismiss: escape');
+        setExpanded(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [expanded]);
 
   /**
    * Build + fire the `obsidian://` deep link.
@@ -146,10 +179,23 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
         const override = configDir.trim();
         const status = await memoryTreeObsidianVaultStatus(override || undefined);
         console.debug(
-          '[ui-flow][obsidian-vault] status registered=%s config_found=%s',
+          '[ui-flow][obsidian-vault] status registered=%s config_found=%s host_os=%s',
           status.registered,
-          status.config_found
+          status.config_found,
+          status.host_os
         );
+
+        // #4278: when the vault lives on a core host running a different OS, the
+        // path is not local — guide instead of firing a doomed deep link / reveal.
+        const match = await resolveVaultHostMatch(status.host_os);
+        if (!match.local) {
+          console.debug('[ui-flow][obsidian-vault] cross-host vault host_os=%s', match.hostOs);
+          setCrossHostOs(match.hostOs ?? status.host_os ?? '');
+          setConfigFound(status.config_found);
+          setExpanded(true);
+          return;
+        }
+        setCrossHostOs(null);
         setConfigFound(status.config_found);
 
         if (status.registered) {
@@ -187,13 +233,20 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
     handleViewVault();
   }, [configDir, handleViewVault]);
 
-  const helpText =
-    configFound === false
+  const helpText = crossHostOs
+    ? `${t('crossHostVault.title')} ${t('crossHostVault.message').replace('{os}', crossHostOs)}`
+    : configFound === false
       ? t('workspace.obsidianNotFoundHelp')
       : t('workspace.vaultNotRegisteredHelp');
 
+  // The guidance panel is rendered as an absolutely-positioned popover anchored
+  // to the button (out of normal flow) rather than as an inline sibling. This
+  // component lives inside the horizontal MemoryControls toolbar; an in-flow
+  // `w-full`/wide panel would grow this flex item and force the whole toolbar to
+  // wrap/misalign (issue #4266). Taking the panel out of flow keeps the toolbar
+  // row stable regardless of the panel's visibility.
   return (
-    <div className="flex flex-col items-end gap-2" data-testid="obsidian-vault-section">
+    <div className="relative inline-flex" data-testid="obsidian-vault-section" ref={containerRef}>
       <Button
         variant="secondary"
         size="sm"
@@ -208,8 +261,19 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
       {expanded && (
         <div
           data-testid="obsidian-vault-guidance"
-          className="w-full max-w-xl rounded-lg border border-violet-200 bg-violet-50 p-4
-                     text-sm dark:border-violet-500/30 dark:bg-violet-500/10">
+          className="absolute right-0 top-full z-20 mt-2 w-[36rem] max-w-[calc(100vw-2rem)]
+                     rounded-lg border border-violet-200 bg-violet-50 p-4 pr-10 text-sm shadow-xl
+                     dark:border-violet-500/30 dark:bg-violet-950">
+          <button
+            type="button"
+            onClick={closePanel}
+            data-testid="obsidian-vault-close"
+            aria-label={t('common.close')}
+            className="absolute right-2 top-2 rounded-md p-1 text-content-muted
+                       hover:bg-violet-100 hover:text-content-secondary
+                       dark:hover:bg-violet-500/20 dark:hover:text-content">
+            <CloseIcon />
+          </button>
           <p className="text-content-secondary">{helpText}</p>
 
           <code
@@ -220,15 +284,21 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
           </code>
 
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm" onClick={reveal} data-testid="obsidian-reveal">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={reveal}
+              disabled={crossHostOs !== null}
+              data-testid="obsidian-reveal">
               {t('workspace.revealFolder')}
             </Button>
             <button
               type="button"
               onClick={openAnyway}
+              disabled={crossHostOs !== null}
               data-testid="obsidian-open-anyway"
               className="rounded-md border border-violet-300 bg-surface px-3 py-1.5 text-xs font-semibold
-                         text-violet-700 hover:bg-violet-50 dark:border-violet-500/40
+                         text-violet-700 hover:bg-violet-50 disabled:opacity-50 dark:border-violet-500/40
                          dark:bg-surface-muted dark:text-violet-300">
               {t('workspace.openAnyway')}
             </button>
@@ -285,6 +355,24 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
         </div>
       )}
     </div>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M18 6L6 18" />
+      <path d="M6 6l12 12" />
+    </svg>
   );
 }
 

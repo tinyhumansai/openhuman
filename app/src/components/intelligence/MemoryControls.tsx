@@ -59,6 +59,7 @@ export function MemoryControls({
   const [building, setBuilding] = useState(false);
   const [wiping, setWiping] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const busy = building || wiping || resetting;
 
   const handleWipe = useCallback(async () => {
@@ -147,6 +148,27 @@ export function MemoryControls({
     }
   }, [onToast, onRefresh]);
 
+  const handleRefresh = useCallback(async () => {
+    if (refreshing) return;
+    console.debug('[ui-flow][memory-controls] manual refresh: entry');
+    setRefreshing(true);
+    try {
+      // `onRefresh` re-pulls the graph; the parent owns the fetch and may
+      // resolve synchronously (it just bumps a version key today). Run it
+      // alongside a short minimum spin window so the click always produces
+      // perceptible feedback instead of an instant, invisible no-op.
+      await Promise.all([
+        Promise.resolve(onRefresh()),
+        new Promise(resolve => setTimeout(resolve, 600)),
+      ]);
+    } catch (err) {
+      console.error('[ui-flow][memory-controls] manual refresh failed', err);
+    } finally {
+      setRefreshing(false);
+      console.debug('[ui-flow][memory-controls] manual refresh: exit');
+    }
+  }, [onRefresh, refreshing]);
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-3" data-testid="memory-actions">
       <ModeToggle mode={mode} onChange={onModeChange} />
@@ -179,11 +201,13 @@ export function MemoryControls({
         {/* Secondary actions — quiet ghost buttons. */}
         <button
           type="button"
-          onClick={onRefresh}
+          onClick={handleRefresh}
+          disabled={refreshing}
+          aria-busy={refreshing}
           data-testid="memory-graph-refresh"
           className={BTN_GHOST}
           title={t('common.refresh')}>
-          <RefreshIcon /> {t('common.refresh')}
+          {refreshing ? <Spinner /> : <RefreshIcon />} {t('common.refresh')}
         </button>
         {contentRootAbs ? (
           <ObsidianVaultSection contentRootAbs={contentRootAbs} onToast={onToast} />

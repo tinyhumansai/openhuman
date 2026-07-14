@@ -7,7 +7,6 @@
  * asserts the page's headline structure is present.
  *
  * Covers:
- *   - 13.4.1 Webhooks Debug panel
  *   - 13.4.2 Autocomplete Debug → Live Logs section
  *   - 13.4.3 Memory Debug panel
  */
@@ -31,21 +30,10 @@ describe('Settings - Developer Options', () => {
     await stopMockServer();
   });
 
-  it('mounts Webhooks Debug panel (13.4.1)', async function () {
-    this.timeout(90_000);
-    await navigateViaHash('/settings/webhooks-debug');
-
-    await waitForText('Webhooks Debug', 15_000);
-    await waitForText('Registered Webhooks', 15_000);
-    await waitForText('Captured Requests', 15_000);
-    expect(await textExists('Refresh')).toBe(true);
-  });
-
   it('mounts Memory Debug panel (13.4.3)', async function () {
     this.timeout(90_000);
     await navigateViaHash('/settings/memory-debug');
 
-    await waitForText('Memory Debug', 15_000);
     await waitForText('Documents', 15_000);
     await waitForText('Namespaces', 15_000);
     await waitForText('Query & Recall', 15_000);
@@ -56,7 +44,9 @@ describe('Settings - Developer Options', () => {
     this.timeout(90_000);
     await navigateViaHash('/settings/autocomplete-debug');
 
-    await waitForText('Autocomplete Debug', 15_000);
+    // Panel heading is settings.developerMenu.autocomplete.title = "Autocomplete";
+    // the old "Autocomplete Debug" (autocomplete.debugTitle) is no longer used.
+    await waitForText('Autocomplete', 15_000);
     await waitForText('Live Logs', 15_000);
 
     const logsFound = (await textExists('No logs yet.')) || (await textExists('[runtime]'));

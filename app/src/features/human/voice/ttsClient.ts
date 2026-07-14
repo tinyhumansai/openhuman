@@ -116,6 +116,69 @@ export function visemesFromAlignment(alignment: AlignmentFrame[]): VisemeFrame[]
 }
 
 /**
+ * Does this viseme track carry a genuinely usable per-frame start timeline?
+ *
+ * The cloud TTS path sometimes ships visemes with all-zero (or otherwise
+ * collapsed) `start_ms`, which can't represent the gaps between words. We treat
+ * the timing as usable only when there are at least two frames, the furthest
+ * start is non-zero, and most starts are distinct (a real, spread-out timeline).
+ */
+export function hasUsableStarts(frames: VisemeFrame[]): boolean {
+  if (frames.length < 2) return false;
+  const maxStart = Math.max(...frames.map(f => f.start_ms));
+  if (!(maxStart > 0)) return false;
+  const distinct = new Set(frames.map(f => f.start_ms)).size;
+  return distinct > frames.length * 0.5;
+}
+
+/**
+ * Turn a backend viseme list into a walkable timeline matched to the audio.
+ *
+ * The cloud TTS path ships viseme *codes* in order but with unreliable
+ * timestamps — observed shapes include a constant `end_ms` (= whole-utterance
+ * length) on every frame, and all-zero `start_ms`. Either way the naive
+ * `findActiveFrame` freezes the mouth (frame 0 "covers" everything, or every
+ * frame is zero-length so it snaps to the last `sil`).
+ *
+ * Strategy:
+ *  - If the frames carry a genuinely usable timeline — strictly-ish increasing
+ *    starts that span most of the audio — keep it, just rebuilding each end from
+ *    the next start (visemes are cue points) and stretching the last to the end.
+ *  - Otherwise distribute the viseme *sequence* evenly across the measured audio
+ *    duration. We lose the natural per-phoneme rhythm but keep the real phonetic
+ *    order, so the mouth animates start-to-finish in lockstep with the voice.
+ */
+export function normalizeVisemeTimeline(frames: VisemeFrame[], totalMs: number): VisemeFrame[] {
+  if (frames.length === 0) return frames;
+  const sorted = [...frames].sort((a, b) => a.start_ms - b.start_ms);
+  const maxStart = sorted[sorted.length - 1].start_ms;
+  const total = totalMs > 0 ? totalMs : Math.max(maxStart, frames.length * 80);
+
+  // A real timeline's last cue starts deep into the clip. If the furthest start
+  // is in the front portion (e.g. every start is 0), the timestamps are junk —
+  // fall back to even distribution.
+  const hasUsableTimeline = maxStart > total * 0.5;
+  if (hasUsableTimeline) {
+    // Preserve the real per-frame end. A gap between one frame's end and the
+    // next frame's start is a genuine pause — findActiveFrame returns no frame
+    // there, so the mouth rests (sil) instead of holding a shape across the
+    // silence. We only clamp ends so a frame never overruns the next cue.
+    return sorted.map((f, i) => {
+      const next = sorted[i + 1];
+      const end = next ? Math.min(f.end_ms, next.start_ms) : Math.max(f.end_ms, total);
+      return { viseme: f.viseme, start_ms: f.start_ms, end_ms: Math.max(f.start_ms, end) };
+    });
+  }
+
+  const step = total / frames.length;
+  return sorted.map((f, i) => ({
+    viseme: f.viseme,
+    start_ms: Math.round(i * step),
+    end_ms: Math.round((i + 1) * step),
+  }));
+}
+
+/**
  * Reshape an assistant message into something the TTS engine can read with
  * natural cadence. The agent's reply is markdown — raw `**bold**`, headings,
  * code fences, link syntax, and `\n\n` paragraph breaks all confuse

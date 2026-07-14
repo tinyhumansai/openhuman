@@ -1,6 +1,6 @@
 //! Channel startup wiring.
 
-use super::dispatch::run_message_dispatch_loop;
+use super::dispatch::{run_message_dispatch_loop, RuntimeChannelMessage};
 use super::supervision::{compute_max_in_flight_messages, spawn_supervised_listener};
 use crate::core::event_bus::{self, DomainEvent, TracingSubscriber, DEFAULT_CAPACITY};
 use crate::openhuman::agent::harness::build_tool_instructions_filtered;
@@ -17,8 +17,6 @@ use crate::openhuman::channels::irc;
 use crate::openhuman::channels::irc::IrcChannel;
 use crate::openhuman::channels::lark::LarkChannel;
 use crate::openhuman::channels::linq::LinqChannel;
-#[cfg(feature = "channel-matrix")]
-use crate::openhuman::channels::matrix::MatrixChannel;
 use crate::openhuman::channels::mattermost::MattermostChannel;
 use crate::openhuman::channels::qq::QQChannel;
 use crate::openhuman::channels::signal::SignalChannel;
@@ -32,14 +30,16 @@ use crate::openhuman::channels::yuanbao::YuanbaoChannel;
 use crate::openhuman::channels::Channel;
 use crate::openhuman::config::Config;
 use crate::openhuman::context::channels_prompt::build_system_prompt;
-use crate::openhuman::inference::provider::{self, Provider};
+use crate::openhuman::inference::provider;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::memory_store;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools;
 use anyhow::Result;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
 
 /// How the channels runtime should construct its default chat provider.
 ///
@@ -59,6 +59,79 @@ pub(super) enum ChatWorkloadResolution {
         provider_string: String,
         slug: String,
     },
+}
+
+pub(super) struct RelayInboundMessageHandler {
+    tx: mpsc::Sender<RuntimeChannelMessage>,
+}
+
+impl RelayInboundMessageHandler {
+    pub(super) fn new(tx: mpsc::Sender<RuntimeChannelMessage>) -> Self {
+        Self { tx }
+    }
+}
+
+#[async_trait]
+impl tinychannels::relay::RelayInboundHandler for RelayInboundMessageHandler {
+    async fn handle(
+        &self,
+        event: tinychannels::relay::AuthenticatedRelayInboundEvent,
+    ) -> Result<(), tinychannels::relay::RelayTransportError> {
+        let envelope: tinychannels::ChannelInboundEnvelope = serde_json::from_value(event.event)
+            .map_err(|error| {
+                tinychannels::relay::RelayTransportError::Handler(format!(
+                    "invalid inbound envelope: {error}"
+                ))
+            })?;
+        let msg = tinychannels::legacy_message_from_inbound_envelope(&envelope, 0);
+        self.tx
+            .send(RuntimeChannelMessage::with_inbound_envelope(msg, envelope))
+            .await
+            .map_err(|_| tinychannels::relay::RelayTransportError::Closed)
+    }
+}
+
+struct RelayRuntimeHandle {
+    _transport: Arc<tinychannels::relay::RelayTransport>,
+    _reconnect: tinychannels::relay::RelayReconnectHandle,
+}
+
+async fn start_relay_runtime(
+    relay: &tinychannels::config::RelayRuntimeConfig,
+    tx: mpsc::Sender<RuntimeChannelMessage>,
+) -> Result<RelayRuntimeHandle> {
+    anyhow::ensure!(
+        relay.is_listener_configured(),
+        "relay runtime requires non-empty url and at least one identity"
+    );
+
+    let websocket_config = tinychannels::relay::WebSocketRelayConfig::from(relay);
+    let io = tinychannels::relay::connect_websocket_relay_io(&websocket_config).await?;
+    let transport = Arc::new(tinychannels::relay::RelayTransport::new(
+        relay.relay_identities(),
+        Arc::new(io),
+        relay.timeouts,
+    ));
+    transport
+        .set_inbound_handler(Arc::new(RelayInboundMessageHandler::new(tx)))
+        .await;
+    transport.connect().await?;
+    let descriptor = transport.handshake().await?;
+    tracing::info!(
+        label = %descriptor.label,
+        max_message_length = descriptor.max_message_length,
+        "[channels][relay] connected relay runtime"
+    );
+    crate::openhuman::channels::relay_runtime::register_relay_transport(transport.clone());
+
+    let dialer = Arc::new(tinychannels::relay::WebSocketRelayDialer::new(
+        websocket_config,
+    ));
+    let reconnect = transport.spawn_reconnect_supervisor(dialer, relay.reconnect);
+    Ok(RelayRuntimeHandle {
+        _transport: transport,
+        _reconnect: reconnect,
+    })
 }
 
 pub(super) fn resolve_chat_workload(config: &Config) -> ChatWorkloadResolution {
@@ -83,7 +156,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     let bus = event_bus::init_global(DEFAULT_CAPACITY);
     let _tracing_handle = bus.subscribe(Arc::new(TracingSubscriber));
     crate::openhuman::health::bus::register_health_subscriber();
-    crate::openhuman::workflows::bus::register_workflow_cleanup_subscriber();
+    crate::openhuman::skills::bus::register_workflow_cleanup_subscriber();
     crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
         config.workspace_dir.clone(),
     );
@@ -98,6 +171,10 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // ArtifactFailed) as `artifact_ready` / `artifact_failed` web-channel
     // events so the frontend ArtifactCard can render in chat (#2779).
     crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
+    // Surface external-egress disclosure events (ExternalTransferPending) as
+    // `external_transfer_pending` web-channel events so the frontend can show a
+    // per-action "what leaves, to where, why" card (privacy epic S2, #4436).
+    crate::openhuman::channels::providers::web::register_egress_surface_subscriber();
     // Spawn the per-toolkit provider periodic sync scheduler. This is
     // a thin tokio task that ticks every minute and dispatches into
     // any provider whose `sync_interval_secs` has elapsed for an
@@ -216,42 +293,32 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
-    let (provider, model, provider_name): (Arc<dyn Provider>, String, String) =
-        match resolve_chat_workload(&config) {
-            ChatWorkloadResolution::Cloud => {
-                let p: Arc<dyn Provider> =
-                    Arc::from(provider::create_intelligent_routing_provider(
-                        config.inference_url.as_deref(),
-                        config.api_url.as_deref(),
-                        config.api_key.as_deref(),
-                        &config,
-                        &provider_runtime_options,
-                    )?);
-                let m = config
-                    .default_model
-                    .clone()
-                    .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into());
-                (p, m, provider::INFERENCE_BACKEND_ID.to_string())
-            }
-            ChatWorkloadResolution::Workload {
-                provider_string,
-                slug,
-            } => {
-                tracing::info!(
-                    chat_provider = %provider_string,
-                    slug = %slug,
-                    "[channels][startup] chat workload routed to per-workload provider — building dedicated channel provider"
-                );
-                let (boxed, model_id) = provider::create_chat_provider("chat", &config)?;
-                (Arc::from(boxed), model_id, slug)
-            }
-        };
-
-    // Warm up the provider connection pool (TLS handshake, DNS, HTTP/2 setup)
-    // so the first real message doesn't hit a cold-start timeout.
-    if let Err(e) = provider.warmup().await {
-        tracing::warn!("Provider warmup failed (non-fatal): {e}");
-    }
+    let (model, provider_name) = match resolve_chat_workload(&config) {
+        ChatWorkloadResolution::Cloud => {
+            let (_chat, model) = provider::create_chat_model_with_model_id(
+                "chat",
+                &config,
+                config.default_temperature,
+            )?;
+            (model, provider::INFERENCE_BACKEND_ID.to_string())
+        }
+        ChatWorkloadResolution::Workload {
+            provider_string,
+            slug,
+        } => {
+            tracing::info!(
+                chat_provider = %provider_string,
+                slug = %slug,
+                "[channels][startup] chat workload routed to per-workload provider — building dedicated channel provider"
+            );
+            let (_chat, model_id) = provider::create_chat_model_with_model_id(
+                "chat",
+                &config,
+                config.default_temperature,
+            )?;
+            (model_id, slug)
+        }
+    };
 
     let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(host_runtime::create_runtime(
         &config.runtime,
@@ -266,11 +333,14 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // (config.update_autonomy_settings) are reflected by `live_policy::current()`
     // and picked up by the next session.
     let security = crate::openhuman::security::live_policy::install(
-        Arc::new(SecurityPolicy::from_config(
-            &config.autonomy,
-            &config.workspace_dir,
-            &config.action_dir,
-        )),
+        Arc::new(
+            SecurityPolicy::from_config(
+                &config.autonomy,
+                &config.workspace_dir,
+                &config.action_dir,
+            )
+            .with_privacy_mode(config.privacy.mode),
+        ),
         config.workspace_dir.clone(),
         config.action_dir.clone(),
     );
@@ -351,14 +421,14 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         None,
     ));
 
-    let skills = crate::openhuman::workflows::load_workflow_metadata(&workspace);
+    let skills = crate::openhuman::skills::load_workflow_metadata(&workspace);
 
     // Install the triggered-workflow subscriber now that workflows are
     // discovered — otherwise any workflow declaring `triggers:` is silently
     // ignored. Idempotent + shares a process-global OnceLock with the
     // `bootstrap_core_runtime` site, so it registers exactly once regardless of
     // which startup path runs first (web-chat-only cores never reach here).
-    crate::openhuman::workflows::bus::ensure_triggered_workflow_subscriber(&workspace);
+    crate::openhuman::skills::bus::ensure_triggered_workflow_subscriber(&workspace);
 
     // Collect tool descriptions for the prompt
     let mut tool_descs: Vec<(&str, &str)> = vec![
@@ -456,6 +526,12 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         );
     }
 
+    // Assemble the ChannelHost capability surface (shutdown, STT/TTS, reaction
+    // gate, approvals, conversation store, event sink). Ported rich providers
+    // reach host capabilities through this instead of calling core internals.
+    let channel_host =
+        crate::openhuman::channels::host::build_channel_host(Arc::new(config.clone()));
+
     // Collect active channels
     let mut channels: Vec<Arc<dyn Channel>> = Vec::new();
 
@@ -468,19 +544,32 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
             draft_update_interval_ms = tg.draft_update_interval_ms,
             "[channels] telegram enabled in core config (bot token not logged)"
         );
-        channels.push(Arc::new(
-            TelegramChannel::new(
-                tg.bot_token.clone(),
-                tg.allowed_users.clone(),
-                tg.mention_only,
-            )
-            .with_streaming(
-                tg.stream_mode,
-                tg.draft_update_interval_ms,
-                tg.silent_streaming,
-            )
-            .with_chat_id(tg.chat_id.clone()),
+        let mut telegram = TelegramChannel::new(
+            tg.bot_token.clone(),
+            tg.allowed_users.clone(),
+            tg.mention_only,
+        )
+        .with_streaming(
+            tg.stream_mode,
+            tg.draft_update_interval_ms,
+            tg.silent_streaming,
+        )
+        .with_chat_id(tg.chat_id.clone())
+        .with_http_client(crate::openhuman::config::build_runtime_proxy_client(
+            "channel.telegram",
         ));
+        // Inject host capabilities: voice STT, persisted allowlist, reaction
+        // event fan-out. Each is optional — telegram degrades gracefully.
+        if let Some(transcriber) = channel_host.transcriber() {
+            telegram = telegram.with_transcriber(transcriber);
+        }
+        if let Some(allowlist) = channel_host.allowlist() {
+            telegram = telegram.with_allowlist(allowlist);
+        }
+        if let Some(events) = channel_host.events() {
+            telegram = telegram.with_events(events);
+        }
+        channels.push(Arc::new(telegram));
     } else {
         tracing::info!(
             "[channels] telegram not configured (no channels_config.telegram in saved config)"
@@ -488,21 +577,23 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     }
 
     if let Some(ref dc) = config.channels_config.discord {
-        channels.push(Arc::new(DiscordChannel::new(
+        channels.push(Arc::new(DiscordChannel::with_http_client(
             dc.bot_token.clone(),
             dc.guild_id.clone(),
             dc.channel_id.clone(),
             dc.allowed_users.clone(),
             dc.listen_to_bots,
             dc.mention_only,
+            crate::openhuman::config::build_runtime_proxy_client("channel.discord"),
         )));
     }
 
     if let Some(ref sl) = config.channels_config.slack {
-        channels.push(Arc::new(SlackChannel::new(
+        channels.push(Arc::new(SlackChannel::with_http_client(
             sl.bot_token.clone(),
             sl.channel_id.clone(),
             sl.allowed_users.clone(),
+            crate::openhuman::config::build_runtime_proxy_client("channel.slack"),
         )));
         // Memory-tree ingestion is handled by the Composio-backed
         // `SlackProvider`, which runs inside `composio::periodic` and
@@ -511,13 +602,14 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     }
 
     if let Some(ref mm) = config.channels_config.mattermost {
-        channels.push(Arc::new(MattermostChannel::new(
+        channels.push(Arc::new(MattermostChannel::with_http_client(
             mm.url.clone(),
             mm.bot_token.clone(),
             mm.channel_id.clone(),
             mm.allowed_users.clone(),
             mm.thread_replies.unwrap_or(true),
             mm.mention_only.unwrap_or(false),
+            crate::openhuman::config::build_runtime_proxy_client("channel.mattermost"),
         )));
     }
 
@@ -525,33 +617,26 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         channels.push(Arc::new(IMessageChannel::new(im.allowed_contacts.clone())));
     }
 
-    #[cfg(feature = "channel-matrix")]
-    if let Some(ref mx) = config.channels_config.matrix {
-        channels.push(Arc::new(MatrixChannel::new_with_session_hint(
-            mx.homeserver.clone(),
-            mx.access_token.clone(),
-            mx.room_id.clone(),
-            mx.allowed_users.clone(),
-            mx.user_id.clone(),
-            mx.device_id.clone(),
-        )));
-    }
-
-    #[cfg(not(feature = "channel-matrix"))]
     if config.channels_config.matrix.is_some() {
         tracing::warn!(
-            "Matrix channel is configured but this build was compiled without `channel-matrix`; skipping Matrix runtime startup."
+            "Matrix channel is configured but Matrix support was removed from this build; skipping Matrix runtime startup."
         );
     }
 
     if let Some(ref sig) = config.channels_config.signal {
-        channels.push(Arc::new(SignalChannel::new(
+        channels.push(Arc::new(SignalChannel::with_http_client(
             sig.http_url.clone(),
             sig.account.clone(),
             sig.group_id.clone(),
             sig.allowed_from.clone(),
             sig.ignore_attachments,
             sig.ignore_stories,
+            crate::openhuman::config::apply_runtime_proxy_to_builder(
+                reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10)),
+                "channel.signal",
+            )
+            .build()
+            .expect("Signal HTTP client should build"),
         )));
     }
 
@@ -561,11 +646,12 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
             "cloud" => {
                 // Cloud API mode: requires phone_number_id, access_token, verify_token
                 if wa.is_cloud_config() {
-                    channels.push(Arc::new(WhatsAppChannel::new(
+                    channels.push(Arc::new(WhatsAppChannel::with_http_client(
                         wa.access_token.clone().unwrap_or_default(),
                         wa.phone_number_id.clone().unwrap_or_default(),
                         wa.verify_token.clone().unwrap_or_default(),
                         wa.allowed_numbers.clone(),
+                        crate::openhuman::config::build_runtime_proxy_client("channel.whatsapp"),
                     )));
                 } else {
                     tracing::warn!("WhatsApp Cloud API configured but missing required fields (phone_number_id, access_token, verify_token)");
@@ -575,12 +661,16 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
                 // Web mode: requires session_path
                 #[cfg(feature = "whatsapp-web")]
                 if wa.is_web_config() {
-                    channels.push(Arc::new(WhatsAppWebChannel::new(
+                    let mut wa_channel = WhatsAppWebChannel::new(
                         wa.session_path.clone().unwrap_or_default(),
                         wa.pair_phone.clone(),
                         wa.pair_code.clone(),
                         wa.allowed_numbers.clone(),
-                    )));
+                    );
+                    if let Some(lifecycle) = channel_host.lifecycle() {
+                        wa_channel = wa_channel.with_lifecycle(lifecycle);
+                    }
+                    channels.push(Arc::new(wa_channel));
                 } else {
                     tracing::warn!("WhatsApp Web configured but session_path not set");
                 }
@@ -604,7 +694,8 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     }
 
     if let Some(ref email_cfg) = config.channels_config.email {
-        channels.push(Arc::new(EmailChannel::new(email_cfg.clone())));
+        let hydrated = resolve_email_password(email_cfg.clone(), &config);
+        channels.push(Arc::new(EmailChannel::new(hydrated)));
     }
 
     if let Some(ref irc) = config.channels_config.irc {
@@ -627,18 +718,20 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     }
 
     if let Some(ref dt) = config.channels_config.dingtalk {
-        channels.push(Arc::new(DingTalkChannel::new(
+        channels.push(Arc::new(DingTalkChannel::with_http_client(
             dt.client_id.clone(),
             dt.client_secret.clone(),
             dt.allowed_users.clone(),
+            crate::openhuman::config::build_runtime_proxy_client("channel.dingtalk"),
         )));
     }
 
     if let Some(ref qq) = config.channels_config.qq {
-        channels.push(Arc::new(QQChannel::new(
+        channels.push(Arc::new(QQChannel::with_http_client(
             qq.app_id.clone(),
             qq.app_secret.clone(),
             qq.allowed_users.clone(),
+            crate::openhuman::config::build_runtime_proxy_client("channel.qq"),
         )));
     }
 
@@ -650,7 +743,13 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         }
     }
 
-    if channels.is_empty() {
+    let relay_config = config
+        .channels_config
+        .relay
+        .clone()
+        .filter(tinychannels::config::RelayRuntimeConfig::is_listener_configured);
+
+    if channels.is_empty() && relay_config.is_none() {
         println!("No channels configured. Set up channels in the web UI.");
         return Ok(());
     }
@@ -671,6 +770,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         channels
             .iter()
             .map(|c| c.name())
+            .chain(relay_config.as_ref().map(|_| "relay"))
             .collect::<Vec<_>>()
             .join(", ")
     );
@@ -691,20 +791,46 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         .channel_max_backoff_secs
         .max(DEFAULT_CHANNEL_MAX_BACKOFF_SECS);
 
-    // Single message bus — all channels send messages here
-    let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(100);
+    // Providers still publish legacy `ChannelMessage`s through the public
+    // channel trait. The runtime dispatch queue wraps those messages so relay
+    // inbound can carry its original TinyChannels envelope through processing.
+    let (provider_tx, mut provider_rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(100);
+    let (dispatch_tx, rx) = tokio::sync::mpsc::channel::<RuntimeChannelMessage>(100);
+    let provider_dispatch_tx = dispatch_tx.clone();
+    let provider_bridge = tokio::spawn(async move {
+        while let Some(msg) = provider_rx.recv().await {
+            if provider_dispatch_tx
+                .send(RuntimeChannelMessage::from(msg))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+
+    let mut relay_handles = Vec::new();
+    if let Some(ref relay) = relay_config {
+        match start_relay_runtime(relay, dispatch_tx.clone()).await {
+            Ok(handle) => relay_handles.push(handle),
+            Err(error) => {
+                tracing::warn!("[channels][relay] failed to start relay runtime: {error}")
+            }
+        }
+    }
 
     // Spawn a listener for each channel
     let mut handles = Vec::new();
     for ch in &channels {
         handles.push(spawn_supervised_listener(
             ch.clone(),
-            tx.clone(),
+            provider_tx.clone(),
             initial_backoff_secs,
             max_backoff_secs,
         ));
     }
-    drop(tx); // Drop our copy so rx closes when all channels stop
+    drop(provider_tx); // Drop our copy so provider_rx closes when all channels stop.
+    drop(dispatch_tx); // Drop startup's copy; relay/bridge clones keep dispatch alive.
 
     let channels_by_name = Arc::new(
         channels
@@ -717,6 +843,11 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     let _cron_delivery_handle = bus.subscribe(Arc::new(
         crate::openhuman::cron::bus::CronDeliverySubscriber::new(Arc::clone(&channels_by_name)),
     ));
+    // NOTE: the flows `FlowTriggerSubscriber` is registered in
+    // `jsonrpc.rs::register_domain_subscribers` (unconditional core boot), NOT
+    // here — `start_channels` is skipped when no channel is configured or
+    // `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` is set, which would otherwise leave
+    // schedule/app-event workflows undispatched (issue B2 review).
     // Register the proactive message subscriber so morning briefings,
     // welcome messages, and other proactive agent output gets routed to
     // the user's active channel (+ always to web).
@@ -763,18 +894,17 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         crate::openhuman::memory_tree::tree_runtime::bus::TreeSummarizerEventSubscriber::new(),
     ));
 
-    let max_in_flight_messages = compute_max_in_flight_messages(channels.len());
+    let listener_count = channels.len() + relay_config.as_ref().map(|_| 1).unwrap_or_default();
+    let max_in_flight_messages = compute_max_in_flight_messages(listener_count);
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
 
-    let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
-    provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
     let message_timeout_secs =
         effective_channel_message_timeout_secs(config.channels_config.message_timeout_secs);
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name,
-        provider: Arc::clone(&provider),
+        provider: None,
         default_provider: Arc::new(provider_name),
         memory: Arc::clone(&mem),
         tools_registry: Arc::clone(&tools_registry),
@@ -785,7 +915,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         max_tool_iterations: config.agent.max_tool_iterations,
         min_relevance_score: config.memory.min_relevance_score,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(provider_cache_seed)),
+        provider_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: config.api_url.clone(),
         inference_url: config.inference_url.clone(),
@@ -795,6 +925,8 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         message_timeout_secs,
         multimodal: config.multimodal.clone(),
         multimodal_files: config.multimodal_files.clone(),
+        // Crate-native turn models for the channel turn (Phase 3 P3-B).
+        config: Some(std::sync::Arc::new(config.clone())),
     });
 
     run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages).await;
@@ -803,6 +935,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     for h in handles {
         let _ = h.await;
     }
+    let _ = provider_bridge.await;
 
     Ok(())
 }
@@ -902,6 +1035,48 @@ fn resolve_yuanbao_app_secret(
         }
     }
     yb_cfg
+}
+
+/// Best-effort fill of `email_cfg.password` from the encrypted credentials store
+/// when TOML doesn't already carry one.
+///
+/// The IMAP/SMTP `password` is intentionally not persisted in `config.toml` (see
+/// `persist_email_config` in `controllers/ops/connect.rs`); it lives only in the
+/// credentials store under `channel:email:api_key`. Existing TOML values still
+/// win so manually-installed deployments keep working. The stored secret is only
+/// copied when the stored profile's `username` matches, so editing `username` in
+/// `config.toml` can't silently pair a fresh account with a stale password.
+fn resolve_email_password(
+    mut email_cfg: crate::openhuman::channels::email_channel::EmailConfig,
+    config: &Config,
+) -> crate::openhuman::channels::email_channel::EmailConfig {
+    if !email_cfg.password.is_empty() {
+        return email_cfg;
+    }
+    let auth = crate::openhuman::credentials::AuthService::from_config(config);
+    match auth.get_profile("channel:email:api_key", None) {
+        Ok(Some(profile)) => {
+            let stored_username = profile.metadata.get("username").map(String::as_str);
+            if stored_username != Some(email_cfg.username.as_str()) {
+                tracing::warn!(
+                    "[channels] email stored credentials are for a different username (toml={:?}, store={:?}); reconnect the channel to refresh the password",
+                    email_cfg.username,
+                    stored_username,
+                );
+            } else if let Some(password) = profile.metadata.get("password") {
+                email_cfg.password = password.clone();
+            }
+        }
+        Ok(None) => {
+            tracing::warn!(
+                "[channels] email credentials missing — connect the channel again from the UI"
+            );
+        }
+        Err(e) => {
+            tracing::warn!("[channels] failed to load email credentials: {e}");
+        }
+    }
+    email_cfg
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -1012,6 +1187,78 @@ mod yuanbao_secret_tests {
         assert_eq!(
             resolved.app_secret, "",
             "stale profile keyed to OLD-KEY must not hydrate NEW-KEY's secret",
+        );
+    }
+}
+
+#[cfg(test)]
+mod email_secret_tests {
+    use super::*;
+    use crate::openhuman::channels::email_channel::EmailConfig;
+    use crate::openhuman::credentials::AuthService;
+    use std::collections::HashMap;
+    use tempfile::tempdir;
+
+    fn isolated_config() -> (tempfile::TempDir, Config) {
+        let tmp = tempdir().expect("tempdir");
+        let mut config = Config::default();
+        config.workspace_dir = tmp.path().join("workspace");
+        config.config_path = tmp.path().join("config.toml");
+        std::fs::create_dir_all(&config.workspace_dir).expect("workspace dir");
+        (tmp, config)
+    }
+
+    fn store_email_creds(config: &Config, username: &str, password: &str) {
+        let auth = AuthService::from_config(config);
+        let mut metadata = HashMap::new();
+        metadata.insert("username".to_string(), username.to_string());
+        metadata.insert("password".to_string(), password.to_string());
+        auth.store_provider_token("channel:email:api_key", "default", "", metadata, true)
+            .expect("store credentials");
+    }
+
+    #[test]
+    fn loads_password_from_credentials_when_toml_empty() {
+        let (_tmp, config) = isolated_config();
+        store_email_creds(&config, "me@example.com", "from-credentials");
+
+        let cfg = EmailConfig {
+            username: "me@example.com".into(),
+            password: String::new(),
+            ..EmailConfig::default()
+        };
+        let resolved = resolve_email_password(cfg, &config);
+        assert_eq!(resolved.password, "from-credentials");
+    }
+
+    #[test]
+    fn preserves_existing_toml_password_without_consulting_store() {
+        let (_tmp, config) = isolated_config();
+        let cfg = EmailConfig {
+            username: "me@example.com".into(),
+            password: "from-toml".into(),
+            ..EmailConfig::default()
+        };
+        let resolved = resolve_email_password(cfg, &config);
+        assert_eq!(resolved.password, "from-toml");
+    }
+
+    #[test]
+    fn skips_hydration_when_stored_profile_has_different_username() {
+        // User changed `username` in config.toml; the stored profile is for the
+        // old account. The resolver must not graft the old password onto it.
+        let (_tmp, config) = isolated_config();
+        store_email_creds(&config, "old@example.com", "old-password-do-not-use");
+
+        let cfg = EmailConfig {
+            username: "new@example.com".into(),
+            password: String::new(),
+            ..EmailConfig::default()
+        };
+        let resolved = resolve_email_password(cfg, &config);
+        assert_eq!(
+            resolved.password, "",
+            "stale profile for old username must not hydrate the new account",
         );
     }
 }

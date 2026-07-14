@@ -1,11 +1,16 @@
-import type { ReactElement } from 'react';
+import { type ChangeEvent, type ReactElement, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import {
   type AgentMessageViewMode,
+  FONT_SIZE_PX,
   type FontSize,
+  MAX_FONT_SIZE_PX,
+  MIN_FONT_SIZE_PX,
+  selectEffectiveFontSizePx,
   setAgentMessageViewMode,
+  setCustomFontSizePx,
   setFontSize,
   setHideAgentInsights,
   setTabBarLabels,
@@ -14,7 +19,7 @@ import {
   type ThemeMode,
 } from '../../../store/themeSlice';
 import LanguageSelect from '../../LanguageSelect';
-import { SettingsRow, SettingsSection, SettingsSwitch } from '../controls';
+import { SettingsNumberField, SettingsRow, SettingsSection, SettingsSwitch } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
 
 interface ModeOption {
@@ -69,7 +74,7 @@ const AppearancePanel = () => {
   const { t } = useT();
   const dispatch = useAppDispatch();
   const mode = useAppSelector(state => state.theme.mode);
-  const fontSize = useAppSelector(state => state.theme.fontSize);
+  const effectiveFontSizePx = useAppSelector(selectEffectiveFontSizePx);
   const tabBarLabels = useAppSelector(state => state.theme.tabBarLabels);
   const agentMessageViewMode = useAppSelector(
     state => state.theme.agentMessageViewMode ?? 'bubbles'
@@ -87,6 +92,33 @@ const AppearancePanel = () => {
   };
   const toggleHideAgentInsights = () => {
     dispatch(setHideAgentInsights(!hideAgentInsights));
+  };
+
+  // Local draft for the numeric px field so partial typing doesn't thrash the
+  // store; commits (blur / Enter) clamp and dispatch, while the slider dispatches
+  // live. Re-sync the draft to the effective size when it changes externally
+  // (slider drag, preset click) via React's render-phase pattern — no effect,
+  // so there's no cascading-render round-trip.
+  const [pxDraft, setPxDraft] = useState(String(effectiveFontSizePx));
+  const [syncedPx, setSyncedPx] = useState(effectiveFontSizePx);
+  if (effectiveFontSizePx !== syncedPx) {
+    setSyncedPx(effectiveFontSizePx);
+    setPxDraft(String(effectiveFontSizePx));
+  }
+  const commitCustomFontSize = () => {
+    const parsed = Number.parseInt(pxDraft, 10);
+    if (Number.isFinite(parsed)) {
+      console.debug('[appearance] commit custom font-size', { pxDraft, parsed });
+      dispatch(setCustomFontSizePx(parsed));
+    } else {
+      console.debug('[appearance] custom font-size rejected, reverting draft', { pxDraft });
+      setPxDraft(String(effectiveFontSizePx));
+    }
+  };
+  const handleFontSizeSlider = (event: ChangeEvent<HTMLInputElement>) => {
+    const px = Number(event.target.value);
+    console.debug('[appearance] custom font-size slider', { px });
+    dispatch(setCustomFontSizePx(px));
   };
 
   // Build at render time so the labels follow the active locale; `t()` itself
@@ -209,7 +241,9 @@ const AppearancePanel = () => {
           role="radiogroup"
           aria-label={t('settings.appearance.fontSizeAria')}>
           {FONT_SIZE_OPTIONS.map((opt, idx) => {
-            const selected = opt.id === fontSize;
+            // Highlight the preset whose px matches the effective size, so a
+            // fine-tuned value landing exactly on a preset still lights it up.
+            const selected = Number.parseInt(FONT_SIZE_PX[opt.id], 10) === effectiveFontSizePx;
             return (
               <button
                 key={opt.id}
@@ -253,6 +287,43 @@ const AppearancePanel = () => {
             );
           })}
         </div>
+        {/* Fine-tune the exact size beyond the presets (issue #4246). */}
+        <div className="bg-surface rounded-xl border border-line px-4 py-3 mt-3">
+          <div className="flex items-center justify-between gap-3">
+            <label htmlFor="font-size-custom-number" className="text-sm font-medium text-content">
+              {t('settings.appearance.fontSizeCustomLabel')}
+            </label>
+            <SettingsNumberField
+              id="font-size-custom-number"
+              value={pxDraft}
+              onChange={setPxDraft}
+              onCommit={commitCustomFontSize}
+              unit={t('settings.appearance.fontSizeUnit')}
+              min={MIN_FONT_SIZE_PX}
+              max={MAX_FONT_SIZE_PX}
+              aria-label={t('settings.appearance.fontSizeCustomAria')}
+              data-testid="font-size-custom-number"
+            />
+          </div>
+          <input
+            id="font-size-slider"
+            type="range"
+            min={MIN_FONT_SIZE_PX}
+            max={MAX_FONT_SIZE_PX}
+            step={1}
+            value={effectiveFontSizePx}
+            onChange={handleFontSizeSlider}
+            aria-label={t('settings.appearance.fontSizeCustomSliderAria')}
+            aria-valuetext={`${effectiveFontSizePx}${t('settings.appearance.fontSizeUnit')}`}
+            className="w-full mt-3 accent-primary-500 cursor-pointer"
+            data-testid="font-size-slider"
+          />
+          <div className="flex items-center justify-between mt-1 text-[11px] text-content-faint">
+            <span>{`${MIN_FONT_SIZE_PX}${t('settings.appearance.fontSizeUnit')}`}</span>
+            <span>{`${MAX_FONT_SIZE_PX}${t('settings.appearance.fontSizeUnit')}`}</span>
+          </div>
+        </div>
+
         <p className="text-xs text-content-muted leading-relaxed px-1 mt-2">
           {t('settings.appearance.fontSizeHelperText')}
         </p>

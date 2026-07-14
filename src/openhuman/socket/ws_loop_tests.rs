@@ -8,6 +8,7 @@ use crate::openhuman::socket::token_provider::{is_invalid_token_error, static_to
 fn make_shared() -> Arc<SharedState> {
     Arc::new(SharedState {
         webhook_router: RwLock::new(None),
+        ack_registry: AckRegistry::default(),
         status: RwLock::new(ConnectionStatus::Connected),
         socket_id: RwLock::new(None),
         error: RwLock::new(None),
@@ -194,6 +195,26 @@ fn handle_sio_packet_event_dispatches_to_event_handler() {
     // `2` = SIO EVENT, payload is a "ready" event → should flip to Connected.
     handle_sio_packet(r#"2["ready",{}]"#, &tx, &shared);
     assert_eq!(*shared.status.read(), ConnectionStatus::Connected);
+}
+
+#[test]
+fn parse_sio_ack_returns_id_and_single_payload_value() {
+    let (ack_id, data) = parse_sio_ack(r#"7[{"channelId":"ch_123","pairingToken":"pt_123"}]"#)
+        .expect("valid ack packet");
+    assert_eq!(ack_id, 7);
+    assert_eq!(data, json!({"channelId":"ch_123","pairingToken":"pt_123"}));
+}
+
+#[tokio::test]
+async fn handle_sio_packet_ack_resolves_pending_ack() {
+    let shared = make_shared();
+    let (tx, _rx) = mpsc::unbounded_channel::<String>();
+    let (ack_id, ack_rx) = shared.ack_registry.register();
+
+    handle_sio_packet(&format!(r#"3{ack_id}[{{"ok":true}}]"#), &tx, &shared);
+
+    let data = ack_rx.await.expect("ack should resolve");
+    assert_eq!(data, json!({"ok": true}));
 }
 
 #[test]

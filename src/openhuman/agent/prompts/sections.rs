@@ -185,6 +185,31 @@ pub struct UserIdentitySection;
 /// [`AgentDefinition::omit_profile`] / `omit_memory_md`.
 pub struct UserFilesSection;
 
+/// Framing preamble emitted immediately before the injected `MEMORY.md`
+/// (and, in the snapshot path, `USER.md`) block.
+///
+/// `MEMORY.md` is durable, cross-session memory — archivist-curated facts
+/// carried over from *past* sessions and previously ingested history. Without
+/// a frame, a relevant curated observation reads to the model as something
+/// already said *in this thread*, so on a brand-new thread it asserts
+/// continuity that isn't there ("already covered this in a previous chat")
+/// and shortcuts its answer (GH-4745). This note scopes the block as
+/// background knowledge and forbids claiming in-thread continuity.
+///
+/// `pub(crate)` so the sub-agent renderer
+/// ([`super::render_helpers::render_subagent_system_prompt_with_format`])
+/// can share the exact same frame — Inline/File sub-agents inject
+/// `MEMORY.md` through their own path and must not drift from this note.
+pub(crate) const MEMORY_MD_FRAMING: &str =
+    "### Long-term memory (background — not this conversation)\n\n\
+The block below is your durable, cross-session memory: facts and observations \
+carried over from *past* sessions and previously ingested history. Treat it as \
+background knowledge only — it is **not** part of the current thread. Do not \
+treat it as messages already exchanged here, never claim you \"already covered \
+this in a previous chat\" or otherwise assert continuity that isn't present in \
+the visible messages, and answer each new thread in full even when related \
+prior context appears here.\n\n";
+
 /// Renders the personality roster for the master agent's system prompt.
 ///
 /// When [`PromptContext::personality_roster`] is non-empty, emits an
@@ -321,22 +346,32 @@ impl PromptSection for UserFilesSection {
             // Personality-specific MEMORY.md takes highest priority, then
             // the session-frozen curated-memory snapshot, then the
             // workspace file (pure prompt-unit tests and older call sites).
+            //
+            // Render into a scratch buffer first so the `MEMORY_MD_FRAMING`
+            // note is only emitted when the block actually carries content —
+            // the inject helpers silently skip empty/missing files, and a
+            // dangling frame pointing at nothing would be worse than none.
+            let mut mem = String::new();
             if let Some(ref memory_md) = ctx.personality_memory_md {
                 tracing::debug!(
                     "[user_files] personality MEMORY.md override active ({} chars)",
                     memory_md.len()
                 );
-                inject_inline_content(&mut out, "MEMORY.md", memory_md, USER_FILE_MAX_CHARS);
+                inject_inline_content(&mut mem, "MEMORY.md", memory_md, USER_FILE_MAX_CHARS);
             } else if let Some(snap) = &ctx.curated_snapshot {
-                inject_snapshot_content(&mut out, "MEMORY.md", &snap.memory, USER_FILE_MAX_CHARS);
-                inject_snapshot_content(&mut out, "USER.md", &snap.user, USER_FILE_MAX_CHARS);
+                inject_snapshot_content(&mut mem, "MEMORY.md", &snap.memory, USER_FILE_MAX_CHARS);
+                inject_snapshot_content(&mut mem, "USER.md", &snap.user, USER_FILE_MAX_CHARS);
             } else {
                 inject_workspace_file_capped(
-                    &mut out,
+                    &mut mem,
                     ctx.workspace_dir,
                     "MEMORY.md",
                     USER_FILE_MAX_CHARS,
                 );
+            }
+            if !mem.trim().is_empty() {
+                out.push_str(MEMORY_MD_FRAMING);
+                out.push_str(&mem);
             }
         }
         Ok(out)
@@ -433,6 +468,7 @@ pub const GROUNDING_BODY: &str = "## Grounding and tool use\n\n\
     - Do not round, convert units, rewrite relative times, or recalculate numeric values unless the user asks and you show the calculation from observed values. If sources disagree, name the discrepancy instead of choosing a plausible value.\n\
     - Use your tools to act. Do not just describe what you would do and stop, and never end a turn with a promise of future action: do it now, or hand back a concrete result.\n\
     - Never substitute plausible looking but fabricated output (made up data, invented file contents, synthesised tool or API responses) for results you could not actually produce. If a step failed, say it failed.\n\
+    - When a tool or delegated sub-agent hands back an incomplete or blocked result (for example a [SUBAGENT_INCOMPLETE] envelope), relay what it did accomplish and the blocker to the user. Do not present it as finished, fabricate the rest, or silently re-run the identical call: change the approach or ask the user.\n\
     - Ground every factual claim in evidence you actually observed: a tool result, the user's message, or cited memory. If the evidence is missing, partial, or truncated, say so or fetch more instead of guessing.\n\
     - Skills run only via `run_workflow`, and only the skills listed as installed exist. Do not invent skill ids.";
 

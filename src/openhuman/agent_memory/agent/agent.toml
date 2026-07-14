@@ -3,7 +3,13 @@ display_name = "Memory Agent"
 delegate_name = "retrieve_memory"
 when_to_use = "Memory retrieval and tree walking specialist — searches, navigates, and retrieves information from the user's memory tree using vector search, keyword matching, entity lookup, and hierarchical tree browsing. Use when the user asks to find, recall, search, or look up something from their memory, conversations, documents, or knowledge base."
 temperature = 0.2
-max_iterations = 15
+# Bounded backstop for fail-fast retrieval (#4655): a legitimate answer needs
+# only a few calls (walk → optional drill_down/fetch_leaves → answer). A large
+# budget let the agent brute-force ~10 empty searches over ~80s and then die
+# `[SUBAGENT_INCOMPLETE]` instead of concluding "no data found". Keep this small
+# so a degraded/empty memory tree fails fast even if the prompt guidance is
+# ignored; deep retrieval still has headroom.
+max_iterations = 6
 sandbox_mode = "read_only"
 agent_tier = "worker"
 omit_identity = true

@@ -1,6 +1,6 @@
 # Release Manual Smoke Checklist
 
-Run this checklist on every release-cut. Sign-off lives in the release PR description (paste the checklist with checked items + the sign-off block at the bottom). Owns OS-level surfaces that drivers cannot assert — everything else is automated under WDIO, Vitest, or Rust integration tests (see [Testing Strategy](../gitbooks/developing/testing-strategy.md)).
+Run this checklist on every release-cut. Sign-off lives as a GitHub commit comment on the `v<version>-staging` tagged commit that QA validated (paste the checklist with checked items + the sign-off block at the bottom). Before approving the production run, the `Release-Approval` reviewer checks the sign-off exists **and** that the run targets that validated commit (staging SHA passed as `commit_sha`, or separated from the target only by `[skip ci]` version-bump commits). Owns OS-level surfaces that drivers cannot assert — everything else is automated under WDIO, Vitest, or Rust integration tests (see [Testing Strategy](../gitbooks/developing/testing-strategy.md)).
 
 This is the **only** acceptable substitute for a `🚫` row in [`TEST-COVERAGE-MATRIX.md`](./TEST-COVERAGE-MATRIX.md). If a feature has neither automated coverage nor an entry on this checklist, treat it as untested and open a coverage gap.
 
@@ -11,9 +11,9 @@ This is the **only** acceptable substitute for a `🚫` row in [`TEST-COVERAGE-M
 1. Build the release artifact for each platform you ship.
 2. On a clean machine (or fresh user account), walk through `## Per-release smoke` then the section for the active release line.
 3. Tick each box only after you have verified the expected outcome with your own eyes.
-4. Paste the completed checklist + sign-off block into the release PR description.
+4. Paste the completed checklist + sign-off block as a commit comment on the `v<version>-staging` tagged commit.
 5. Any item that is genuinely not applicable for this release: mark `N/A` with a one-line reason; do not silently skip.
-6. If `release-staging.yml` was dispatched with `skip_e2e=true`, record the reason and link the most recent relevant green pretest evidence in the PR notes (unit/rust and E2E as applicable). That override is for operator recovery, not the default release path.
+6. If `release-staging.yml` or `release-production.yml` was dispatched with `skip_ci_gate=true`, record the reason and link the most recent relevant green CI Full evidence alongside the sign-off. That override is for operator recovery, not the default release path.
 
 ---
 
@@ -48,7 +48,8 @@ Applies to every release, all platforms.
 
 ### Linux
 
-- [ ] **`.deb` and/or `.AppImage` install on a clean Ubuntu 22.04** — `sudo dpkg -i openhuman_*.deb` or `chmod +x openhuman-*.AppImage && ./openhuman-*.AppImage`. Expected: no missing-dependency errors; app launches.
+- [ ] **Public `install.sh` prefers the `.deb` path on clean Ubuntu 24.04** — Run `curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash` on a host with `apt-get` and `dpkg`. Expected: the script resolves `OpenHuman_*_amd64.deb` or `OpenHuman_*_arm64.deb`, installs it with `apt-get`, and launch does not fail on missing CEF runtime libraries such as `libgbm.so.1`.
+- [ ] **`.deb` and/or `.AppImage` install on a clean Ubuntu 22.04** — `sudo apt-get install -y --no-install-recommends ./OpenHuman_*.deb` or `chmod +x OpenHuman_*.AppImage && ./OpenHuman_*.AppImage`. Expected: no missing-dependency errors; app launches.
 - [ ] **`.AppImage` launches on a clean Ubuntu 24.04 host without a sibling extracted tree** — Run the downloaded AppImage directly from an empty directory. Expected: no `Interpreter not found!` error; `sharun` finds its bundled dynamic linker and the app reaches the first window.
 - [ ] **OS-native notification toasts fire** — Trigger a notification from inside the app (e.g. memory captured, agent finished). Expected: a libnotify-style toast appears outside the app window. (CI Linux sees only Xvfb; this surface verifies on a real desktop.)
 - [ ] **Headless supervisor update stages without self-exit** — On a Linux service deployment with `[update] restart_strategy = "supervisor"` and `rpc_mutations_enabled = false`, stage a new core binary through the documented operator flow. Expected: the running process stays up until the supervisor restart, the staged binary is present on disk, and `systemctl restart openhuman` (or equivalent) picks up the new version.
@@ -84,4 +85,4 @@ Platforms tested: [macOS arm64] [macOS x64] [Windows] [Linux .deb] [Linux .AppIm
 Notes:
 ```
 
-Paste the filled block into the release PR description before tagging.
+Paste the filled block as a commit comment on the `v<version>-staging` tagged commit before promoting to production.

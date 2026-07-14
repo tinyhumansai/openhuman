@@ -13,18 +13,22 @@ test.describe('Google Meet Connections tab', () => {
     await dismissWalkthroughIfPresent(page);
   });
 
-  test('opens the Meetings tab and shows the inline join form', async ({ page }) => {
+  test('opens the Meetings tab and shows the multi-platform composer', async ({ page }) => {
     await expect
       .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
       .toContain('/connections');
 
     await expect(page.getByTestId('two-pane-nav-meetings')).toHaveAttribute('aria-current', 'page');
 
-    // The join form renders inline on the Meetings tab (no banner/modal).
+    // The redesigned composer renders inline on the Meetings tab (no banner/modal).
     await expect(page.getByText('Send OpenHuman to a meeting')).toBeVisible();
-    await expect(page.getByText('Meeting link')).toBeVisible();
     await expect(page.locator('input[type="url"]')).toHaveCount(1);
-    await expect(page.getByText('Zoom')).toHaveCount(0);
-    await expect(page.getByText('Microsoft Teams')).toHaveCount(0);
+
+    // The redesign replaced the single-platform form with a platform selector;
+    // all four platforms are now selectable radio chips.
+    await expect(page.getByRole('radio', { name: /google meet/i })).toBeVisible();
+    await expect(page.getByRole('radio', { name: /zoom/i })).toBeVisible();
+    await expect(page.getByRole('radio', { name: /microsoft teams/i })).toBeVisible();
+    await expect(page.getByRole('radio', { name: /webex/i })).toBeVisible();
   });
 });

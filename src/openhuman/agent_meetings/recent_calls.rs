@@ -150,7 +150,7 @@ pub async fn record_backend_call_detail(
 /// [`MeetCallDetail`]. Pure (no I/O) so the field-mapping is unit-testable.
 /// Blank turns are dropped so the stored transcript matches what the summary
 /// was generated from.
-fn build_detail(
+pub(crate) fn build_detail(
     request_id: &str,
     turns: &[BackendMeetTurn],
     generated: Option<&GeneratedSummary>,

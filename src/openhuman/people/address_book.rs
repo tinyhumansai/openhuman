@@ -160,7 +160,7 @@ mod imp {
                 }
             });
 
-            store.requestAccessForEntityType_completionHandler(CNEntityType::Contacts, &*block);
+            store.requestAccessForEntityType_completionHandler(CNEntityType::Contacts, &block);
 
             rx.recv().map_err(|_| {
                 AddressBookError::Other("contacts permission callback never fired".into())
@@ -251,7 +251,7 @@ mod imp {
             let ok = store.enumerateContactsWithFetchRequest_error_usingBlock(
                 &request,
                 Some(&mut error),
-                &*block,
+                &block,
             );
             if !ok {
                 let msg = error

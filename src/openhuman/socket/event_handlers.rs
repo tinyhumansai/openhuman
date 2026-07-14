@@ -23,7 +23,7 @@ use super::manager::{emit_server_event, emit_state_change, SharedState};
 pub(super) fn handle_sio_event(
     event_name: &str,
     data: serde_json::Value,
-    _emit_tx: &mpsc::UnboundedSender<String>,
+    emit_tx: &mpsc::UnboundedSender<String>,
     shared: &Arc<SharedState>,
 ) {
     // Log every incoming event for observability.
@@ -61,11 +61,65 @@ pub(super) fn handle_sio_event(
             log::info!("[socket] Server ready — auth successful");
             *shared.status.write() = ConnectionStatus::Connected;
             emit_state_change(shared);
+            // Declare the device-tool manifest so the hosted brain knows which
+            // tool calls to round-trip to this device (Phase 2). Sent every
+            // (re)connect so the server's view is rebuilt from scratch.
+            emit_via_channel(
+                emit_tx,
+                "orch:register_tools",
+                crate::openhuman::orchestration::effect_executor::device_tool_manifest(),
+            );
+            // Advertise this core's agent roster to the backend so a medulla
+            // operator can delegate `medulla:task_run` to a named agent. The
+            // backend clears the roster on socket disconnect.
+            super::medulla::emit_register_agents();
         }
         "error" => {
             log::error!("[socket] Server error event: {}", data);
             *shared.status.write() = ConnectionStatus::Error;
             emit_state_change(shared);
+        }
+        // Hosted-brain device effect: relay a reply over Signal, then ack. Runs
+        // async so the recv loop isn't blocked on the send; the ack rides back
+        // over the same socket. Device Signal keys never leave the machine.
+        "orch:effect:send_dm" => {
+            let tx = emit_tx.clone();
+            tokio::spawn(async move {
+                if let Some((call_id, ack)) =
+                    crate::openhuman::orchestration::effect_executor::handle_send_dm(&data).await
+                {
+                    log::debug!("[socket] orch:effect:send_dm acked call_id={call_id}");
+                    emit_via_channel(&tx, "orch:effect:result", ack);
+                }
+            });
+        }
+        // Hosted-brain device tool call: run a local (read-only) device tool and
+        // return the result so the reasoning loop can continue.
+        "orch:tool_call" => {
+            let tx = emit_tx.clone();
+            tokio::spawn(async move {
+                if let Some((call_id, result)) =
+                    crate::openhuman::orchestration::effect_executor::handle_tool_call(&data).await
+                {
+                    log::debug!("[socket] orch:tool_call result call_id={call_id}");
+                    emit_via_channel(&tx, "orch:tool_result", result);
+                }
+            });
+        }
+        // Hosted-brain context-guard eviction: fold the evicted compressed
+        // summaries into local memory RAG so they stay retrievable offline, then
+        // ack. Async so the recv loop isn't blocked on the RAG write; the ack
+        // rides back over the same socket (shared `orch:effect:result` channel).
+        "orch:effect:evict" => {
+            let tx = emit_tx.clone();
+            tokio::spawn(async move {
+                if let Some((call_id, ack)) =
+                    crate::openhuman::orchestration::effect_executor::handle_evict(&data).await
+                {
+                    log::debug!("[socket] orch:effect:evict acked call_id={call_id}");
+                    emit_via_channel(&tx, "orch:effect:result", ack);
+                }
+            });
         }
         // Webhook tunnel — publish to event bus for routing by WebhookRequestSubscriber
         "webhook:request" => {
@@ -207,34 +261,6 @@ pub(super) fn handle_sio_event(
                 }
             }
         }
-        // Device tunnel — backend ack for tunnel:register.
-        "tunnel:registered" => {
-            log::info!("[socket] tunnel:registered received");
-            let channel_id = data
-                .get("channelId")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let pairing_token = data
-                .get("pairingToken")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let session_token = data
-                .get("sessionToken")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if !channel_id.is_empty() {
-                publish_global(DomainEvent::DeviceTunnelRegistered {
-                    channel_id,
-                    pairing_token,
-                    session_token,
-                });
-            } else {
-                log::warn!("[socket] tunnel:registered missing channelId");
-            }
-        }
         // Device tunnel — backend evicted the channel (TTL / server restart).
         "tunnel:evicted" => {
             let channel_id = data
@@ -369,6 +395,32 @@ pub(super) fn handle_sio_event(
                 correlation_id,
             });
         }
+        "bot:transcript_delta" => {
+            // Incremental mid-call transcript turn (issue #4304). Relayed live
+            // to the renderer; the terminal `bot:transcript` stays authoritative
+            // for thread creation / summary (handled by MeetingEventSubscriber).
+            match parse_transcript_delta(&data) {
+                Some((turn, index, is_partial, correlation_id)) => {
+                    log::info!(
+                        "[socket] bot:transcript_delta index={} is_partial={} role={}",
+                        index,
+                        is_partial,
+                        turn.role
+                    );
+                    publish_global(DomainEvent::BackendMeetTranscriptDelta {
+                        turn,
+                        index,
+                        is_partial,
+                        correlation_id,
+                    });
+                }
+                None => {
+                    log::warn!(
+                        "[socket] bot:transcript_delta dropped: missing/invalid 'turn' field"
+                    );
+                }
+            }
+        }
         "bot:in_call_request" => {
             let correlation_id = data
                 .get("correlationId")
@@ -392,10 +444,18 @@ pub(super) fn handle_sio_event(
                 .get("timestampMs")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
+            // Dual-mascot name addressing (#4277 follow-up): which slot the
+            // backend's wake matcher decided was addressed (0|1), if any.
+            let mascot_slot = data
+                .get("mascotSlot")
+                .and_then(|v| v.as_u64())
+                .filter(|s| *s <= 1)
+                .map(|s| s as u8);
             log::info!(
-                "[socket] bot:in_call_request speaker={} cmd_len={}",
+                "[socket] bot:in_call_request speaker={} cmd_len={} mascot_slot={:?}",
                 speaker,
-                command_text.len()
+                command_text.len(),
+                mascot_slot
             );
             publish_global(DomainEvent::BackendMeetInCallRequest {
                 correlation_id,
@@ -403,6 +463,7 @@ pub(super) fn handle_sio_event(
                 command_text,
                 recent_transcript,
                 timestamp_ms,
+                mascot_slot,
             });
         }
         "bot:error" => {
@@ -420,6 +481,42 @@ pub(super) fn handle_sio_event(
                 error,
                 correlation_id,
             });
+        }
+
+        // ── Medulla harness plane ────────────────────────────────────────
+        // A medulla operator (running in the backend) drives an openhuman agent
+        // session as a delegated sub-agent. See `socket::medulla`.
+        "medulla:task_run" => {
+            match serde_json::from_value::<super::medulla::payloads::TaskRun>(data) {
+                Ok(run) => {
+                    log::info!(
+                        "[socket] medulla:task_run task_id={} cycle_id={} agent_id={:?}",
+                        run.task_id,
+                        run.cycle_id,
+                        run.agent_id
+                    );
+                    super::medulla::manager().start_task(run);
+                }
+                Err(e) => log::warn!("[socket] failed to parse medulla:task_run: {e}"),
+            }
+        }
+        "medulla:task_send" => {
+            match serde_json::from_value::<super::medulla::payloads::TaskSend>(data) {
+                Ok(send) => {
+                    log::info!("[socket] medulla:task_send task_id={}", send.task_id);
+                    super::medulla::manager().steer_task(send);
+                }
+                Err(e) => log::warn!("[socket] failed to parse medulla:task_send: {e}"),
+            }
+        }
+        "medulla:task_abort" => {
+            match serde_json::from_value::<super::medulla::payloads::TaskAbort>(data) {
+                Ok(abort) => {
+                    log::info!("[socket] medulla:task_abort task_id={}", abort.task_id);
+                    super::medulla::manager().abort_task(abort);
+                }
+                Err(e) => log::warn!("[socket] failed to parse medulla:task_abort: {e}"),
+            }
         }
 
         // Channel inbound message — publish to event bus for ChannelInboundSubscriber
@@ -497,6 +594,30 @@ fn base64_encode(input: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(input.as_bytes())
 }
 
+/// Parse a `bot:transcript_delta` payload (issue #4304) into its event fields.
+///
+/// Expected shape: `{ turn: { role, content }, index, isPartial, correlationId }`.
+/// Returns `None` when the required `turn` object is missing or malformed so the
+/// caller can drop the event rather than publish a degenerate turn. `index`
+/// defaults to 0 and `isPartial` to `false` (final) when absent.
+fn parse_transcript_delta(
+    data: &serde_json::Value,
+) -> Option<(BackendMeetTurn, u64, bool, Option<String>)> {
+    let turn: BackendMeetTurn = data
+        .get("turn")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())?;
+    let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+    let is_partial = data
+        .get("isPartial")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let correlation_id = data
+        .get("correlationId")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    Some((turn, index, is_partial, correlation_id))
+}
+
 /// Send a Socket.IO event through the emit channel.
 ///
 /// Format: `42["eventName", data]`
@@ -537,6 +658,7 @@ mod tests {
     fn make_shared() -> Arc<SharedState> {
         Arc::new(SharedState {
             webhook_router: RwLock::new(None),
+            ack_registry: super::super::manager::AckRegistry::default(),
             status: RwLock::new(ConnectionStatus::Disconnected),
             socket_id: RwLock::new(None),
             error: RwLock::new(None),
@@ -604,6 +726,41 @@ mod tests {
     #[test]
     fn parse_sio_event_returns_none_when_json_invalid() {
         assert!(parse_sio_event(r#"[invalid json"#).is_none());
+    }
+
+    // ── parse_transcript_delta (bot:transcript_delta, #4304) ────────
+
+    #[test]
+    fn parse_transcript_delta_extracts_all_fields() {
+        let data = json!({
+            "turn": { "role": "user", "content": "hello there" },
+            "index": 3,
+            "isPartial": true,
+            "correlationId": "corr-123"
+        });
+        let (turn, index, is_partial, correlation_id) = parse_transcript_delta(&data).unwrap();
+        assert_eq!(turn.role, "user");
+        assert_eq!(turn.content, "hello there");
+        assert_eq!(index, 3);
+        assert!(is_partial);
+        assert_eq!(correlation_id.as_deref(), Some("corr-123"));
+    }
+
+    #[test]
+    fn parse_transcript_delta_defaults_index_partial_and_correlation() {
+        let data = json!({ "turn": { "role": "assistant", "content": "hi" } });
+        let (turn, index, is_partial, correlation_id) = parse_transcript_delta(&data).unwrap();
+        assert_eq!(turn.role, "assistant");
+        assert_eq!(index, 0);
+        assert!(!is_partial);
+        assert!(correlation_id.is_none());
+    }
+
+    #[test]
+    fn parse_transcript_delta_returns_none_without_turn() {
+        assert!(parse_transcript_delta(&json!({ "index": 1, "isPartial": false })).is_none());
+        // Malformed turn (missing required fields) is also dropped.
+        assert!(parse_transcript_delta(&json!({ "turn": { "role": "user" } })).is_none());
     }
 
     // ── handle_sio_event dispatch ───────────────────────────────────

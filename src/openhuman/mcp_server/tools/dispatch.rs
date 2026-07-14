@@ -10,8 +10,7 @@ use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 use super::super::write_dispatch;
 use super::params::{build_rpc_params, validate_controller_params};
 use super::specs::{
-    base_tool_specs, list_tools_result_for_config, list_tools_result_from_specs, searxng_tool_spec,
-    tool_specs,
+    base_tool_specs, list_tools_result_for_config, list_tools_result_from_specs, tool_specs,
 };
 use super::types::ToolCallError;
 

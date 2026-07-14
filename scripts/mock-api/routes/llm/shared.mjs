@@ -97,6 +97,89 @@ export function latestRoleMessage(parsedBody, role) {
   return matches[matches.length - 1] || null;
 }
 
+// Substitute `{{DYNAMIC_*}}` placeholders using values pulled from the latest
+// `[SUBAGENT_AWAITING_USER]` envelope in the message history. When the
+// orchestrator receives a paused sub-agent's envelope from
+// `awaiting_user_envelope()` (src/openhuman/agent_orchestration/tools/
+// awaiting_user.rs) it carries a runtime-generated
+// `task_id: sub-<uuid>` / `agent_id: <name>` / `worker_thread_id: ...`. A test
+// scripting the orchestrator's follow-up `continue_subagent` tool_call can't
+// know those values ahead of time — this helper substitutes them from the
+// envelope so keyword-rule fixtures can drive resume flows deterministically
+// (tinyhumansai/openhuman#4517).
+//
+// Returns `text` unchanged when it has no placeholders, no envelope is in
+// history, or `parsedBody` is missing.
+export function renderDynamicPlaceholders(text, parsedBody) {
+  if (typeof text !== "string" || text.length === 0) return text;
+  if (!text.includes("{{DYNAMIC_")) return text;
+  if (!parsedBody || !Array.isArray(parsedBody.messages)) return text;
+
+  const fields = extractLatestAwaitingUserEnvelope(parsedBody);
+  if (!fields) return text;
+
+  return text
+    .replace(/\{\{DYNAMIC_TASK_ID\}\}/g, fields.task_id ?? "{{DYNAMIC_TASK_ID}}")
+    .replace(
+      /\{\{DYNAMIC_AGENT_ID\}\}/g,
+      fields.agent_id ?? "{{DYNAMIC_AGENT_ID}}",
+    )
+    .replace(
+      /\{\{DYNAMIC_WORKER_THREAD_ID\}\}/g,
+      fields.worker_thread_id ?? "{{DYNAMIC_WORKER_THREAD_ID}}",
+    );
+}
+
+// Walk messages newest-first, find the last `[SUBAGENT_AWAITING_USER]…
+// [/SUBAGENT_AWAITING_USER]` block, and parse its `key: value` lines. Returns
+// null if not found.
+function extractLatestAwaitingUserEnvelope(parsedBody) {
+  for (let i = parsedBody.messages.length - 1; i >= 0; i -= 1) {
+    const m = parsedBody.messages[i];
+    if (!m || typeof m !== "object") continue;
+    const content = normalizeMessageContent(m.content);
+    const openIdx = content.indexOf("[SUBAGENT_AWAITING_USER]");
+    if (openIdx < 0) continue;
+    const closeIdx = content.indexOf("[/SUBAGENT_AWAITING_USER]", openIdx);
+    const body =
+      closeIdx > openIdx
+        ? content.slice(openIdx, closeIdx)
+        : content.slice(openIdx);
+    const fields = {};
+    for (const line of body.split(/\r?\n/)) {
+      const match = /^\s*([a-zA-Z_]+):\s*(.*)$/.exec(line);
+      if (!match) continue;
+      const [, key, val] = match;
+      if (!(key in fields)) fields[key] = val.trim();
+    }
+    return fields;
+  }
+  return null;
+}
+
+// Apply `renderDynamicPlaceholders` to a rule / forced-response's `content` and
+// each `toolCalls[*].arguments` (when they're stringified JSON, which the mock
+// forwards verbatim to the agent harness). No-op for entries that don't carry
+// placeholders. Returns a shallow copy — never mutates the input.
+export function applyDynamicPlaceholdersToResponse(response, parsedBody) {
+  if (!response || typeof response !== "object") return response;
+  const rendered = { ...response };
+  if (typeof rendered.content === "string") {
+    rendered.content = renderDynamicPlaceholders(rendered.content, parsedBody);
+  }
+  if (Array.isArray(rendered.toolCalls)) {
+    rendered.toolCalls = rendered.toolCalls.map((tc) => {
+      if (!tc || typeof tc !== "object") return tc;
+      const next = { ...tc };
+      if (typeof next.arguments === "string") {
+        next.arguments = renderDynamicPlaceholders(next.arguments, parsedBody);
+      }
+      return next;
+    });
+  }
+  return rendered;
+}
+
 export function resolveThreadKey(ctx) {
   const { parsedBody, req } = ctx;
   const headers = req?.headers || {};

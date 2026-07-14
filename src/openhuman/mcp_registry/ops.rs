@@ -23,6 +23,7 @@ use super::types::{CommandKind, ConnStatus, InstalledServer};
 pub async fn mcp_clients_registry_search(
     config: &Config,
     query: Option<String>,
+    transport: Option<String>,
     page: Option<u32>,
     page_size: Option<u32>,
 ) -> Result<RpcOutcome<Value>, String> {
@@ -30,16 +31,22 @@ pub async fn mcp_clients_registry_search(
     let page_size = page_size.unwrap_or(20);
 
     tracing::debug!(
-        "[mcp-client] registry_search query={:?} page={} page_size={}",
+        "[mcp-client] registry_search query={:?} transport={:?} page={} page_size={}",
         query,
+        transport,
         page,
         page_size
     );
 
-    let (servers, total_pages) =
-        registry::registry_search(config, query.as_deref(), page, page_size)
-            .await
-            .map_err(|e| e.to_string())?;
+    let (servers, total_pages) = registry::registry_search(
+        config,
+        query.as_deref(),
+        transport.as_deref(),
+        page,
+        page_size,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(RpcOutcome::new(
         json!({ "servers": servers, "page": page, "total_pages": total_pages }),
@@ -269,7 +276,7 @@ pub async fn mcp_clients_install(
         server.qualified_name
     );
 
-    let _ = publish_global(DomainEvent::McpServerInstalled {
+    publish_global(DomainEvent::McpServerInstalled {
         server_id: server_id.clone(),
         qualified_name: server.qualified_name.clone(),
     });
@@ -411,7 +418,7 @@ pub async fn mcp_clients_connect(
 
     let tool_count = tools.len() as u32;
 
-    let _ = publish_global(DomainEvent::McpServerConnected {
+    publish_global(DomainEvent::McpServerConnected {
         server_id: server_id.trim().to_string(),
         tool_count,
     });
@@ -464,7 +471,7 @@ pub async fn mcp_clients_set_enabled(
     if !enabled {
         connections::disconnect(&server_id).await;
         connections::clear_last_error(&server_id).await;
-        let _ = publish_global(DomainEvent::McpServerDisconnected {
+        publish_global(DomainEvent::McpServerDisconnected {
             server_id: server_id.clone(),
             reason: Some("disabled".to_string()),
         });
@@ -489,7 +496,7 @@ pub async fn mcp_clients_disconnect(server_id: String) -> Result<RpcOutcome<Valu
 
     connections::disconnect(server_id.trim()).await;
 
-    let _ = publish_global(DomainEvent::McpServerDisconnected {
+    publish_global(DomainEvent::McpServerDisconnected {
         server_id: server_id.trim().to_string(),
         reason: None,
     });
@@ -544,7 +551,7 @@ pub async fn mcp_clients_update_env(
 
     // Drop any live session so the reconnect picks up the new env.
     connections::disconnect(server_id).await;
-    let _ = publish_global(DomainEvent::McpServerDisconnected {
+    publish_global(DomainEvent::McpServerDisconnected {
         server_id: server_id.to_string(),
         reason: Some("env reconfigured".to_string()),
     });
@@ -584,7 +591,7 @@ pub async fn mcp_clients_update_env(
     match connections::connect(config, &server).await {
         Ok(tools) => {
             let tool_count = tools.len() as u32;
-            let _ = publish_global(DomainEvent::McpServerConnected {
+            publish_global(DomainEvent::McpServerConnected {
                 server_id: server_id.to_string(),
                 tool_count,
             });
@@ -600,17 +607,37 @@ pub async fn mcp_clients_update_env(
                 )],
             ))
         }
-        Err(err) => Ok(RpcOutcome::new(
-            json!({
-                "server_id": server_id,
-                "status": "disconnected",
-                "env_keys": server.env_keys,
-                "error": err.to_string(),
-            }),
-            vec![format!(
-                "update_env persisted env for server_id={server_id} but reconnect failed: {err}"
-            )],
-        )),
+        Err(err) => {
+            // A 401 is surfaced as `unauthorized` + a stable `auth_hint` code
+            // (oauth_required / token_rejected / credential_required) the UI maps
+            // to actionable copy — the raw message is WITHHELD because it leaks
+            // the OAuth metadata URL (#3719, #4289). Generic transport failures
+            // keep their diagnostic message under `disconnected`.
+            match connections::auth_hint_for(server_id).await {
+                Some(hint) => Ok(RpcOutcome::new(
+                    json!({
+                        "server_id": server_id,
+                        "status": "unauthorized",
+                        "env_keys": server.env_keys,
+                        "auth_hint": hint,
+                    }),
+                    vec![format!(
+                        "update_env persisted env for server_id={server_id} but reconnect was unauthorized: {hint}"
+                    )],
+                )),
+                None => Ok(RpcOutcome::new(
+                    json!({
+                        "server_id": server_id,
+                        "status": "disconnected",
+                        "env_keys": server.env_keys,
+                        "error": err.to_string(),
+                    }),
+                    vec![format!(
+                        "update_env persisted env for server_id={server_id} but reconnect failed: {err}"
+                    )],
+                )),
+            }
+        }
     }
 }
 
@@ -759,7 +786,7 @@ pub async fn mcp_clients_tool_call(
     let elapsed_ms = start.elapsed().as_millis() as u64;
     let success = result.is_ok();
 
-    let _ = publish_global(DomainEvent::McpClientToolExecuted {
+    publish_global(DomainEvent::McpClientToolExecuted {
         server_id: server_id.trim().to_string(),
         tool_name: tool_name.trim().to_string(),
         success,
@@ -910,7 +937,7 @@ async fn invoke_config_assist_agent(
         Err(e) => {
             return Ok(json!({
                 "reply": format!(
-                    "Couldn't start the assistant: {e}. Make sure AI/inference is configured (Settings → AI)."
+                    "Couldn't start the assistant: {e}. Make sure AI/inference is configured (Connections → API keys → LLM)."
                 ),
                 "suggested_env": null
             }));
@@ -939,7 +966,7 @@ async fn invoke_config_assist_agent(
         Ok(reply) => Ok(json!({ "reply": reply, "suggested_env": null })),
         Err(e) => Ok(json!({
             "reply": format!(
-                "I couldn't research that right now: {e}. Make sure AI/inference is configured (Settings → AI)."
+                "I couldn't research that right now: {e}. Make sure AI/inference is configured (Connections → API keys → LLM)."
             ),
             "suggested_env": null
         })),

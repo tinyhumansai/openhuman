@@ -33,7 +33,7 @@ mod tests;
 pub use dispatch::dispatch_card;
 pub use poller::start_board_poller;
 pub use prompt::build_task_prompt;
-pub use registry::cancel_session;
+pub use registry::{cancel_session, cancel_session_scoped};
 pub use types::DispatchOutcome;
 
 /// Run a one-off **system** agent turn on an existing chat thread, streaming the
@@ -52,6 +52,3 @@ pub async fn run_system_turn_on_thread(
     let run_id = format!("bgdeliver-{}", uuid::Uuid::new_v4());
     executor::run_autonomous(config, &executor, &prompt, &run_id, Some(thread_id)).await
 }
-
-// `pub(crate)` for test drivers.
-pub(crate) use poller::poll_once;

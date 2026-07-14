@@ -13,7 +13,7 @@ omit_profile = true
 omit_memory_md = true
 
 [model]
-hint = "agentic"
+hint = "burst"
 
 [tools]
 # `resolve_time` turns "in 10 minutes" / "tomorrow 9am" into an exact

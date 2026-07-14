@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import {
+  hasUsableStarts,
+  normalizeVisemeTimeline,
   prepareForSpeech,
   proceduralVisemes,
   synthesizeSpeech,
@@ -176,5 +178,73 @@ describe('proceduralVisemes', () => {
     // 100ms / 10 chars = 10ms which is below the floor — frames must still be
     // visible (≥60ms) even if that overshoots the audio.
     expect(short[0].end_ms - short[0].start_ms).toBeGreaterThanOrEqual(60);
+  });
+});
+
+describe('hasUsableStarts', () => {
+  it('is true for a spread-out, mostly-distinct timeline', () => {
+    expect(
+      hasUsableStarts([
+        { viseme: 'aa', start_ms: 0, end_ms: 100 },
+        { viseme: 'PP', start_ms: 100, end_ms: 200 },
+        { viseme: 'E', start_ms: 200, end_ms: 300 },
+      ])
+    ).toBe(true);
+  });
+
+  it('is false when every start collapses to zero (degenerate backend timing)', () => {
+    expect(
+      hasUsableStarts([
+        { viseme: 'aa', start_ms: 0, end_ms: 80 },
+        { viseme: 'PP', start_ms: 0, end_ms: 80 },
+        { viseme: 'E', start_ms: 0, end_ms: 80 },
+      ])
+    ).toBe(false);
+  });
+
+  it('is false for fewer than two frames', () => {
+    expect(hasUsableStarts([{ viseme: 'aa', start_ms: 10, end_ms: 90 }])).toBe(false);
+    expect(hasUsableStarts([])).toBe(false);
+  });
+});
+
+describe('normalizeVisemeTimeline', () => {
+  it('preserves a real timeline and keeps gaps as pauses', () => {
+    // Real per-frame timing spanning the clip, with a gap 450→900 (a pause).
+    const track = [
+      { viseme: 'aa', start_ms: 0, end_ms: 450 },
+      { viseme: 'PP', start_ms: 900, end_ms: 1000 },
+    ];
+    const out = normalizeVisemeTimeline(track, 1000);
+    // First frame keeps its real end (450) — the gap to 900 stays a pause.
+    expect(out[0]).toEqual({ viseme: 'aa', start_ms: 0, end_ms: 450 });
+    expect(out[1].start_ms).toBe(900);
+  });
+
+  it('clamps an overrunning end to the next cue start', () => {
+    const track = [
+      { viseme: 'aa', start_ms: 0, end_ms: 9999 }, // overruns next
+      { viseme: 'PP', start_ms: 600, end_ms: 1000 },
+    ];
+    const out = normalizeVisemeTimeline(track, 1000);
+    expect(out[0].end_ms).toBe(600);
+  });
+
+  it('evenly distributes the sequence when timestamps are degenerate', () => {
+    // All-zero starts → unusable → spread evenly across the audio duration.
+    const track = [
+      { viseme: 'aa', start_ms: 0, end_ms: 80 },
+      { viseme: 'PP', start_ms: 0, end_ms: 80 },
+      { viseme: 'E', start_ms: 0, end_ms: 80 },
+      { viseme: 'oh', start_ms: 0, end_ms: 80 },
+    ];
+    const out = normalizeVisemeTimeline(track, 1000);
+    expect(out.map(f => f.viseme)).toEqual(['aa', 'PP', 'E', 'oh']);
+    expect(out[0]).toEqual({ viseme: 'aa', start_ms: 0, end_ms: 250 });
+    expect(out[3]).toEqual({ viseme: 'oh', start_ms: 750, end_ms: 1000 });
+  });
+
+  it('returns empty frames untouched', () => {
+    expect(normalizeVisemeTimeline([], 1000)).toEqual([]);
   });
 });

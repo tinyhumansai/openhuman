@@ -1,13 +1,81 @@
 use super::super::context::{ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS};
-use super::super::runtime::{process_channel_message, run_message_dispatch_loop};
+use super::super::runtime::test_support::{run_dispatch_harness, DispatchHarnessOptions};
+use super::super::runtime::{
+    process_channel_message, run_message_dispatch_loop, RuntimeChannelMessage,
+};
 use super::super::{traits, Channel};
 use super::common::{use_real_agent_handler, NoopMemory, RecordingChannel, SlowProvider};
+use crate::core::event_bus::{init_global, DomainEvent, DEFAULT_CAPACITY};
 use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnRequest, AgentTurnResponse};
 use crate::openhuman::inference::provider;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::Barrier;
+
+#[tokio::test]
+async fn dispatch_publishes_tinychannels_inbound_envelope() {
+    let observation = run_dispatch_harness(DispatchHarnessOptions {
+        channel_name: "telegram".to_string(),
+        thread_ts: Some("topic-99".to_string()),
+        ..Default::default()
+    })
+    .await;
+
+    let envelope = observation
+        .received_event_envelope
+        .expect("dispatch should publish inbound envelope");
+    assert_eq!(envelope.channel.id, "telegram");
+    assert_eq!(envelope.message_id, "m1");
+    assert_eq!(envelope.conversation.id, "reply");
+    assert_eq!(envelope.conversation.thread_id, None);
+    assert_eq!(envelope.conversation.topic_id.as_deref(), Some("topic-99"));
+    assert_eq!(envelope.sender.id, "alice");
+}
+
+#[tokio::test]
+async fn dispatch_preserves_supplied_tinychannels_inbound_envelope() {
+    let supplied = tinychannels::ChannelInboundEnvelope {
+        channel: tinychannels::channel::ChannelRef {
+            id: "slack".into(),
+            account_id: Some("bot-a".into()),
+        },
+        message_id: "m1".into(),
+        conversation: tinychannels::channel::ConversationRef {
+            kind: tinychannels::channel::ConversationKind::Channel,
+            id: "general".into(),
+            scope_id: Some("T123".into()),
+            parent_id: None,
+            thread_id: Some("thread-1".into()),
+            topic_id: None,
+        },
+        sender: tinychannels::channel::SenderRef {
+            id: "alice".into(),
+            name: Some("Alice".into()),
+            is_bot: false,
+            ..Default::default()
+        },
+        text: "hello".into(),
+        ..Default::default()
+    };
+
+    let observation = run_dispatch_harness(DispatchHarnessOptions {
+        channel_name: "slack".to_string(),
+        thread_ts: Some("thread-1".to_string()),
+        inbound_envelope: Some(supplied),
+        ..Default::default()
+    })
+    .await;
+
+    let envelope = observation
+        .received_event_envelope
+        .expect("dispatch should publish supplied inbound envelope");
+    assert_eq!(envelope.channel.account_id.as_deref(), Some("bot-a"));
+    assert_eq!(envelope.conversation.scope_id.as_deref(), Some("T123"));
+    assert_eq!(envelope.conversation.thread_id.as_deref(), Some("thread-1"));
+    assert_eq!(envelope.sender.name.as_deref(), Some("Alice"));
+}
 
 #[tokio::test]
 async fn message_dispatch_processes_messages_in_parallel() {
@@ -16,20 +84,24 @@ async fn message_dispatch_processes_messages_in_parallel() {
     // without relying on wall-clock thresholds that can wobble in CI.
     let in_flight = Arc::new(AtomicUsize::new(0));
     let peak_in_flight = Arc::new(AtomicUsize::new(0));
+    let handler_barrier = Arc::new(Barrier::new(2));
     let _bus_guard = mock_agent_run_turn({
         let in_flight = in_flight.clone();
         let peak_in_flight = peak_in_flight.clone();
+        let handler_barrier = handler_barrier.clone();
         move |_req: AgentTurnRequest| {
             let in_flight = in_flight.clone();
             let peak_in_flight = peak_in_flight.clone();
+            let handler_barrier = handler_barrier.clone();
             async move {
                 let current = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
                 peak_in_flight.fetch_max(current, Ordering::SeqCst);
+                tokio::time::timeout(Duration::from_secs(2), handler_barrier.wait())
+                    .await
+                    .map_err(|_| "parallel dispatch handler barrier timed out".to_string())?;
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 in_flight.fetch_sub(1, Ordering::SeqCst);
-                Ok(AgentTurnResponse {
-                    text: "echo: stub".to_string(),
-                })
+                Ok(AgentTurnResponse::new("echo: stub"))
             }
         }
     })
@@ -44,9 +116,9 @@ async fn message_dispatch_processes_messages_in_parallel() {
 
         let runtime_ctx = Arc::new(ChannelRuntimeContext {
             channels_by_name: Arc::new(channels_by_name),
-            provider: Arc::new(SlowProvider {
+            provider: Some(Arc::new(SlowProvider {
                 delay: Duration::from_millis(5),
-            }),
+            })),
             default_provider: Arc::new("test-provider".to_string()),
             memory: Arc::new(NoopMemory),
             tools_registry: Arc::new(vec![]),
@@ -67,14 +139,15 @@ async fn message_dispatch_processes_messages_in_parallel() {
             message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             multimodal: crate::openhuman::config::MultimodalConfig::default(),
             multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+            config: None,
         });
 
         (channel_impl, runtime_ctx)
     };
 
     let (parallel_channel, parallel_ctx) = build_runtime();
-    let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);
-    tx.send(traits::ChannelMessage {
+    let (tx, rx) = tokio::sync::mpsc::channel::<RuntimeChannelMessage>(4);
+    tx.send(RuntimeChannelMessage::from(traits::ChannelMessage {
         id: "1".to_string(),
         sender: "alice".to_string(),
         reply_target: "alice".to_string(),
@@ -82,10 +155,10 @@ async fn message_dispatch_processes_messages_in_parallel() {
         channel: "test-channel".to_string(),
         timestamp: 1,
         thread_ts: None,
-    })
+    }))
     .await
     .unwrap();
-    tx.send(traits::ChannelMessage {
+    tx.send(RuntimeChannelMessage::from(traits::ChannelMessage {
         id: "2".to_string(),
         sender: "bob".to_string(),
         reply_target: "bob".to_string(),
@@ -93,7 +166,7 @@ async fn message_dispatch_processes_messages_in_parallel() {
         channel: "test-channel".to_string(),
         timestamp: 2,
         thread_ts: None,
-    })
+    }))
     .await
     .unwrap();
     drop(tx);
@@ -116,9 +189,9 @@ async fn process_channel_message_cancels_scoped_typing_task() {
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(SlowProvider {
+        provider: Some(Arc::new(SlowProvider {
             delay: Duration::from_millis(20),
-        }),
+        })),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -139,6 +212,7 @@ async fn process_channel_message_cancels_scoped_typing_task() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(
@@ -190,9 +264,7 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
                 req.history.len() >= 2,
                 "history should include at least the system prompt and user message"
             );
-            Ok(AgentTurnResponse {
-                text: "CANNED_RESPONSE_FROM_BUS_STUB".to_string(),
-            })
+            Ok(AgentTurnResponse::new("CANNED_RESPONSE_FROM_BUS_STUB"))
         }
     })
     .await;
@@ -207,7 +279,7 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
         channels_by_name: Arc::new(channels_by_name),
         // Still need a Provider for the Arc field, but the stubbed bus
         // handler never invokes it — so a minimal no-op is fine.
-        provider: Arc::new(super::common::DummyProvider),
+        provider: Some(Arc::new(super::common::DummyProvider)),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -228,6 +300,7 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(
@@ -265,6 +338,104 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
     // that expects the real path sees a consistent registry.
 }
 
+#[tokio::test]
+async fn channel_processed_event_records_resolved_agent_route() {
+    init_global(DEFAULT_CAPACITY);
+    let mut events = crate::core::event_bus::global()
+        .expect("event bus should be initialized")
+        .raw_receiver();
+
+    let _bus_guard = mock_agent_run_turn(move |_req| async move {
+        Ok(AgentTurnResponse::with_resolved_route(
+            "CANNED_RESPONSE_FROM_RESOLVED_ROUTE",
+            "actual-provider",
+            "actual-model",
+        ))
+    })
+    .await;
+
+    let channel_impl = Arc::new(RecordingChannel::default());
+    let channel: Arc<dyn Channel> = channel_impl.clone();
+
+    let mut channels_by_name = HashMap::new();
+    channels_by_name.insert(channel.name().to_string(), channel);
+
+    let runtime_ctx = Arc::new(ChannelRuntimeContext {
+        channels_by_name: Arc::new(channels_by_name),
+        provider: Some(Arc::new(super::common::DummyProvider)),
+        default_provider: Arc::new("requested-provider".to_string()),
+        memory: Arc::new(NoopMemory),
+        tools_registry: Arc::new(vec![]),
+        system_prompt: Arc::new("test-system-prompt".to_string()),
+        model: Arc::new("requested-model".to_string()),
+        temperature: 0.0,
+        auto_save_memory: false,
+        max_tool_iterations: 10,
+        min_relevance_score: 0.0,
+        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
+        provider_cache: Arc::new(Mutex::new(HashMap::new())),
+        route_overrides: Arc::new(Mutex::new(HashMap::new())),
+        api_url: None,
+        inference_url: None,
+        reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
+        provider_runtime_options: provider::ProviderRuntimeOptions::default(),
+        workspace_dir: Arc::new(std::env::temp_dir()),
+        message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
+        multimodal: crate::openhuman::config::MultimodalConfig::default(),
+        multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
+    });
+
+    process_channel_message(
+        runtime_ctx,
+        traits::ChannelMessage {
+            id: "resolved-route-msg".to_string(),
+            sender: "alice".to_string(),
+            reply_target: "alice".to_string(),
+            content: "hello from resolved route test".to_string(),
+            channel: "test-channel".to_string(),
+            timestamp: 1,
+            thread_ts: None,
+        },
+    )
+    .await;
+
+    // Bound the scan so unrelated global event traffic can't hang the test;
+    // the target event is published by process_channel_message above.
+    let mut matched = false;
+    for _ in 0..50 {
+        let event = tokio::time::timeout(Duration::from_millis(200), events.recv())
+            .await
+            .expect("ChannelMessageProcessed event should be published")
+            .expect("event receiver should stay open");
+
+        if let DomainEvent::ChannelMessageProcessed {
+            message_id,
+            provider,
+            model,
+            response,
+            success,
+            ..
+        } = event
+        {
+            if message_id != "resolved-route-msg" {
+                continue;
+            }
+
+            assert!(success);
+            assert_eq!(response, "CANNED_RESPONSE_FROM_RESOLVED_ROUTE");
+            assert_eq!(provider, "actual-provider");
+            assert_eq!(model, "actual-model");
+            matched = true;
+            break;
+        }
+    }
+    assert!(
+        matched,
+        "did not observe ChannelMessageProcessed for resolved-route-msg"
+    );
+}
+
 /// Security regression for the `[FILE:…]` smuggling vector: a remote
 /// channel user (Slack/Discord/Telegram/WhatsApp/etc) putting
 /// `[FILE:/etc/passwd]` (or any other local-path marker) into a normal
@@ -282,9 +453,7 @@ async fn process_channel_message_hardens_multimodal_files_against_smuggled_marke
         let captured = Arc::clone(&captured_for_handler);
         async move {
             *captured.lock().unwrap() = Some(req.multimodal_files.clone());
-            Ok(AgentTurnResponse {
-                text: "ok".to_string(),
-            })
+            Ok(AgentTurnResponse::new("ok"))
         }
     })
     .await;
@@ -305,7 +474,7 @@ async fn process_channel_message_hardens_multimodal_files_against_smuggled_marke
     };
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(super::common::DummyProvider),
+        provider: Some(Arc::new(super::common::DummyProvider)),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -326,6 +495,7 @@ async fn process_channel_message_hardens_multimodal_files_against_smuggled_marke
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: permissive_operator_default,
+        config: None,
     });
 
     // Attacker-shaped message: an absolute-path FILE marker dropped
@@ -375,9 +545,7 @@ async fn process_channel_message_hardens_against_relative_path_markers() {
         let captured = Arc::clone(&captured_for_handler);
         async move {
             *captured.lock().unwrap() = Some(req.multimodal_files.clone());
-            Ok(AgentTurnResponse {
-                text: "ok".to_string(),
-            })
+            Ok(AgentTurnResponse::new("ok"))
         }
     })
     .await;
@@ -389,7 +557,7 @@ async fn process_channel_message_hardens_against_relative_path_markers() {
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider: Arc::new(super::common::DummyProvider),
+        provider: Some(Arc::new(super::common::DummyProvider)),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -410,6 +578,7 @@ async fn process_channel_message_hardens_against_relative_path_markers() {
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     });
 
     process_channel_message(

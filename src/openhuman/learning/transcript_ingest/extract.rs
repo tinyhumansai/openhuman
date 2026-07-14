@@ -166,13 +166,13 @@ fn find_phrase_snippet(original: &str, lower: &str, phrases: &[&str]) -> Option<
     // "I prefer X").
     let prefix = &original[..start];
     let sentence_start = prefix
-        .rfind(|c: char| matches!(c, '.' | '!' | '?' | '\n'))
+        .rfind(['.', '!', '?', '\n'])
         .map(|i| i + 1)
         .unwrap_or(0);
 
     let tail = &original[sentence_start..];
     let mut end = tail.len();
-    if let Some(rel) = tail.find(|c: char| matches!(c, '\n')) {
+    if let Some(rel) = tail.find('\n') {
         end = end.min(rel);
     }
     if let Some(rel) = tail.find(['.', '!', '?']) {

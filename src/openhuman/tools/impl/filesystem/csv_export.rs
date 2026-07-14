@@ -1,8 +1,9 @@
 use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Export structured data (JSON array of objects) as a CSV file to the workspace.
 pub struct CsvExportTool {
@@ -124,6 +125,25 @@ impl Tool for CsvExportTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, context).await
+    }
+}
+
+impl CsvExportTool {
+    async fn execute_in_context(
+        &self,
+        args: serde_json::Value,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let data_str = args
             .get("data")
             .and_then(|v| v.as_str())
@@ -186,10 +206,12 @@ impl Tool for CsvExportTool {
         // Validate the relative path
         let relative_path = format!("exports/{filename}");
 
+        let path_policy = super::security_for_tool_context(&self.security, context, "csv_export");
+
         // Security check first: validate path string, resolve symlinks, confirm workspace
         // containment. validate_parent_path walks up to the deepest existing ancestor so
         // it does not require the exports/ directory to exist yet.
-        let resolved_target = match self.security.validate_parent_path(&relative_path).await {
+        let resolved_target = match path_policy.validate_parent_path(&relative_path).await {
             Ok(p) => p,
             Err(msg) => return Ok(ToolResult::error(msg)),
         };

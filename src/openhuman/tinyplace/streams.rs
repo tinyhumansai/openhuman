@@ -17,7 +17,6 @@
 //! status and the frontend can call `start` again.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;

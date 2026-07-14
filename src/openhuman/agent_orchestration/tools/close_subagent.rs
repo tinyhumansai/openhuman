@@ -97,9 +97,12 @@ impl Tool for CloseSubagentTool {
                 "close_subagent: sub-agent session not found for this parent thread",
             ));
         }
-        let cancelled =
-            running_subagents::cancel_by_session(&subagent_session_id, &parent.session_id)
-                .is_some();
+        let cancelled = running_subagents::cancel_by_session_in_workspace(
+            &subagent_session_id,
+            &parent.session_id,
+            &parent.workspace_dir,
+        )
+        .is_some();
         match subagent_sessions::close(&store, &subagent_session_id) {
             Ok(closed) => {
                 log::info!(
@@ -238,9 +241,12 @@ mod tests {
 
     fn parent_context(workspace_dir: &Path) -> ParentExecutionContext {
         ParentExecutionContext {
+            workspace_descriptor: None,
             agent_definition_id: "orchestrator".into(),
             allowed_subagent_ids: HashSet::new(),
-            provider: Arc::new(NoopProvider),
+            turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(Arc::new(
+                NoopProvider,
+            )),
             all_tools: Arc::new(Vec::new()),
             all_tool_specs: Arc::new(Vec::new()),
             visible_tool_names: std::collections::HashSet::new(),

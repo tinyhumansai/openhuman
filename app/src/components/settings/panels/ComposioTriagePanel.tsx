@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
@@ -15,7 +15,13 @@ import {
 } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
 
-const ComposioTriagePanel = () => {
+interface ComposioTriagePanelProps {
+  /** When true, render without the SettingsPanel chrome (used when embedded in
+   *  the Connections Composio page). */
+  embedded?: boolean;
+}
+
+const ComposioTriagePanel = ({ embedded = false }: ComposioTriagePanelProps = {}) => {
   const { t } = useT();
 
   const [triageDisabled, setTriageDisabled] = useState(false);
@@ -79,16 +85,19 @@ const ComposioTriagePanel = () => {
     }
   };
 
-  if (loading) {
-    return (
-      <SettingsPanel description={t('settings.developerMenu.composio.desc')}>
-        <p className="text-sm text-content-muted">{t('settings.composio.loading')}</p>
-      </SettingsPanel>
+  const wrap = (node: ReactNode) =>
+    embedded ? (
+      <div className="space-y-5">{node}</div>
+    ) : (
+      <SettingsPanel description={t('settings.developerMenu.composio.desc')}>{node}</SettingsPanel>
     );
+
+  if (loading) {
+    return wrap(<p className="text-sm text-content-muted">{t('settings.composio.loading')}</p>);
   }
 
-  return (
-    <SettingsPanel description={t('settings.developerMenu.composio.desc')}>
+  return wrap(
+    <>
       <p className="text-sm text-content-muted">
         {t('composio.triageDesc')}{' '}
         <span className="font-mono">OPENHUMAN_TRIGGER_TRIAGE_DISABLED</span>{' '}
@@ -146,7 +155,7 @@ const ComposioTriagePanel = () => {
           savingLabel={t('common.loading')}
         />
       </div>
-    </SettingsPanel>
+    </>
   );
 };
 

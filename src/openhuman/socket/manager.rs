@@ -9,11 +9,15 @@
 //! - Connection state logging for observability
 //! - Automatic reconnection with exponential backoff
 
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, OnceLock,
+};
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde_json::json;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::Duration;
 
 use crate::api::models::socket::{ConnectionStatus, SocketState};
@@ -48,6 +52,8 @@ pub fn global_socket_manager() -> Option<&'static Arc<SocketManager>> {
 pub(super) struct SharedState {
     /// Router for delivering incoming webhooks to skills.
     pub(super) webhook_router: RwLock<Option<Arc<WebhookRouter>>>,
+    /// Pending Socket.IO ACK callbacks keyed by outbound ack id.
+    pub(super) ack_registry: AckRegistry,
     /// Current connection status.
     pub(super) status: RwLock<ConnectionStatus>,
     /// Socket ID assigned by the server.
@@ -56,6 +62,46 @@ pub(super) struct SharedState {
     /// (e.g. "backend redirected ws→wss; update BACKEND_URL"). Cleared on every
     /// successful handshake and on disconnect.
     pub(super) error: RwLock<Option<String>>,
+}
+
+pub(super) struct AckRegistry {
+    next_id: AtomicU64,
+    pending: Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>,
+}
+
+impl Default for AckRegistry {
+    fn default() -> Self {
+        Self {
+            next_id: AtomicU64::new(1),
+            pending: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl AckRegistry {
+    pub(super) fn register(&self) -> (u64, oneshot::Receiver<serde_json::Value>) {
+        let ack_id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().insert(ack_id, tx);
+        (ack_id, rx)
+    }
+
+    pub(super) fn resolve(&self, ack_id: u64, data: serde_json::Value) -> bool {
+        if let Some(tx) = self.pending.lock().remove(&ack_id) {
+            let _ = tx.send(data);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(super) fn remove(&self, ack_id: u64) {
+        self.pending.lock().remove(&ack_id);
+    }
+
+    pub(super) fn cancel_all(&self) {
+        self.pending.lock().clear();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +131,7 @@ impl SocketManager {
         Self {
             shared: Arc::new(SharedState {
                 webhook_router: RwLock::new(None),
+                ack_registry: AckRegistry::default(),
                 status: RwLock::new(ConnectionStatus::Disconnected),
                 socket_id: RwLock::new(None),
                 error: RwLock::new(None),
@@ -228,6 +275,7 @@ impl SocketManager {
         if let Some(tx) = self.shutdown_tx.lock().await.take() {
             let _ = tx.send(true);
         }
+        self.shared.ack_registry.cancel_all();
         self.emit_tx.lock().await.take();
         if let Some(handle) = self.loop_handle.lock().await.take() {
             let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
@@ -243,14 +291,60 @@ impl SocketManager {
     /// Emit a Socket.IO event to the server.
     pub async fn emit(&self, event: &str, data: serde_json::Value) -> Result<(), String> {
         if let Some(ref tx) = *self.emit_tx.lock().await {
-            let payload =
-                serde_json::to_string(&json!([event, data])).map_err(|e| format!("{e}"))?;
-            let msg = format!("42{}", payload);
+            let msg = encode_sio_event(event, data, None)?;
             tx.send(msg).map_err(|_| "Socket not connected".to_string())
         } else {
             Err("Not connected".to_string())
         }
     }
+
+    /// Emit a Socket.IO event and wait for the backend ACK callback.
+    pub async fn emit_with_ack(
+        &self,
+        event: &str,
+        data: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, String> {
+        let tx = self
+            .emit_tx
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| "Not connected".to_string())?;
+        let (ack_id, ack_rx) = self.shared.ack_registry.register();
+        let msg = encode_sio_event(event, data, Some(ack_id))?;
+        if let Err(e) = tx.send(msg) {
+            self.shared.ack_registry.remove(ack_id);
+            return Err(format!("Socket not connected: {e}"));
+        }
+
+        log::debug!("[socket] emit_with_ack sent event={event} ack_id={ack_id}");
+        match tokio::time::timeout(timeout, ack_rx).await {
+            Ok(Ok(data)) => {
+                log::debug!("[socket] emit_with_ack resolved event={event} ack_id={ack_id}");
+                Ok(data)
+            }
+            Ok(Err(_)) => Err(format!(
+                "Socket ack channel dropped for event {event} ack_id={ack_id}"
+            )),
+            Err(_) => {
+                self.shared.ack_registry.remove(ack_id);
+                Err(format!(
+                    "Socket ack timeout for event {event} ack_id={ack_id}"
+                ))
+            }
+        }
+    }
+}
+
+fn encode_sio_event(
+    event: &str,
+    data: serde_json::Value,
+    ack_id: Option<u64>,
+) -> Result<String, String> {
+    let payload = serde_json::to_string(&json!([event, data])).map_err(|e| format!("{e}"))?;
+    let ack = ack_id.map(|id| id.to_string()).unwrap_or_default();
+    Ok(format!("42{ack}{payload}"))
 }
 
 impl Default for SocketManager {
@@ -337,6 +431,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn emit_with_ack_without_connection_errors_without_waiting() {
+        let mgr = SocketManager::new();
+        let err = mgr
+            .emit_with_ack("test.event", json!({"k":"v"}), Duration::from_secs(30))
+            .await
+            .unwrap_err();
+        assert_eq!(err, "Not connected");
+    }
+
+    #[tokio::test]
+    async fn emit_with_ack_uses_emit_queue_while_connecting() {
+        let mgr = SocketManager::new();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        *mgr.emit_tx.lock().await = Some(tx);
+        *mgr.shared.status.write() = ConnectionStatus::Connecting;
+
+        let result = mgr
+            .emit_with_ack("test.event", json!({"k": "v"}), Duration::from_millis(10))
+            .await;
+
+        let queued = rx
+            .try_recv()
+            .unwrap_or_else(|_| panic!("expected queued ACK emit, got result={result:?}"));
+        assert_eq!(queued, r#"421["test.event",{"k":"v"}]"#);
+        let err = result.unwrap_err();
+        assert!(
+            err.starts_with("Socket ack timeout for event test.event ack_id=1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
     async fn disconnect_on_fresh_manager_is_idempotent() {
         let mgr = SocketManager::new();
         assert!(mgr.disconnect().await.is_ok());
@@ -349,6 +475,7 @@ mod tests {
     fn emit_state_change_is_safe_to_call_on_empty_shared() {
         let shared = SharedState {
             webhook_router: RwLock::new(None),
+            ack_registry: AckRegistry::default(),
             status: RwLock::new(ConnectionStatus::Connecting),
             socket_id: RwLock::new(None),
             error: RwLock::new(None),
@@ -361,6 +488,7 @@ mod tests {
     fn emit_server_event_is_safe_without_subscribers() {
         let shared = SharedState {
             webhook_router: RwLock::new(None),
+            ack_registry: AckRegistry::default(),
             status: RwLock::new(ConnectionStatus::Connected),
             socket_id: RwLock::new(Some("x".into())),
             error: RwLock::new(None),

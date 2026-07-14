@@ -13,6 +13,8 @@ import {
   swallowAudioStop,
 } from './voice/audioPlayer';
 import {
+  hasUsableStarts,
+  normalizeVisemeTimeline,
   proceduralVisemes,
   synthesizeSpeech,
   type VisemeFrame,
@@ -32,6 +34,14 @@ const VISEME_DECAY_MS = 180;
  * 5 minutes comfortably covers any real reply; exported for tests.
  */
 export const TTS_MAX_PLAYBACK_MS = 5 * 60 * 1_000;
+const TTS_ESTIMATED_MS_PER_CHAR = 55;
+const TTS_MIN_ESTIMATED_PLAYBACK_MS = 600;
+
+function estimateTtsPlaybackMs(text: string, frames: VisemeFrame[]): number {
+  const frameEnd = frames.at(-1)?.end_ms ?? 0;
+  if (frameEnd > 0 && hasUsableStarts(frames)) return frameEnd;
+  return Math.max(TTS_MIN_ESTIMATED_PLAYBACK_MS, text.trim().length * TTS_ESTIMATED_MS_PER_CHAR);
+}
 
 /**
  * Heuristic — does this timeline contain at least one frame whose code maps
@@ -310,6 +320,15 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
   const visemeFramesRef = useRef<{ viseme: string; start_ms: number; end_ms: number }[]>([]);
   const visemeCursorRef = useRef(0);
   const playbackSeqRef = useRef(0);
+  // Wall-clock anchor (performance.now() at the instant playback became
+  // current) used to index the viseme timeline. We deliberately do NOT key off
+  // `audio.currentTime`: in the embedded CEF webview it can fail to advance for
+  // in-memory blob audio, which freezes the mouth on a single viseme even
+  // though the audio plays. A monotonic clock always advances, and because the
+  // viseme frames are rescaled to the measured audio duration it stays in sync.
+  const playbackStartedAtRef = useRef(0);
+  // Throttle marker for the lipsync diagnostic log (last logged ms).
+  const lastLipsyncLogRef = useRef(0);
 
   const [, force] = useState(0);
 
@@ -382,6 +401,16 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
           mascotLog('voice-session text_delta suppressed — listening is active');
           return;
         }
+        // When TTS is enabled the mouth is driven by the synthesized audio's
+        // viseme timeline (see startTtsPlayback), locked to the audio clock.
+        // The text-delta pseudo-lipsync exists only for the no-audio path — if
+        // we let it run while replies are spoken, the mouth flaps along with
+        // the streaming text *before and faster than* the voice. Stay at rest
+        // during streaming so the only mouth motion is in sync with the audio.
+        if (speakRef.current) {
+          mascotLog('voice-session text_delta lipsync suppressed — TTS will drive the mouth');
+          return;
+        }
         if (playbackRef.current) return;
         clearAckTimer();
         setFace('speaking');
@@ -419,6 +448,7 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
         playbackSeqRef.current++;
         const orphan = playbackRef.current;
         playbackRef.current = null;
+        playbackStartedAtRef.current = 0;
         if (orphan) {
           orphan.stop();
           orphan.ended.catch(swallowAudioStop);
@@ -433,6 +463,7 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
       playbackSeqRef.current++;
       const orphan = playbackRef.current;
       playbackRef.current = null;
+      playbackStartedAtRef.current = 0;
       if (orphan) {
         orphan.stop();
         orphan.ended.catch(swallowAudioStop);
@@ -454,6 +485,7 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
     playbackSeqRef.current++;
     const orphan = playbackRef.current;
     playbackRef.current = null;
+    playbackStartedAtRef.current = 0;
     if (orphan) {
       orphan.stop();
       orphan.ended.catch(swallowAudioStop);
@@ -472,6 +504,7 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
   ): Promise<void> {
     const prev = playbackRef.current;
     playbackRef.current = null;
+    playbackStartedAtRef.current = 0;
     if (prev) {
       prev.stop();
       prev.ended.catch(swallowAudioStop);
@@ -499,13 +532,24 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
         mascotLog('tts visemes produced no motion — dropping and falling through');
         frames = [];
       }
-      if (frames.length === 0 && tts.alignment && tts.alignment.length > 0) {
-        frames = visemesFromAlignment(tts.alignment);
+      // The cloud path's viseme *timestamps* are frequently degenerate (all-zero
+      // starts or a constant end), which loses the gaps between words/sentences.
+      // The char-level alignment carries real timing — including those pauses —
+      // so prefer it whenever the viseme starts don't form a usable timeline.
+      const visemeStartsUsable = hasUsableStarts(frames);
+      const haveAlignment = !!tts.alignment && tts.alignment.length > 0;
+      if ((frames.length === 0 || !visemeStartsUsable) && haveAlignment) {
+        frames = visemesFromAlignment(tts.alignment!);
         source = 'alignment';
         mascotLog('tts derived %d viseme frames from alignment', frames.length);
-      } else if (frames.length > 0) {
-        mascotLog('tts got %d viseme frames from backend', frames.length);
       }
+      mascotLog(
+        'tts synth visemes=%d alignment=%d startsUsable=%s → source=%s',
+        tts.visemes?.length ?? 0,
+        tts.alignment?.length ?? 0,
+        visemeStartsUsable,
+        source
+      );
       const ttsOptions: PlaybackOptions = { maxDurationMs: TTS_MAX_PLAYBACK_MS };
       const handle = await playBase64Audio(
         tts.audio_base64,
@@ -517,21 +561,66 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
         handle.ended.catch(swallowAudioStop);
         return;
       }
-      if (frames.length === 0) {
-        const dur = handle.durationMs();
-        frames = proceduralVisemes(text, dur);
-        source = 'procedural';
-        mascotLog('tts derived %d procedural viseme frames over %dms', frames.length, dur);
+      // Start lipsync as soon as audio.play() succeeds. Metadata can lag by the
+      // 500ms decoder fallback in blob/MP3 cases; keeping playbackRef empty
+      // until then makes short replies play while the mascot is still thinking.
+      let audioMs = handle.durationMs();
+      const waitingForMetadata = audioMs <= 0;
+      if (waitingForMetadata) {
+        audioMs = estimateTtsPlaybackMs(text, frames);
+        mascotLog(
+          'tts duration pending — starting lipsync with %dms estimate',
+          Math.round(audioMs)
+        );
       }
+      if (frames.length === 0) {
+        frames = proceduralVisemes(text, audioMs);
+        source = 'procedural';
+        mascotLog('tts derived %d procedural viseme frames over %dms', frames.length, audioMs);
+      }
+      // Rebuild per-frame end times from the next frame's start. The backend can
+      // ship a constant `end_ms` (= whole-utterance length) for every frame,
+      // which freezes findActiveFrame on frame 0; this restores a walkable
+      // cue timeline and stretches the last frame to the measured audio length.
+      frames = normalizeVisemeTimeline(frames, audioMs);
+      mascotLog(
+        'tts normalized %d viseme frames (%s) over %dms',
+        frames.length,
+        source,
+        Math.round(audioMs)
+      );
       visemeFramesRef.current = frames;
       visemeCursorRef.current = 0;
       playbackRef.current = handle;
+      playbackStartedAtRef.current = window.performance.now();
+      lastLipsyncLogRef.current = -1_000;
       setFace('speaking');
       mascotLog(
         'tts playback started (%s) — driving lipsync from %d frames',
         source,
         frames.length
       );
+      if (waitingForMetadata) {
+        await handle.metadataReady;
+        if (!isStillCurrent()) {
+          handle.stop();
+          handle.ended.catch(swallowAudioStop);
+          return;
+        }
+        const measuredAudioMs = handle.durationMs();
+        if (measuredAudioMs > 0 && playbackRef.current === handle) {
+          const measuredFrames =
+            source === 'procedural'
+              ? proceduralVisemes(text, measuredAudioMs)
+              : normalizeVisemeTimeline(visemeFramesRef.current, measuredAudioMs);
+          visemeFramesRef.current =
+            source === 'procedural'
+              ? normalizeVisemeTimeline(measuredFrames, measuredAudioMs)
+              : measuredFrames;
+          visemeCursorRef.current = 0;
+          mascotLog('tts metadata duration ready — refined lipsync to %dms', measuredAudioMs);
+        }
+      }
       try {
         await handle.ended;
       } catch (err) {
@@ -543,6 +632,7 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
     } finally {
       if (isStillCurrent()) {
         playbackRef.current = null;
+        playbackStartedAtRef.current = 0;
         visemeFramesRef.current = [];
         visemeCodeRef.current = 'sil';
         if (degraded) {
@@ -569,7 +659,12 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
   let visemeCode = 'sil';
   const playback = playbackRef.current;
   if (playback) {
-    const ms = playback.currentMs();
+    const audioMs = playback.currentMs();
+    const wallClockMs =
+      playbackStartedAtRef.current > 0
+        ? window.performance.now() - playbackStartedAtRef.current
+        : audioMs;
+    const ms = audioMs < 0 ? -1 : Math.max(audioMs, wallClockMs);
     if (ms >= 0) {
       const { frame, cursor } = findActiveFrame(
         visemeFramesRef.current,
@@ -579,6 +674,16 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
       visemeCursorRef.current = cursor;
       viseme = frame ? oculusVisemeToShape(frame.viseme) : VISEMES.REST;
       visemeCode = frame ? frame.viseme : 'sil';
+      if (ms - lastLipsyncLogRef.current >= 500) {
+        lastLipsyncLogRef.current = ms;
+        mascotLog(
+          'lipsync ms=%d cursor=%d/%d code=%s',
+          Math.round(ms),
+          cursor,
+          visemeFramesRef.current.length,
+          visemeCode
+        );
+      }
     }
   } else if (face === 'speaking') {
     const since = window.performance.now() - lastDeltaAtRef.current;

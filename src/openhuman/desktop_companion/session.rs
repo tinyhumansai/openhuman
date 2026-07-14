@@ -93,7 +93,7 @@ pub fn start_session(
     drop(guard);
 
     // Publish session-started event for Socket.IO bridge / subscribers.
-    let _ = crate::core::event_bus::publish_global(
+    crate::core::event_bus::publish_global(
         crate::core::event_bus::DomainEvent::CompanionSessionStarted {
             session_id: session_id.clone(),
             ttl_secs,
@@ -125,7 +125,7 @@ pub fn stop_session(
             );
             drop(guard);
 
-            let _ = crate::core::event_bus::publish_global(
+            crate::core::event_bus::publish_global(
                 crate::core::event_bus::DomainEvent::CompanionSessionEnded {
                     session_id,
                     reason: reason.clone(),
@@ -170,7 +170,7 @@ pub fn session_status() -> CompanionSessionStatus {
                     info!(
                         "{LOG_PREFIX} auto-expiring stale session id={stale_id} turns={turn_count}"
                     );
-                    let _ = crate::core::event_bus::publish_global(
+                    crate::core::event_bus::publish_global(
                         crate::core::event_bus::DomainEvent::CompanionSessionEnded {
                             session_id: stale_id,
                             reason: "ttl_expired".into(),

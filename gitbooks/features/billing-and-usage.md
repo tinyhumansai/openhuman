@@ -7,15 +7,15 @@ icon: credit-card
 
 # Billing, Cost & Usage
 
-OpenHuman keeps two related but separate ledgers. **Billing** is what you pay the hosted backend — plans, credit top-ups, saved cards and coupons, all settled through Stripe or Coinbase. **Cost & Usage** is what the agent spends on your behalf, tracked locally per provider call so you can see (and cap) real token spend before the bill ever lands.
+OpenHuman keeps two related but separate ledgers. **Billing** is what you pay the hosted backend: plans, credit top-ups, saved cards and coupons, all settled through Stripe or Coinbase. **Cost & Usage** is what the agent spends on your behalf, tracked locally per provider call so you can see (and cap) real token spend before the bill ever lands.
 
 The first lives in the cloud; the second never leaves your workspace.
 
 ***
 
-## Part 1 — Billing & Payments
+## Part 1: Billing & Payments
 
-The `billing` domain is a thin RPC adapter. It holds **no payment logic or state of its own** — every operation forwards an authenticated HTTPS call to the hosted backend (`/payments/*`, `/coupons/*`) using your stored app-session JWT, and surfaces the JSON response verbatim. Authorization, plan ownership and payment policy are all enforced backend-side. A missing or invalid session yields the backend's `401`/`403` directly; JWTs and card data are never logged.
+The `billing` domain is a thin RPC adapter. It holds **no payment logic or state of its own**. Every operation forwards an authenticated HTTPS call to the hosted backend (`/payments/*`, `/coupons/*`) using your stored app-session JWT, and surfaces the JSON response verbatim. Authorization, plan ownership and payment policy are all enforced backend-side. A missing or invalid session yields the backend's `401`/`403` directly; JWTs and card data are never logged.
 
 Pre-HTTP, the adapter does light input validation only: non-empty plan/coupon/payment-method ids, a finite positive `amountUsd`, and a gateway whitelist of `stripe` / `coinbase`.
 
@@ -25,7 +25,7 @@ Three tiers are offered, each with a monthly and annual interval:
 
 | Tier | Monthly | Annual | Per-call discount vs pay-as-you-go |
 | --- | --- | --- | --- |
-| **Free** | $0 | $0 | None — pay-as-you-go baseline |
+| **Free** | $0 | $0 | None (pay-as-you-go baseline) |
 | **Basic** | $19.99 | $199 | 50% cheaper per call |
 | **Pro** | $199.99 | $1,799.99 | 90% cheaper per call |
 
@@ -35,8 +35,8 @@ Higher tiers do not unlock features so much as lower the **per-call margin** ove
 
 Two gateways are wired, and only two:
 
-- **Stripe** — plan purchases (Checkout sessions), the customer billing portal, credit top-ups, saved-card management (SetupIntents) and auto-recharge.
-- **Coinbase Commerce** — crypto charges, used for credit top-ups and annual billing.
+- **Stripe**: plan purchases (Checkout sessions), the customer billing portal, credit top-ups, saved-card management (SetupIntents) and auto-recharge.
+- **Coinbase Commerce**: crypto charges, used for credit top-ups and annual billing.
 
 `top_up_credits` and `create_coinbase_charge` default to the `stripe` gateway and `annual` interval; an empty or whitespace gateway normalises to Stripe.
 
@@ -50,7 +50,7 @@ Coupon codes are redeemed against the backend (`POST /coupons/redeem`), and you 
 
 ### Where billing lives in the app
 
-The desktop **Settings → Billing** panel intentionally has no embedded payment UI — it links out to the hosted web **billing dashboard**, which is the single place to manage plans, cards and invoices. The agent can also read billing state through default-ON tools (plan, balance, transactions, cards, coupons, the Stripe portal link); every money-moving or payment-method mutator ships **default-OFF** behind a `billing_writes` toggle, and card deletion is flagged dangerous.
+The desktop **Settings → Billing** panel intentionally has no embedded payment UI. It links out to the hosted web **billing dashboard**, which is the single place to manage plans, cards and invoices. The agent can also read billing state through default-ON tools (plan, balance, transactions, cards, coupons, the Stripe portal link); every money-moving or payment-method mutator ships **default-OFF** behind a `billing_writes` toggle, and card deletion is flagged dangerous.
 
 ### RPC surface
 
@@ -58,7 +58,7 @@ Namespace `billing`, exposed as `openhuman.billing_*` (15 methods), e.g. `billin
 
 ***
 
-## Part 2 — Cost & Usage Dashboard
+## Part 2: Cost & Usage Dashboard
 
 The `cost` domain is entirely local. It records every provider call's token usage and computed USD cost to an append-only JSONL file (`<workspace>/state/costs.jsonl`), keeps in-memory daily/monthly aggregates, enforces budgets, and serves a 7-day dashboard over JSON-RPC. A process-global singleton tracker is shared by the agent turn loop (which logs telemetry after each provider call) and the dashboard handlers, so each call is persisted exactly once.
 
@@ -77,7 +77,7 @@ Budget enforcement is configured under the `[cost]` config block:
 | `monthly_limit_usd` | `100.00` | Hard monthly cap |
 | `warn_at_percent` | `80` | Warn threshold for `check_budget` |
 
-`check_budget` returns `Allowed`, `Warning` (warn threshold reached) or `Exceeded` (over the daily or monthly cap). A crucial detail: **`enabled` controls enforcement, not capture.** When it is `false`, `check_budget` always returns `Allowed` and hard caps are off — but the agent still records usage unconditionally, so your spend history accumulates and you can review it *before* opting into hard caps. To hide the panel set `dashboard.enabled = false`; to clear history delete the JSONL file (it is local and never leaves the workspace).
+`check_budget` returns `Allowed`, `Warning` (warn threshold reached) or `Exceeded` (over the daily or monthly cap). A crucial detail: **`enabled` controls enforcement, not capture.** When it is `false`, `check_budget` always returns `Allowed` and hard caps are off. The agent still records usage unconditionally, so your spend history accumulates and you can review it *before* opting into hard caps. To hide the panel set `dashboard.enabled = false`; to clear history delete the JSONL file (it is local and never leaves the workspace).
 
 ### The 7-day dashboard
 
@@ -90,7 +90,7 @@ Namespace `cost`, exposed as `openhuman.cost_*`:
 | Method | Inputs | Output |
 | --- | --- | --- |
 | `cost_get_dashboard` | none | 7-day buckets, summary metrics, budget utilisation/status, per-model breakdown |
-| `cost_get_daily_history` | `days?` (default 7, clamped 1–366) | Ordered daily entries, oldest first, gaps zero-filled |
+| `cost_get_daily_history` | `days?` (default 7, clamped 1 to 366) | Ordered daily entries, oldest first, gaps zero-filled |
 | `cost_get_summary` | none | Live session / daily / monthly cost summary |
 
 These are also exposed as read-only, default-ON agent tools so the agent can inspect its own spend.
@@ -99,7 +99,7 @@ These are also exposed as read-only, default-ON agent tools so the agent can ins
 
 ## Cost & token compression
 
-Because cost tracks **real token counts**, anything that shrinks the prompt directly lowers spend. OpenHuman's [TokenJuice token compression](token-compression.md) reduces the tokens sent on each call, and [model routing](model-routing/README.md) sends work to the cheapest model that can handle it — both of which show up as lower bars in the dashboard and slower budget burn.
+Because cost tracks **real token counts**, anything that shrinks the prompt directly lowers spend. OpenHuman's [TokenJuice token compression](token-compression.md) reduces the tokens sent on each call, and [model routing](model-routing/README.md) sends work to the cheapest model that can handle it. Both show up as lower bars in the dashboard and slower budget burn.
 
 ***
 

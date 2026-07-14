@@ -236,7 +236,8 @@ use crate::openhuman::memory_store::chunks::types::{
     chunk_id, Chunk, Metadata, SourceKind, SourceRef,
 };
 use axum::{
-    extract::{Path, Query},
+    extract::{Path, Query, State},
+    http::HeaderMap,
     routing::{get, post},
     Json, Router,
 };
@@ -268,6 +269,52 @@ impl Drop for WorkspaceEnvGuard {
                 std::env::remove_var("OPENHUMAN_WORKSPACE");
             },
         }
+    }
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(prev) => unsafe {
+                std::env::set_var(self.key, prev);
+            },
+            None => unsafe {
+                std::env::remove_var(self.key);
+            },
+        }
+    }
+}
+
+struct DirectAuthFailureGuard {
+    key_id: u64,
+}
+
+impl DirectAuthFailureGuard {
+    fn new(api_key: &str) -> Self {
+        let key_id = crate::openhuman::composio::direct_auth::fingerprint_api_key(api_key);
+        crate::openhuman::composio::direct_auth::reset_direct_auth_failure(key_id);
+        Self { key_id }
+    }
+}
+
+impl Drop for DirectAuthFailureGuard {
+    fn drop(&mut self) {
+        crate::openhuman::composio::direct_auth::reset_direct_auth_failure(self.key_id);
     }
 }
 
@@ -715,6 +762,13 @@ async fn composio_delete_connection_clear_memory_cascades_live_sealed_tree_and_f
         token_sum: i64::from(chunk.token_count),
         oldest_at: Some(chunk.metadata.time_range.0),
     };
+    memory_tree_store::with_connection(&config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        tree_store::upsert_buffer_tx(&tx, &buf)?;
+        tx.commit()?;
+        Ok(())
+    })
+    .expect("persist buffer snapshot");
     let summary_id = seal_one_level(&config, &tree, &buf, &LabelStrategy::Empty, false)
         .await
         .expect("real seal produces a summary");
@@ -848,7 +902,8 @@ async fn notion_cleanup_targets_include_synced_page_sources() {
     let mut state = SyncState::new("notion", "conn-1");
     state.mark_synced("page-a@2026-01-01T00:00:00Z");
     state.mark_synced("page-b");
-    state.save(&memory).await.expect("sync state should save");
+    let adapter = crate::openhuman::tinycortex::HostSyncAdapter::new(memory);
+    state.save(&adapter).await.expect("sync state should save");
 
     let targets = composio_memory_targets_for_connection(&config, Some("notion"), "conn-1")
         .await
@@ -1052,13 +1107,11 @@ async fn composio_execute_via_mock_propagates_backend_error() {
 }
 
 #[tokio::test]
-async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
+async fn composio_sync_gmail_via_mock_stores_skill_document_and_updates_outcome() {
     let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
         .lock()
         .await;
     use crate::openhuman::config::TEST_ENV_LOCK;
-    use crate::openhuman::memory_store::content::raw::{raw_rel_path, RawKind};
-    use crate::openhuman::memory_tree::tree::rpc::{list_chunks_rpc, ListChunksRequest};
     let _cache_guard = cache_guard();
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -1146,63 +1199,36 @@ async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
         outcome.value.summary
     );
 
-    // Poll for the spawned ingest task to drain. The mock backend is
-    // local + in-memory, so this normally lands in well under a second.
-    let chunks = {
-        let mut chunks = Vec::new();
+    // Poll for the spawned ingest task to persist the TinyCortex skill
+    // document. The mock backend is local, so this normally lands quickly.
+    let documents = {
+        let mut documents = Vec::new();
         for _ in 0..50 {
-            chunks = list_chunks_rpc(
-                &config,
-                ListChunksRequest {
-                    source_kind: Some("email".to_string()),
-                    source_id: Some("gmail:pilot-at-example-dot-com".to_string()),
-                    limit: Some(10),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap()
-            .value
-            .chunks;
-            if !chunks.is_empty() {
+            documents = crate::openhuman::memory::global::client_if_ready()
+                .expect("memory client remains initialized")
+                .list_documents(Some("skill-gmail"))
+                .await
+                .unwrap()
+                .get("documents")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if !documents.is_empty() {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
-        chunks
+        documents
     };
     assert_eq!(
-        chunks.len(),
+        documents.len(),
         1,
-        "expected one ingested Gmail chunk after spawned task drains"
+        "expected one ingested Gmail document after spawned task drains"
     );
-    assert!(
-        chunks[0].content.contains("Phoenix launch canary"),
-        "chunk content missing mock email subject: {}",
-        chunks[0].content
-    );
-    assert!(
-        chunks[0].content.contains("mock sync coverage"),
-        "chunk content missing mock email body: {}",
-        chunks[0].content
-    );
-
-    let raw_path = config.memory_tree_content_root().join(raw_rel_path(
-        "gmail:pilot-at-example-dot-com",
-        RawKind::Email,
-        1_717_243_200_000,
-        "gmail-msg-1",
-    ));
-    let archived = std::fs::read_to_string(&raw_path)
-        .unwrap_or_else(|e| panic!("expected archived Gmail raw message at {raw_path:?}: {e}"));
-    assert!(
-        archived.contains("Phoenix launch canary"),
-        "archived email missing mock subject: {archived}"
-    );
-    assert!(
-        archived.contains("mock sync coverage"),
-        "archived email missing mock body: {archived}"
-    );
+    let document = &documents[0];
+    assert_eq!(document["documentId"], "gmail:gmail-msg-1");
+    assert_eq!(document["title"], "Phoenix launch canary");
+    assert_eq!(document["taint"], "external_sync");
 }
 
 #[tokio::test]
@@ -1590,6 +1616,37 @@ fn cache_entries_expire_after_ttl() {
     );
 }
 
+#[test]
+fn including_expired_serves_stale_snapshot_for_transient_fallback() {
+    let _guard = cache_guard();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let key = crate::openhuman::composio::connected_integrations::cache_key(&config);
+    clear_cache_key(&key);
+    seed_cache(&key, vec![integration("gmail", true)]);
+
+    // Age the entry past the TTL (simulates a session idle > 60s).
+    {
+        let mut guard = INTEGRATIONS_CACHE.write().unwrap();
+        guard.get_mut(&key).unwrap().cached_at =
+            Instant::now() - (CACHE_TTL + Duration::from_secs(1));
+    }
+
+    // The TTL-enforcing read treats the expired entry as missing…
+    assert!(
+        cached_active_integrations(&config).is_none(),
+        "expired entry must not be served by the freshness-checked read"
+    );
+    // …but the transient-failure fallback read preserves the last-known set,
+    // so a backend blip just after TTL expiry doesn't drop tool-calling.
+    let stale = cached_active_integrations_including_expired(&config)
+        .expect("expired entry should still be returned by the fallback read");
+    assert_eq!(stale.len(), 1);
+    assert_eq!(stale[0].toolkit, "gmail");
+
+    clear_cache_key(&key);
+}
+
 // ── Trigger management ops (PR #671) ────────────────────────────────
 
 #[tokio::test]
@@ -1923,6 +1980,104 @@ async fn composio_list_connections_returns_empty_when_direct_mode_no_key() {
         outcome.logs.iter().any(|l| l.contains("no api key")),
         "log must explain the empty list is the no-key setup state, got {:?}",
         outcome.logs
+    );
+}
+
+#[tokio::test]
+async fn composio_set_api_key_rejects_invalid_direct_key_before_persisting() {
+    use crate::openhuman::config::TEST_ENV_LOCK;
+    use crate::openhuman::credentials::get_composio_api_key;
+
+    let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let app = Router::new().route(
+        "/connected_accounts",
+        get(|| async {
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": { "message": "Invalid API key" } })),
+            )
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let _base_v2 = EnvVarGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2", &base);
+    let _base_v3 = EnvVarGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V3", &base);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config = direct_mode_no_key_config(&tmp);
+    let _auth_guard = DirectAuthFailureGuard::new("ck_invalid_direct");
+
+    let err = composio_set_api_key(&config, "ck_invalid_direct", false)
+        .await
+        .expect_err("invalid direct-mode key must be rejected before persistence");
+    assert!(
+        err.contains("Invalid Composio API key"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        get_composio_api_key(&config).expect("read composio key after failed save"),
+        None,
+        "invalid key must not be stored"
+    );
+}
+
+#[tokio::test]
+async fn composio_set_api_key_validates_candidate_key_even_when_stored_key_exists() {
+    use crate::openhuman::config::TEST_ENV_LOCK;
+    use crate::openhuman::credentials::{get_composio_api_key, store_composio_api_key};
+    use std::sync::{Arc, Mutex};
+
+    let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let seen_keys = Arc::new(Mutex::new(Vec::<String>::new()));
+    let app = Router::new()
+        .route(
+            "/connected_accounts",
+            get(
+                |State(seen_keys): State<Arc<Mutex<Vec<String>>>>, headers: HeaderMap| async move {
+                    let key = headers
+                        .get("x-api-key")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string();
+                    seen_keys.lock().unwrap().push(key.clone());
+                    if key == "ck_old_valid" {
+                        (axum::http::StatusCode::OK, Json(json!({ "items": [] })))
+                    } else {
+                        (
+                            axum::http::StatusCode::UNAUTHORIZED,
+                            Json(json!({ "error": { "message": "Invalid API key" } })),
+                        )
+                    }
+                },
+            ),
+        )
+        .with_state(seen_keys.clone());
+    let base = start_mock_backend(app).await;
+    let _base_v2 = EnvVarGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2", &base);
+    let _base_v3 = EnvVarGuard::set("OPENHUMAN_COMPOSIO_DIRECT_BASE_V3", &base);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config = direct_mode_no_key_config(&tmp);
+    store_composio_api_key(&config, "ck_old_valid")
+        .await
+        .expect("seed old stored composio key");
+    let _new_key_guard = DirectAuthFailureGuard::new("ck_new_invalid");
+
+    let err = composio_set_api_key(&config, "ck_new_invalid", false)
+        .await
+        .expect_err("candidate invalid key must be rejected even if old stored key is valid");
+    assert!(
+        err.contains("Invalid Composio API key"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        get_composio_api_key(&config).expect("read composio key after failed replacement"),
+        Some("ck_old_valid".to_string()),
+        "failed replacement must leave the old stored key intact"
+    );
+    assert_eq!(
+        seen_keys.lock().unwrap().as_slice(),
+        ["ck_new_invalid"],
+        "validation must probe the candidate key, not the stored key"
     );
 }
 

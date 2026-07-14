@@ -251,9 +251,20 @@ pub struct ComposioToolFunction {
     /// Human-readable description shown to the model.
     #[serde(default)]
     pub description: Option<String>,
-    /// JSON schema for the tool parameters.
+    /// JSON schema for the tool's INPUT parameters.
     #[serde(default)]
     pub parameters: Option<serde_json::Value>,
+    /// JSON schema describing the tool's OUTPUT/return-value shape, when the
+    /// upstream listing publishes one. Composio's v3 `/tools` endpoint calls
+    /// this `output_parameters` — documented as "Schema definition of return
+    /// values from the tool"
+    /// (<https://docs.composio.dev/reference/api-reference/tools/getTools>) —
+    /// alongside `input_parameters`. `None` means "unknown" (not "empty"):
+    /// the backend-proxied `/agent-integrations/composio/tools` path is
+    /// opaque to this crate and may not forward it, and not every Composio
+    /// action publishes an output schema.
+    #[serde(default)]
+    pub output_parameters: Option<serde_json::Value>,
 }
 
 /// Response body of `GET /agent-integrations/composio/tools`.

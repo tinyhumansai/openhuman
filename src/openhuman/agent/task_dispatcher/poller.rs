@@ -14,10 +14,44 @@ use crate::openhuman::todos::runs::{self, RunLimits};
 
 use super::dispatch::dispatch_card;
 
-/// How often the poller wakes to look for a dispatchable card.
+/// Base cadence: how often the poller wakes to look for a dispatchable card
+/// while there is fresh work to do.
 const POLLER_TICK_SECONDS: u64 = 60;
 
+/// Ceiling on the backed-off cadence (issue #4090). After a run of idle ticks
+/// the interval doubles up to this cap — an effective self-suspend that still
+/// rechecks periodically. 15 minutes: long enough to stop hammering an idle
+/// board, short enough that newly-arrived work is still picked up without an
+/// unbounded stall.
+const POLLER_MAX_BACKOFF_SECONDS: u64 = 15 * 60;
+
+/// Number of consecutive idle ticks tolerated at the base cadence before the
+/// backoff starts to grow — a small grace so a briefly-empty board doesn't
+/// immediately slow down.
+const POLLER_IDLE_GRACE_TICKS: u32 = 2;
+
 static POLLER_STARTED: OnceLock<()> = OnceLock::new();
+
+/// Compute the next sleep before a poll tick given how many consecutive idle
+/// ticks have elapsed (issue #4090). Pure + deterministic so the backoff curve
+/// is unit-testable without the real timer.
+///
+/// - Fresh work (`idle_ticks == 0`) or within the grace window → base cadence.
+/// - Beyond the grace window → exponential backoff (double per extra idle tick)
+///   saturating at [`POLLER_MAX_BACKOFF_SECONDS`].
+fn next_poll_delay(idle_ticks: u32) -> Duration {
+    let over = idle_ticks.saturating_sub(POLLER_IDLE_GRACE_TICKS);
+    if over == 0 {
+        return Duration::from_secs(POLLER_TICK_SECONDS);
+    }
+    // Double per idle tick past the grace window, saturating at the cap. Clamp
+    // the shift so a long idle streak can't overflow the multiply.
+    let factor = 1u64.checked_shl(over.min(20)).unwrap_or(u64::MAX);
+    let secs = POLLER_TICK_SECONDS
+        .saturating_mul(factor)
+        .min(POLLER_MAX_BACKOFF_SECONDS);
+    Duration::from_secs(secs)
+}
 
 /// Spawn the board poller. Idempotent — only the first call installs the loop.
 ///
@@ -35,14 +69,37 @@ pub fn start_board_poller() {
     tokio::spawn(async move {
         tracing::info!(
             tick_seconds = POLLER_TICK_SECONDS,
+            max_backoff_seconds = POLLER_MAX_BACKOFF_SECONDS,
             "[task_dispatcher:poller] starting"
         );
-        let mut ticker = tokio::time::interval(Duration::from_secs(POLLER_TICK_SECONDS));
-        ticker.tick().await; // skip the immediate fire so startup isn't slammed
+        // Diminishing-returns backoff (issue #4090): a run of idle ticks (no
+        // card dispatched) stretches the interval up to POLLER_MAX_BACKOFF so an
+        // idle board isn't swept every 60s forever; a dispatch resets it to the
+        // base cadence. The capped backoff still rechecks within
+        // POLLER_MAX_BACKOFF, so newly-arrived work is picked up without an
+        // unbounded stall (an event-driven instant wake is a follow-up).
+        let mut idle_ticks: u32 = 0;
         loop {
-            ticker.tick().await;
-            if let Err(e) = poll_once().await {
-                tracing::warn!(error = %e, "[task_dispatcher:poller] tick failed (continuing)");
+            tokio::time::sleep(next_poll_delay(idle_ticks)).await;
+            match poll_once().await {
+                Ok(true) => {
+                    // Dispatched work → reset to fast cadence.
+                    idle_ticks = 0;
+                }
+                Ok(false) => {
+                    idle_ticks = idle_ticks.saturating_add(1);
+                    if idle_ticks == POLLER_IDLE_GRACE_TICKS + 1 {
+                        tracing::debug!(
+                            "[task_dispatcher:poller] board idle — backing off toward the {POLLER_MAX_BACKOFF_SECONDS}s ceiling"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "[task_dispatcher:poller] tick failed (continuing)");
+                    // Treat an errored tick as idle for backoff purposes so a
+                    // persistently failing sweep doesn't spin at base cadence.
+                    idle_ticks = idle_ticks.saturating_add(1);
+                }
             }
         }
     });
@@ -61,13 +118,14 @@ pub fn start_board_poller() {
 ///   enabled. With plan-approval required this only ever parks a `todo` at
 ///   `awaiting_approval`; it runs a card directly only when approval is off.
 ///   Kept in the sweep so its stale/wedged runs are still reclaimed.
-pub(crate) async fn poll_once() -> Result<(), String> {
+pub(crate) async fn poll_once() -> Result<bool, String> {
     // Gate on background-AI capacity (autonomy / power / pause). Dropping the
     // permit immediately is fine: this is a "may background work start now"
-    // check; the run itself is detached.
+    // check; the run itself is detached. No capacity → an idle tick (returns
+    // `false` so the caller backs off, #4090).
     let Some(_permit) = crate::openhuman::scheduler_gate::wait_for_capacity().await else {
         tracing::debug!("[task_dispatcher:poller] scheduler gate denied capacity; idle tick");
-        return Ok(());
+        return Ok(false);
     };
 
     let config = Config::load_or_init()
@@ -93,23 +151,28 @@ pub(crate) async fn poll_once() -> Result<(), String> {
         ));
     }
 
+    let mut dispatched_any = false;
     for (location, agent_assigned_only) in boards {
-        if let Err(e) = poll_board(&location, agent_assigned_only).await {
-            tracing::warn!(
+        match poll_board(&location, agent_assigned_only).await {
+            Ok(dispatched) => dispatched_any |= dispatched,
+            Err(e) => tracing::warn!(
                 thread_id = ?location.thread_id(),
                 error = %e,
                 "[task_dispatcher:poller] board sweep failed (continuing)"
-            );
+            ),
         }
     }
-    Ok(())
+    Ok(dispatched_any)
 }
 
 /// Sweep one board: reclaim stale runs, then (unless one is already running)
 /// dispatch its highest-urgency dispatchable card. When `agent_assigned_only`
 /// is set, only cards with an `assigned_agent` are eligible — the guard that
 /// keeps the poller off a human's manual `user-tasks` cards.
-async fn poll_board(location: &BoardLocation, agent_assigned_only: bool) -> Result<(), String> {
+/// Returns `true` when this sweep dispatched a card (real work), `false` when
+/// the board was idle (nothing to claim). The idle signal drives the poller's
+/// diminishing-returns backoff (issue #4090).
+async fn poll_board(location: &BoardLocation, agent_assigned_only: bool) -> Result<bool, String> {
     // Reclaim stale/wedged runs before looking for new work. Reclaimed
     // cards move back to `todo` (re-dispatchable) so they appear in the
     // snapshot below and can be picked up in the same tick.
@@ -141,11 +204,11 @@ async fn poll_board(location: &BoardLocation, agent_assigned_only: bool) -> Resu
         .iter()
         .any(|c| c.status == TaskCardStatus::InProgress)
     {
-        return Ok(());
+        return Ok(false);
     }
 
     let Some(card) = pick_next_todo(&snapshot.cards, agent_assigned_only) else {
-        return Ok(());
+        return Ok(false);
     };
 
     tracing::info!(
@@ -155,7 +218,7 @@ async fn poll_board(location: &BoardLocation, agent_assigned_only: bool) -> Resu
         agent_assigned_only,
         "[task_dispatcher:poller] dispatching highest-urgency dispatchable card"
     );
-    dispatch_card(location.clone(), card).await.map(|_| ())
+    dispatch_card(location.clone(), card).await.map(|_| true)
 }
 
 /// Highest-urgency dispatchable card (`todo` or approved `ready`; urgency from
@@ -221,4 +284,50 @@ pub(super) fn card_urgency(card: &TaskBoardCard) -> f64 {
         .and_then(|m| m.get("urgency"))
         .and_then(serde_json::Value::as_f64)
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_poll_delay_holds_base_cadence_within_the_grace_window() {
+        let base = Duration::from_secs(POLLER_TICK_SECONDS);
+        // Fresh work and the first few idle ticks all poll at the base cadence.
+        assert_eq!(next_poll_delay(0), base);
+        assert_eq!(next_poll_delay(POLLER_IDLE_GRACE_TICKS), base);
+    }
+
+    #[test]
+    fn next_poll_delay_backs_off_exponentially_past_the_grace_window() {
+        // One tick past the grace window doubles, then doubles again.
+        assert_eq!(
+            next_poll_delay(POLLER_IDLE_GRACE_TICKS + 1),
+            Duration::from_secs(POLLER_TICK_SECONDS * 2)
+        );
+        assert_eq!(
+            next_poll_delay(POLLER_IDLE_GRACE_TICKS + 2),
+            Duration::from_secs(POLLER_TICK_SECONDS * 4)
+        );
+        assert_eq!(
+            next_poll_delay(POLLER_IDLE_GRACE_TICKS + 3),
+            Duration::from_secs(POLLER_TICK_SECONDS * 8)
+        );
+    }
+
+    #[test]
+    fn next_poll_delay_saturates_at_the_ceiling() {
+        let cap = Duration::from_secs(POLLER_MAX_BACKOFF_SECONDS);
+        // A long idle streak caps out (self-suspend) and never overflows.
+        assert_eq!(next_poll_delay(50), cap);
+        assert_eq!(next_poll_delay(u32::MAX), cap);
+        // The backoff is monotonic non-decreasing and never exceeds the ceiling.
+        let mut prev = next_poll_delay(0);
+        for idle in 1..40u32 {
+            let d = next_poll_delay(idle);
+            assert!(d >= prev, "backoff must not shrink as idle grows");
+            assert!(d <= cap, "backoff must never exceed the ceiling");
+            prev = d;
+        }
+    }
 }
