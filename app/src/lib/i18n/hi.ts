@@ -7061,7 +7061,7 @@ const messages: TranslationMap = {
   'privacy.disclosure.kindSeparator': ', ',
   'privacy.disclosure.kind.prompt': 'आपका संदेश',
   'privacy.disclosure.kind.toolArguments': 'टूल इनपुट',
-  'privacy.disclosure.kind.embeddingInput': 'अनुक्रमणित करने के लिए पाठ',
+  'privacy.disclosure.kind.embeddingInput': 'अनुक्रमित करने के लिए पाठ',
   'privacy.disclosure.kind.fileContent': 'फ़ाइल सामग्री',
   'privacy.disclosure.kind.url': 'एक वेब पता',
   'privacy.disclosure.kind.metadata': 'अनुरोध मेटाडेटा',
