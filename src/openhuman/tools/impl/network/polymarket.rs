@@ -574,15 +574,18 @@ impl PolymarketTool {
             return Ok(creds.clone());
         }
 
-        // Egress spine (privacy epic S7, #4441): deriving CLOB credentials
-        // sends the wallet address + L1 EIP-712 signature to Polymarket's
-        // `/auth/api-key` (and `/auth/derive-api-key` fallback) directly on
-        // `self.http`, which does NOT pass through the `send_with_retry`
-        // egress chokepoint. Refuse BEFORE that round-trip under LocalOnly so
-        // no credential material leaves the device. A cached-credential hit
-        // (checked above) never reaches here, so a permitted local read is
-        // unaffected — every `self.http` path is now gated first (this +
-        // `send_with_retry`).
+        // Egress spine (privacy epic S2/S7, #4436/#4441): deriving CLOB
+        // credentials sends the wallet address + L1 EIP-712 signature to
+        // Polymarket's `/auth/api-key` (and `/auth/derive-api-key` fallback)
+        // directly on `self.http`, which does NOT pass through the
+        // `send_with_retry` egress chokepoint. Refuse BEFORE that round-trip
+        // under LocalOnly so no credential material leaves the device, then
+        // disclose the destination for a permitted derive — mirroring
+        // `send_with_retry` so this off-device transfer produces the same
+        // `ExternalTransferPending` disclosure as every other egress point. A
+        // cached-credential hit (checked above) never reaches here, so a
+        // permitted local read is unaffected — every `self.http` path is now
+        // gated and disclosed (this + `send_with_retry`).
         {
             use crate::openhuman::security::egress::{DataKind, EgressDescriptor};
             let host = reqwest::Url::parse(&self.clob_base_url)
@@ -593,6 +596,7 @@ impl PolymarketTool {
             if let Some(msg) = crate::openhuman::security::egress::local_only_tool_block(&desc) {
                 anyhow::bail!("{msg}");
             }
+            crate::openhuman::security::egress::emit_external_transfer(desc);
         }
 
         ensure_https(&self.clob_base_url)?;
