@@ -23,6 +23,7 @@ import {
   type ChatTaskBoardUpdatedEvent,
   type ChatToolCallEvent,
   type ChatToolResultEvent,
+  type ExternalTransferPendingEvent,
   type ProactiveMessageEvent,
   segmentText,
   subscribeChatEvents,
@@ -66,6 +67,11 @@ import {
   type WorkflowProposal,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
+import {
+  disclosureFromEvent,
+  hydratePrivacyMode,
+  pushDisclosureForThread,
+} from '../store/privacySlice';
 import { selectSocketStatus } from '../store/socketSelectors';
 import {
   addInferenceResponse,
@@ -355,6 +361,13 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   // (#4273, AC3). Single instance for the provider's lifetime; observability
   // only — it never gates or cancels a turn.
   const skillLatencyRef = useRef(createSkillToolChainLatencyTracker());
+
+  // Hydrate the current Privacy Mode once on mount so the persistent status
+  // pill can show the posture immediately (#4437 / S3). Failures resolve to
+  // null inside the thunk — the pill degrades gracefully.
+  useEffect(() => {
+    void dispatch(hydratePrivacyMode());
+  }, [dispatch]);
 
   useEffect(() => {
     toolTimelineRef.current = toolTimelineByThread;
@@ -1054,6 +1067,25 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             kind: event.kind,
             title: event.title,
             error: event.error,
+          })
+        );
+      },
+      onExternalTransferPending: (event: ExternalTransferPendingEvent) => {
+        // #4437 / S3 — DISCLOSURE ONLY. Project the egress descriptor onto the
+        // thread's privacy ledger so the in-chat card + status pill can render
+        // what/where/why. No approve/deny here (that's S4 #4438).
+        rtLog('external_transfer_pending', {
+          thread: event.thread_id,
+          provider: event.provider_slug,
+          service: event.service,
+          reason: event.reason,
+          kinds: event.data_kinds.length,
+          external: String(event.is_external),
+        });
+        dispatch(
+          pushDisclosureForThread({
+            threadId: event.thread_id,
+            disclosure: disclosureFromEvent(event),
           })
         );
       },
