@@ -132,7 +132,17 @@ cef = { version = "=146.4.1", default-features = false }
 # by tying the core's lifetime to the GUI process. The existing port-7788
 # probe in `core_process::ensure_running` still attaches to a running
 # `openhuman-core run` harness when one is already listening.
-openhuman_core = { path = "../..", package = "openhuman", default-features = false }
+#
+# `default-features = false` (set in #1061, before the compile-time domain
+# gates existed) means the embedded core does NOT inherit the root crate's
+# default gate set, so each default-ON gate must be forwarded explicitly to
+# keep the shipped desktop build byte-identical (AGENTS.md "Compile-time
+# domain gates"). `media` re-registers the `media_generate_*` agent tools
+# that #4804 moved behind `#[cfg(feature = "media")]`; it sheds no deps, so
+# this only restores the pre-gate desktop tool surface.
+openhuman_core = { path = "../..", package = "openhuman", default-features = false, features = [
+    "media",
+] }
 tinyjuice = { version = "0.2.1", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
