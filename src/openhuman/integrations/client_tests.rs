@@ -214,6 +214,79 @@ async fn post_500_propagates_html_body_truncated() {
 }
 
 #[tokio::test]
+async fn local_only_rejects_user_data_verb_before_transport() {
+    // End-to-end proof (privacy epic S7, #4441) that a PUBLIC verb
+    // (`post`/`get`) — not just the private `enforce_backend_egress` helper —
+    // honours LocalOnly and refuses a user-data backend call BEFORE it hits
+    // transport. The mock 403s on every route it actually receives, so if the
+    // gate short-circuits first the error is the policy message, never the
+    // mock body.
+    use crate::openhuman::config::PrivacyMode;
+    use crate::openhuman::security::live_policy::test_privacy_scope;
+
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/execute",
+            post(|| async {
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({ "success": false, "error": "mock must not be reached" })),
+                )
+                    .into_response()
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({ "success": false, "error": "control-plane reached transport" })),
+                )
+                    .into_response()
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let client = client_for(base);
+
+    // `#[tokio::test]` runs on a current-thread runtime, so the gate's inline
+    // `current_privacy_mode()` read observes this override on the same thread
+    // (see `TEST_PRIVACY_MODE`).
+    let _mode = test_privacy_scope(PrivacyMode::LocalOnly);
+
+    // (1) User-data verb call is refused by the gate BEFORE transport — the
+    //     error carries the policy message and NOT the mock's 403 body.
+    let err = client
+        .post::<serde_json::Value>(
+            "/agent-integrations/composio/execute",
+            &json!({ "tool": "GMAIL_FETCH_EMAILS" }),
+        )
+        .await
+        .expect_err("LocalOnly must block the user-data POST before transport");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("Local-only privacy mode is active"),
+        "expected policy block, got: {msg}"
+    );
+    assert!(
+        !msg.contains("mock must not be reached"),
+        "gate must short-circuit before the request reaches the mock: {msg}"
+    );
+
+    // (2) A control-plane verb call under the SAME LocalOnly scope passes the
+    //     gate and DOES reach transport (surfaces the mock's 403) — proving the
+    //     gate is selective, not a blanket network kill.
+    let err = client
+        .get::<serde_json::Value>("/agent-integrations/composio/connections")
+        .await
+        .expect_err("control-plane reaches transport and surfaces the mock 403");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("control-plane reached transport"),
+        "control-plane must reach transport under LocalOnly, got: {msg}"
+    );
+}
+
+#[tokio::test]
 async fn get_403_propagates_backend_error_envelope_message() {
     let app = Router::new().route(
         "/agent-integrations/composio/connections",
