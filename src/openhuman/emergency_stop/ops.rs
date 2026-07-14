@@ -120,6 +120,11 @@ mod tests {
         let _g = EMERGENCY_TEST_GUARD
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // Panic-safe cleanup: clear the process-global switch on drop — even if
+        // an assertion panics between engage and the end of the test — so an
+        // engaged state can't leak into a later test sharing the binary (#4600
+        // review). Supersedes the manual `emergency_resume` reset below.
+        let _reset = crate::openhuman::emergency_stop::state::ClearEmergencyOnDrop;
         let out = emergency_stop(Some("user".into()), "user").await;
         assert!(out.value.engaged);
         let status = emergency_status().await;
@@ -134,6 +139,9 @@ mod tests {
         let _g = EMERGENCY_TEST_GUARD
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // Panic-safe cleanup (see the note in the first test) — clears the
+        // process-global switch on drop so a mid-test panic can't leak state.
+        let _reset = crate::openhuman::emergency_stop::state::ClearEmergencyOnDrop;
         let _ = emergency_stop(None, "user").await;
         let out = emergency_resume("user").await;
         assert!(!out.value.engaged);
@@ -145,6 +153,9 @@ mod tests {
         let _g = EMERGENCY_TEST_GUARD
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // Panic-safe cleanup (see the note in the first test) — clears the
+        // process-global switch on drop so a mid-test panic can't leak state.
+        let _reset = crate::openhuman::emergency_stop::state::ClearEmergencyOnDrop;
         let _ = emergency_stop(Some("a".into()), "user").await;
         let out = emergency_stop(Some("b".into()), "system").await;
         assert!(out.value.engaged);
