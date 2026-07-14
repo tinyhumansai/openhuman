@@ -7049,6 +7049,29 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'हटाएं',
   'flows.delete.deleting': 'हटाया जा रहा है…',
   'flows.canvas.renameLabel': 'वर्कफ़्लो का नाम बदलें',
+
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'गोपनीयता स्थिति',
+  'privacy.status.external': 'बाहर भेजा जा रहा है',
+  'privacy.status.local': 'डिवाइस पर',
+  'privacy.disclosure.title': 'आपके डिवाइस से बाहर जा रहा है',
+  'privacy.disclosure.body': 'यह {kinds} को {destination} पर भेजेगा क्योंकि {reason}।',
+  'privacy.disclosure.dismiss': 'समझ गया',
+  'privacy.disclosure.ariaLabel': 'बाहरी डेटा प्रकटीकरण',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'आपका संदेश',
+  'privacy.disclosure.kind.toolArguments': 'टूल इनपुट',
+  'privacy.disclosure.kind.embeddingInput': 'अनुक्रमणित करने के लिए पाठ',
+  'privacy.disclosure.kind.fileContent': 'फ़ाइल सामग्री',
+  'privacy.disclosure.kind.url': 'एक वेब पता',
+  'privacy.disclosure.kind.metadata': 'अनुरोध मेटाडेटा',
+  'privacy.disclosure.kind.unknown': 'डेटा',
+  'privacy.disclosure.reason.inference': 'AI मॉडल को इसे संसाधित करना है',
+  'privacy.disclosure.reason.toolCall': 'एक टूल को इसकी ज़रूरत है',
+  'privacy.disclosure.reason.integration': 'एक कनेक्टेड इंटीग्रेशन को इसकी ज़रूरत है',
+  'privacy.disclosure.reason.embedding': 'इसे खोज के लिए अनुक्रमित करना आवश्यक है',
+  'privacy.disclosure.reason.networkFetch': 'एक वेब अनुरोध को इसकी ज़रूरत है',
+  'privacy.disclosure.reason.unknown': 'यह इस क्रिया के लिए आवश्यक है',
 };
 
 export default messages;

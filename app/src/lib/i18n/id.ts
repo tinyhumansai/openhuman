@@ -7078,6 +7078,29 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Hapus',
   'flows.delete.deleting': 'Menghapus…',
   'flows.canvas.renameLabel': 'Ganti nama alur kerja',
+
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Status privasi',
+  'privacy.status.external': 'Mengirim ke luar',
+  'privacy.status.local': 'Di perangkat',
+  'privacy.disclosure.title': 'Meninggalkan perangkat Anda',
+  'privacy.disclosure.body': 'Ini akan mengirim {kinds} ke {destination} karena {reason}.',
+  'privacy.disclosure.dismiss': 'Mengerti',
+  'privacy.disclosure.ariaLabel': 'Pengungkapan data eksternal',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'pesan Anda',
+  'privacy.disclosure.kind.toolArguments': 'masukan alat',
+  'privacy.disclosure.kind.embeddingInput': 'teks untuk diindeks',
+  'privacy.disclosure.kind.fileContent': 'isi berkas',
+  'privacy.disclosure.kind.url': 'alamat web',
+  'privacy.disclosure.kind.metadata': 'metadata permintaan',
+  'privacy.disclosure.kind.unknown': 'data',
+  'privacy.disclosure.reason.inference': 'model AI perlu memprosesnya',
+  'privacy.disclosure.reason.toolCall': 'sebuah alat memerlukannya',
+  'privacy.disclosure.reason.integration': 'integrasi yang terhubung memerlukannya',
+  'privacy.disclosure.reason.embedding': 'perlu diindeks untuk pencarian',
+  'privacy.disclosure.reason.networkFetch': 'permintaan web memerlukannya',
+  'privacy.disclosure.reason.unknown': 'diperlukan untuk tindakan ini',
 };
 
 export default messages;

@@ -7129,6 +7129,29 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Удалить',
   'flows.delete.deleting': 'Удаление…',
   'flows.canvas.renameLabel': 'Переименовать рабочий процесс',
+
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Состояние конфиденциальности',
+  'privacy.status.external': 'Отправка вовне',
+  'privacy.status.local': 'На устройстве',
+  'privacy.disclosure.title': 'Покидает ваше устройство',
+  'privacy.disclosure.body': 'Это отправит {kinds} на {destination}, потому что {reason}.',
+  'privacy.disclosure.dismiss': 'Понятно',
+  'privacy.disclosure.ariaLabel': 'Раскрытие внешних данных',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'ваше сообщение',
+  'privacy.disclosure.kind.toolArguments': 'входные данные инструмента',
+  'privacy.disclosure.kind.embeddingInput': 'текст для индексации',
+  'privacy.disclosure.kind.fileContent': 'содержимое файла',
+  'privacy.disclosure.kind.url': 'веб-адрес',
+  'privacy.disclosure.kind.metadata': 'метаданные запроса',
+  'privacy.disclosure.kind.unknown': 'данные',
+  'privacy.disclosure.reason.inference': 'модели ИИ нужно его обработать',
+  'privacy.disclosure.reason.toolCall': 'инструменту это нужно',
+  'privacy.disclosure.reason.integration': 'подключённой интеграции это нужно',
+  'privacy.disclosure.reason.embedding': 'его нужно проиндексировать для поиска',
+  'privacy.disclosure.reason.networkFetch': 'веб-запросу это нужно',
+  'privacy.disclosure.reason.unknown': 'это требуется для данного действия',
 };
 
 export default messages;

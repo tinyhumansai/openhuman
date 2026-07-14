@@ -7155,6 +7155,29 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Usuń',
   'flows.delete.deleting': 'Usuwanie…',
   'flows.canvas.renameLabel': 'Zmień nazwę przepływu pracy',
+
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Stan prywatności',
+  'privacy.status.external': 'Wysyłanie na zewnątrz',
+  'privacy.status.local': 'Na urządzeniu',
+  'privacy.disclosure.title': 'Opuszcza Twoje urządzenie',
+  'privacy.disclosure.body': 'Spowoduje to wysłanie {kinds} do {destination}, ponieważ {reason}.',
+  'privacy.disclosure.dismiss': 'Rozumiem',
+  'privacy.disclosure.ariaLabel': 'Ujawnienie danych zewnętrznych',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'Twoja wiadomość',
+  'privacy.disclosure.kind.toolArguments': 'dane wejściowe narzędzia',
+  'privacy.disclosure.kind.embeddingInput': 'tekst do zindeksowania',
+  'privacy.disclosure.kind.fileContent': 'zawartość pliku',
+  'privacy.disclosure.kind.url': 'adres internetowy',
+  'privacy.disclosure.kind.metadata': 'metadane żądania',
+  'privacy.disclosure.kind.unknown': 'dane',
+  'privacy.disclosure.reason.inference': 'model AI musi je przetworzyć',
+  'privacy.disclosure.reason.toolCall': 'potrzebuje go narzędzie',
+  'privacy.disclosure.reason.integration': 'potrzebuje go połączona integracja',
+  'privacy.disclosure.reason.embedding': 'musi zostać zindeksowane do wyszukiwania',
+  'privacy.disclosure.reason.networkFetch': 'potrzebuje go żądanie sieciowe',
+  'privacy.disclosure.reason.unknown': 'jest to wymagane do tej akcji',
 };
 
 export default messages;

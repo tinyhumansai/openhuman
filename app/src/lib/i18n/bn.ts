@@ -7051,6 +7051,29 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'মুছুন',
   'flows.delete.deleting': 'মুছে ফেলা হচ্ছে…',
   'flows.canvas.renameLabel': 'ওয়ার্কফ্লো পুনঃনামকরণ করুন',
+
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'গোপনীয়তা স্থিতি',
+  'privacy.status.external': 'বাইরে পাঠানো হচ্ছে',
+  'privacy.status.local': 'ডিভাইসে',
+  'privacy.disclosure.title': 'আপনার ডিভাইস ছেড়ে যাচ্ছে',
+  'privacy.disclosure.body': 'এটি {kinds} কে {destination}-এ পাঠাবে কারণ {reason}।',
+  'privacy.disclosure.dismiss': 'বুঝেছি',
+  'privacy.disclosure.ariaLabel': 'বাহ্যিক ডেটা প্রকাশ',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'আপনার বার্তা',
+  'privacy.disclosure.kind.toolArguments': 'টুল ইনপুট',
+  'privacy.disclosure.kind.embeddingInput': 'সূচিবদ্ধ করার পাঠ্য',
+  'privacy.disclosure.kind.fileContent': 'ফাইলের বিষয়বস্তু',
+  'privacy.disclosure.kind.url': 'একটি ওয়েব ঠিকানা',
+  'privacy.disclosure.kind.metadata': 'অনুরোধের মেটাডেটা',
+  'privacy.disclosure.kind.unknown': 'ডেটা',
+  'privacy.disclosure.reason.inference': 'AI মডেলটিকে এটি প্রক্রিয়া করতে হবে',
+  'privacy.disclosure.reason.toolCall': 'একটি টুলের এটি প্রয়োজন',
+  'privacy.disclosure.reason.integration': 'একটি সংযুক্ত ইন্টিগ্রেশনের এটি প্রয়োজন',
+  'privacy.disclosure.reason.embedding': 'এটি অনুসন্ধানের জন্য সূচিবদ্ধ করা প্রয়োজন',
+  'privacy.disclosure.reason.networkFetch': 'একটি ওয়েব অনুরোধের এটি প্রয়োজন',
+  'privacy.disclosure.reason.unknown': 'এটি এই ক্রিয়ার জন্য প্রয়োজন',
 };
 
 export default messages;

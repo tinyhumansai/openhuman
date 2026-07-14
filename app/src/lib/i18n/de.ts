@@ -7248,6 +7248,29 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Löschen',
   'flows.delete.deleting': 'Wird gelöscht…',
   'flows.canvas.renameLabel': 'Workflow umbenennen',
+
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Datenschutzstatus',
+  'privacy.status.external': 'Wird extern gesendet',
+  'privacy.status.local': 'Auf dem Gerät',
+  'privacy.disclosure.title': 'Verlässt Ihr Gerät',
+  'privacy.disclosure.body': 'Dadurch werden {kinds} an {destination} gesendet, weil {reason}.',
+  'privacy.disclosure.dismiss': 'Verstanden',
+  'privacy.disclosure.ariaLabel': 'Offenlegung externer Daten',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'Ihre Nachricht',
+  'privacy.disclosure.kind.toolArguments': 'Werkzeug-Eingaben',
+  'privacy.disclosure.kind.embeddingInput': 'zu indexierender Text',
+  'privacy.disclosure.kind.fileContent': 'Dateiinhalte',
+  'privacy.disclosure.kind.url': 'eine Webadresse',
+  'privacy.disclosure.kind.metadata': 'Anfrage-Metadaten',
+  'privacy.disclosure.kind.unknown': 'Daten',
+  'privacy.disclosure.reason.inference': 'das KI-Modell es verarbeiten muss',
+  'privacy.disclosure.reason.toolCall': 'ein Werkzeug es benötigt',
+  'privacy.disclosure.reason.integration': 'eine verbundene Integration es benötigt',
+  'privacy.disclosure.reason.embedding': 'es für die Suche indexiert werden muss',
+  'privacy.disclosure.reason.networkFetch': 'eine Webanfrage es benötigt',
+  'privacy.disclosure.reason.unknown': 'es für diese Aktion erforderlich ist',
 };
 
 export default messages;

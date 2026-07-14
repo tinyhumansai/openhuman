@@ -6972,6 +6972,29 @@ const messages: TranslationMap = {
   'flows.delete.confirm': '삭제',
   'flows.delete.deleting': '삭제 중…',
   'flows.canvas.renameLabel': '워크플로 이름 바꾸기',
+
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': '개인정보 상태',
+  'privacy.status.external': '외부로 전송 중',
+  'privacy.status.local': '기기 내',
+  'privacy.disclosure.title': '기기에서 나가는 중',
+  'privacy.disclosure.body': '이 작업은 {reason} {kinds}을(를) {destination}(으)로 보냅니다.',
+  'privacy.disclosure.dismiss': '확인',
+  'privacy.disclosure.ariaLabel': '외부 데이터 공개',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': '메시지',
+  'privacy.disclosure.kind.toolArguments': '도구 입력값',
+  'privacy.disclosure.kind.embeddingInput': '색인할 텍스트',
+  'privacy.disclosure.kind.fileContent': '파일 내용',
+  'privacy.disclosure.kind.url': '웹 주소',
+  'privacy.disclosure.kind.metadata': '요청 메타데이터',
+  'privacy.disclosure.kind.unknown': '데이터',
+  'privacy.disclosure.reason.inference': 'AI 모델이 이를 처리해야 하기 때문에',
+  'privacy.disclosure.reason.toolCall': '도구가 이를 필요로 하기 때문에',
+  'privacy.disclosure.reason.integration': '연결된 통합 기능이 이를 필요로 하기 때문에',
+  'privacy.disclosure.reason.embedding': '검색을 위해 색인해야 하기 때문에',
+  'privacy.disclosure.reason.networkFetch': '웹 요청이 이를 필요로 하기 때문에',
+  'privacy.disclosure.reason.unknown': '이 작업에 필요하기 때문에',
 };
 
 export default messages;
