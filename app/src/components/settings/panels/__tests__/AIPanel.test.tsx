@@ -902,7 +902,7 @@ describe('AIPanel', () => {
       expect(screen.getByRole('switch', { name: /Connect OpenAI/i })).toBeInTheDocument()
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Codex 인증/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Codex Authentication/i }));
 
     await waitFor(() => expect(vi.mocked(importOpenAiCodexCliAuth)).toHaveBeenCalledTimes(1));
     expect(vi.mocked(startOpenAiCodexOAuth)).not.toHaveBeenCalled();
@@ -947,7 +947,7 @@ describe('AIPanel', () => {
       expect(screen.getByRole('switch', { name: /Connect OpenAI/i })).toBeInTheDocument()
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Codex 인증/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Codex Authentication/i }));
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(expectedMessage));
     expect(vi.mocked(setCloudProviderKey)).not.toHaveBeenCalled();

@@ -4292,6 +4292,8 @@ const messages: TranslationMap = {
   'settings.ai.connectProviderDialog': 'الاتصال {label}',
   'settings.ai.getProviderApiKey': 'احصل على مفتاح API',
   'settings.ai.or': 'أو',
+  'settings.ai.codexAuthButton': 'مصادقة Codex',
+  'settings.ai.codexAuthHelper': 'يستخدم تسجيل دخول Codex CLI الحالي من ~/.codex/auth.json.',
   'settings.ai.codexOauthMissingAuthUrl':
     'لم يُرجع Codex OAuth عنوان URL للتفويض. حاول تسجيل الدخول مرة أخرى.',
   'settings.ai.codexOauthMissingCallbackUrl':

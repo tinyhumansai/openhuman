@@ -4436,6 +4436,8 @@ const messages: TranslationMap = {
   'settings.ai.connectProviderDialog': 'Подключиться {label}',
   'settings.ai.getProviderApiKey': 'Получить API Key',
   'settings.ai.or': 'Или',
+  'settings.ai.codexAuthButton': 'Аутентификация Codex',
+  'settings.ai.codexAuthHelper': 'Использует существующий вход Codex CLI из ~/.codex/auth.json.',
   'settings.ai.codexOauthMissingAuthUrl':
     'Codex OAuth не вернул URL авторизации. Попробуйте войти снова.',
   'settings.ai.codexOauthMissingCallbackUrl':

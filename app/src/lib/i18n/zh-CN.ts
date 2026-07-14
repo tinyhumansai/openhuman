@@ -4161,6 +4161,8 @@ const messages: TranslationMap = {
   'settings.ai.connectProviderDialog': '连接 {label}',
   'settings.ai.getProviderApiKey': '获取 API Key',
   'settings.ai.or': '或者',
+  'settings.ai.codexAuthButton': 'Codex 认证',
+  'settings.ai.codexAuthHelper': '使用 ~/.codex/auth.json 中现有的 Codex CLI 登录信息。',
   'settings.ai.codexOauthMissingAuthUrl': 'Codex OAuth 未返回授权 URL。请重试登录。',
   'settings.ai.codexOauthMissingCallbackUrl': '登录后请粘贴浏览器中的重定向 URL。',
   'settings.ai.openRouterOauthDescription':

@@ -4394,6 +4394,8 @@ const messages: TranslationMap = {
   'settings.ai.connectProviderDialog': 'সংযোগ করুন {label}',
   'settings.ai.getProviderApiKey': 'API Key নিন',
   'settings.ai.or': 'অথবা',
+  'settings.ai.codexAuthButton': 'Codex প্রমাণীকরণ',
+  'settings.ai.codexAuthHelper': '~/.codex/auth.json থেকে বিদ্যমান Codex CLI লগইন ব্যবহার করে।',
   'settings.ai.codexOauthMissingAuthUrl':
     'Codex OAuth কোনো অনুমোদন URL ফেরত দেয়নি। আবার সাইন ইন করার চেষ্টা করুন।',
   'settings.ai.codexOauthMissingCallbackUrl':

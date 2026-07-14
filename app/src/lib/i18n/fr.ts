@@ -4485,6 +4485,9 @@ const messages: TranslationMap = {
   'settings.ai.connectProviderDialog': 'Connectez-vous {label}',
   'settings.ai.getProviderApiKey': 'Obtenir une API Key',
   'settings.ai.or': 'Ou',
+  'settings.ai.codexAuthButton': 'Authentification Codex',
+  'settings.ai.codexAuthHelper':
+    'Utilise la connexion Codex CLI existante dans ~/.codex/auth.json.',
   'settings.ai.codexOauthMissingAuthUrl':
     "Codex OAuth n'a pas renvoyé d'URL d'autorisation. Essayez de vous reconnecter.",
   'settings.ai.codexOauthMissingCallbackUrl':

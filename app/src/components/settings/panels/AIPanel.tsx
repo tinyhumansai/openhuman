@@ -3319,13 +3319,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                   disabled={busyAction === 'codex-auth' || busyAction === 'toggle-openai'}>
                   {busyAction === 'codex-auth' || busyAction === 'toggle-openai'
                     ? t('settings.ai.connecting')
-                    : t('settings.ai.codexAuthButton', 'Codex 인증')}
+                    : t('settings.ai.codexAuthButton')}
                 </Button>
                 <span className="text-xs text-content-muted">
-                  {t(
-                    'settings.ai.codexAuthHelper',
-                    'Uses the existing Codex CLI login from ~/.codex/auth.json.'
-                  )}
+                  {t('settings.ai.codexAuthHelper')}
                 </span>
               </div>
               {codexAuthError ? <ProviderSetupErrorNotice error={codexAuthError} /> : null}
