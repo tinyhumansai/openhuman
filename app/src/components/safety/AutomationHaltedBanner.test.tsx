@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { setHalt } from '../../store/safetySlice';
+import { clearHalt, setHalt } from '../../store/safetySlice';
 import { renderWithProviders } from '../../test/test-utils';
 import { AutomationHaltedBanner } from './AutomationHaltedBanner';
 
@@ -70,13 +70,36 @@ describe('AutomationHaltedBanner', () => {
     expect(safetyState.halted).toBe(true);
     // Visible retry indicator appears.
     await waitFor(() =>
-      expect(
-        screen.getByRole('status', { name: /could not resume/i }) ??
-          screen.getByText(/could not resume/i)
-      ).toBeDefined()
+      expect(screen.getByRole('status', { name: /could not resume/i })).toBeDefined()
     );
     // Banner is still there so the user retains a Resume button to try again.
     expect(screen.getByRole('alert')).toBeDefined();
+  });
+
+  it('clears the stale retry indicator on a new halt cycle', async () => {
+    // Guards the cross-cycle leak: the banner is mounted permanently, so a failed
+    // resume in one cycle must not surface a stale "could not resume" indicator on
+    // a later, unrelated halt. Drive: fail a resume → clear the halt via the
+    // external socket path (not the successful-RPC branch) → start a fresh halt.
+    resume.mockRejectedValueOnce(new Error('core error'));
+    const { store } = renderWithProviders(<AutomationHaltedBanner />, {
+      preloadedState: { safety: { halted: true } },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /resume/i }));
+    await waitFor(() =>
+      expect(screen.getByRole('status', { name: /could not resume/i })).toBeDefined()
+    );
+    // Halt lifts via the socket-driven clear (bypasses the successful resume path).
+    act(() => {
+      store.dispatch(clearHalt());
+    });
+    // A brand-new halt cycle begins.
+    act(() => {
+      store.dispatch(setHalt({ reason: 'second cycle', source: 'test' }));
+    });
+    await waitFor(() => expect(screen.getByRole('alert')).toBeDefined());
+    // The retry indicator from the previous cycle must not carry over.
+    expect(screen.queryByRole('status', { name: /could not resume/i })).toBeNull();
   });
 
   it('dispatches halt and then renders banner after setHalt dispatch', async () => {

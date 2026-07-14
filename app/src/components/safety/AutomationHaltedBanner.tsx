@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { emergencyResume } from '../../services/api/emergencyApi';
@@ -39,6 +39,15 @@ export function AutomationHaltedBanner() {
     }
   }, [dispatch]);
 
+  // The banner is mounted permanently (it only returns null when not halted), so
+  // `resumeFailed` would otherwise leak across halt cycles: a failed resume, then
+  // an external socket-driven clear, then a fresh halt would show a stale "could
+  // not resume" retry indicator the user never triggered. Reset it whenever the
+  // halt lifts so each new cycle starts clean.
+  useEffect(() => {
+    if (!halted) setResumeFailed(false);
+  }, [halted]);
+
   if (!halted) return null;
 
   return (
@@ -49,7 +58,7 @@ export function AutomationHaltedBanner() {
       <div className="flex items-center gap-2 min-w-0">
         <strong className="shrink-0 font-semibold">{t('safety.haltedTitle')}</strong>
         <span className="truncate text-sm text-[var(--color-coral-700,#b94040)]">
-          {reason ?? t('safety.haltedBody')}
+          {reason || t('safety.haltedBody')}
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-2">
