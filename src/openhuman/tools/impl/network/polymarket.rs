@@ -1418,8 +1418,8 @@ mod tests_web3_disabled {
             .expect_err("wallet-signed writes must fail when web3 is compiled out");
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("wallet secret material") || msg.contains("feature disabled"),
-            "expected a wallet-disabled error, got: {msg}"
+            msg.contains("web3/wallet feature disabled at compile time"),
+            "expected the stable compile-time-disabled marker, got: {msg}"
         );
     }
 }
