@@ -7172,7 +7172,7 @@ const messages: TranslationMap = {
 
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'Estado de privacidade',
-  'privacy.status.external': 'A enviar para o exterior',
+  'privacy.status.external': 'Fora do dispositivo',
   'privacy.status.local': 'No dispositivo',
   'privacy.disclosure.title': 'A sair do seu dispositivo',
   'privacy.disclosure.body': 'Isto irá enviar {kinds} para {destination} porque {reason}.',
@@ -7186,11 +7186,11 @@ const messages: TranslationMap = {
   'privacy.disclosure.kind.url': 'um endereço web',
   'privacy.disclosure.kind.metadata': 'metadados do pedido',
   'privacy.disclosure.kind.unknown': 'dados',
-  'privacy.disclosure.reason.inference': 'o modelo de IA precisa de o processar',
-  'privacy.disclosure.reason.toolCall': 'uma ferramenta precisa dele',
-  'privacy.disclosure.reason.integration': 'uma integração ligada precisa dele',
-  'privacy.disclosure.reason.embedding': 'precisa de ser indexado para pesquisa',
-  'privacy.disclosure.reason.networkFetch': 'um pedido web precisa dele',
+  'privacy.disclosure.reason.inference': 'o modelo de IA precisa de processar estes dados',
+  'privacy.disclosure.reason.toolCall': 'uma ferramenta precisa destes dados',
+  'privacy.disclosure.reason.integration': 'uma integração ligada precisa destes dados',
+  'privacy.disclosure.reason.embedding': 'estes dados precisam de ser indexados para pesquisa',
+  'privacy.disclosure.reason.networkFetch': 'um pedido web precisa destes dados',
   'privacy.disclosure.reason.unknown': 'é necessário para esta ação',
 };
 

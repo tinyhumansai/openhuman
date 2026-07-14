@@ -6975,10 +6975,11 @@ const messages: TranslationMap = {
 
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': '개인정보 상태',
-  'privacy.status.external': '외부로 전송 중',
+  'privacy.status.external': '기기 외',
   'privacy.status.local': '기기 내',
   'privacy.disclosure.title': '기기에서 나가는 중',
-  'privacy.disclosure.body': '이 작업은 {reason} {kinds}을(를) {destination}(으)로 보냅니다.',
+  'privacy.disclosure.body':
+    '이 작업은 {destination}(으)로 다음 데이터를 보냅니다: {kinds}. ({reason})',
   'privacy.disclosure.dismiss': '확인',
   'privacy.disclosure.ariaLabel': '외부 데이터 공개',
   'privacy.disclosure.kindSeparator': ', ',

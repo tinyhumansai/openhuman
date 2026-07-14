@@ -7183,12 +7183,12 @@ const messages: TranslationMap = {
 
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'Stato privacy',
-  'privacy.status.external': 'Invio all’esterno',
+  'privacy.status.external': 'Fuori dal dispositivo',
   'privacy.status.local': 'Sul dispositivo',
   'privacy.disclosure.title': 'Sta lasciando il tuo dispositivo',
   'privacy.disclosure.body': 'Questo invierà {kinds} a {destination} perché {reason}.',
   'privacy.disclosure.dismiss': 'Ho capito',
-  'privacy.disclosure.ariaLabel': 'Divulgazione dati esterni',
+  'privacy.disclosure.ariaLabel': 'Informativa sul trasferimento di dati esterni',
   'privacy.disclosure.kindSeparator': ', ',
   'privacy.disclosure.kind.prompt': 'il tuo messaggio',
   'privacy.disclosure.kind.toolArguments': 'input dello strumento',
@@ -7197,10 +7197,10 @@ const messages: TranslationMap = {
   'privacy.disclosure.kind.url': 'un indirizzo web',
   'privacy.disclosure.kind.metadata': 'metadati della richiesta',
   'privacy.disclosure.kind.unknown': 'dati',
-  'privacy.disclosure.reason.inference': 'il modello di IA deve elaborarlo',
+  'privacy.disclosure.reason.inference': 'il modello di IA deve elaborare i dati',
   'privacy.disclosure.reason.toolCall': 'uno strumento ne ha bisogno',
   'privacy.disclosure.reason.integration': 'un’integrazione collegata ne ha bisogno',
-  'privacy.disclosure.reason.embedding': 'deve essere indicizzato per la ricerca',
+  'privacy.disclosure.reason.embedding': 'i dati devono essere indicizzati per la ricerca',
   'privacy.disclosure.reason.networkFetch': 'una richiesta web ne ha bisogno',
   'privacy.disclosure.reason.unknown': 'è necessario per questa azione',
 };

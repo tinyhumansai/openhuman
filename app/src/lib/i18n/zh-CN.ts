@@ -6674,13 +6674,13 @@ const messages: TranslationMap = {
 
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': '隐私状态',
-  'privacy.status.external': '正在外发',
+  'privacy.status.external': '设备外',
   'privacy.status.local': '本地设备',
   'privacy.disclosure.title': '正在离开你的设备',
   'privacy.disclosure.body': '这将把 {kinds} 发送到 {destination}，因为{reason}。',
   'privacy.disclosure.dismiss': '知道了',
   'privacy.disclosure.ariaLabel': '外部数据披露',
-  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kindSeparator': '、',
   'privacy.disclosure.kind.prompt': '你的消息',
   'privacy.disclosure.kind.toolArguments': '工具输入',
   'privacy.disclosure.kind.embeddingInput': '待索引的文本',

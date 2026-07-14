@@ -7196,7 +7196,7 @@ const messages: TranslationMap = {
 
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'Estado de privacidad',
-  'privacy.status.external': 'Enviando al exterior',
+  'privacy.status.external': 'Fuera del dispositivo',
   'privacy.status.local': 'En el dispositivo',
   'privacy.disclosure.title': 'Sale de tu dispositivo',
   'privacy.disclosure.body': 'Esto enviará {kinds} a {destination} porque {reason}.',

@@ -6899,7 +6899,7 @@ const messages: TranslationMap = {
 
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'حالة الخصوصية',
-  'privacy.status.external': 'جارٍ الإرسال خارجيًا',
+  'privacy.status.external': 'خارج الجهاز',
   'privacy.status.local': 'على الجهاز',
   'privacy.disclosure.title': 'يغادر جهازك',
   'privacy.disclosure.body': 'سيؤدي هذا إلى إرسال {kinds} إلى {destination} لأن {reason}.',
