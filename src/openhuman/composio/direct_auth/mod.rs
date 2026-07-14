@@ -11,6 +11,20 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 
 pub(crate) const DIRECT_INVALID_API_KEY_THRESHOLD: u32 = 3;
 
+/// User-facing rejection returned by `composio_set_api_key`'s validate-before-store
+/// probe (`ops/direct_mode.rs`) when the entered BYO key fails Composio's v3 auth
+/// wall. This is the **single source of truth** for that string: the
+/// `expected_error_kind` classifier (TAURI-RUST-K27 arm in `core::observability`)
+/// keys on the distinctive `"invalid composio api key"` phrase within it to demote
+/// the RPC-boundary `report_error` to `ProviderUserState`. Unlike the runtime
+/// `[composio-direct] … HTTP 401: Invalid API key` wire body (TAURI-RUST-X9), this
+/// prose carries no `[composio-direct]` prefix and — because the word `Composio`
+/// splits `Invalid … api key` — does not match the X9 anchor, so it needs its own
+/// arm. Reword the tail freely, but keep the `"Invalid Composio API key"` phrase or
+/// the drift-coupling test `demotes_composio_set_key_invalid_key_rejection` fails CI.
+pub(crate) const COMPOSIO_INVALID_API_KEY_USER_MESSAGE: &str =
+    "Invalid Composio API key. Re-enter a valid key in Settings > Connections > Composio.";
+
 static DIRECT_AUTH_FAILURES: LazyLock<Mutex<HashMap<u64, u32>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
