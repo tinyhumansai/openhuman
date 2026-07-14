@@ -39,7 +39,9 @@ pub(crate) use provider::user_is_signed_in_to_composio;
 // `super::resolve_subagent_provider`. Keep it accessible at the ops
 // module boundary.
 pub(crate) use prompt::append_subagent_role_contract;
+#[cfg(test)]
 pub(crate) use provider::resolve_subagent_provider;
+pub(crate) use provider::resolve_subagent_source;
 
 // Re-exports for test companion modules that use `use super::*`.
 // These provide the same flat namespace the original ops.rs had.

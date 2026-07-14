@@ -22,9 +22,12 @@ pub mod ops;
 mod schemas;
 pub mod store;
 pub mod tools;
-pub mod types;
 
 pub use enrich::{enrich_goals, spawn_enrich_goals, GOALS_AGENT_ID};
 pub use schemas::{all_memory_goals_controller_schemas, all_memory_goals_registered_controllers};
 pub use tools::{GoalsAddTool, GoalsDeleteTool, GoalsEditTool, GoalsListTool};
-pub use types::{GoalItem, GoalsDoc};
+// W7: goal item/doc types are the crate's (byte-identical `MEMORY_GOALS.md`
+// render/parse); the host `types.rs` engine was deleted. Consumers use only
+// `.items` / `.render()` / `.is_empty()` / `.len()`, all present on the crate
+// type, so re-exporting is transparent.
+pub use tinycortex::memory::goals::types::{GoalItem, GoalsDoc};

@@ -36,6 +36,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schema_for("orchestration_self_identity"),
         schema_for("orchestration_publish_identity"),
         schema_for("orchestration_relay_info"),
+        schema_for("orchestration_run"),
     ]
 }
 
@@ -80,6 +81,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("orchestration_relay_info"),
             handler: handle_relay_info,
+        },
+        RegisteredController {
+            schema: schema_for("orchestration_run"),
+            handler: handle_medulla_run,
         },
     ]
 }
@@ -178,6 +183,19 @@ fn schema_for(function: &str) -> ControllerSchema {
             inputs: vec![],
             outputs: vec![json_output("result", "{ baseUrl, network }.")],
         },
+        "orchestration_run" => ControllerSchema {
+            namespace: "orchestration",
+            function: "run",
+            description: "Run the paid hosted Medulla engine with OpenHuman's local contact/session/send tools. Tool calls execute on this device and are returned through the backend continuation loop until a final reply is available.",
+            inputs: vec![
+                required_str("input", "The task or prompt for Medulla to orchestrate."),
+                optional_str("sessionId", "Optional Medulla session id to continue."),
+            ],
+            outputs: vec![json_output(
+                "result",
+                "{ reply, passCount, compressedHistory, escalations, sessionId, cycleId }.",
+            )],
+        },
         other => unreachable!("unknown orchestration schema: {other}"),
     }
 }
@@ -190,7 +208,7 @@ struct SessionSummary {
     session_id: String,
     agent_id: String,
     source: String,
-    /// The emitting harness (claude/codex/gemini) when this is an external agent
+    /// The emitting harness (claude/codex/gemini/cursor/windsurf) when this is an external agent
     /// instance; absent for the pinned master/subconscious/user-created windows.
     #[serde(skip_serializing_if = "Option::is_none")]
     harness_type: Option<String>,
@@ -286,11 +304,15 @@ fn is_active(last_message_at: &str) -> bool {
 }
 
 /// The harness provider for a session, when its `source` names one. Session
-/// windows persist the emitting harness (claude/codex/gemini) in `source` (see
+/// windows persist the emitting harness (claude/codex/gemini/cursor/windsurf) in `source` (see
 /// `ingest.rs`); the sentinel windows (master/subconscious/user_created/
 /// orchestration) carry no harness and yield `None`.
 fn harness_type_for(source: &str) -> Option<String> {
-    matches!(source, "claude" | "codex" | "gemini").then(|| source.to_string())
+    matches!(
+        source,
+        "claude" | "codex" | "gemini" | "cursor" | "windsurf"
+    )
+    .then(|| source.to_string())
 }
 
 /// Coarse instance status for the roster dot. Reads the persisted v2 run-state
@@ -583,37 +605,46 @@ fn handle_send_master_message(params: Map<String, Value>) -> ControllerFuture {
         if explicit.is_none() && session_id.is_none() {
             let now = chrono::Utc::now().to_rfc3339();
             let message_id = format!("master-ask:{now}");
+            // Allocate the ordinal and write both rows in ONE IMMEDIATE txn so a
+            // concurrent master writer (a rapid double-send, or this ask racing the
+            // graph's reply-persist on the same `(local, "master")` key) can't read
+            // the same `MAX(seq)` and duplicate it. A duplicate `seq` collides on the
+            // backend idempotency key `(user, counterpart, session, seq)` and the wake
+            // is silently 202-deduped with no inference. Mirrors the DM ingest path
+            // (`ingest.rs` — the sole other writer on this key also uses IMMEDIATE).
             let persisted: Result<i64, _> = store::with_connection(&config.workspace_dir, |conn| {
-                let seq = store::next_session_seq(conn, LOCAL_MASTER_AGENT, "master")?;
-                store::upsert_session(
-                    conn,
-                    &OrchestrationSession {
-                        session_id: "master".to_string(),
-                        agent_id: LOCAL_MASTER_AGENT.to_string(),
-                        source: "master".to_string(),
-                        label: None,
-                        workspace: None,
-                        last_seq: seq,
-                        created_at: now.clone(),
-                        last_message_at: now.clone(),
-                        ..Default::default()
-                    },
-                )?;
-                store::insert_message(
-                    conn,
-                    &OrchestrationMessage {
-                        id: message_id.clone(),
-                        agent_id: LOCAL_MASTER_AGENT.to_string(),
-                        session_id: "master".to_string(),
-                        chat_kind: ChatKind::Master,
-                        role: "user".to_string(),
-                        body: body.clone(),
-                        timestamp: now.clone(),
-                        seq,
-                        ..Default::default()
-                    },
-                )?;
-                Ok(seq)
+                store::in_immediate_txn(conn, |conn| {
+                    let seq = store::next_session_seq(conn, LOCAL_MASTER_AGENT, "master")?;
+                    store::upsert_session(
+                        conn,
+                        &OrchestrationSession {
+                            session_id: "master".to_string(),
+                            agent_id: LOCAL_MASTER_AGENT.to_string(),
+                            source: "master".to_string(),
+                            label: None,
+                            workspace: None,
+                            last_seq: seq,
+                            created_at: now.clone(),
+                            last_message_at: now.clone(),
+                            ..Default::default()
+                        },
+                    )?;
+                    store::insert_message(
+                        conn,
+                        &OrchestrationMessage {
+                            id: message_id.clone(),
+                            agent_id: LOCAL_MASTER_AGENT.to_string(),
+                            session_id: "master".to_string(),
+                            chat_kind: ChatKind::Master,
+                            role: "user".to_string(),
+                            body: body.clone(),
+                            timestamp: now.clone(),
+                            seq,
+                            ..Default::default()
+                        },
+                    )?;
+                    Ok(seq)
+                })
             });
             let seq = match persisted {
                 Ok(seq) => seq,
@@ -1021,6 +1052,30 @@ fn handle_relay_info(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// Direct paid Medulla entry point. The backend remains the authority for both
+/// authentication and plan enforcement; `medulla::run` also performs a local
+/// plan preflight so free users receive an immediate actionable error.
+fn handle_medulla_run(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let input = required_param(&params, "input")?.trim().to_string();
+        let session_id = params
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let config = load_config("medulla_run").await?;
+        log::debug!(
+            target: LOG,
+            "[orchestration_rpc] medulla_run.entry input_bytes={} has_session={}",
+            input.len(),
+            session_id.is_some(),
+        );
+        let result = super::medulla::run(&config, &input, session_id.as_deref()).await?;
+        to_json(result)
+    })
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 async fn load_config(action: &str) -> Result<Config, String> {
@@ -1078,7 +1133,7 @@ mod tests {
     #[test]
     fn schemas_use_orchestration_namespace() {
         let schemas = all_controller_schemas();
-        assert_eq!(schemas.len(), 10);
+        assert_eq!(schemas.len(), 11);
         assert!(schemas.iter().all(|s| s.namespace == "orchestration"));
         assert_eq!(schema_for("orchestration_attention").function, "attention");
         assert_eq!(
@@ -1106,6 +1161,10 @@ mod tests {
             schema_for("orchestration_sessions_create").function,
             "sessions_create"
         );
+        assert_eq!(schema_for("orchestration_run").function, "run");
+        assert!(all_registered_controllers()
+            .iter()
+            .any(|controller| controller.schema.function == "run"));
     }
 
     #[test]
@@ -1193,6 +1252,8 @@ mod tests {
         assert_eq!(harness_type_for("claude").as_deref(), Some("claude"));
         assert_eq!(harness_type_for("codex").as_deref(), Some("codex"));
         assert_eq!(harness_type_for("gemini").as_deref(), Some("gemini"));
+        assert_eq!(harness_type_for("cursor").as_deref(), Some("cursor"));
+        assert_eq!(harness_type_for("windsurf").as_deref(), Some("windsurf"));
         // Sentinel / origin sources are not harnesses.
         assert_eq!(harness_type_for("master"), None);
         assert_eq!(harness_type_for("user_created"), None);

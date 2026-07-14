@@ -13,9 +13,7 @@
 //!
 //! Issue: #2288 (introduction); #2885 (memory_tree migration).
 
-mod ingest;
 mod provider;
-mod source;
 mod sync;
 #[cfg(test)]
 mod tests;

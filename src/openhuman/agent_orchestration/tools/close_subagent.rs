@@ -244,7 +244,9 @@ mod tests {
             workspace_descriptor: None,
             agent_definition_id: "orchestrator".into(),
             allowed_subagent_ids: HashSet::new(),
-            provider: Arc::new(NoopProvider),
+            turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(Arc::new(
+                NoopProvider,
+            )),
             all_tools: Arc::new(Vec::new()),
             all_tool_specs: Arc::new(Vec::new()),
             visible_tool_names: std::collections::HashSet::new(),

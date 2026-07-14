@@ -11,6 +11,37 @@ use super::*;
 use crate::openhuman::inference::provider::{ChatRequest, ChatResponse, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolResult};
 
+#[test]
+fn crate_native_turn_source_does_not_retain_host_provider() {
+    let source = TurnModelSource::new_crate_native(
+        "chat",
+        Arc::new(crate::openhuman::config::Config::default()),
+    );
+    assert!(
+        source.provider.is_none(),
+        "crate-native turn sources must not construct or retain a host Provider"
+    );
+    assert!(source.crate_native.is_some());
+}
+
+#[test]
+fn crate_native_text_mode_does_not_resolve_host_provider() {
+    let source = TurnModelSource::new_crate_native(
+        "chat",
+        Arc::new(crate::openhuman::config::Config::default()),
+    )
+    .with_text_mode();
+
+    assert!(source.provider.is_none());
+    assert!(
+        source
+            .crate_native
+            .as_ref()
+            .is_some_and(|native| native.force_text_mode),
+        "text mode must be represented on the crate-native source"
+    );
+}
+
 /// A real openhuman tool the harness will execute.
 struct EchoTool;
 
@@ -728,4 +759,42 @@ fn spawn_and_delegate_tools_are_never_registered_on_subagents() {
             "{name} is a normal tool and must not be stripped"
         );
     }
+}
+
+/// Issue #4746: the harness bounds each model/tool/sub-agent call by the run's
+/// remaining wall-clock budget, but ONLY when `max_wall_clock_ms` is set — with
+/// `None` a hung call is awaited unbounded and the turn can ship an empty reply
+/// with no terminal event. `run_policy_for` must arm that ceiling.
+#[test]
+fn run_policy_for_arms_the_wall_clock_ceiling() {
+    let policy = run_policy_for(10, false);
+    assert_eq!(
+        policy.limits.max_wall_clock_ms,
+        Some(DEFAULT_AGENT_TURN_TIMEOUT_SECS * 1_000),
+        "run_policy_for must set a wall-clock ceiling so hung calls are interrupted"
+    );
+}
+
+/// The `OPENHUMAN_AGENT_TURN_TIMEOUT_SECS` override maps seconds → ms, falls
+/// back to the default when absent/unparseable, and treats `0` as an explicit
+/// unbounded opt-out (`None`). Tested through the env-free pure core so it stays
+/// deterministic under parallel execution.
+#[test]
+fn agent_turn_wall_clock_ms_parses_env_override() {
+    // Absent → default.
+    assert_eq!(
+        parse_agent_turn_wall_clock_ms(None),
+        Some(DEFAULT_AGENT_TURN_TIMEOUT_SECS * 1_000)
+    );
+    // Explicit custom value → seconds converted to ms.
+    assert_eq!(parse_agent_turn_wall_clock_ms(Some("120")), Some(120_000));
+    // Whitespace tolerated.
+    assert_eq!(parse_agent_turn_wall_clock_ms(Some(" 90 ")), Some(90_000));
+    // `0` → unbounded opt-out.
+    assert_eq!(parse_agent_turn_wall_clock_ms(Some("0")), None);
+    // Garbage → default (fail safe, never unbounded by accident).
+    assert_eq!(
+        parse_agent_turn_wall_clock_ms(Some("not-a-number")),
+        Some(DEFAULT_AGENT_TURN_TIMEOUT_SECS * 1_000)
+    );
 }

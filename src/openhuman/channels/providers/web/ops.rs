@@ -59,6 +59,120 @@ static THREAD_BUDGET_SIGNALS: Lazy<Mutex<HashMap<String, BudgetSignal>>> =
 /// the signal regardless (the balance is evidently usable again). See #3386.
 const BUDGET_SIGNAL_TTL: Duration = Duration::from_secs(5 * 60);
 
+/// Default wall-clock backstop for a single web chat turn, in seconds.
+///
+/// This is the OUTER safety net (issue #4746). The primary, root-cause guard is
+/// the harness policy's `max_wall_clock_ms` (`tinyagents::run_policy_for`,
+/// default 600s), which interrupts a hung/slow model or tool/sub-agent call
+/// mid-flight and returns a proper `Timeout` → `chat_error`. This channel-level
+/// backstop sits ABOVE that (900s) and only fires if a turn wedges OUTSIDE the
+/// harness run entirely (e.g. session assembly / persistence plumbing), so the
+/// client still always gets a terminal event instead of an empty reply / an
+/// endless `inference_heartbeat` stream. Deliberately generous — a hang
+/// backstop, not a UX deadline. Override via `OPENHUMAN_WEB_TURN_TIMEOUT_SECS`;
+/// set it to `0` to disable the backstop.
+const DEFAULT_WEB_TURN_TIMEOUT_SECS: u64 = 900;
+
+/// Resolve the per-turn wall-clock backstop. Returns `None` when disabled
+/// (env `OPENHUMAN_WEB_TURN_TIMEOUT_SECS=0`).
+fn web_turn_deadline() -> Option<Duration> {
+    let secs = std::env::var("OPENHUMAN_WEB_TURN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_WEB_TURN_TIMEOUT_SECS);
+    (secs > 0).then(|| Duration::from_secs(secs))
+}
+
+/// Drive a chat-turn future under the wall-clock backstop.
+///
+/// On elapse the inner future is dropped (cooperative teardown at its next
+/// await point) and a synthetic `turn_timeout` error is returned, so the
+/// caller's existing `chat_error` emission path fires. This is the outermost
+/// guarantee that a wedged turn always ends in a terminal event rather than an
+/// empty reply / an endless `inference_heartbeat` stream (issue #4746).
+async fn drive_turn_with_deadline<F>(
+    deadline: Option<Duration>,
+    fut: F,
+) -> Result<super::types::WebChatTaskResult, String>
+where
+    F: std::future::Future<Output = Result<super::types::WebChatTaskResult, String>>,
+{
+    match deadline {
+        Some(d) => match tokio::time::timeout(d, fut).await {
+            Ok(res) => res,
+            Err(_elapsed) => {
+                log::warn!(
+                    "[web-channel] turn wall-clock backstop fired after {}s with no terminal event; \
+                     emitting graceful turn_timeout chat_error (issue #4746)",
+                    d.as_secs()
+                );
+                Err(super::web_errors::turn_timeout_error_message(d.as_secs()))
+            }
+        },
+        None => fut.await,
+    }
+}
+
+/// Run a chat-turn future under the two standard web-channel guards, inside the
+/// shared origin + approval-context scope: the cooperative cancel token
+/// (interrupt/cancel paths tear the turn down at its next await point) and the
+/// wall-clock backstop ([`drive_turn_with_deadline`]).
+///
+/// Returns `None` when the turn was cancelled cooperatively before producing a
+/// result — the cancelling side already emitted the user-facing `chat_error`,
+/// so the caller just unwinds quietly. Otherwise `Some(res)` carries the turn's
+/// `Result`. Extracted so `start_chat` and `spawn_parallel_turn` share one copy
+/// of this wiring and can't drift apart (issue #4746 review); the only per-site
+/// differences are the `fork` flag and run-queue handle passed to
+/// `run_chat_task` when building `fut`.
+async fn run_turn_under_cancel_and_deadline<F>(
+    cancel_token: CancellationToken,
+    origin: crate::openhuman::agent::turn_origin::AgentTurnOrigin,
+    approval_ctx: crate::openhuman::approval::ApprovalChatContext,
+    fut: F,
+) -> Option<Result<super::types::WebChatTaskResult, String>>
+where
+    F: std::future::Future<Output = Result<super::types::WebChatTaskResult, String>>,
+{
+    tokio::select! {
+        biased;
+        _ = cancel_token.cancelled() => None,
+        res = drive_turn_with_deadline(
+            web_turn_deadline(),
+            crate::openhuman::agent::turn_origin::with_origin(
+                origin,
+                crate::openhuman::approval::APPROVAL_CHAT_CONTEXT.scope(approval_ctx, fut),
+            ),
+        ) => Some(res),
+    }
+}
+
+/// Reason a terminal `run_chat_task` error should be kept OUT of Sentry, or
+/// `None` when it is a genuine defect that must page.
+///
+/// Both suppressed cases are deterministic, user-surfaced, retryable
+/// agent-loop outcomes — a terminal `chat_error` already reaches the client, so
+/// a Sentry event is pure noise (same tier as `MaxIterationsExceeded` /
+/// `EmptyProviderResponse`, which are demoted the same way):
+///
+/// - the max-iteration cap (`is_max_iterations_error`), and
+/// - the turn wall-clock backstop / harness `Timeout` (`is_turn_timeout_error`,
+///   issue #4746) — without this arm every wedged turn that trips the ceiling
+///   would emit a spurious Sentry event, contradicting the graceful
+///   `turn_timeout` framing.
+///
+/// Kept as a pure predicate over the already-formatted error string so the
+/// suppression policy is unit-testable without a Sentry harness.
+pub(crate) fn sentry_suppression_reason(detailed: &str) -> Option<&'static str> {
+    if crate::openhuman::agent::error::is_max_iterations_error(detailed) {
+        Some("max-iteration cap")
+    } else if super::web_errors::is_turn_timeout_error(detailed) {
+        Some("turn wall-clock backstop")
+    } else {
+        None
+    }
+}
+
 /// What the budget-correlator should do with a terminated turn (#3386).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BudgetCorrelation {
@@ -194,6 +308,21 @@ pub struct TestRunChatTaskBlock {
 #[cfg(any(test, debug_assertions))]
 pub(super) static TEST_RUN_CHAT_TASK_BLOCK: Lazy<Mutex<Option<TestRunChatTaskBlock>>> =
     Lazy::new(|| Mutex::new(None));
+
+/// Process-wide lock serializing every test that drives the global
+/// `run_chat_task` test hooks (`set_test_run_chat_task_block`,
+/// `set_test_forced_run_chat_task_error`) or the `OPENHUMAN_WEB_TURN_TIMEOUT_SECS`
+/// turn-timeout override.
+///
+/// All of those toggles are process-global, so a `start_chat` / `run_chat_task`
+/// call in ANY test — not just those in `web_tests.rs` — can observe another
+/// test's forced block/error/timeout unless every such test holds this one lock
+/// for its whole body. It lives here at the hook boundary (rather than as a
+/// file-local lock in `web_tests.rs`) precisely so tests in other modules that
+/// exercise `start_chat`/`run_chat_task` can serialize against the same lock
+/// (CodeRabbit review on #4746).
+#[cfg(any(test, debug_assertions))]
+pub static RUN_CHAT_TASK_TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Cooperatively cancel an in-flight turn, with a hard `abort()` backstop.
 ///
@@ -555,29 +684,25 @@ pub async fn start_chat(
         // `None` => the turn was cancelled cooperatively before producing a
         // result; the interrupting/cancelling side already emitted the
         // user-facing `chat_error`, so we just unwind quietly here.
-        let result = tokio::select! {
-            biased;
-            _ = task_cancel_token.cancelled() => None,
-            res = crate::openhuman::agent::turn_origin::with_origin(
-                origin,
-                crate::openhuman::approval::APPROVAL_CHAT_CONTEXT.scope(
-                    approval_ctx,
-                    run_chat_task(
-                        &client_id_task,
-                        &thread_id_task,
-                        &request_id_task,
-                        &user_message,
-                        model_override,
-                        temperature,
-                        profile_id,
-                        locale,
-                        turn_run_queue_task,
-                        metadata,
-                        /* fork */ false,
-                    ),
-                ),
-            ) => Some(res),
-        };
+        let result = run_turn_under_cancel_and_deadline(
+            task_cancel_token,
+            origin,
+            approval_ctx,
+            run_chat_task(
+                &client_id_task,
+                &thread_id_task,
+                &request_id_task,
+                &user_message,
+                model_override,
+                temperature,
+                profile_id,
+                locale,
+                turn_run_queue_task,
+                metadata,
+                /* fork */ false,
+            ),
+        )
+        .await;
 
         let result = match result {
             Some(res) => res,
@@ -629,11 +754,12 @@ pub async fn start_chat(
                 let classified = classify_inference_error(&err);
                 let classified_type = classified.error_type;
                 let classified_type_string = classified_type.to_string();
-                if crate::openhuman::agent::error::is_max_iterations_error(&detailed) {
+                if let Some(reason) = sentry_suppression_reason(&detailed) {
                     log::info!(
                         target: "web_channel",
-                        "[web_channel.run_chat_task] suppressed Sentry emission for max-iteration \
-                         cap client_id={} thread_id={} request_id={} error_type={} message={}",
+                        "[web_channel.run_chat_task] suppressed Sentry emission for {} \
+                         client_id={} thread_id={} request_id={} error_type={} message={}",
+                        reason,
                         client_id_task,
                         thread_id_task,
                         request_id_task,
@@ -783,29 +909,25 @@ async fn spawn_parallel_turn(
             client_id: client_id_task.clone(),
             request_id: Some(request_id_task.clone()),
         };
-        let result = tokio::select! {
-            biased;
-            _ = task_cancel_token.cancelled() => None,
-            res = crate::openhuman::agent::turn_origin::with_origin(
-                origin,
-                crate::openhuman::approval::APPROVAL_CHAT_CONTEXT.scope(
-                    approval_ctx,
-                    run_chat_task(
-                        &client_id_task,
-                        &thread_id_task,
-                        &request_id_task,
-                        &user_message,
-                        model_override,
-                        temperature,
-                        profile_id,
-                        locale,
-                        run_queue,
-                        metadata,
-                        /* fork */ true,
-                    ),
-                ),
-            ) => Some(res),
-        };
+        let result = run_turn_under_cancel_and_deadline(
+            task_cancel_token,
+            origin,
+            approval_ctx,
+            run_chat_task(
+                &client_id_task,
+                &thread_id_task,
+                &request_id_task,
+                &user_message,
+                model_override,
+                temperature,
+                profile_id,
+                locale,
+                run_queue,
+                metadata,
+                /* fork */ true,
+            ),
+        )
+        .await;
 
         match result {
             Some(Ok(chat_result)) => {
@@ -932,7 +1054,78 @@ pub async fn parallel_in_flight_entries_for_test() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Whether a cancel request should tear down the turn currently in flight for a
+/// thread.
+///
+/// `requested` is the `request_id` the caller is cancelling; `None` means an
+/// unscoped stop ("cancel whatever is running", e.g. a Stop button or a session
+/// teardown). `in_flight` is the `request_id` currently registered for the
+/// thread.
+///
+/// A *scoped* cancel matches only its own request. This is the fix for #4760: a
+/// client that times out on request A and then sends request B — which
+/// supersedes A on the same thread — must not have A's late-arriving cancel tear
+/// down B. Scoping the cancel to A makes it a no-op once B is in flight, so the
+/// newer turn survives instead of being killed at t=0.
+pub fn cancel_should_target(requested: Option<&str>, in_flight: &str) -> bool {
+    match requested {
+        Some(rid) => rid == in_flight,
+        None => true,
+    }
+}
+
+/// Cancel a single parallel (forked) turn identified by `request_id`, but only
+/// when it belongs to `thread_id`. Returns the cancelled id (as a one-element
+/// vec, mirroring [`cancel_parallel_turns_for_thread`]) or empty when no such
+/// parallel turn exists. Request-scoped cancel path (#4760).
+async fn cancel_parallel_turn_by_request_id(thread_id: &str, request_id: &str) -> Vec<String> {
+    let mut parallel = PARALLEL_IN_FLIGHT.lock().await;
+    let matches = parallel
+        .get(request_id)
+        .map(|entry| entry.thread_id == thread_id)
+        .unwrap_or(false);
+    if !matches {
+        return Vec::new();
+    }
+    if let Some(entry) = parallel.remove(request_id) {
+        entry.cancel_token.cancel();
+        let mut handle = entry.handle;
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = &mut handle => {}
+                _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                    handle.abort();
+                }
+            }
+        });
+        return vec![request_id.to_string()];
+    }
+    Vec::new()
+}
+
+/// Cancel whatever turn is currently running on a thread (unscoped stop).
+///
+/// Back-compat entry point (Stop button / session teardown). For a cancel that
+/// must only affect a specific turn — so a stale cancel can't kill a newer turn
+/// on the same thread — use [`cancel_chat_scoped`] with the target `request_id`
+/// (#4760).
 pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<String>, String> {
+    cancel_chat_scoped(client_id, thread_id, None).await
+}
+
+/// Cancel the in-flight turn(s) for a thread.
+///
+/// When `request_id` is `Some`, the cancel is **scoped**: it only tears down the
+/// primary turn if that exact request is still running (and only the matching
+/// parallel turn), so a stale cancel for a superseded request can't kill the
+/// newer turn that replaced it (#4760). When `request_id` is `None`, it stops
+/// whatever is running on the thread (primary + every parallel) — the "stop
+/// everything" behaviour used by session teardown / a Stop button.
+pub async fn cancel_chat_scoped(
+    client_id: &str,
+    thread_id: &str,
+    request_id: Option<&str>,
+) -> Result<Option<String>, String> {
     let client_id = client_id.trim();
     let thread_id = thread_id.trim();
 
@@ -948,18 +1141,47 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
 
     {
         let mut in_flight = IN_FLIGHT.lock().await;
-        if let Some(existing) = in_flight.remove(&map_key) {
-            removed_request_id = Some(cancel_in_flight_gracefully(existing));
+        // #4760: only tear down the primary turn when the cancel is unscoped OR
+        // targets exactly the request that is running. A stale cancel for an
+        // already-superseded request must be a no-op so the newer turn lives.
+        let should_cancel_primary = in_flight
+            .get(&map_key)
+            .map(|entry| cancel_should_target(request_id, &entry.request_id))
+            .unwrap_or(false);
+        if should_cancel_primary {
+            if let Some(existing) = in_flight.remove(&map_key) {
+                removed_request_id = Some(cancel_in_flight_gracefully(existing));
+            }
+        } else if let Some(rid) = request_id {
+            log::info!(
+                "[web-channel] ignoring stale cancel request_id={} for thread_id={} — current in-flight is {:?}; newer turn preserved",
+                rid,
+                thread_id,
+                in_flight.get(&map_key).map(|e| e.request_id.as_str())
+            );
         }
     }
 
-    // Also tear down any concurrent parallel (forked) turns on the thread so a
-    // cancel/stop covers every in-flight turn, not just the primary one.
-    let cancelled_parallel = cancel_parallel_turns_for_thread(thread_id).await;
+    // Also tear down concurrent parallel (forked) turns. A scoped cancel targets
+    // only the named parallel turn (if it is one); an unscoped cancel/stop
+    // covers every parallel turn on the thread, not just the primary one.
+    let cancelled_parallel = match request_id {
+        Some(rid) => cancel_parallel_turn_by_request_id(thread_id, rid).await,
+        None => cancel_parallel_turns_for_thread(thread_id).await,
+    };
+
+    // #4760: a scoped cancel that matched only a parallel (forked) turn — not the
+    // primary — still genuinely tore a turn down and emitted its cancelled event.
+    // Surface that id so `channel_web_cancel` reports `cancelled: true` with the
+    // right request_id instead of misreporting a no-op just because the primary
+    // turn wasn't the one cancelled.
+    let cancelled_any = removed_request_id
+        .clone()
+        .or_else(|| cancelled_parallel.first().cloned());
 
     // Emit a cancelled chat_error for each cancelled turn (primary + parallels)
     // so every interleaved branch's UI is resolved.
-    for request_id in removed_request_id.iter().cloned().chain(cancelled_parallel) {
+    for request_id in removed_request_id.into_iter().chain(cancelled_parallel) {
         publish_web_channel_event(WebChannelEvent {
             event: "chat_error".to_string(),
             client_id: client_id.to_string(),
@@ -971,7 +1193,7 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
         });
     }
 
-    Ok(removed_request_id)
+    Ok(cancelled_any)
 }
 
 pub async fn channel_web_chat(
@@ -1078,13 +1300,24 @@ pub async fn channel_web_queue_clear(thread_id: &str) -> Result<RpcOutcome<Value
 pub async fn channel_web_cancel(
     client_id: &str,
     thread_id: &str,
+    request_id: Option<&str>,
 ) -> Result<RpcOutcome<Value>, String> {
-    let cancelled_request_id = cancel_chat(client_id, thread_id).await?;
+    let cancelled_request_id = cancel_chat_scoped(client_id, thread_id, request_id).await?;
 
+    // No web-channel turn matched. Fall through to the task-dispatcher registry,
+    // which holds autonomous runs that are NOT web-channel turns (so they never
+    // appear in IN_FLIGHT and can only be reached here). The fallback is itself
+    // request-scoped: a scoped cancel aborts the run only when its run_id
+    // matches, so a stale cancel for a superseded request can't tear down a newer
+    // run on the thread (#4760); an unscoped stop aborts whatever run is running.
     let cancelled = if cancelled_request_id.is_some() {
         true
     } else {
-        crate::openhuman::agent::task_dispatcher::cancel_session(thread_id.trim()).await
+        crate::openhuman::agent::task_dispatcher::cancel_session_scoped(
+            thread_id.trim(),
+            request_id,
+        )
+        .await
     };
 
     Ok(RpcOutcome::single_log(

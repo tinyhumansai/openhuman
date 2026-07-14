@@ -186,11 +186,29 @@ fn orchestrator_reaches_memory_agent_on_demand() {
         !has_call_memory_agent,
         "orchestrator agent.toml must not expose the 'call_memory_agent' tool"
     );
-    // Verify all superseded tool names are gone.
+    // Simple recall/store operations stay direct so they do not pay an agentic
+    // round-trip; deep retrieval still routes through the memory subagent.
+    for direct_name in [
+        "memory_recall",
+        "memory_store",
+        "save_preference",
+        "update_memory_md",
+    ] {
+        let entry = format!("\"{direct_name}\"");
+        let entry_comma = format!("\"{direct_name}\",");
+        let direct_tool_present = toml
+            .lines()
+            .map(str::trim)
+            .any(|line| line == entry || line == entry_comma);
+        assert!(
+            direct_tool_present,
+            "orchestrator agent.toml must list direct memory tool '{direct_name}'"
+        );
+    }
+    // Verify the superseded tree/query tool names are gone.
     for old_name in [
         "memory_tree",
         "query_memory",
-        "memory_recall",
         "memory_tree_search_entities",
         "memory_tree_query_topic",
         "memory_tree_query_source",
@@ -206,7 +224,7 @@ fn orchestrator_reaches_memory_agent_on_demand() {
             .any(|line| line == entry || line == entry_comma);
         assert!(
             !old_tool_present,
-            "orchestrator agent.toml must NOT list '{old_name}' — superseded by 'call_memory_agent'"
+            "orchestrator agent.toml must NOT list legacy memory tool '{old_name}'"
         );
     }
 }

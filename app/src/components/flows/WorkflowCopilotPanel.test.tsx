@@ -167,6 +167,41 @@ describe('WorkflowCopilotPanel', () => {
     expect(screen.queryByTestId('workflow-copilot-empty')).not.toBeInTheDocument();
   });
 
+  it('B25: unwraps a raw tool-call envelope message into clean text + a tool activity chip, never raw JSON', () => {
+    // Repro for B25: a turn that both talks and calls a tool can land in the
+    // thread transcript as the provider wire-format `{ content, tool_calls }`
+    // envelope. The panel must render only the human text — never the raw
+    // JSON — plus a compact status chip for the tool activity.
+    hookState.displayMessages = [
+      { id: 'm1', content: 'build me a Slack digest', sender: 'user' },
+      {
+        id: 'm2',
+        content: JSON.stringify({
+          content: "Here's the workflow I propose.",
+          tool_calls: [{ id: 'call_1', name: 'propose_workflow', arguments: '{"nodes":[]}' }],
+        }),
+        sender: 'agent',
+      },
+    ];
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    const bubble = screen.getByTestId('workflow-copilot-agent');
+    expect(bubble).toHaveTextContent("Here's the workflow I propose.");
+    // The raw envelope must never reach the DOM as text.
+    expect(bubble).not.toHaveTextContent('tool_calls');
+    expect(bubble).not.toHaveTextContent('"nodes":[]');
+    expect(screen.getByTestId('tool-activity-chip')).toHaveTextContent(
+      'flows.copilot.tool.proposing'
+    );
+  });
+
   it('does not render an isInterim agent message as a bubble, only the terminal one', () => {
     // The panel only ever renders `displayMessages` — the same filtered set
     // `useWorkflowBuilderChat` computes from the raw transcript (isInterim
@@ -523,5 +558,204 @@ describe('WorkflowCopilotPanel', () => {
     // not just the bare "#eng" answer.
     expect(secondArg.request.instruction).toContain('post a daily summary to slack');
     expect(secondArg.request.instruction).toContain('#eng');
+  });
+
+  it('populates the composer input from a prefill seed WITHOUT sending it', () => {
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        prefillSeed={{ text: 'Build a workflow that files receipts.' }}
+      />
+    );
+    // The Suggested Workflows "Build this" prefill never auto-sends — only
+    // populates the input so the user can review/edit before pressing Send.
+    expect(hookState.send).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText('flows.copilot.placeholder')).toHaveValue(
+      'Build a workflow that files receipts.'
+    );
+  });
+
+  it('reports the prefill seed as consumed once applied, so the host can clear the route seed', () => {
+    const onPrefillSeedConsumed = vi.fn();
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        prefillSeed={{ text: 'Build a workflow that files receipts.' }}
+        onPrefillSeedConsumed={onPrefillSeedConsumed}
+      />
+    );
+    expect(onPrefillSeedConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-apply the prefill seed on a re-render (would clobber in-progress edits)', () => {
+    const onPrefillSeedConsumed = vi.fn();
+    const { rerender } = render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        prefillSeed={{ text: 'Build a workflow that files receipts.' }}
+        onPrefillSeedConsumed={onPrefillSeedConsumed}
+      />
+    );
+    const input = screen.getByPlaceholderText('flows.copilot.placeholder');
+    expect(input).toHaveValue('Build a workflow that files receipts.');
+
+    // The user edits the pre-filled text.
+    fireEvent.change(input, { target: { value: 'Build a workflow that files receipts weekly.' } });
+
+    // A re-render (e.g. a graph edit) with the same seed must not re-apply it
+    // and clobber the user's in-progress edit.
+    rerender(
+      <WorkflowCopilotPanel
+        graph={graph(['a', 'b', 'c'])}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        prefillSeed={{ text: 'Build a workflow that files receipts.' }}
+        onPrefillSeedConsumed={onPrefillSeedConsumed}
+      />
+    );
+    expect(screen.getByPlaceholderText('flows.copilot.placeholder')).toHaveValue(
+      'Build a workflow that files receipts weekly.'
+    );
+    expect(onPrefillSeedConsumed).toHaveBeenCalledTimes(1);
+    expect(hookState.send).not.toHaveBeenCalled();
+  });
+
+  it('does not re-apply the prefill seed when remounted after the seed is cleared', () => {
+    const onPrefillSeedConsumed = vi.fn();
+    const { unmount } = render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        prefillSeed={{ text: 'Build a workflow that files receipts.' }}
+        onPrefillSeedConsumed={onPrefillSeedConsumed}
+      />
+    );
+    expect(onPrefillSeedConsumed).toHaveBeenCalledTimes(1);
+
+    // The host clears the route seed (prefillSeed -> null) in response.
+    // Closing and reopening the copilot fully remounts it; with no seed left
+    // there is nothing to re-apply.
+    unmount();
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        prefillSeed={null}
+        onPrefillSeedConsumed={onPrefillSeedConsumed}
+      />
+    );
+    expect(onPrefillSeedConsumed).toHaveBeenCalledTimes(1);
+    expect(hookState.send).not.toHaveBeenCalled();
+  });
+
+  it("sends the FIRST Send after a prefill seed with the seed's builder mode, not revise", async () => {
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        prefillSeed={{ text: 'Build a workflow that files receipts.', mode: 'build' }}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('send-message-button'));
+
+    expect(hookState.send).toHaveBeenCalledTimes(1);
+    const arg = hookState.send.mock.calls[0][0];
+    // First Send after a Suggested Workflows prefill must run the seed's
+    // `build` mode (build → dry-run → propose against the just-created blank
+    // flow) — NOT the panel's usual `revise` turn.
+    expect(arg.request.mode).toBe('build');
+    expect(arg.request.instruction).toBe('Build a workflow that files receipts.');
+    expect(arg.request.flowId).toBe('flow-1');
+  });
+
+  it('falls back to revise for subsequent Sends after the prefill-seeded first one', async () => {
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        prefillSeed={{ text: 'Build a workflow that files receipts.', mode: 'build' }}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('send-message-button'));
+    expect(hookState.send.mock.calls[0][0].request.mode).toBe('build');
+
+    fireEvent.change(screen.getByPlaceholderText('flows.copilot.placeholder'), {
+      target: { value: 'also add a retry' },
+    });
+    fireEvent.click(screen.getByTestId('send-message-button'));
+
+    expect(hookState.send).toHaveBeenCalledTimes(2);
+    expect(hookState.send.mock.calls[1][0].request.mode).toBe('revise');
+  });
+
+  it('defaults an omitted prefill seed mode to build on the first Send', async () => {
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-1"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        prefillSeed={{ text: 'Build a workflow that files receipts.' }}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('send-message-button'));
+
+    expect(hookState.send.mock.calls[0][0].request.mode).toBe('build');
+  });
+
+  it('falls back to revise on the first Send when there is no flow id to build against', async () => {
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+        prefillSeed={{ text: 'Build a workflow that files receipts.', mode: 'build' }}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('send-message-button'));
+
+    expect(hookState.send.mock.calls[0][0].request.mode).toBe('revise');
   });
 });

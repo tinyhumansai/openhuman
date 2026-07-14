@@ -420,7 +420,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
 
     let ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
-        provider,
+        provider: Some(provider),
         default_provider: Arc::new("harness-provider".to_string()),
         memory: Arc::new(HarnessMemory {
             entries: options
@@ -447,6 +447,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         message_timeout_secs: options.timeout_secs,
         multimodal: MultimodalConfig::default(),
         multimodal_files: MultimodalFileConfig::default(),
+        config: None,
     });
 
     let expected_event_channel = options.channel_name.clone();

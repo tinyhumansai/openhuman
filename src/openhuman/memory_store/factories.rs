@@ -12,6 +12,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use parking_lot::Mutex;
+use rusqlite::Connection;
+
 use crate::openhuman::config::{EmbeddingRouteConfig, MemoryConfig, StorageProviderConfig};
 use crate::openhuman::embeddings::{
     self, format_embedding_signature, EmbeddingProvider, DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
@@ -337,6 +340,38 @@ pub fn create_memory_with_local_ai(
     )
 }
 
+/// Memory resources needed by an agent session.
+///
+/// The storage abstraction remains backend-neutral while SQLite-specific
+/// consumers receive the concrete shared connection explicitly.
+pub(crate) struct SessionMemory {
+    pub memory: Box<dyn Memory>,
+    pub sqlite_connection: Arc<Mutex<Connection>>,
+}
+
+pub(crate) fn create_session_memory_with_local_ai(
+    memory: &MemoryConfig,
+    local_embedding_model: Option<&str>,
+    embedding_api_key: &str,
+    embedding_routes: &[EmbeddingRouteConfig],
+    storage_provider: Option<&StorageProviderConfig>,
+    workspace_dir: &Path,
+) -> anyhow::Result<SessionMemory> {
+    let memory = create_unified_memory_full(
+        memory,
+        embedding_routes,
+        storage_provider,
+        local_embedding_model,
+        embedding_api_key,
+        workspace_dir,
+    )?;
+    let sqlite_connection = Arc::clone(&memory.conn);
+    Ok(SessionMemory {
+        memory: Box::new(memory),
+        sqlite_connection,
+    })
+}
+
 /// Synchronous health-check shim around [`probe_ollama_reachable`].
 ///
 /// Production call sites (`create_memory_with_local_ai` and friends) live in
@@ -385,6 +420,24 @@ fn create_memory_full(
     embedding_api_key: &str,
     workspace_dir: &Path,
 ) -> anyhow::Result<Box<dyn Memory>> {
+    Ok(Box::new(create_unified_memory_full(
+        config,
+        _embedding_routes,
+        _storage_provider,
+        local_embedding_model,
+        embedding_api_key,
+        workspace_dir,
+    )?))
+}
+
+fn create_unified_memory_full(
+    config: &MemoryConfig,
+    _embedding_routes: &[EmbeddingRouteConfig],
+    _storage_provider: Option<&StorageProviderConfig>,
+    local_embedding_model: Option<&str>,
+    embedding_api_key: &str,
+    workspace_dir: &Path,
+) -> anyhow::Result<UnifiedMemory> {
     // 1. Resolve the intended provider from config.
     let intended = effective_embedding_settings(config, local_embedding_model);
     let local_ai_opt_in = local_embedding_model
@@ -454,8 +507,7 @@ fn create_memory_full(
     );
 
     // 4. Instantiate UnifiedMemory which handles SQLite and vector storage.
-    let mem = UnifiedMemory::new(workspace_dir, embedder, config.sqlite_open_timeout_secs)?;
-    Ok(Box::new(mem))
+    UnifiedMemory::new(workspace_dir, embedder, config.sqlite_open_timeout_secs)
 }
 
 /// Create a memory instance specifically for migration purposes.

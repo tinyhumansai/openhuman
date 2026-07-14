@@ -7,11 +7,7 @@
 
 use std::time::Duration;
 
-use chrono::{Timelike, Utc};
-
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_queue::store;
-use crate::openhuman::memory_queue::types::{FlushStalePayload, NewJob};
 
 static STARTED: std::sync::Once = std::sync::Once::new();
 
@@ -43,7 +39,9 @@ pub fn start(config: Config) {
 /// Unrecoverable failures stay parked — see
 /// [`store::requeue_transient_failed`].
 fn retry_transient_failures(config: &Config) {
-    match store::requeue_transient_failed(config) {
+    let memory =
+        crate::openhuman::tinycortex::memory_config_from(config, config.workspace_dir.clone());
+    match tinycortex::memory::queue::scheduler::self_heal(&memory) {
         Ok(0) => {}
         Ok(n) => {
             log::info!("[memory::jobs] periodic retry requeued {n} transient-failed job(s)");
@@ -56,26 +54,15 @@ fn retry_transient_failures(config: &Config) {
 }
 
 fn enqueue_flush_stale(config: &Config) {
-    // Take a single `Utc::now()` reading and derive both the date and
-    // 3-hour block from it so the dedupe key can't disagree with itself
-    // across a 3-hour boundary.
-    let now = Utc::now();
-    let today_iso = now.date_naive().format("%Y-%m-%d").to_string();
-    let hour_block = now.hour() / 3;
-    match NewJob::flush_stale(&FlushStalePayload::default(), &today_iso, hour_block) {
-        Ok(new_job) => {
-            match store::enqueue(config, &new_job) {
-                Ok(Some(_)) => {
-                    super::worker::wake_workers();
-                }
-                Ok(None) => {} // dedupe-suppressed — OK
-                Err(err) => {
-                    log::warn!("[memory::jobs] periodic flush_stale enqueue failed: {err:#}");
-                }
-            }
+    let memory =
+        crate::openhuman::tinycortex::memory_config_from(config, config.workspace_dir.clone());
+    match tinycortex::memory::queue::scheduler::enqueue_flush_stale(&memory) {
+        Ok(Some(_)) => {
+            super::worker::wake_workers();
         }
+        Ok(None) => {}
         Err(err) => {
-            log::warn!("[memory::jobs] flush_stale job build failed: {err:#}");
+            log::warn!("[memory::jobs] periodic flush_stale enqueue failed: {err:#}");
         }
     }
 }

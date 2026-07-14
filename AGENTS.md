@@ -149,21 +149,21 @@ bash scripts/test-rust-with-mock.sh --test json_rpc_e2e
 
 No `UserProvider`/`AIProvider`/`SkillProvider` — auth lives in `CoreStateProvider` via `fetchCoreAppSnapshot()` RPC.
 
-**State** (`store/`): Redux Toolkit slices — `accounts`, `channelConnections`, `chatRuntime`, `coreMode`, `deepLinkAuth`, `mascot`, `notification`, `providerSurface`, `socket`, `thread`. Prefer Redux over ad-hoc `localStorage`.
+**State** (`store/`): Redux Toolkit slices — `accounts`, `agentProfile`, `announcement`, `backendMeet`, `channelConnections`, `chatRuntime`, `companion`, `connectivity`, `coreMode`, `deepLinkAuth`, `layout`, `locale`, `mascot`, `notification`, `persona`, `providerSurface`, `ptt`, `socket`, `theme`, `thread`, `userErrors` (authoritative list: `store/index.ts`; persistence via `userScopedStorage`). Prefer Redux over ad-hoc `localStorage`.
 
-**Services** (`services/`): `apiClient`, `socketService`, `coreRpcClient`, `coreCommandClient`, `chatService`, `analytics`, `notificationService`, `webviewAccountService`, `daemonHealthService`, plus domain `api/*` clients. Always use `invoke('core_rpc_relay', ...)` for core RPC.
+**Services** (`services/`): `apiClient`, `socketService`, `coreRpcClient`, `coreCommandClient`, `chatService`, `analytics`, `notificationService`, `webviewAccountService`, `daemonHealthService`, plus domain `api/*` clients. Always use `coreRpcClient` (which invokes the `relay_http_rpc` Tauri command) for core RPC.
 
-**Routing** (`AppRoutes.tsx`, HashRouter): `/` (Welcome), `/onboarding/*`, `/home`, `/human`, `/intelligence`, `/skills`, `/chat`, `/channels`, `/invites`, `/notifications`, `/rewards`, `/settings/*`. No `/login`, `/mnemonic`, `/agents`, `/conversations`.
+**Routing** (`AppRoutes.tsx`, HashRouter): `/` (Welcome), `/auth`, `/onboarding/*`, `/chat/:threadId?`, `/human`, `/brain` (+ `/brain/tinyplace-orchestration`), `/orchestration`, `/connections`, `/flows` (+ `/flows/:id`, `/flows/draft`), `/agent-world/*`, `/invites`, `/notifications`, `/rewards`, `/settings/*`, `/feedback`. Back-compat redirects: `/home`→`/chat`, `/skills`→`/connections`, `/channels`→`/connections?tab=messaging`, `/intelligence` & `/activity`→`/settings/notifications`, `/routines` & `/workflows`→`/settings/automations`, `/webhooks`→`/settings/integrations#webhooks`. No `/login`, `/mnemonic`, `/agents`, `/conversations`.
 
-**AI config**: bundled prompts in `src/openhuman/agent/prompts/` (also via `tauri.conf.json` resources). Loaders in `app/src/lib/ai/` with `?raw` imports.
+**AI config**: bundled prompts in `src/openhuman/agent/prompts/` ship via `tauri.conf.json` resources and are read core-side (`app/src/lib/ai/` holds agent-context helpers, not prompt loaders).
 
 ---
 
 ## Tauri shell (`app/src-tauri/`)
 
-Thin desktop host. Key modules: `core_process`, `core_rpc`, `cdp`, `cef_preflight`, `cef_profile`, `dictation_hotkeys`, `file_logging`, `mascot_native_window`, `screen_capture`, `window_state`, per-provider scanners (`discord_scanner`, `slack_scanner`, `telegram_scanner`, `whatsapp_scanner`, etc.), `meet_audio`/`meet_call`/`meet_video`, `fake_camera`, `webview_accounts`, `webview_apis`.
+Thin desktop host. Key modules: `core_process`, `core_rpc`, `cdp`, `cef_preflight`, `cef_profile`, `dictation_hotkeys`, `file_logging`, `mascot_native_window`, `screen_capture`, `window_state`, per-provider scanners (`discord_scanner`, `slack_scanner`, `telegram_scanner`, `whatsapp_scanner`, `wechat_scanner`, `gmessages_scanner`, `imessage_scanner`, `meet_scanner`), `meet_audio`/`meet_call`/`meet_video`, `fake_camera`, `webview_accounts`, `webview_apis`.
 
-IPC commands: `greet`, `write_ai_config_file`, `ai_get_config`, `ai_refresh_config`, `core_rpc_relay`, `core_rpc_token`, `start_core_process`, `restart_core_process`, window commands, `openhuman_*` daemon helpers.
+IPC commands (authoritative list: `generate_handler!` in `app/src-tauri/src/lib.rs`): `core_rpc::relay_http_rpc`, `core_rpc_url`, `core_rpc_token`, `start_core_process`/`restart_core_process`, update commands (`check_app_update`, `apply_core_update`, …), window commands (`activate_main_window`, `mascot_window_*`, `notch_window_*`), `webview_accounts::*`, `workspace_paths::*`, `artifact_commands::*`, hotkeys (dictation/PTT/companion), `meet_call::*`, `native_notifications::*`, `mcp_commands::*`, `loopback_oauth::*`.
 
 ### CEF child webviews — no new JS injection
 
@@ -175,9 +175,9 @@ Embedded provider webviews **must not** grow new JS injection. No new `.js` unde
 
 ### Domain layout (`src/openhuman/`)
 
-Domains: `about_app`, `accessibility`, `agent`, `app_state`, `approval`, `autocomplete`, `billing`, `channels`, `composio`, `config`, `context`, `cost`, `credentials`, `cron`, `doctor`, `embeddings`, `encryption`, `health`, `heartbeat`, `integrations`, `learning`, `local_ai`, `meet`, `meet_agent`, `memory`, `migration`, `node_runtime`, `notifications`, `overlay`, `people`, `prompt_injection`, `provider_surfaces`, `providers`, `redirect_links`, `referral`, `routing`, `scheduler_gate`, `screen_intelligence`, `security`, `service`, `skills`, `socket`, `subconscious`, `team`, `text_input`, `threads`, `tokenjuice`, `tool_timeout`, `tools`, `tree_summarizer`, `update`, `voice`, `wallet`, `webhooks`, `webview_accounts`, `webview_apis`, `webview_notifications`.
+~130 domain directories — authoritative list: `ls -d src/openhuman/*/`. Major families: agent (`agent`, `agent_experience`, `agent_meetings`, `agent_memory`, `agent_orchestration`, `agent_registry`, `agent_tool_policy`, `agentbox`, `orchestration`), memory (`memory`, `memory_archivist`, `memory_conversations`, `memory_diff`, `memory_goals`, `memory_queue`, `memory_search`, `memory_sources`, `memory_store`, `memory_sync`, `memory_tools`, `memory_tree`, `tinycortex`), skills/flows (`skills`, `skill_registry`, `skill_runtime`, `flows`, `tinyflows`, `tinyagents`, `rhai_workflows`), inference/AI (`inference`, `model_council`, `council_registry`, `embeddings`, `routing`), MCP (`mcp_audit`, `mcp_client`, `mcp_registry`, `mcp_server`), runtimes (`runtime_node`, `runtime_python`, `runtime_python_server`, `javascript`, `sandbox`, `cwd_jail`), channels/webviews (`channels`, `webview_accounts`, `webview_apis`, `webview_notifications`, `whatsapp_data`), meet (`meet`, `meet_agent`), web3 (`wallet`, `web3`, `x402`, `tokenjuice`), plus platform domains (`about_app`, `approval`, `config`, `cron`, `credentials`, `keyring`, `security`, `threads`, `tools`, `update`, `voice`, …).
 
-**Skills runtime removed**: QuickJS gone. `src/openhuman/skills/` is metadata-only now.
+**Skills runtime**: the QuickJS per-skill VM engine is gone. `src/openhuman/skills/` holds skill metadata/tool descriptors; execution of installed `SKILL.md` workflows lives in `src/openhuman/skill_runtime/` (starts/cancels runs, hosts the `skill_executor` agent, reuses `runtime_node`/`runtime_python`).
 
 **Rules:**
 
@@ -208,6 +208,33 @@ Domains: `about_app`, `accessibility`, `agent`, `app_state`, `approval`, `autoco
 ### `src/core/` — transport only
 
 Modules: `all`, `auth`, `cli`, `dispatch`, `event_bus/`, `jsonrpc`, `logging`, `observability`, `types`, etc. No business logic here.
+
+### Runtime composition — `ServiceSet` + `DomainSet` on `CoreBuilder`
+
+Two independent runtime axes on `CoreBuilder` (`src/core/runtime/builder.rs`):
+
+- **`ServiceSet`** selects which *background services / transports* run (`rpc_http`, `socketio`, `cron`, `channels`, `heartbeat`, …). Presets: `desktop()` / `headless_api()` / `none()`.
+- **`DomainSet`** selects which *domain families* exist at runtime, one flag per `DomainGroup` (`src/core/all.rs`). Presets: `full()` (default — byte-identical to before #4796), `harness()` (agent + memory + threads + config + security only), `none()`. Every controller is tagged with its `DomainGroup` at the single registration site in `src/core/all.rs`; the live surface (controllers/`/schema`/dispatch, agent tools, stores, subscribers) is filtered by the ambient `CoreContext::domains()`. A gated domain's controllers become unknown-method, its agent tools absent, its stores/subscribers uninitialized. `examples/embed_headless.rs` uses `DomainSet::harness()`. Per-gate Cargo `[features]` (children #4797–#4804) narrow the compile-time surface further; `DomainSet` is the runtime axis they compose with.
+
+### Compile-time domain gates (Cargo `[features]`)
+
+Per-domain Cargo features drop whole domains **at compile time** (smaller binary, fewer deps), composing with the runtime `DomainSet` axis above. Each gate is **default-ON**, so the desktop build is byte-identical; slim builds opt out explicitly.
+
+**Slim-profile convention** (no `full` meta-feature): build slim variants with `cargo build --no-default-features --features "<explicit list of gates you want>"`. This mirrors the existing standalone-feature style (`sandbox-landlock`, `browser-native`, …). Example — everything except voice:
+
+```bash
+# check / build without the voice + audio_toolkit domains
+GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml \
+  --no-default-features --features tokenjuice-treesitter
+```
+
+| Feature | Default | Gates | Drops deps |
+| ------- | ------- | ----- | ---------- |
+| `voice` | ON | `openhuman::voice` + `openhuman::audio_toolkit` domains — STT/TTS providers, dictation server, always-on listening, podcast audio + email | `hound`, `lettre` |
+
+**Facade pattern (pathfinder for the other gates).** `pub mod voice;` is **always compiled** as a facade: the real submodules are `#[cfg(feature = "voice")]`, and a `#[cfg(not(feature = "voice"))] mod stub;` (`src/openhuman/voice/stub.rs`) re-exposes the same public surface that always-on / other-gated callers use (`server`, `dictation_listener`, `streaming`, `reply_speech`, `cloud_transcribe`, `cli`, `create_stt_provider`, `effective_stt_provider`, `publish_ptt_transcript_committed`) with no-op / `None` / disabled-error bodies. Callers therefore do **not** need per-call `#[cfg]`. When voice is off: the voice/audio controllers are unregistered (unknown-method over `/rpc`, absent from `/schema`), the `audio_generate_podcast` agent tools are absent, and `openhuman voice` returns a "voice disabled" error. Stub signatures must match the real ones exactly — the disabled build (`--no-default-features --features tokenjuice-treesitter`) is the **only** thing that catches drift, so run it before pushing any change to the voice surface.
+
+**Scope note:** the `voice` gate does **not** drop `whisper-rs` / `llama` / `cpal`. Those live in the inference domain (`src/openhuman/inference/local/service/whisper_engine.rs`; `cpal` is shared with accessibility) and await a separate future `inference` gate. The issue-level DoD line claiming whisper is dropped is superseded by this scope correction.
 
 ### Event bus (`src/core/event_bus/`)
 
@@ -261,7 +288,7 @@ Specify → prove in Rust → prove over RPC → surface in UI → test.
 1. **Specify** — ground in existing domains, controller patterns, JSON-RPC naming (`openhuman.<namespace>_<function>`).
 2. **Implement in Rust** — domain logic + unit tests.
 3. **JSON-RPC E2E** — extend `tests/json_rpc_e2e.rs` / `scripts/test-rust-with-mock.sh`.
-4. **UI** — React + `core_rpc_relay`/`coreRpcClient`. Keep rules in core.
+4. **UI** — React + `coreRpcClient` (`relay_http_rpc`). Keep rules in core.
 5. **App unit tests** — Vitest.
 6. **App E2E** — desktop specs.
 

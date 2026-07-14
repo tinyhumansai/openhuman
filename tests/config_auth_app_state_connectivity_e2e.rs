@@ -70,7 +70,16 @@ use openhuman_core::openhuman::credentials::{
 const TEST_RPC_TOKEN: &str = "worker-a-domain-e2e-token";
 
 static AUTH_INIT: OnceLock<()> = OnceLock::new();
-static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+// This file is both its own integration target AND `#[path]`-included as
+// `base_coverage` by `raw_coverage/config_credentials_raw_coverage_e2e.rs`.
+// `ENV_LOCK` aliases `crate::SHARED_ENV_LOCK`, which resolves to this file's
+// own static when built standalone (separate process, isolated env) and to the
+// aggregate's shared static when nested into `raw_coverage_all` (so its env
+// mutations serialize against every other aggregated suite). The nested copy of
+// this static is simply unused.
+#[allow(dead_code)]
+pub static SHARED_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static ENV_LOCK: &OnceLock<Mutex<()>> = &crate::SHARED_ENV_LOCK;
 
 struct EnvVarGuard {
     key: &'static str,

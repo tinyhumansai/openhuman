@@ -130,6 +130,52 @@ fn trigger_kind_fires(kind: &TriggerKind) -> bool {
     )
 }
 
+/// Whether `graph`'s trigger fires **without a human in the loop** — i.e. on
+/// a timer, an inbound webhook, or a connected-app event, as opposed to
+/// `manual` (only ever fired by an explicit `flows_run`). Used by
+/// [`flows_create`] (issue B29 — save/enable safety, Rule 1) to decide
+/// whether a freshly-saved flow may persist `enabled: true` or must persist
+/// `enabled: false` until the user arms it explicitly via
+/// `flows_set_enabled`.
+///
+/// Deliberately broader than [`trigger_kind_fires`]: `webhook` is not yet
+/// wired to auto-dispatch in this host (see that fn's doc), but it WILL fire
+/// unattended the moment it is — so a webhook-trigger flow must not be handed
+/// to the user pre-armed either. Returns `false` for a graph with no single
+/// resolvable trigger node or no `trigger_kind` discriminator (never a
+/// surprise — it never self-fires).
+pub(crate) fn trigger_is_automatic(graph: &WorkflowGraph) -> bool {
+    let Some(trigger) = graph.trigger() else {
+        return false;
+    };
+    let Some(kind_value) = trigger.config.get("trigger_kind") else {
+        return false;
+    };
+    let Ok(kind) = serde_json::from_value::<TriggerKind>(kind_value.clone()) else {
+        return false;
+    };
+    matches!(
+        kind,
+        TriggerKind::Schedule | TriggerKind::AppEvent | TriggerKind::Webhook
+    )
+}
+
+/// Whether `graph` contains a node that can produce a real outbound side
+/// effect — `tool_call` (a curated integration action), `http_request`, or
+/// `code` (sandboxed but Turing-complete, can reach the network). Used by
+/// [`flows_create`] (issue B29, Rule 2) to force `require_approval: true` on
+/// any graph that can act on the world, regardless of what the caller
+/// passed. A graph built only from `trigger` / `agent` / `transform` /
+/// `condition` / data-flow nodes is read-only and unaffected.
+pub(crate) fn graph_has_outbound_side_effect(graph: &WorkflowGraph) -> bool {
+    graph.nodes.iter().any(|n| {
+        matches!(
+            n.kind,
+            NodeKind::ToolCall | NodeKind::HttpRequest | NodeKind::Code
+        )
+    })
+}
+
 /// Produces host-side, **non-fatal** validation warnings for a graph — today
 /// exactly one: "this trigger kind does not fire automatically yet". Returns
 /// an empty vec when the trigger fires (`manual`/`schedule`/`app_event`), when
@@ -1069,6 +1115,274 @@ pub(crate) async fn validate_tool_contracts(config: &Config, graph: &WorkflowGra
     errors
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Required-arg resolvability gate (issue B18)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `validate_tool_contracts` (above) proves a required arg is PRESENT
+// (`missing_required_args`: absent or literal `null`) — it has no opinion on
+// whether an arg wired to a real-looking `=`-expression actually RESOLVES to
+// something at runtime, and it says nothing at all about an arg the live
+// schema doesn't individually mark `required` even though the PROVIDER
+// enforces it as a business rule — e.g. `GMAIL_SEND_EMAIL.subject`/`.body`
+// are each individually optional in the schema, but Gmail rejects a send
+// where BOTH are empty ("At least one of 'subject' or 'body' must be
+// provided with non-empty content"). A builder can wire either to an
+// upstream path that looks fully wired but resolves `null`, and neither
+// static check above has anything to say about it.
+//
+// `crate::openhuman::flows::builder_tools::DryRunWorkflowTool` already
+// detects exactly this class of null resolution (`null_resolutions`) by
+// running the graph through the same MOCK sandbox — but only as information
+// the agent is *instructed* (by prompt, not enforced in code) to act on
+// before calling `propose_workflow`/`save_workflow`. Nothing previously
+// stopped those tools from persisting the graph anyway.
+// [`validate_required_arg_resolvability`] closes that gap: it re-runs the
+// identical sandbox check and escalates ANY arg of a real (non-`=`-derived,
+// non-native) `tool_call` node that resolved `null` to a hard reject, wired
+// into `propose_workflow` / `revise_workflow` / `save_workflow` alongside
+// [`validate_binding_resolvability`] and [`validate_tool_contracts`].
+
+/// Wall-clock bound on the sandbox run this gate performs. Mirrors
+/// `builder_tools::DRY_RUN_TIMEOUT_SECS`'s purpose but kept short: unlike the
+/// opt-in `dry_run_workflow` tool, this check runs on EVERY
+/// propose/revise/save call, so a slow or pathological draft must not stall
+/// authoring.
+const REQUIRED_ARG_NULL_CHECK_TIMEOUT_SECS: u64 = 15;
+
+/// Sandbox-executes `graph` against `tinyflows`' deterministic MOCK
+/// capabilities (the same shape `DryRunWorkflowTool` uses — see this
+/// section's module doc) and returns one human-readable error per arg of a
+/// real (non-`=`-derived, non-native) `tool_call` node whose `=`-expression
+/// resolved to `null` during that run **and** whose expression is wired to a
+/// specific upstream node's output (directly, via the implicit
+/// `item`/`items` scope, or explicitly via `nodes.<id>...`) rather than to
+/// the trigger.
+///
+/// This run always sandboxes against `json!({})` as the trigger payload (see
+/// below), so any arg wired to trigger-scoped data — `=item.<field>` /
+/// `=items...` fed directly from the trigger node, or `=run.<field>` (the
+/// trigger metadata itself) — legitimately resolves `null` here even though a
+/// real webhook/app-event/manual trigger WILL populate it at runtime. Hard
+/// gate that on an empty mock run would reject every ordinary trigger-bound
+/// workflow (Codex feedback on PR #4826). Only a `null` resolved from a
+/// genuine upstream **node** reference is escalated — that's the real B18
+/// bug this gate exists to catch: an arg wired to a node output path that can
+/// never resolve (e.g. `GMAIL_SEND_EMAIL.subject =
+/// "=nodes.build_body.item.subject"` where `build_body` never produces
+/// `subject`), which stays broken no matter what the trigger payload is.
+///
+/// Deliberately does **not** wrap the mock `ToolInvoker` in
+/// [`crate::openhuman::tinyflows::caps::PreflightToolInvoker`] the way
+/// `DryRunWorkflowTool` does: that wrapper aborts the WHOLE sandbox run the
+/// instant a node with a `stop` `on_error` policy (the default) hits a
+/// schema-required null arg, which would lose the per-field diagnostic this
+/// gate exists to report for every OTHER node — and this check cares about
+/// EVERY arg, not just ones the schema happens to mark `required`. The plain
+/// mock tool invoker always "succeeds" (a deterministic echo), so the run
+/// settles and every node's config-resolution diagnostics get captured
+/// regardless of on_error policy or schema required-ness.
+///
+/// Best-effort, same posture as [`validate_tool_contracts`]: a compile
+/// failure (structural errors are already caught by
+/// [`validate_and_migrate_graph`] before this gate ever runs) or a sandbox
+/// error/timeout is SKIPPED — never turned into a false rejection. This
+/// check only ever adds a diagnostic the sandbox actually observed.
+pub(crate) async fn validate_required_arg_resolvability(graph: &WorkflowGraph) -> Vec<String> {
+    use crate::openhuman::flows::builder_tools::CapturingObserver;
+    use crate::openhuman::tinyflows::caps::SchemaAwareMockAgentRunner;
+
+    let Ok(compiled) = tinyflows::compiler::compile(graph) else {
+        return Vec::new();
+    };
+
+    let caps = tinyflows::caps::mock::mock_capabilities_with_agent(SchemaAwareMockAgentRunner);
+
+    let observer = Arc::new(CapturingObserver::default());
+    let observer_dyn: Arc<dyn tinyflows::observability::RunObserver> = observer.clone();
+    let run = tinyflows::engine::run_with_observer(&compiled, json!({}), &caps, &observer_dyn);
+    if tokio::time::timeout(
+        std::time::Duration::from_secs(REQUIRED_ARG_NULL_CHECK_TIMEOUT_SECS),
+        run,
+    )
+    .await
+    .is_err()
+    {
+        // Timed out — a different class of problem than this gate exists to
+        // catch; never block authoring on it here.
+        return Vec::new();
+    }
+    // A sandbox `Err` outcome here is a compile/capability issue unrelated
+    // to null args (the plain mock invoker never itself fails) — surfaced by
+    // the other gates / `dry_run_workflow` instead; this gate only adds
+    // diagnostics from a run that actually settled, so an error is silently
+    // skipped rather than turned into a (misleading) empty-errors success.
+
+    let tool_call_slugs: std::collections::HashMap<&str, &str> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::ToolCall)
+        .filter_map(|n| {
+            let slug = n.config.get("slug").and_then(Value::as_str)?;
+            Some((n.id.as_str(), slug))
+        })
+        .collect();
+
+    // The trigger node's id, if any — used below to tell a trigger-scoped
+    // `item`/`items` reference (the direct predecessor IS the trigger) apart
+    // from a real upstream-node reference. Graphs are expected to have
+    // exactly one trigger; `flows_validate` rejects zero/multiple before this
+    // gate ever runs, so `first()` here doesn't hide ambiguity.
+    let trigger_id: Option<&str> = graph
+        .nodes
+        .iter()
+        .find(|n| n.kind == NodeKind::Trigger)
+        .map(|n| n.id.as_str());
+
+    let mut errors = Vec::new();
+    for step in observer.steps() {
+        let Some(&slug) = tool_call_slugs.get(step.node_id.as_str()) else {
+            continue;
+        };
+        // `=`-derived slugs resolve from upstream/trigger data at runtime;
+        // native `oh:` tools have no external-provider rejection mode.
+        if slug.starts_with('=') || slug.starts_with("oh:") {
+            continue;
+        }
+        for diag in &step.diagnostics {
+            let Some(field) = diag.location.strip_prefix("args.") else {
+                continue;
+            };
+            if is_trigger_scoped_expression(&diag.expression, graph, &step.node_id, trigger_id) {
+                // Legitimately empty in this gate's `{}` mock run — the real
+                // trigger (webhook/app-event/manual) will populate it. Not
+                // the B18 broken-wiring case this gate exists to catch.
+                tracing::debug!(
+                    target: "flows",
+                    node = %step.node_id,
+                    %slug,
+                    %field,
+                    expression = %diag.expression,
+                    "[flows] required-arg resolvability check: trigger-scoped null in empty \
+                     mock run — not rejecting"
+                );
+                continue;
+            }
+            tracing::warn!(
+                target: "flows",
+                node = %step.node_id,
+                %slug,
+                %field,
+                expression = %diag.expression,
+                "[flows] required-arg resolvability check: arg resolved null in sandbox — \
+                 rejecting"
+            );
+            errors.push(format!(
+                "Node '{}': arg `{field}` of `{slug}` (`{}`) resolved to `null` during a \
+                 sandboxed test run — an empty/missing `{field}` can be rejected by the real \
+                 provider at runtime (e.g. Gmail rejects a send with no subject or body). \
+                 Rewire it from an upstream node's output that actually has a value — call \
+                 dry_run_workflow to see exactly which upstream field is null — or drop the \
+                 field from args if it isn't really needed.",
+                step.node_id, diag.expression
+            ));
+        }
+    }
+    errors
+}
+
+/// Returns the node id an explicit `nodes.<id>...` expression addresses —
+/// either the legacy dotted shorthand (`=nodes.build_body.item.subject`) or
+/// the jq bracket form (`=.nodes["build_body"].item.subject`) — or `None` if
+/// the expression's root isn't the `nodes` scope key at all. The expression
+/// scope's shape (`item` / `items` / `run` / `nodes`) is documented on
+/// `tinyflows`'s `expr` module and `nodes::expr_scope`.
+fn explicit_nodes_ref(expr: &str) -> Option<&str> {
+    let body = expr.strip_prefix('=')?.trim();
+    let body = body.strip_prefix('.').unwrap_or(body);
+    let rest = body.strip_prefix("nodes")?;
+    if let Some(after_dot) = rest.strip_prefix('.') {
+        // Dotted shorthand: `nodes.<id>.item.<field>` — the id ends at the
+        // next `.` or `[`.
+        let id = after_dot.split(['.', '[']).next()?;
+        (!id.is_empty()).then_some(id)
+    } else if let Some(after_bracket) = rest.strip_prefix('[') {
+        // jq bracket form: `nodes["<id>"]` / `nodes['<id>']`.
+        let after_bracket = after_bracket.trim_start();
+        let after_bracket = after_bracket
+            .strip_prefix('"')
+            .or_else(|| after_bracket.strip_prefix('\''))
+            .unwrap_or(after_bracket);
+        let id = after_bracket.split(['"', '\'', ']']).next()?;
+        (!id.is_empty()).then_some(id)
+    } else {
+        // `rest` is empty (bare `nodes`) or continues some other identifier
+        // (e.g. a hypothetical `nodesomething` — not this scope key at all).
+        None
+    }
+}
+
+/// Whether a null-resolved config expression on `node_id` is scoped to the
+/// TRIGGER's data rather than a specific upstream node's output — and
+/// therefore legitimately empty in [`validate_required_arg_resolvability`]'s
+/// `{}` mock run rather than evidence of broken wiring (see that function's
+/// doc comment and the Codex feedback it links).
+///
+/// - `=run...` always addresses the trigger payload/metadata directly
+///   (`crate::openhuman::tinyflows`'s `expr_scope` docs) — always
+///   trigger-scoped.
+/// - `=nodes.<id>...` / `=.nodes["<id>"]...` explicitly names an upstream
+///   node. Trigger-scoped only if `<id>` IS the trigger node; naming any
+///   other node is exactly the B18 broken-wiring case this gate exists to
+///   catch, so it is never treated as trigger-scoped.
+/// - `=item...` / `=items...` implicitly addresses `node_id`'s direct
+///   predecessor(s) output. Trigger-scoped only when EVERY incoming edge to
+///   `node_id` comes from the trigger node — a fan-in that mixes the trigger
+///   with a real upstream node, or an `item`/`items` reference fed entirely
+///   by real upstream nodes, keeps the existing (reject) behavior, since a
+///   node that already ran in the sandbox is expected to have produced its
+///   real, deterministic output.
+/// - Anything else (a jq expression not rooted at one of the above, or a
+///   malformed one) is conservatively treated as NOT trigger-scoped, matching
+///   this gate's pre-existing behavior.
+fn is_trigger_scoped_expression(
+    expr: &str,
+    graph: &WorkflowGraph,
+    node_id: &str,
+    trigger_id: Option<&str>,
+) -> bool {
+    let body = expr.strip_prefix('=').unwrap_or(expr).trim();
+    let body = body.strip_prefix('.').unwrap_or(body);
+
+    if body == "run" || body.starts_with("run.") || body.starts_with("run[") {
+        return true;
+    }
+
+    if let Some(referenced_id) = explicit_nodes_ref(expr) {
+        return trigger_id == Some(referenced_id);
+    }
+
+    let is_item_scoped = body == "item"
+        || body.starts_with("item.")
+        || body.starts_with("item[")
+        || body == "items"
+        || body.starts_with("items.")
+        || body.starts_with("items[");
+    if !is_item_scoped {
+        return false;
+    }
+
+    let Some(trigger_id) = trigger_id else {
+        return false;
+    };
+    let mut predecessors = graph
+        .edges
+        .iter()
+        .filter(|e| e.to_node == node_id)
+        .peekable();
+    predecessors.peek().is_some() && predecessors.all(|e| e.from_node == trigger_id)
+}
+
 /// Validates a candidate graph without persisting it — the same
 /// migrate/validate path `flows_create` and `ProposeWorkflowTool` use — and
 /// reports structural errors alongside non-fatal trigger warnings
@@ -1194,13 +1508,42 @@ pub fn flows_import(
 
 /// Creates a new flow from a name and a raw graph JSON value.
 ///
-/// `store::create_flow` defaults new flows to `enabled = true` — this binds
-/// the flow's automatic-dispatch side effect (e.g. registers the
-/// schedule-trigger cron job) immediately, reusing the same [`bind_trigger`]
-/// helper `flows_set_enabled` uses. Without this, a freshly-created enabled
-/// schedule flow would silently never fire until an app restart (boot
-/// reconcile) or a manual disable→enable toggle. Best-effort, same as
-/// `flows_set_enabled`: a binding failure is logged, not fatal to create.
+/// Issue B29 (save/enable safety) — two server-side rules apply here,
+/// authoritative regardless of what the caller passed, so no creation path
+/// (prompt bar, scratch/template modal, proposal "save & enable", copilot
+/// `save_workflow`, …) can silently hand the user an armed, unattended
+/// automation:
+///
+/// - **Rule 1** ([`trigger_is_automatic`]): a graph whose trigger fires
+///   without a human in the loop (`schedule` / `app_event` / `webhook`)
+///   persists **disabled**. The user arms it explicitly via
+///   `flows_set_enabled` — the same toggle already used everywhere else. A
+///   `manual` trigger (or no trigger-kind discriminator at all) still
+///   persists enabled: it only ever runs via an explicit `flows_run`, so
+///   there is no surprise, and gating it would just add friction.
+///
+///   This means a caller that represents an explicit user-arming action
+///   (e.g. `WorkflowProposalCard`'s "Save & enable" click,
+///   `app/src/components/chat/WorkflowProposalCard.tsx`) must check the
+///   returned [`Flow`]'s `enabled` field and follow up with
+///   `flows_set_enabled(id, true)` when it comes back `false` — otherwise
+///   the button's own label lies to the user. That follow-up call is a
+///   legitimate, explicit enable, not the silent copilot auto-arm this rule
+///   exists to prevent (the copilot's `save_workflow` path has no such
+///   follow-up and stays disabled).
+/// - **Rule 2** ([`graph_has_outbound_side_effect`]): a graph containing any
+///   `tool_call` / `http_request` / `code` node — the three kinds that can
+///   produce a real outbound effect — forces `require_approval: true`,
+///   overriding whatever the caller passed. A read-only graph (only
+///   `trigger` / `agent` / `transform` / `condition` / data-flow nodes) is
+///   unaffected.
+///
+/// An enabled flow still has its automatic-dispatch side effect bound
+/// immediately (e.g. the schedule-trigger cron job registered), reusing the
+/// same [`bind_trigger`] helper `flows_set_enabled` uses — but per Rule 1
+/// that now only happens for a `manual`-triggered (or trigger-kind-less)
+/// flow. Best-effort, same as `flows_set_enabled`: a binding failure is
+/// logged, not fatal to create.
 pub async fn flows_create(
     config: &Config,
     name: String,
@@ -1208,16 +1551,62 @@ pub async fn flows_create(
     require_approval: bool,
 ) -> Result<RpcOutcome<Flow>, String> {
     let graph = validate_and_migrate_graph(graph_json)?;
-    tracing::debug!(target: "flows", %name, node_count = graph.nodes.len(), require_approval, "[flows] flows_create: persisting new flow");
-    let flow =
-        store::create_flow(config, name, graph, require_approval).map_err(|e| e.to_string())?;
+
+    // Rule 1: automatic triggers create DISABLED — the user must arm them
+    // explicitly.
+    let enabled = !trigger_is_automatic(&graph);
+
+    // Rule 2: any outbound side-effect node forces require_approval, no
+    // matter what the caller asked for.
+    let has_side_effect = graph_has_outbound_side_effect(&graph);
+    let effective_require_approval = require_approval || has_side_effect;
+    if has_side_effect && !require_approval {
+        tracing::info!(
+            target: "flows",
+            %name,
+            "[flows] flows_create: forcing require_approval=true — graph contains outbound \
+             side-effect node(s) (tool_call / http_request / code)"
+        );
+    }
+
+    tracing::debug!(
+        target: "flows",
+        %name,
+        node_count = graph.nodes.len(),
+        enabled,
+        require_approval = effective_require_approval,
+        "[flows] flows_create: persisting new flow"
+    );
+    let flow = store::create_flow(config, name, graph, effective_require_approval, enabled)
+        .map_err(|e| e.to_string())?;
 
     if flow.enabled {
         tracing::debug!(target: "flows", flow_id = %flow.id, "[flows] flows_create: flow is enabled — binding automatic-dispatch trigger");
         bind_trigger(config, &flow);
     }
 
-    Ok(RpcOutcome::single_log(flow, "flow created"))
+    let mut logs = vec!["flow created".to_string()];
+    if !enabled {
+        let trigger_label = flow
+            .graph
+            .trigger()
+            .and_then(|t| t.config.get("trigger_kind"))
+            .and_then(Value::as_str)
+            .unwrap_or("automatic");
+        logs.push(format!(
+            "Flow created DISABLED because it has an automatic trigger ({trigger_label}). \
+             Enable it explicitly (flows_set_enabled) when you are ready for it to fire."
+        ));
+    }
+    if effective_require_approval && !require_approval {
+        logs.push(
+            "require_approval forced to true because the graph contains outbound side-effect \
+             nodes (tool_call / http_request / code)."
+                .to_string(),
+        );
+    }
+
+    Ok(RpcOutcome::new(flow, logs))
 }
 
 /// Duplicates a saved flow: creates an independent copy of its graph under a

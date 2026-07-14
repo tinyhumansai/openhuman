@@ -382,6 +382,7 @@ fn workload_override_respected() {
 
 #[test]
 fn create_chat_provider_uses_role() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
     let mut config = Config::default();
     config.cloud_providers.push(openai_entry("p_oai", "openai"));
     config.reasoning_provider = Some("openai:gpt-4o-mini".to_string());
@@ -463,6 +464,7 @@ fn managed_backend_summarization_ignores_default_model() {
 // run summarization on a BYOK/local `memory_provider` instead.
 #[test]
 fn managed_backend_summarization_ignores_cloud_llm_model_override() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
     let mut config = Config::default();
     config.memory_tree.cloud_llm_model = Some("chat-v1".to_string());
     let (_, model) = create_chat_provider_from_string("summarization", "openhuman", &config)
@@ -482,6 +484,7 @@ fn managed_backend_summarization_ignores_cloud_llm_model_override() {
 // `code_executor` agent (`hint = "coding"`) makes when it spawns.
 #[test]
 fn subagent_hint_resolves_to_tier_on_managed_backend() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
     use crate::openhuman::config::{
         MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CODING_V1, MODEL_REASONING_V1,
     };
@@ -527,6 +530,7 @@ fn managed_backend_chat_role_inherits_default_model() {
 // `provider_for_role` resolves the per-workload route before the managed path.
 #[test]
 fn coding_workload_byok_route_wins_over_managed_pin() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
     let mut config = Config::default();
     config
         .cloud_providers
@@ -668,7 +672,7 @@ async fn cloud_provider_without_stored_key_fails_with_actionable_error() {
         .await
         .expect_err("missing key should fail at call time");
     assert!(
-        err.to_string().contains("API key not set"),
+        err.to_string().contains("provide an API key"),
         "expected missing-key guidance, got: {err}"
     );
 }
@@ -729,12 +733,14 @@ async fn cloud_provider_with_malformed_endpoint_surfaces_url_error() {
 
 #[test]
 fn primary_cloud_defaults_to_openhuman_when_no_providers() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
     let config = Config::default();
     assert!(create_chat_provider("reasoning", &config).is_ok());
 }
 
 #[test]
 fn cloud_sentinel_resolves_to_primary_custom_provider() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
     let mut config = config_with_providers(vec![oh_entry("p_oh"), openai_entry("p_oai", "openai")]);
     config.primary_cloud = Some("p_oai".to_string());
 
@@ -835,6 +841,7 @@ fn unknown_workload_falls_back_to_openhuman() {
 
 #[test]
 fn openhuman_backend_uses_config_path_parent_as_state_dir() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
     let mut config = Config::default();
     config.config_path = std::path::PathBuf::from("/tmp/oh-test-workspace/config.toml");
     let (_provider, model) = create_chat_provider("reasoning", &config)
@@ -1191,6 +1198,7 @@ fn managed_backend_pins_subconscious_role_to_chat_tier() {
 
 #[test]
 fn create_chat_provider_subconscious_managed_resolves_chat_v1() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
     // End-to-end of the managed tick path: provider role `subconscious` with the
     // hint default_model, no BYOK subconscious_provider → managed backend, model
     // pinned to chat-v1 (no regression vs the pre-change chat-role behaviour).
@@ -1206,6 +1214,11 @@ fn create_chat_provider_subconscious_honours_byok_route() {
     // When the user pins a concrete cloud provider for the subconscious workload
     // in Connections → API keys → LLM, the factory builds that provider and returns
     // its exact model id.
+    // Serialize with the process-global `test_provider_override` (installed by the
+    // `create_chat_model` seam tests): while an override is active, every
+    // `create_chat_provider` returns the sentinel `mock-model`, so an unguarded
+    // read here can race it and see `mock-model` instead of the resolved BYOK id.
+    let _guard = crate::openhuman::inference::inference_test_guard();
     let mut config = Config::default();
     config.cloud_providers.push(openai_entry("p_oai", "openai"));
     config.subconscious_provider = Some("openai:gpt-4o-mini".to_string());
@@ -1805,11 +1818,10 @@ async fn lmstudio_provider_does_not_fall_back_to_responses_on_404() {
     );
 }
 
-/// Counterpart to the no-fallback tests: a cloud provider (responses_fallback=true)
-/// MUST retry against `/v1/responses` when chat/completions returns 404.
-/// This guards against an accidental inversion of the supports_responses_fallback flag.
+/// Generic crate-native cloud providers do not speculate that a chat 404 means
+/// the endpoint implements the Responses API.
 #[tokio::test]
-async fn cloud_provider_falls_back_to_responses_on_404() {
+async fn cloud_provider_does_not_fall_back_to_responses_on_404() {
     let mock_server = MockServer::start().await;
 
     // chat/completions returns 404 → should trigger fallback.
@@ -1823,7 +1835,7 @@ async fn cloud_provider_falls_back_to_responses_on_404() {
         .mount(&mock_server)
         .await;
 
-    // /v1/responses MUST be called — the provider should fall back to it.
+    // Responses is primary-only on tinyagents; a chat provider does not retry it.
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
         .respond_with(
@@ -1831,7 +1843,7 @@ async fn cloud_provider_falls_back_to_responses_on_404() {
                 r#"{"output":[{"content":[{"type":"output_text","text":"ok"}]}]}"#,
             ),
         )
-        .expect(1) // must be called exactly once
+        .expect(0)
         .mount(&mock_server)
         .await;
 
@@ -1852,14 +1864,8 @@ async fn cloud_provider_falls_back_to_responses_on_404() {
         create_chat_provider_from_string("chat", "test-cloud:test-model", &config)
             .expect("cloud provider must build");
 
-    // The call should succeed via the responses fallback.
     let result = provider.chat_with_system(None, "hello", &model, 0.0).await;
-
-    // wiremock verifies expect(1) on the responses mock when the server is dropped.
-    // We don't assert Ok here because the provider may return an error even after a
-    // successful fallback call (e.g. if the response body doesn't fully satisfy parsing).
-    // The important invariant is that /v1/responses was called — verified by wiremock.
-    drop(result);
+    assert!(result.is_err());
 }
 
 /// TAURI-RUST-5EN: a built-in chat-completions-only cloud provider (DeepSeek)
@@ -1925,12 +1931,10 @@ async fn deepseek_builtin_does_not_fall_back_to_responses_on_404() {
     // wiremock verifies expect(0) on /v1/responses when the server is dropped.
 }
 
-/// Counterpart guard: a custom (non-built-in) Bearer slug KEEPS the responses
-/// fallback — its endpoint may be a genuine OpenAI proxy that serves
-/// `/v1/responses`. Ensures the 5EN slug-gate only disables the fallback for
-/// known chat-completions-only built-ins, not for unknown providers.
+/// Custom Bearer providers also remain on their configured Chat Completions
+/// protocol; Responses routing must be selected explicitly.
 #[tokio::test]
-async fn custom_bearer_provider_keeps_responses_fallback_on_404() {
+async fn custom_bearer_provider_does_not_fall_back_to_responses_on_404() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -1943,7 +1947,6 @@ async fn custom_bearer_provider_keeps_responses_fallback_on_404() {
         .mount(&mock_server)
         .await;
 
-    // Unknown slug → fallback retained → /v1/responses MUST be called.
     Mock::given(method("POST"))
         .and(path("/v1/responses"))
         .respond_with(
@@ -1951,7 +1954,7 @@ async fn custom_bearer_provider_keeps_responses_fallback_on_404() {
                 r#"{"output":[{"content":[{"type":"output_text","text":"ok"}]}]}"#,
             ),
         )
-        .expect(1)
+        .expect(0)
         .mount(&mock_server)
         .await;
 
@@ -1981,9 +1984,7 @@ async fn custom_bearer_provider_keeps_responses_fallback_on_404() {
             .expect("custom bearer provider must build");
 
     let result = provider.chat_with_system(None, "hello", &model, 0.0).await;
-    drop(result);
-
-    // wiremock verifies expect(1) on /v1/responses when the server is dropped.
+    assert!(result.is_err());
 }
 
 #[tokio::test]
@@ -2808,4 +2809,351 @@ async fn create_chat_model_wraps_provider_and_round_trips() {
         .await
         .expect("invoke must succeed");
     assert_eq!(response.text(), "echo: hi there");
+}
+
+// ── Motion B (#4727): managed-backend crate-native routing ──────────────────
+// `create_chat_model` must route the managed OpenHuman backend through the
+// crate-native `OpenHumanBackendModel` (which advertises no static profile),
+// while BYOK/local roles keep the `ProviderModel`-wrapped path (profile
+// `Some`). The `profile()` discriminant is the cheapest observable that tells
+// the two construction paths apart without a network round-trip.
+
+#[test]
+fn resolves_to_managed_backend_for_default_config_but_not_for_local() {
+    // A default config has no BYOK/cloud providers, so every chat-tier role
+    // resolves to the managed OpenHuman backend.
+    let managed = Config::default();
+    assert!(resolves_to_managed_backend("chat", &managed));
+    assert!(resolves_to_managed_backend("reasoning", &managed));
+
+    // Pointing the chat role at a local runtime opts it out of the managed path.
+    let mut local = Config::default();
+    local.chat_provider = Some("ollama:qwen2.5".to_string());
+    assert!(!resolves_to_managed_backend("chat", &local));
+}
+
+#[test]
+fn create_chat_model_routes_managed_backend_to_crate_native() {
+    use tinyagents::harness::model::ChatModel;
+
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    // No test-provider override installed → the managed short-circuit engages.
+    let config = Config::default();
+    let (model, _model_id) = create_chat_model_with_model_id("chat", &config, 0.7)
+        .expect("managed create_chat_model must build");
+    // The crate-native `OpenHumanBackendModel` serves every tier via
+    // `request.model`, so it advertises no single static profile.
+    assert!(
+        model.profile().is_none(),
+        "managed backend must build the crate-native OpenHumanBackendModel (profile None)"
+    );
+}
+
+#[test]
+fn create_chat_model_routes_local_runtime_to_crate_native() {
+    use tinyagents::harness::model::ChatModel;
+
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    let mut config = Config::default();
+    config.chat_provider = Some("ollama:qwen2.5".to_string());
+    let (model, model_id) = create_chat_model_with_model_id("chat", &config, 0.7)
+        .expect("local create_chat_model must build");
+    assert_eq!(model_id, "qwen2.5");
+    // Motion B (#4727): a local runtime now builds a crate-native `OpenAiModel`
+    // (not a `ProviderModel` wrapper), so its profile carries the concrete
+    // provider slug — `ollama`, not the adapter's neutral `local`/`remote` — and
+    // native tools + vision are forced off (Ollama rejects the OpenAI `tools`
+    // param and is text-only here).
+    let profile = model
+        .profile()
+        .expect("crate-native local model exposes a profile");
+    assert_eq!(profile.provider.as_deref(), Some("ollama"));
+    assert!(!profile.tool_calling, "Ollama disables native tool calling");
+    assert!(!profile.modalities.image_in, "Ollama is text-only here");
+}
+
+#[test]
+fn explicit_local_provider_string_routes_to_crate_native_model() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    let config = Config::default();
+    let (model, model_id) =
+        create_chat_model_from_string_with_model_id("chat", "ollama:qwen2.5", &config, 0.7)
+            .expect("explicit local model must build");
+    assert_eq!(model_id, "qwen2.5");
+    assert_eq!(
+        model
+            .profile()
+            .and_then(|profile| profile.provider.as_deref()),
+        Some("ollama")
+    );
+}
+
+#[test]
+fn try_create_local_runtime_returns_none_for_managed_and_cloud() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    // Default config resolves to the managed backend, not a local runtime.
+    assert!(try_create_local_runtime_chat_model("chat", &Config::default()).is_none());
+    // A BYOK cloud slug is not a local runtime either — it falls through to the
+    // `Provider` path.
+    let mut cloud = Config::default();
+    cloud.cloud_providers.push(openai_entry("p_oai", "openai"));
+    cloud.chat_provider = Some("openai:gpt-4o-mini".to_string());
+    assert!(try_create_local_runtime_chat_model("chat", &cloud).is_none());
+}
+
+// ── Motion B (#4727 Phase 3): wire-equivalent BYOK cloud-slug cutover ────────
+
+fn deepseek_entry(id: &str) -> CloudProviderCreds {
+    CloudProviderCreds {
+        id: id.to_string(),
+        slug: "deepseek".to_string(),
+        label: "DeepSeek".to_string(),
+        endpoint: "https://api.deepseek.com/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: Some("deepseek-chat".to_string()),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn create_chat_model_routes_plain_bearer_cloud_slug_to_crate_native() {
+    use tinyagents::harness::model::ChatModel;
+
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    // DeepSeek is a built-in chat-completions-only Bearer provider: no
+    // `/v1/responses` fallback and no codex-oauth, so it is wire-equivalent and
+    // flips crate-native.
+    let mut config = Config::default();
+    config.cloud_providers.push(deepseek_entry("p_ds"));
+    config.chat_provider = Some("deepseek:deepseek-reasoner".to_string());
+    let (model, model_id) = create_chat_model_with_model_id("chat", &config, 0.7)
+        .expect("bearer cloud create_chat_model must build");
+    assert_eq!(model_id, "deepseek-reasoner");
+    let profile = model
+        .profile()
+        .expect("crate-native cloud model exposes a profile");
+    assert_eq!(profile.provider.as_deref(), Some("deepseek"));
+    // A generic cloud model keeps native tool calling + vision on (unlike the
+    // local runtimes), so this is the crate `OpenAiModel` default profile.
+    assert!(profile.tool_calling);
+}
+
+#[test]
+fn explicit_cloud_provider_string_routes_to_crate_native_model() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    let mut config = Config::default();
+    config.cloud_providers.push(deepseek_entry("p_ds"));
+    let (model, model_id) = create_chat_model_from_string_with_model_id(
+        "chat",
+        "deepseek:deepseek-reasoner",
+        &config,
+        0.7,
+    )
+    .expect("explicit cloud model must build");
+    assert_eq!(model_id, "deepseek-reasoner");
+    assert_eq!(
+        model
+            .profile()
+            .and_then(|profile| profile.provider.as_deref()),
+        Some("deepseek")
+    );
+}
+
+#[test]
+fn create_chat_model_routes_anthropic_auth_cloud_slug_to_crate_native() {
+    use tinyagents::harness::model::ChatModel;
+
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    // Anthropic-auth cloud slugs are always wire-equivalent (their endpoints have
+    // no `/v1/responses`, so the host's dormant fallback is behavior-neutral).
+    let mut config = Config::default();
+    config
+        .cloud_providers
+        .push(anthropic_entry("p_anth", "anthropic"));
+    config.chat_provider = Some("anthropic:claude-sonnet-4-6".to_string());
+    let (model, model_id) = create_chat_model_with_model_id("chat", &config, 0.7)
+        .expect("anthropic cloud create_chat_model must build");
+    assert_eq!(model_id, "claude-sonnet-4-6");
+    assert_eq!(
+        model.profile().and_then(|p| p.provider.as_deref()),
+        Some("anthropic")
+    );
+}
+
+#[test]
+fn try_create_cloud_slug_flips_openai_but_declines_non_cloud() {
+    use tinyagents::harness::model::ChatModel;
+
+    let _guard = crate::openhuman::inference::inference_test_guard();
+    // `openai` (API-key Bearer, no codex OAuth) now flips crate-native on Chat
+    // Completions — the legacy `/v1/responses` fallback is not replicated.
+    let mut openai = Config::default();
+    openai.cloud_providers.push(openai_entry("p_oai", "openai"));
+    openai.chat_provider = Some("openai:gpt-4o-mini".to_string());
+    let (model, model_id) = try_create_cloud_slug_chat_model("chat", &openai)
+        .expect("openai should flip crate-native")
+        .expect("build");
+    assert_eq!(model_id, "gpt-4o-mini");
+    assert_eq!(
+        model.profile().and_then(|p| p.provider.as_deref()),
+        Some("openai")
+    );
+
+    // Managed (default), local runtimes, and unconfigured slugs are not cloud
+    // slugs — they decline and fall through to their own paths.
+    assert!(try_create_cloud_slug_chat_model("chat", &Config::default()).is_none());
+    let mut local = Config::default();
+    local.chat_provider = Some("ollama:qwen2.5".to_string());
+    assert!(try_create_cloud_slug_chat_model("chat", &local).is_none());
+    let mut unconfigured = Config::default();
+    unconfigured.chat_provider = Some("deepseek:deepseek-chat".to_string());
+    assert!(try_create_cloud_slug_chat_model("chat", &unconfigured).is_none());
+}
+
+/// Real-path smoke (privacy epic S2, #4436): driving the actual inference
+/// chokepoint `create_chat_provider_from_string` with an EXTERNAL provider must
+/// publish an `ExternalTransferPending` egress event — proving the emit is wired
+/// into the live construction path, not merely callable in isolation.
+/// Complements the isolated emit unit tests in `security::egress`.
+#[tokio::test]
+async fn from_string_external_provider_emits_egress_realpath() {
+    use crate::core::event_bus::{init_global, DomainEvent, DEFAULT_CAPACITY};
+    use crate::openhuman::security::egress::EgressReason;
+
+    init_global(DEFAULT_CAPACITY);
+    let mut rx = crate::core::event_bus::global().unwrap().raw_receiver();
+
+    let config = Config::default();
+    // External provider → real chokepoint must emit BEFORE constructing.
+    let _ = create_chat_provider_from_string("agentic", "openai:gpt-4o-mini", &config);
+
+    // Bus is process-wide; drain past unrelated events until our descriptor lands.
+    let found = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            match rx.recv().await {
+                Ok(DomainEvent::ExternalTransferPending { descriptor, .. })
+                    if descriptor.provider_slug == "openai"
+                        && descriptor.is_external
+                        && matches!(descriptor.reason, EgressReason::Inference) =>
+                {
+                    return descriptor;
+                }
+                Ok(_) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    panic!("event bus closed before ExternalTransferPending arrived")
+                }
+            }
+        }
+    })
+    .await;
+
+    assert!(
+        found.is_ok(),
+        "external inference via create_chat_provider_from_string must publish ExternalTransferPending"
+    );
+}
+
+/// Real-path smoke (privacy epic S2, #4436): the crate-native ChatModel path
+/// `create_chat_model_with_model_id` — the path production agent turns use
+/// post-#4784 — must emit EXACTLY ONE egress descriptor for a managed-backend
+/// (external) construction. Regression guard for the gap where emit lived only
+/// on the legacy `Provider` path, so the default managed turn disclosed nothing.
+#[tokio::test]
+async fn create_chat_model_managed_emits_exactly_one_egress_realpath() {
+    use crate::core::event_bus::{init_global, publish_global, DomainEvent, DEFAULT_CAPACITY};
+    use crate::openhuman::security::egress::{EgressDescriptor, EgressReason};
+    use std::time::Duration;
+
+    init_global(DEFAULT_CAPACITY);
+    let mut rx = crate::core::event_bus::global().unwrap().raw_receiver();
+
+    // Unique model marker so the process-wide bus can't confuse a concurrent
+    // test's managed event with ours. `heartbeat` has no managed tier and
+    // resolves to the managed backend, so `default_model` flows through verbatim.
+    let marker = "egress-managed-realpath-marker-v1";
+    let mut config = Config::default();
+    config.default_model = Some(marker.to_string());
+    let _ = create_chat_model_with_model_id("heartbeat", &config, 0.7);
+
+    // Bound the drain with a unique sentinel published AFTER our construction.
+    let sentinel = "egress-managed-sentinel-end";
+    publish_global(DomainEvent::ExternalTransferPending {
+        descriptor: EgressDescriptor::network_fetch(sentinel),
+        thread_id: None,
+        client_id: None,
+    });
+
+    let mut count = 0usize;
+    loop {
+        match tokio::time::timeout(Duration::from_secs(3), rx.recv()).await {
+            Ok(Ok(DomainEvent::ExternalTransferPending { descriptor, .. })) => {
+                if descriptor.service == marker {
+                    assert_eq!(descriptor.provider_slug, "openhuman");
+                    assert!(descriptor.is_external, "managed backend is external");
+                    assert!(matches!(descriptor.reason, EgressReason::Inference));
+                    count += 1;
+                } else if descriptor.service == sentinel {
+                    break;
+                }
+            }
+            Ok(Ok(_)) => continue,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                panic!("event bus closed before sentinel arrived")
+            }
+            Err(_) => panic!("timed out before egress sentinel arrived"),
+        }
+    }
+    assert_eq!(
+        count, 1,
+        "managed inference via create_chat_model_with_model_id must emit EXACTLY ONE egress descriptor (no miss, no double)"
+    );
+}
+
+/// Real-path smoke (privacy epic S2, #4436): a LOCAL runtime construction on the
+/// crate-native ChatModel path must NOT publish an `ExternalTransferPending`
+/// (nothing leaves the device — it is disclosed as non-external, no event).
+#[tokio::test]
+async fn create_chat_model_local_runtime_does_not_emit_egress_realpath() {
+    use crate::core::event_bus::{init_global, publish_global, DomainEvent, DEFAULT_CAPACITY};
+    use crate::openhuman::security::egress::EgressDescriptor;
+    use std::time::Duration;
+
+    init_global(DEFAULT_CAPACITY);
+    let mut rx = crate::core::event_bus::global().unwrap().raw_receiver();
+
+    let local_marker = "egress-local-realpath-marker";
+    let mut config = Config::default();
+    config.chat_provider = Some(format!("ollama:{local_marker}"));
+    let _ = create_chat_model_with_model_id("chat", &config, 0.7);
+
+    // Sentinel bounds the drain; if the local marker ever appears as an external
+    // transfer before it, the local-suppression contract is broken.
+    let sentinel = "egress-local-sentinel-end";
+    publish_global(DomainEvent::ExternalTransferPending {
+        descriptor: EgressDescriptor::network_fetch(sentinel),
+        thread_id: None,
+        client_id: None,
+    });
+
+    loop {
+        match tokio::time::timeout(Duration::from_secs(3), rx.recv()).await {
+            Ok(Ok(DomainEvent::ExternalTransferPending { descriptor, .. })) => {
+                assert_ne!(
+                    descriptor.service, local_marker,
+                    "local runtime must NOT publish ExternalTransferPending"
+                );
+                if descriptor.service == sentinel {
+                    break;
+                }
+            }
+            Ok(Ok(_)) => continue,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                panic!("event bus closed before sentinel arrived")
+            }
+            Err(_) => panic!("timed out before egress sentinel arrived"),
+        }
+    }
 }

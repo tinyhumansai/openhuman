@@ -464,7 +464,7 @@ async fn try_arm(
     ];
 
     let request = AgentTurnRequest {
-        provider: Arc::clone(&resolved.provider),
+        turn_model_source: resolved.turn_model_source.clone(),
         history,
         tools_registry: Arc::new(Vec::new()),
         provider_name: resolved.provider_name.clone(),

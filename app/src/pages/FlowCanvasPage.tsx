@@ -76,6 +76,42 @@ export function asCopilotBuildSeed(state: unknown): CopilotBuildSeed | null {
   return { description };
 }
 
+/**
+ * Seed for opening the canvas copilot with its input PRE-FILLED (never
+ * auto-sent) — the Suggested Workflows "Build this" action navigates here
+ * with the suggestion's `build_prompt` so the user can review/edit it before
+ * pressing Send themselves. Rides in `location.state` (ephemeral — lost on
+ * hard reload, which just leaves a blank flow with an empty copilot input).
+ */
+export interface CopilotPrefillSeed {
+  /** The text to populate the copilot's composer with, unsent. */
+  text: string;
+  /**
+   * The builder mode the FIRST Send after this prefill should use (mirrors
+   * `CopilotBuildSeed`'s auto-sent `mode: 'build'` turn). Suggested
+   * Workflows' "Build this" always seeds `'build'` — the flow this prefill
+   * targets was JUST created blank, matching the server's `BuildMode::Build`
+   * contract ("the flow already exists ... design the graph and verify it
+   * with dry_run_workflow") — rather than the panel's default `revise` turn,
+   * which would treat the blank graph as an existing draft to merely tweak.
+   * Defaults to `'build'` if omitted (the only seed producer today), so an
+   * older/partial route state still gets the correct first-send mode.
+   */
+  mode?: 'build' | 'create';
+}
+
+/** Narrow an opaque `location.state` to a {@link CopilotPrefillSeed}. */
+export function asCopilotPrefillSeed(state: unknown): CopilotPrefillSeed | null {
+  if (!state || typeof state !== 'object') return null;
+  const seed = (state as Record<string, unknown>).copilotPrefill;
+  if (!seed || typeof seed !== 'object') return null;
+  const text = (seed as Record<string, unknown>).text;
+  if (typeof text !== 'string' || text.trim().length === 0) return null;
+  const rawMode = (seed as Record<string, unknown>).mode;
+  const mode = rawMode === 'build' || rawMode === 'create' ? rawMode : 'build';
+  return { text, mode };
+}
+
 /** Narrow an opaque `location.state` to a {@link CopilotRepairSeed}. */
 export function asCopilotRepairSeed(state: unknown): CopilotRepairSeed | null {
   if (!state || typeof state !== 'object') return null;
@@ -138,6 +174,9 @@ function FlowEditor({
   initialCopilotSeed = null,
   initialBuildSeed = null,
   onBuildSeedConsumed,
+  initialPrefillSeed = null,
+  onPrefillSeedConsumed,
+  locationKey,
 }: {
   editorFlow: EditorFlow;
   initialCopilotSeed?: CopilotRepairSeed | null;
@@ -145,6 +184,20 @@ function FlowEditor({
   initialBuildSeed?: CopilotBuildSeed | null;
   /** Clear the route's build seed once the copilot has dispatched it (#4597). */
   onBuildSeedConsumed?: () => void;
+  /** Suggested Workflows seed: open the copilot with its input pre-filled (unsent). */
+  initialPrefillSeed?: CopilotPrefillSeed | null;
+  /** Clear the route's prefill seed once the copilot has consumed it. */
+  onPrefillSeedConsumed?: () => void;
+  /**
+   * The route's `location.key` (issue B22) — react-router mints a fresh one on
+   * every navigation, including a same-path repeat navigation (e.g. the "Fix
+   * with agent" action from {@link FlowRunsSidebar}, which stays on this same
+   * `/flows/:id` route and so does NOT remount `FlowEditor`). Folded into the
+   * copilot panel's `key` below so a repair seed arriving without a page-level
+   * remount still forces a fresh panel mount — required for the panel's
+   * once-per-mount auto-fire guard (`repairSentRef`) to actually fire again.
+   */
+  locationKey: string;
 }) {
   const { t } = useT();
   const navigate = useNavigate();
@@ -204,8 +257,21 @@ function FlowEditor({
   // commits the proposed graph into `draftGraph`; Reject reverts to the frozen
   // base. NOTHING here persists — the canvas's own Save is the only gate.
   const [copilotOpen, setCopilotOpen] = useState(
-    initialCopilotSeed !== null || initialBuildSeed !== null
+    initialCopilotSeed !== null || initialBuildSeed !== null || initialPrefillSeed !== null
   );
+  // Issue B22: a repair seed can also arrive WITHOUT a `FlowEditor` remount —
+  // "Fix with agent" clicked from `FlowRunsSidebar` stays on this same
+  // `/flows/:id` route (only `location.state`/`location.key` change), so the
+  // `useState` initializer above (mount-only) won't re-open the panel for it.
+  // Re-assert open whenever a new repair seed prop arrives — done during
+  // render (React's "adjusting state when a prop changes" pattern) rather
+  // than a `useEffect`, so it lands in the same render pass instead of an
+  // extra one.
+  const [seenCopilotSeed, setSeenCopilotSeed] = useState(initialCopilotSeed);
+  if (initialCopilotSeed !== seenCopilotSeed) {
+    setSeenCopilotSeed(initialCopilotSeed);
+    if (initialCopilotSeed) setCopilotOpen(true);
+  }
   // Per-workflow copilot thread: seeded from the session cache so opening/closing
   // the panel (or switching flows and back) resumes the same conversation
   // instead of starting a fresh `workflow_builder` thread each time.
@@ -323,6 +389,14 @@ function FlowEditor({
   // the new flow's canonical `/flows/:id` canvas so further saves update it.
   // Rejections propagate so the canvas surfaces the failure inline (and leaves
   // the draft dirty).
+  //
+  // Issue B21: `flows_update` re-validates/normalizes the graph server-side
+  // (schema migration, id defaults, port normalization, etc.) before
+  // persisting, so the canonical saved shape can differ from what the client
+  // sent. Re-sync the canvas draft from the RESPONSE (not just the just-sent
+  // `next`) and bump `canvasVersion` so the editable canvas re-seeds from the
+  // canonical persisted graph immediately — matching what a navigate-away-
+  // and-back remount would show, without requiring one.
   const handleSave = useCallback(
     async (next: WorkflowGraph) => {
       if (isDraft) {
@@ -338,9 +412,17 @@ function FlowEditor({
         return;
       }
       log('save: flow id=%s nodes=%d edges=%d', flowId, next.nodes.length, next.edges.length);
-      await updateFlow(flowId, { graph: next });
-      persistedGraphRef.current = next;
-      log('save: flow id=%s persisted', flowId);
+      const updated = await updateFlow(flowId, { graph: next });
+      const persisted = updated.graph as WorkflowGraph;
+      persistedGraphRef.current = persisted;
+      setDraftGraph(persisted);
+      setCanvasVersion(v => v + 1);
+      log(
+        'save: flow id=%s persisted — canvas re-synced from response nodes=%d edges=%d',
+        flowId,
+        persisted.nodes.length,
+        persisted.edges.length
+      );
     },
     [isDraft, flowId, name, requireApproval, navigate]
   );
@@ -534,6 +616,14 @@ function FlowEditor({
 
         {copilotOpen && (
           <WorkflowCopilotPanel
+            // Stable ('copilot') across manual open/close and build-seed
+            // navigations (unaffected — those always land on a fresh
+            // `FlowEditor` mount already, see `locationKey`'s doc comment).
+            // Repair seeds fold in `locationKey` so a same-route "Fix with
+            // agent" click (no `FlowEditor` remount) still forces a fresh
+            // panel mount, resetting the once-per-mount `repairSentRef` guard
+            // so the repair turn actually (re)fires (issue B22).
+            key={initialCopilotSeed ? `copilot-repair-${locationKey}` : 'copilot'}
             graph={preview?.base ?? draftGraph}
             flowId={flowId}
             onProposal={handleProposal}
@@ -543,6 +633,8 @@ function FlowEditor({
             repairSeed={copilotRepairSeed}
             buildSeed={initialBuildSeed}
             onBuildSeedConsumed={onBuildSeedConsumed}
+            prefillSeed={initialPrefillSeed}
+            onPrefillSeedConsumed={onPrefillSeedConsumed}
             seedThreadId={copilotThreadId}
             onThreadIdChange={handleCopilotThreadId}
           />
@@ -564,6 +656,10 @@ export default function FlowCanvasPage() {
   // The Flows prompt bar's instant-create path navigates here with a build
   // seed so the copilot opens already building the described workflow.
   const buildSeed = useMemo(() => asCopilotBuildSeed(location.state), [location.state]);
+  // The Suggested Workflows "Build this" action navigates here with a prefill
+  // seed so the copilot opens with its input pre-filled (unsent) from the
+  // suggestion's `build_prompt`.
+  const prefillSeed = useMemo(() => asCopilotPrefillSeed(location.state), [location.state]);
 
   // Strip the ephemeral build seed from `location.state` once the copilot has
   // dispatched it. The panel's own `buildSentRef` guard is per-mount, so
@@ -581,6 +677,23 @@ export default function FlowCanvasPage() {
     log('build seed consumed — clearing route state: id=%s', id);
     // Navigate with an object (not a bare pathname) so the current search and
     // hash are preserved — a string target would drop them.
+    navigate(
+      { pathname: location.pathname, search: location.search, hash: location.hash },
+      { replace: true, state: next }
+    );
+  }, [id, location.state, location.pathname, location.search, location.hash, navigate]);
+
+  // Strip the ephemeral prefill seed from `location.state` once the copilot
+  // has consumed it (populated its input) — same rationale as
+  // `clearBuildSeed`: a remount (close + reopen the copilot) must not re-fill
+  // the input a second time against the still-present route seed. Only drops
+  // `copilotPrefill`, preserving any sibling state fields.
+  const clearPrefillSeed = useCallback(() => {
+    const routeState = location.state;
+    if (!routeState || typeof routeState !== 'object' || !('copilotPrefill' in routeState)) return;
+    const next = { ...(routeState as Record<string, unknown>) };
+    delete next.copilotPrefill;
+    log('prefill seed consumed — clearing route state: id=%s', id);
     navigate(
       { pathname: location.pathname, search: location.search, hash: location.hash },
       { replace: true, state: next }
@@ -647,6 +760,9 @@ export default function FlowCanvasPage() {
         initialCopilotSeed={copilotSeed}
         initialBuildSeed={buildSeed}
         onBuildSeedConsumed={clearBuildSeed}
+        initialPrefillSeed={prefillSeed}
+        onPrefillSeedConsumed={clearPrefillSeed}
+        locationKey={location.key}
       />
     );
   }
@@ -735,6 +851,7 @@ export function FlowCanvasDraftPage() {
             graph: draft.graph,
             requireApproval: draft.requireApproval,
           }}
+          locationKey={location.key}
         />
         <ToastContainer notifications={toasts} onRemove={removeToast} />
       </>

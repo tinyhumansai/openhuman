@@ -21,7 +21,7 @@ export { PaymentRequiredError };
 export type OrchestrationChatKind = 'master' | 'subconscious' | 'session';
 
 /** External agent harness that emits a session (drives the roster grouping). */
-export type HarnessType = 'claude' | 'codex' | 'gemini';
+export type HarnessType = 'claude' | 'codex' | 'gemini' | 'cursor' | 'windsurf';
 
 /**
  * Coarse instance status for the roster dot. Peer instances carry no true

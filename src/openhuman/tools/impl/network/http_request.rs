@@ -8,6 +8,32 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Build the egress descriptor for an outbound HTTP request (privacy epic S2,
+/// #4436). The host is the destination; a request body carries tool arguments
+/// and any custom headers (e.g. an `Authorization` token) are metadata that
+/// also leaves the device — so a header-only call is not under-reported as
+/// URL-only (codex P2, PR #4812). Pure over its inputs so it is unit-testable
+/// off the network path.
+fn network_egress_descriptor(
+    url: &str,
+    has_body: bool,
+    has_headers: bool,
+) -> crate::openhuman::security::egress::EgressDescriptor {
+    use crate::openhuman::security::egress::{DataKind, EgressDescriptor};
+    let host = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string());
+    let mut desc = EgressDescriptor::network_fetch(host);
+    if has_body {
+        desc = desc.with_data_kind(DataKind::ToolArguments);
+    }
+    if has_headers {
+        desc = desc.with_data_kind(DataKind::Metadata);
+    }
+    desc
+}
+
 /// HTTP request tool for API interactions.
 /// Supports GET, POST, PUT, DELETE methods with configurable security.
 pub struct HttpRequestTool {
@@ -357,6 +383,22 @@ impl Tool for HttpRequestTool {
             Ok(v) => v,
             Err(e) => return Ok(ToolResult::error(e.to_string())),
         };
+
+        // Egress spine (privacy epic S2, #4436): an agent-driven HTTP request to
+        // an allowlisted host leaves the device — disclose the destination and
+        // everything that rides with it (body + custom headers) before the
+        // round-trip.
+        {
+            let has_headers = headers_val
+                .as_object()
+                .map(|h| !h.is_empty())
+                .unwrap_or(false);
+            crate::openhuman::security::egress::emit_external_transfer(network_egress_descriptor(
+                &url,
+                body.is_some(),
+                has_headers,
+            ));
+        }
 
         let method = match self.validate_method(method_str) {
             Ok(m) => m,

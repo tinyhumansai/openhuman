@@ -45,7 +45,6 @@ import { MemoryControls } from './MemoryControls';
 import { MemoryGraph } from './MemoryGraph';
 import { MemorySourcesRegistry } from './MemorySourcesRegistry';
 import { MemoryTreeStatusPanel } from './MemoryTreeStatusPanel';
-import { SyncAuditPanel } from './SyncAuditPanel';
 import { WhatsAppMemorySection } from './WhatsAppMemorySection';
 
 interface MemoryWorkspaceProps {
@@ -146,13 +145,6 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       ) : (
         <MemoryGraph nodes={graph.nodes} edges={graph.edges} mode={mode} />
       )}
-
-      <div className="rounded-lg border border-line-subtle bg-surface p-4">
-        <h3 className="mb-2 text-sm font-medium text-content-secondary">
-          {t('sync.auditTitle', 'Sync History')}
-        </h3>
-        <SyncAuditPanel />
-      </div>
     </div>
   );
 }

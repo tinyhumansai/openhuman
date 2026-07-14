@@ -23,12 +23,11 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-use super::source::run_github_sync;
 use super::sync;
 use crate::openhuman::memory_sync::composio::providers::{
     merge_extra, pick_str, resolve_sync_interval_secs, ComposioProvider, CuratedTool,
-    GithubFetchMode, NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
-    TaskFetchFilter, TaskKind,
+    GithubFetchMode, NormalizedTask, ProviderContext, ProviderUserProfile, TaskFetchFilter,
+    TaskKind,
 };
 
 pub(crate) const ACTION_GET_AUTHENTICATED_USER: &str = "GITHUB_GET_THE_AUTHENTICATED_USER";
@@ -118,10 +117,6 @@ impl ComposioProvider for GitHubProvider {
     /// login resolution, pagination, dedup, the `max_items` cap, and cursor
     /// handling live in `run_sync`; the GitHub-specific primitives — including
     /// the **server-side** `sync_depth_days` window — live in [`super::source`].
-    async fn sync(&self, ctx: &ProviderContext, reason: SyncReason) -> Result<SyncOutcome, String> {
-        run_github_sync(ctx, reason).await
-    }
-
     async fn fetch_tasks(
         &self,
         ctx: &ProviderContext,

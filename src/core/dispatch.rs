@@ -65,7 +65,7 @@ pub async fn dispatch(
     }
 
     // Tier 2: Registered domain controllers.
-    if let Some(result) = try_registry_dispatch(method, params.clone()).await {
+    if let Some(result) = try_registry_dispatch(method, params).await {
         log::debug!(
             "[rpc:dispatch] routed method={} subsystem=controller_registry",
             method
@@ -73,16 +73,7 @@ pub async fn dispatch(
         return result;
     }
 
-    // Tier 3: Legacy domain-specific dispatcher.
-    if let Some(result) = crate::rpc::try_dispatch(method, params).await {
-        log::debug!(
-            "[rpc:dispatch] routed method={} subsystem=openhuman",
-            method
-        );
-        return result;
-    }
-
-    // Tier 4: unrecognised method. The JSON-RPC response is unchanged — the
+    // Tier 3: unrecognised method. The JSON-RPC response is unchanged — the
     // caller still receives a method-not-found error. Only the *severity* of
     // how the transport layer records it differs by class (see
     // `jsonrpc::rpc_handler`): known non-actionable misses

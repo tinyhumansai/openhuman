@@ -17,7 +17,7 @@
 //! the turn's effective model, so nothing dispatches to these entries until a
 //! future fallback/selection step chooses them.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use async_trait::async_trait;
 use tinyagents::harness::context::RunContext;
@@ -25,6 +25,7 @@ use tinyagents::harness::events::AgentEvent;
 use tinyagents::harness::middleware::{MiddlewareModelOutcome, ModelHandler, ModelMiddleware};
 use tinyagents::harness::model::{CapabilitySet, ModelRequest};
 use tinyagents::harness::retry::FallbackPolicy;
+use tinyagents::registry::{ModelRouter, WorkloadRoute};
 
 use crate::openhuman::config::{
     MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_V1,
@@ -54,6 +55,61 @@ pub(super) const WORKLOAD_ROUTE_TIERS: &[&str] = &[
     MODEL_SUMMARIZATION_V1,
     MODEL_VISION_V1,
 ];
+
+/// The OpenHuman workload-tier routing table as a crate
+/// [`ModelRouter`](tinyagents::registry::ModelRouter) — the single declarative
+/// source for cross-route **fallback chains** and per-tier **required-capability
+/// gates** (issue #4249, Phase 3: RouterProvider → crate registry projection).
+///
+/// This does not move tier→provider/model *resolution* into the crate —
+/// `provider/router.rs` stays the product source of truth for what each tier
+/// name resolves to, and [`build_route_models`] still registers the per-tier
+/// [`ProviderModel`] with its real profile. The router owns only the *policy*
+/// this module previously open-coded as `same_family_fallbacks` +
+/// `turn_required_capabilities`: it answers [`route_fallback_policy`] and
+/// [`turn_required_capabilities`] from one declarative table.
+///
+/// Built once — the tier set + fallback ordering + vision gate are static:
+/// - light/fast conversational siblings `chat-v1 ⇄ burst-v1`;
+/// - heavy reasoning/agentic siblings `reasoning-v1 ⇄ agentic-v1`;
+/// - `coding-v1 → agentic-v1` (coding is tool-heavy, agentic-adjacent);
+/// - `summarization-v1 → chat-v1` (summarization rides a general chat model);
+/// - `vision-v1` is `image_in`-gated and primary-only — a text fallback cannot
+///   satisfy the gate — and its `hint:vision` form carries the same gate.
+static OH_WORKLOAD_ROUTER: LazyLock<ModelRouter> = LazyLock::new(|| {
+    let vision_gate = CapabilitySet {
+        image_in: true,
+        ..CapabilitySet::default()
+    };
+    ModelRouter::new()
+        .with_route(
+            WorkloadRoute::new(MODEL_CHAT_V1, MODEL_CHAT_V1).with_fallbacks([MODEL_BURST_V1]),
+        )
+        .with_route(
+            WorkloadRoute::new(MODEL_BURST_V1, MODEL_BURST_V1).with_fallbacks([MODEL_CHAT_V1]),
+        )
+        .with_route(
+            WorkloadRoute::new(MODEL_REASONING_V1, MODEL_REASONING_V1)
+                .with_fallbacks([MODEL_AGENTIC_V1]),
+        )
+        .with_route(
+            WorkloadRoute::new(MODEL_AGENTIC_V1, MODEL_AGENTIC_V1)
+                .with_fallbacks([MODEL_REASONING_V1]),
+        )
+        .with_route(
+            WorkloadRoute::new(MODEL_CODING_V1, MODEL_CODING_V1).with_fallbacks([MODEL_AGENTIC_V1]),
+        )
+        .with_route(
+            WorkloadRoute::new(MODEL_SUMMARIZATION_V1, MODEL_SUMMARIZATION_V1)
+                .with_fallbacks([MODEL_CHAT_V1]),
+        )
+        .with_route(
+            WorkloadRoute::new(MODEL_VISION_V1, MODEL_VISION_V1).requiring(vision_gate.clone()),
+        )
+        // The hint form resolves to the same vision tier and carries the same gate,
+        // with no fallback (primary-only), matching the legacy static gate.
+        .with_route(WorkloadRoute::new("hint:vision", MODEL_VISION_V1).requiring(vision_gate))
+});
 
 /// Whether a workload tier emits reasoning/thinking output.
 ///
@@ -149,13 +205,7 @@ pub(super) fn build_route_models(
 /// (needs `Config` + `model_registry.vision`), and true per-message image
 /// presence rather than the tier proxy.
 pub(super) fn turn_required_capabilities(model: &str) -> Option<CapabilitySet> {
-    if model == MODEL_VISION_V1 || model == "hint:vision" {
-        return Some(CapabilitySet {
-            image_in: true,
-            ..CapabilitySet::default()
-        });
-    }
-    None
+    OH_WORKLOAD_ROUTER.required_capabilities(model)
 }
 
 /// Around-model middleware that stamps the turn's required [`CapabilitySet`] onto
@@ -195,67 +245,33 @@ impl ModelMiddleware<()> for RequiredCapabilitiesMiddleware {
     }
 }
 
-/// The ordered same-family fallback **alternates** for a workload tier (issue
-/// #4249, Workstream 02.2). Each primary tier falls back to a single sibling in
-/// the same workload family so the harness can retry a different registered route
-/// when the primary route errors — bounding the cross-route fan-out to one extra
-/// call per turn (mirroring the single-alternate spirit of `ReliableProvider`'s
-/// `model_fallbacks`, so this does not regress failure latency/cost).
-///
-/// Ordering rationale (derived from `provider/router.rs` tier families):
-/// - `chat-v1` ⇄ `burst-v1` — the two light/fast conversational tiers.
-/// - `reasoning-v1` ⇄ `agentic-v1` — the two heavy reasoning/agentic tiers.
-/// - `coding-v1` → `agentic-v1` — coding is agentic-adjacent (tool-heavy).
-/// - `summarization-v1` → `chat-v1` — summarization rides a general chat model.
-/// - `vision-v1` → **none**: a non-vision route cannot satisfy the `image_in`
-///   capability the [`RequiredCapabilitiesMiddleware`] stamps on a vision turn, so
-///   falling back to a text tier would only be rejected pre-dispatch. There is a
-///   single vision tier, so vision turns are primary-only.
-///
-/// A model that is not one of the recognized tiers (a raw provider model string)
-/// returns an empty slice → no fallback chain is installed for that turn.
-fn same_family_fallbacks(model: &str) -> &'static [&'static str] {
-    match model {
-        MODEL_CHAT_V1 => &[MODEL_BURST_V1],
-        MODEL_BURST_V1 => &[MODEL_CHAT_V1],
-        MODEL_REASONING_V1 => &[MODEL_AGENTIC_V1],
-        MODEL_AGENTIC_V1 => &[MODEL_REASONING_V1],
-        MODEL_CODING_V1 => &[MODEL_AGENTIC_V1],
-        MODEL_SUMMARIZATION_V1 => &[MODEL_CHAT_V1],
-        MODEL_VISION_V1 => &[],
-        _ => &[],
-    }
-}
-
 /// Build the [`FallbackPolicy`] for a turn whose effective/primary model is
 /// `model` (issue #4249, Workstream 02.2). The returned chain is `[primary,
 /// alternate…]` — the crate's [`FallbackPolicy::next_after`] traversal expects the
 /// current (primary) name as the first entry and yields each subsequent alternate.
 ///
-/// Every alternate is a distinct workload tier that
+/// The chain now comes straight from the declarative [`OH_WORKLOAD_ROUTER`]
+/// (`fallback_policy` leads with the primary, then the tier's same-family
+/// alternates). Every alternate is a distinct workload tier that
 /// [`build_route_models`] has already registered in the harness model registry
 /// (the primary tier itself is skipped there, since the caller registers it as the
 /// default), so the harness can resolve each fallback name to its capability-carrying
 /// route adapter. Returns `None` when no same-family alternate exists (vision, or a
 /// raw non-tier model string), leaving the turn primary-only.
 pub(super) fn route_fallback_policy(model: &str) -> Option<FallbackPolicy> {
-    let alternates = same_family_fallbacks(model);
-    if alternates.is_empty() {
-        tracing::debug!(
+    let policy = OH_WORKLOAD_ROUTER.fallback_policy(model);
+    match &policy {
+        Some(p) => tracing::debug!(
+            route = model,
+            chain = ?p.models,
+            "[fallback] configured SDK-owned cross-route fallback chain"
+        ),
+        None => tracing::debug!(
             route = model,
             "[fallback] no same-family fallback route; turn is primary-only"
-        );
-        return None;
+        ),
     }
-    let mut models = Vec::with_capacity(alternates.len() + 1);
-    models.push(model.to_string());
-    models.extend(alternates.iter().map(|s| s.to_string()));
-    tracing::debug!(
-        route = model,
-        chain = ?models,
-        "[fallback] configured SDK-owned cross-route fallback chain"
-    );
-    Some(FallbackPolicy { models })
+    policy
 }
 
 /// Around-model middleware that makes the crate's registry-backed
@@ -365,5 +381,82 @@ impl ModelMiddleware<()> for UsageCarryMiddleware {
                 .push_back(usage);
         }
         Ok(MiddlewareModelOutcome::from(response))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fallback chain for every tier must lead with the primary and carry the
+    /// single same-family alternate the legacy static table encoded — the crate
+    /// `ModelRouter` projection is exactly behavior-neutral.
+    #[test]
+    fn route_fallback_policy_matches_legacy_chains() {
+        let cases: &[(&str, Option<&[&str]>)] = &[
+            (MODEL_CHAT_V1, Some(&[MODEL_CHAT_V1, MODEL_BURST_V1])),
+            (MODEL_BURST_V1, Some(&[MODEL_BURST_V1, MODEL_CHAT_V1])),
+            (
+                MODEL_REASONING_V1,
+                Some(&[MODEL_REASONING_V1, MODEL_AGENTIC_V1]),
+            ),
+            (
+                MODEL_AGENTIC_V1,
+                Some(&[MODEL_AGENTIC_V1, MODEL_REASONING_V1]),
+            ),
+            (MODEL_CODING_V1, Some(&[MODEL_CODING_V1, MODEL_AGENTIC_V1])),
+            (
+                MODEL_SUMMARIZATION_V1,
+                Some(&[MODEL_SUMMARIZATION_V1, MODEL_CHAT_V1]),
+            ),
+            // Vision is primary-only (an image_in gate no text tier can satisfy).
+            (MODEL_VISION_V1, None),
+            ("hint:vision", None),
+            // A raw non-tier model installs no chain.
+            ("gpt-4o", None),
+        ];
+        for (model, expected) in cases {
+            let got = route_fallback_policy(model).map(|p| p.models);
+            let want =
+                expected.map(|chain| chain.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+            assert_eq!(got, want, "fallback chain mismatch for {model}");
+        }
+    }
+
+    /// Only the vision tier (and its hint form) imposes an `image_in` gate; the
+    /// common text turn stays ungated.
+    #[test]
+    fn turn_required_capabilities_gates_only_vision() {
+        let vision = turn_required_capabilities(MODEL_VISION_V1).expect("vision is gated");
+        assert!(vision.image_in);
+        let hint = turn_required_capabilities("hint:vision").expect("hint:vision is gated");
+        assert!(hint.image_in);
+        for model in [
+            MODEL_CHAT_V1,
+            MODEL_REASONING_V1,
+            MODEL_AGENTIC_V1,
+            MODEL_CODING_V1,
+            MODEL_BURST_V1,
+            MODEL_SUMMARIZATION_V1,
+            "gpt-4o",
+        ] {
+            assert!(
+                turn_required_capabilities(model).is_none(),
+                "{model} must not be capability-gated"
+            );
+        }
+    }
+
+    /// The router covers exactly the projected tier inventory (plus the hint:vision
+    /// gate alias), so the fallback/capability source of truth stays aligned with
+    /// `WORKLOAD_ROUTE_TIERS`.
+    #[test]
+    fn router_covers_the_workload_tier_inventory() {
+        for tier in WORKLOAD_ROUTE_TIERS {
+            assert!(
+                OH_WORKLOAD_ROUTER.route(tier).is_some(),
+                "router missing tier {tier}"
+            );
+        }
     }
 }

@@ -21,7 +21,7 @@ OpenHuman is a cross-platform communication and automation platform purpose-buil
 | **`src/openhuman/skills/`** | **Metadata-only** skill helpers (`ops_create`, `ops_discover`, `ops_install`, `ops_parse`, `inject`, `schemas`, `types`). The legacy QuickJS / `rquickjs` skill execution runtime was removed; skills now contribute metadata + tool descriptors that get injected into agent prompts, while tool execution flows through native Rust handlers and Node-backed helpers via `runtime_node`. |
 | **`docs/`**             | This book + per-tree guides (`docs/src/`, `docs/src-tauri/`)                                                                                                       |
 
-The desktop app **WebView** loads the UI from `app/`; heavy RPC and skills run in the **`openhuman-core`** process, reachable over HTTP from the Tauri host (`core_rpc_relay`).
+The desktop app **WebView** loads the UI from `app/`; heavy RPC and skills run in the **`openhuman-core`** process, reachable over HTTP from the Tauri host (renderer → `coreRpcClient`, with the `relay_http_rpc` Tauri command as the host-side relay).
 
 ---
 
@@ -78,7 +78,7 @@ Tauri v2 compiles the Rust core into native binaries per platform, embedding the
      (Socket.io Server)        (Telegram, etc.)
 ```
 
-The frontend communicates with the **openhuman** Rust core in two ways: **Tauri IPC** for a small set of shell commands (windows, AI file helpers, **`core_rpc_relay`**) and **HTTP JSON-RPC** to the core process for business logic and tools. The core owns persistent connections where applicable, cryptographic work for memory/features, and tool execution: native Rust handlers plus Node-backed helpers via `runtime_node`, gated by the `security/` sandbox policy. Skills no longer execute in-process; the `src/openhuman/skills/` domain contributes metadata + tool descriptors that get injected into agent prompts.
+The frontend communicates with the **openhuman** Rust core in two ways: **Tauri IPC** for shell commands (windows, webview accounts, hotkeys, and the **`relay_http_rpc`** HTTP relay) and **HTTP JSON-RPC** to the core process for business logic and tools. The core owns persistent connections where applicable, cryptographic work for memory/features, and tool execution: native Rust handlers plus Node-backed helpers via `runtime_node`, gated by the `security/` sandbox policy. Skills no longer execute in-process; the `src/openhuman/skills/` domain contributes metadata + tool descriptors that get injected into agent prompts.
 
 ---
 
@@ -136,55 +136,17 @@ The socket connection is **shared across all skills**. When events arrive, the s
 
 ---
 
-## Skills Runtime Engine
+## Skills
 
-OpenHuman's defining capability is its **sandboxed JavaScript execution engine** running inside the Rust process. Skills are lightweight automation scripts that extend the platform with custom tools, integrations, and scheduled tasks.
+Skills are `SKILL.md` packages (metadata, instructions, optional bundled scripts/resources) that extend the agent with reusable workflows. The legacy model — one sandboxed QuickJS VM per skill with per-skill bridge APIs and an embedded 5-second cron tick — is gone.
 
-```
-+---------------------------------------------------------------+
-|                     RuntimeEngine                             |
-|                                                               |
-|  +-------------------+  +-------------------+                 |
-|  | SkillRegistry     |  | CronScheduler     |                |
-|  | (HashMap + MPSC)  |  | (5s tick loop)    |                |
-|  +--------+----------+  +--------+----------+                |
-|           |                      |                            |
-|  +--------v----------+  +--------v----------+  +----------+  |
-|  | JavaScript Layer  |  | runtime_node      |  |  Bridge  |  |
-|  | skill metadata    |  | managed Node.js   |  |   APIs   |  |
-|  | + prompt context  |  | system/bundled    |  +----+-----+  |
-|  | + tool discovery  |  | tool execution    |       |        |
-|  +-------------------+  +-------------------+       |        |
-|                                                      |        |
-|  +---------------------------------------------------v-----+ |
-|  |  net  |  db  |  store  |  cron  |  log  |  tauri  |     | |
-|  |  HTTP    SQLite  KV       Schedule  Log    Platform|     | |
-|  +------------------------------------------------------+   | |
-+---------------------------------------------------------------+
-```
+Responsibilities are split across three domains:
 
-**Node.js Runtime**: the core resolves a compatible system `node` when possible and otherwise installs a managed distribution into the OpenHuman cache. Skills primarily expose tool metadata and use the runtime bridge to list and execute tools rather than running isolated QuickJS VMs inside the core.
-
-| Parameter              | Value |
-| ---------------------- | ----- |
-| Public language slot   | `javascript` |
-| Current JS backend     | `runtime_node` |
-| Managed Node version   | `v22.11.0` by default |
-| Runtime source         | system `node` or managed install |
-| Integrity verification | SHA-256 against `SHASUMS256.txt` |
-
-**Tool bridge architecture**: `SKILL.md` packages provide metadata, instructions, and optional bundled JS helpers. The Rust core owns the authoritative tool registry, and the JavaScript runtime bridge lists tools and dispatches named tool calls into the core or into Node-backed helpers.
-
-**Bridge APIs** expose platform capabilities to the runtime bridge and Node-backed helpers:
-
-| Bridge    | Capability                                                  |
-| --------- | ----------------------------------------------------------- |
-| **net**   | HTTP fetch via `reqwest` (30s default timeout, all methods) |
-| **db**    | SQLite database per skill via `rusqlite`                    |
-| **store** | Key-value persistence                                       |
-| **cron**  | Schedule registration (6-field cron expressions)            |
-| **log**   | Structured logging routed through Rust `log` crate          |
-| **tauri** | Platform detection, notifications, whitelisted env vars     |
+| Domain                            | Role |
+| --------------------------------- | ---- |
+| `src/openhuman/skills/`           | Skill metadata: create/discover/install/parse `SKILL.md`, inject descriptors into agent prompts (`ops_create`, `ops_discover`, `ops_install`, `ops_parse`, `inject`). |
+| `src/openhuman/skill_registry/`   | Registry of installed skills. |
+| `src/openhuman/skill_runtime/`    | Execution of installed `SKILL.md` workflows: starts/cancels runs, reads run metadata/logs, resolves language runtimes, hosts the built-in `skill_executor` agent. |
 
 **Skill discovery** uses `SKILL.md` plus optional bundled resources:
 
@@ -196,9 +158,9 @@ OpenHuman's defining capability is its **sandboxed JavaScript execution engine**
 | `allowed-tools`    | Tool allowlist guidance |
 | bundled resources  | scripts, references, assets |
 
-Skills are synced from a GitHub repository and discovered at runtime. Execution is no longer modeled as one embedded QuickJS VM per skill; JavaScript behavior flows through the shared runtime bridge instead.
+**Language runtimes**: script-backed skills run through shared runtime domains rather than embedded VMs — `runtime_node` resolves a compatible system `node` or installs a managed distribution (SHA-256-verified) into the OpenHuman cache, and `runtime_python` does the same for Python. Execution is gated by the `security/` sandbox policy like any other tool.
 
-**Cron scheduler**: A 5-second tick loop checks all registered schedules against UTC time, using the `cron` crate for expression parsing. When a schedule fires, the scheduler sends a `CronTrigger` message to the skill's channel, invoking the skill's `onCronTrigger()` handler.
+**Scheduling**: recurring work is owned by the `cron` domain (with `scheduler_gate`), not by skills; there is no per-skill `onCronTrigger()` handler.
 
 ---
 
@@ -246,7 +208,7 @@ AI Response to User
 | Chunking           | 512 tokens per chunk, 64-token overlap                 |
 | Search             | Hybrid: 70% vector similarity + 30% FTS5 full-text     |
 | Embeddings         | OpenAI `text-embedding-3-small`                        |
-| Knowledge graph    | Neo4j via REST API for entity relationships            |
+| Knowledge graph    | SQLite-backed code/entity graph (`codegraph`, `memory_tree`) — no external graph DB |
 | Sessions           | JSONL transcripts with compaction and tool compression |
 
 Memory encryption keys derive from user credentials via Argon2id, ensuring memory files are unreadable without authentication. The hybrid search combines semantic understanding (vector similarity) with keyword precision (SQLite FTS5) for reliable recall.
@@ -327,6 +289,17 @@ Every layer is async and non-blocking. The Rust core processes thousands of conc
 
 ---
 
+## Vendored crate family & recent shifts
+
+Core subsystems are being re-platformed onto published `tiny*` crates, vendored as git submodules under `vendor/` (`tinyagents`, `tinyflows`, `tinycortex`, `tinychannels`, `tinyjuice`, `tinyplace`) so crate changes can be tested in-tree before publishing. The major ongoing shifts:
+
+- **Agent engine on tinyagents** — every agent turn runs through the `tinyagents` crate harness via the seam in `src/openhuman/tinyagents/`; see [Agent Harness](architecture/agent-harness.md).
+- **Memory on tinycortex** — memory modules (`memory_diff`, `memory_conversations`, `memory_queue`, …) are being deleted or shimmed onto the `tinycortex` crate engine (W7 migration; #4785–#4788).
+- **Inference on the crate ModelRouter** — host workload-tier model routing and cloud provider slugs now use the crate-native `ModelRouter`/`OpenAiModel` (#4782, #4783).
+- **Hosted-only brain** — the client-local orchestration graph engine (`src/openhuman/orchestration/graph/`) was retired (#4738); the client is a thin hosted-brain participant (pushers, effect/tool executors, wire allowlist — #4725) surfaced in the `/orchestration` and `/brain/tinyplace-orchestration` routes.
+
+---
+
 ## Technology Stack
 
 | Layer          | Technology                      | Why                                                      |
@@ -339,16 +312,16 @@ Every layer is async and non-blocking. The Rust core processes thousands of conc
 | **Language**   | Rust (2021 edition)             | Memory safety, zero-cost abstractions                    |
 | **Async**      | Tokio                           | High-performance async I/O runtime                       |
 | **JS Runtime** | Node.js                         | Managed V8 runtime for tool helpers and skill-adjacent JS |
-| **Database**   | SQLite (rusqlite)               | Embedded, zero-config, per-skill isolation               |
+| **Database**   | SQLite (rusqlite)               | Embedded, zero-config, per-domain stores                 |
 | **WebSocket**  | tokio-tungstenite + rustls      | Persistent connections with native TLS                   |
 | **HTTP**       | reqwest                         | Async HTTP with rustls + native-tLS dual support         |
 | **Encryption** | aes-gcm + argon2                | AES-256-GCM encryption, Argon2id key derivation          |
-| **Scheduling** | cron crate + custom scheduler   | Standard cron expressions, 5-second resolution           |
-| **Telegram**   | Removed                         | Telegram integration removed                             |
+| **Scheduling** | cron crate + `cron` domain      | Standard cron expressions, `scheduler_gate`-gated        |
+| **Telegram**   | CEF webview provider            | Embedded webview + `telegram_scanner` (no bot API client) |
 | **Realtime**   | Socket.io (client)              | Bidirectional event-based communication                  |
 | **AI**         | MCP (JSON-RPC 2.0)              | Standardized tool protocol for LLM integration           |
 | **Search**     | OpenAI embeddings + SQLite FTS5 | Hybrid semantic + keyword search                         |
-| **Graph**      | Neo4j                           | Entity relationship knowledge graph                      |
+| **Graph**      | SQLite (`codegraph`/`memory_tree`) | Entity/code relationship graph, embedded              |
 
 ---
 
@@ -388,7 +361,6 @@ Transport is selected by `ConnectionProfile` stored in secure storage. On pairin
 | `app/src/pages/ios/` | iOS-specific screens (PairScreen, MascotScreen) |
 | `packages/tauri-plugin-ptt/` | Swift PTT plugin (AVAudioEngine + SFSpeechRecognizer) |
 | `app/src-tauri/Info.ios.plist` | Privacy strings for iOS Info.plist |
-| `docs/ios/SETUP.md` | Developer setup guide |
 
 ### Security
 

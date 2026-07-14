@@ -33,6 +33,12 @@ pub(crate) struct CompletedBackgroundAgent {
 /// batch of threads is deleted.
 const CANCELLED_TOMBSTONE_CAP: usize = 512;
 
+/// Upper bound on the collected-task tombstone set. A completion records within
+/// seconds of the parent collecting it inline, so only recently collected task
+/// ids can still be racing a late record; older tombstones are evicted in
+/// insertion order.
+const COLLECTED_TOMBSTONE_CAP: usize = 512;
+
 /// Shared state behind a single mutex so the cancellation check in
 /// [`record_completion`] is atomic against the tombstone+sweep in
 /// [`discard_for_thread`] — otherwise the cooperative-abort race could enqueue a
@@ -49,6 +55,15 @@ struct QueueState {
     cancelled_threads: HashSet<String>,
     /// Insertion order for `cancelled_threads`, used to bound the set.
     cancelled_order: VecDeque<String>,
+    /// Task ids the parent already collected inline via `wait_subagent` and will
+    /// present in its own turn. A completion for a collected task is dropped by
+    /// [`record_completion`] (closing the wait/record ordering race) and any
+    /// already-queued entry is swept by [`mark_collected`], so background
+    /// delivery never re-answers a result the master already surfaced (the
+    /// duplicate-response bug).
+    collected_tasks: HashSet<String>,
+    /// Insertion order for `collected_tasks`, used to bound the set.
+    collected_order: VecDeque<String>,
 }
 
 impl QueueState {
@@ -59,6 +74,19 @@ impl QueueState {
             while self.cancelled_order.len() > CANCELLED_TOMBSTONE_CAP {
                 if let Some(evicted) = self.cancelled_order.pop_front() {
                     self.cancelled_threads.remove(&evicted);
+                }
+            }
+        }
+    }
+
+    /// Tombstone `task_id` so a completion that records after the parent
+    /// collected it inline is dropped rather than delivered again.
+    fn tombstone_collected(&mut self, task_id: &str) {
+        if self.collected_tasks.insert(task_id.to_string()) {
+            self.collected_order.push_back(task_id.to_string());
+            while self.collected_order.len() > COLLECTED_TOMBSTONE_CAP {
+                if let Some(evicted) = self.collected_order.pop_front() {
+                    self.collected_tasks.remove(&evicted);
                 }
             }
         }
@@ -103,6 +131,18 @@ pub(crate) fn record_completion(
             );
             return;
         }
+    }
+    // The parent already collected this result inline (`wait_subagent`) and
+    // presents it in its own turn, so a background-delivery turn for it would
+    // just re-answer the same thing. Drop it (closes the wait-before-record
+    // race; the record-before-wait order is handled by the sweep in
+    // `mark_collected`).
+    if state.collected_tasks.contains(&entry.task_id) {
+        log::debug!(
+            "[background_completions] dropping completion task_id={} already collected inline",
+            entry.task_id
+        );
+        return;
     }
     let pending = state.pending.entry(parent_session).or_default();
     if pending.iter().any(|c| c.task_id == entry.task_id) {
@@ -168,6 +208,33 @@ pub(crate) fn discard_for_thread(thread_id: &str) -> usize {
         thread_id,
         removed,
         sessions_left
+    );
+    removed
+}
+
+/// Mark `task_id` as collected inline by the parent (via `wait_subagent`) so its
+/// background completion is not independently delivered as a second, duplicate
+/// answer. Tombstones the id — bounded — so a completion that records *after*
+/// this call (the wait-before-record ordering) is dropped by
+/// [`record_completion`], and sweeps any entry already queued for it across all
+/// sessions (the record-before-wait ordering). Both orderings resolve
+/// atomically under the single queue mutex. Returns whether a queued entry was
+/// removed.
+pub(crate) fn mark_collected(task_id: &str) -> bool {
+    let mut state = queue()
+        .lock()
+        .expect("background_completions queue poisoned");
+    state.tombstone_collected(task_id);
+    let mut removed = false;
+    for pending in state.pending.values_mut() {
+        let before = pending.len();
+        pending.retain(|c| c.task_id != task_id);
+        removed |= pending.len() != before;
+    }
+    // Drop now-empty session buckets so the map doesn't accumulate keys.
+    state.pending.retain(|_, v| !v.is_empty());
+    log::debug!(
+        "[background_completions] mark_collected task_id={task_id} removed_queued={removed}"
     );
     removed
 }
@@ -400,5 +467,68 @@ mod tests {
         assert!(!has_pending("sess-c1"));
         assert!(!has_pending("sess-c2"));
         assert_eq!(clear_all(), 0);
+    }
+
+    #[test]
+    fn mark_collected_sweeps_the_queued_entry() {
+        let _guard = test_guard();
+        let s = "sess-mc-sweep";
+        record_completion(s, "mc-sub-1", "researcher", "collected", None);
+        record_completion(s, "mc-sub-2", "researcher", "keep", None);
+
+        // The parent collected sub-1 inline, so it must not be delivered again;
+        // sub-2 (never waited on) survives for normal idle delivery.
+        assert!(mark_collected("mc-sub-1"), "swept the queued entry");
+        assert_eq!(pending_count(s), 1);
+        let drained = take_pending(s);
+        assert_eq!(drained[0].task_id, "mc-sub-2");
+    }
+
+    #[test]
+    fn record_after_mark_collected_is_dropped_by_tombstone() {
+        let _guard = test_guard();
+        // Collecting inline tombstones the task id...
+        assert!(
+            !mark_collected("mc-late"),
+            "nothing queued yet, so nothing swept"
+        );
+        // ...so a completion that records *after* (the wait-before-record order)
+        // is dropped rather than queued for a duplicate delivery turn.
+        record_completion("sess-mc-race", "mc-late", "researcher", "stale", None);
+        assert_eq!(
+            pending_count("sess-mc-race"),
+            0,
+            "a completion collected inline must not be re-delivered"
+        );
+    }
+
+    #[test]
+    fn mark_collected_is_task_scoped() {
+        let _guard = test_guard();
+        let s = "sess-mc-scope";
+        // Only the collected task is suppressed; an un-waited sibling still
+        // surfaces (the genuinely-later fire-and-forget feature is preserved).
+        mark_collected("mc-scope-1");
+        record_completion(s, "mc-scope-2", "researcher", "later", None);
+        assert_eq!(pending_count(s), 1);
+        assert!(has_pending(s));
+        take_pending(s);
+    }
+
+    #[test]
+    fn collected_tombstone_is_bounded() {
+        let _guard = test_guard();
+        for i in 0..(COLLECTED_TOMBSTONE_CAP + 50) {
+            mark_collected(&format!("mc-bound-{i}"));
+        }
+        let len = queue()
+            .lock()
+            .expect("queue poisoned")
+            .collected_tasks
+            .len();
+        assert!(
+            len <= COLLECTED_TOMBSTONE_CAP,
+            "collected tombstone must stay bounded, got {len}"
+        );
     }
 }

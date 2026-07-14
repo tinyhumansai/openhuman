@@ -869,10 +869,22 @@ impl Agent {
             .as_ref()
             .map(|c| c.multimodal_files.clone())
             .unwrap_or_default();
+        // Resolve the effective context window and build the turn's tiered crate
+        // `ChatModel` set from the session source up front (issue #4249, Phase 3 /
+        // Motion A) — the harness holds crate model types, and the vision read
+        // below comes off the built models, not a raw provider.
+        let context_window = self
+            .turn_model_source
+            .effective_context_window(effective_model)
+            .await;
+        let turn_models =
+            self.turn_model_source
+                .build(effective_model, temperature, context_window)?;
+
         // Honor custom/BYOK vision models too: they can set `model_vision` even
         // when the provider capability bit is false, and must still rehydrate
         // `[IMAGE:…]` placeholders (else image chat silently degrades to text).
-        if (self.provider.supports_vision() || self.model_vision)
+        if (turn_models.supports_vision() || self.model_vision)
             && crate::openhuman::agent::multimodal::has_image_placeholders(&messages)
         {
             messages = crate::openhuman::agent::multimodal::rehydrate_image_placeholders(&messages);
@@ -892,13 +904,6 @@ impl Agent {
             tools = self.tools.len(),
             "[agent_loop] routing chat turn through the tinyagents harness"
         );
-
-        // Resolve the provider's effective context window so the harness can
-        // trim long threads to budget (autocompaction parity).
-        let context_window = self
-            .provider
-            .effective_context_window(effective_model)
-            .await;
 
         // Dispatch through the chat turn graph (this folder's `graph.rs`): a thin
         // wrapper over the shared tinyagents seam that pins the chat path's fixed
@@ -944,9 +949,8 @@ impl Agent {
         let (outcome, subagent_usage_entries) =
             crate::openhuman::agent::harness::turn_subagent_usage::with_turn_collector(
                 super::graph::run_chat_turn_graph(super::graph::ChatTurnGraph {
-                    provider: self.provider.clone(),
+                    turn_models,
                     model: effective_model.to_string(),
-                    temperature,
                     messages,
                     tools: self.tools.clone(),
                     visible_tool_names: self.visible_tool_names.clone(),

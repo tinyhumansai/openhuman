@@ -348,50 +348,38 @@ impl Memory for UnifiedMemory {
         &self,
         namespace: Option<&str>,
         category: Option<&MemoryCategory>,
-        _session_id: Option<&str>,
+        session_id: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
-        let ns = normalize_namespace(namespace);
-        let docs = self
-            .list_documents(Some(ns))
-            .await
-            .map_err(anyhow::Error::msg)?;
-        let mut out = Vec::new();
-        let items = docs
-            .get("documents")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        for (idx, d) in items.into_iter().enumerate() {
-            let cat = category.cloned().unwrap_or(MemoryCategory::Core);
-            let taint_str = d
-                .get("taint")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("internal");
-            out.push(MemoryEntry {
-                id: d
-                    .get("documentId")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                key: d
-                    .get("key")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                content: d
-                    .get("title")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                namespace: Some(ns.to_string()),
-                category: cat,
-                timestamp: format!("idx-{idx}"),
-                session_id: None,
+        let ns = UnifiedMemory::sanitize_namespace(normalize_namespace(namespace));
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT document_id, key, content, category, session_id, updated_at, taint
+             FROM memory_docs WHERE namespace = ?1 ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map(params![ns], |row| {
+            let stored_category: String = row.get(3)?;
+            Ok(MemoryEntry {
+                id: row.get(0)?,
+                key: row.get(1)?,
+                content: row.get(2)?,
+                namespace: Some(ns.clone()),
+                category: memory_category_from_stored(&stored_category),
+                session_id: row.get(4)?,
+                timestamp: timestamp_to_rfc3339(row.get(5)?),
                 score: None,
-                taint: crate::openhuman::memory::MemoryTaint::from_db_str(taint_str),
-            });
+                taint: crate::openhuman::memory::MemoryTaint::from_db_str(
+                    &row.get::<_, String>(6)?,
+                ),
+            })
+        })?;
+        let mut entries = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        if let Some(category) = category {
+            entries.retain(|entry| &entry.category == category);
         }
-        Ok(out)
+        if let Some(session_id) = session_id {
+            entries.retain(|entry| entry.session_id.as_deref() == Some(session_id));
+        }
+        Ok(entries)
     }
 
     async fn forget(&self, namespace: &str, key: &str) -> anyhow::Result<bool> {
@@ -454,10 +442,6 @@ impl Memory for UnifiedMemory {
     async fn health_check(&self) -> bool {
         self.workspace_dir.exists() && self.db_path.exists()
     }
-
-    fn sqlite_conn(&self) -> Option<std::sync::Arc<parking_lot::Mutex<rusqlite::Connection>>> {
-        Some(std::sync::Arc::clone(&self.conn))
-    }
 }
 
 #[cfg(test)]
@@ -500,14 +484,51 @@ mod tests {
 
         let in_b = mem.list(Some("ns_b"), None, None).await.unwrap();
         assert_eq!(in_b.len(), 1);
-        // `list` currently maps title → content (pre-Phase-A quirk preserved).
-        // What matters here is namespace isolation: ns_a rows must not appear.
+        assert_eq!(in_b[0].content, "b");
         assert!(in_b.iter().all(|e| e.namespace.as_deref() == Some("ns_b")));
 
         // Forget in ns_a must not delete ns_b's row
         assert!(mem.forget("ns_a", "k1").await.unwrap());
         assert!(mem.get("ns_b", "k1").await.unwrap().is_some());
         assert!(mem.get("ns_a", "k1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn list_returns_stored_fields_and_applies_category_and_session_filters() {
+        let (_tmp, mem) = fresh_mem();
+        mem.store(
+            "rules",
+            "core",
+            "core body",
+            MemoryCategory::Core,
+            Some("session-a"),
+        )
+        .await
+        .unwrap();
+        mem.store(
+            "rules",
+            "procedure",
+            "procedure body",
+            MemoryCategory::Daily,
+            Some("session-b"),
+        )
+        .await
+        .unwrap();
+
+        let entries = mem
+            .list(
+                Some("rules"),
+                Some(&MemoryCategory::Daily),
+                Some("session-b"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, "procedure");
+        assert_eq!(entries[0].content, "procedure body");
+        assert_eq!(entries[0].category, MemoryCategory::Daily);
+        assert_eq!(entries[0].session_id.as_deref(), Some("session-b"));
+        assert!(!entries[0].timestamp.starts_with("idx-"));
     }
 
     #[tokio::test]

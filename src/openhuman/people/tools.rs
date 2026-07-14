@@ -15,14 +15,18 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
 
+use crate::core::runtime::context::CoreContext;
 use crate::openhuman::people::rpc;
-use crate::openhuman::people::store::{self, PeopleStore};
+use crate::openhuman::people::store::PeopleStore;
 use crate::openhuman::people::types::{Handle, Interaction, PersonId};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 
-/// Acquire the global people store or surface a uniform error.
+/// Acquire the people store for the current runtime context.
 fn people_store() -> anyhow::Result<std::sync::Arc<PeopleStore>> {
-    store::get().map_err(|e| anyhow::anyhow!("people store unavailable: {e}"))
+    CoreContext::current()
+        .ok_or_else(|| anyhow::anyhow!("people store unavailable: core context not initialized"))?
+        .people()
+        .map_err(|e| anyhow::anyhow!("people store unavailable: {e}"))
 }
 
 fn read_required_str(args: &serde_json::Value, key: &str) -> anyhow::Result<String> {

@@ -21,68 +21,49 @@ use crate::openhuman::memory_tree::tree::bucket_seal::{append_leaf, LabelStrateg
 use crate::openhuman::memory_tree::tree::flush::force_flush_tree;
 use crate::openhuman::memory_tree::tree::registry::get_or_create_tree;
 
-/// Literal scope used for the singleton global tree.
-pub const GLOBAL_SCOPE: &str = "global";
-
-/// High-level tree profile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TreeProfile {
-    Source,
-    Topic,
-    Global,
-}
+pub use tinycortex::memory::tree::{TreeProfile, GLOBAL_SCOPE};
 
 /// Factory/config object for one tree instance.
 #[derive(Debug, Clone)]
 pub struct TreeFactory<'a> {
-    profile: TreeProfile,
-    scope: Cow<'a, str>,
+    inner: tinycortex::memory::tree::TreeFactory<'a>,
 }
 
 impl<'a> TreeFactory<'a> {
     pub fn source(scope: impl Into<Cow<'a, str>>) -> Self {
         Self {
-            profile: TreeProfile::Source,
-            scope: scope.into(),
+            inner: tinycortex::memory::tree::TreeFactory::source(scope),
         }
     }
 
     pub fn topic(scope: impl Into<Cow<'a, str>>) -> Self {
         Self {
-            profile: TreeProfile::Topic,
-            scope: scope.into(),
+            inner: tinycortex::memory::tree::TreeFactory::topic(scope),
         }
     }
 
     pub fn global() -> Self {
         Self {
-            profile: TreeProfile::Global,
-            scope: Cow::Borrowed(GLOBAL_SCOPE),
+            inner: tinycortex::memory::tree::TreeFactory::global(),
         }
     }
 
     pub fn from_tree(tree: &'a Tree) -> Self {
-        match tree.kind {
-            TreeKind::Source => Self::source(tree.scope.as_str()),
-            TreeKind::Topic => Self::topic(tree.scope.as_str()),
-            TreeKind::Global => Self::global(),
+        Self {
+            inner: tinycortex::memory::tree::TreeFactory::from_tree(tree),
         }
     }
 
     pub fn profile(&self) -> TreeProfile {
-        self.profile
+        self.inner.profile()
     }
 
     pub fn kind(&self) -> TreeKind {
-        match self.profile {
-            TreeProfile::Source => TreeKind::Source,
-            TreeProfile::Topic => TreeKind::Topic,
-            TreeProfile::Global => TreeKind::Global,
-        }
+        self.inner.kind()
     }
 
     pub fn scope(&self) -> &str {
-        self.scope.as_ref()
+        self.inner.scope()
     }
 
     pub fn summary_tree_kind(&self) -> SummaryTreeKind {
@@ -90,6 +71,7 @@ impl<'a> TreeFactory<'a> {
             TreeKind::Source => SummaryTreeKind::Source,
             TreeKind::Topic => SummaryTreeKind::Topic,
             TreeKind::Global => SummaryTreeKind::Global,
+            _ => SummaryTreeKind::Source,
         }
     }
 
@@ -104,6 +86,7 @@ impl<'a> TreeFactory<'a> {
                     slugify_source_id(scope)
                 }
             }
+            _ => slugify_source_id(scope),
         }
     }
 
@@ -111,6 +94,7 @@ impl<'a> TreeFactory<'a> {
         match self.kind() {
             TreeKind::Source => LabelStrategy::ExtractFromContent(build_summary_extractor(config)),
             TreeKind::Topic | TreeKind::Global => LabelStrategy::Empty,
+            _ => LabelStrategy::ExtractFromContent(build_summary_extractor(config)),
         }
     }
 

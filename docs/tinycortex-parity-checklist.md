@@ -62,23 +62,40 @@ two layers.
 
 ### Layer 1 — schema/format asserters (host-side unit tests, cheap, run every PR)
 
-A `tests/tinycortex_parity/` module with pure-function comparators (no disk):
+Pure-function comparators (no disk), implemented in **`src/openhuman/tinycortex/parity.rs`**
+(`#[cfg(test)]`). Status ✅ = landed & green; ⏳ = pending.
 
-- **`chunk_id_parity`** — table of `(source_kind, source_id, seq, content)` → assert host `chunk_id`
-  == `tinycortex::memory::chunks::chunk_id` (covers P1). *(After W3 both resolve to the crate; keep
-  the vector as a regression pin.)*
-- **`vector_roundtrip_parity`** — random `Vec<f32>` → `vec_to_bytes` → `bytes_to_vec` byte-equal
-  across both (P2).
-- **`content_path_parity`** — corpus of adversarial ids (colons, unicode, >255 chars, `email`
-  source) → assert identical `chunk_rel_path`/`summary_rel_path` (P6).
-- **`frontmatter_parity`** — compose a fixed chunk+summary → byte-compare markdown incl. frontmatter
-  key order (P7).
-- **`embedding_signature_parity`** — assert the W1 seam's `signature()` string == the format the
-  store persisted into `store_meta` (P10).
+- ✅ **`chunk_id_matches_historical_golden` / `chunk_id_is_sensitive_to_every_field`** — golden +
+  every-field sensitivity for the deterministic `chunk_id` (covers P1). *(After W3 both resolve to the
+  crate; the golden vector stays as a regression pin.)*
+- ✅ **`vector_encoding_is_le_packed_f32`** — `vec_to_bytes`/`bytes_to_vec` LE-packed-f32 round-trip
+  + golden bytes (P2).
+- ✅ **`chunk_rel_path_host_crate_byte_parity` / `summary_rel_path_host_crate_byte_parity`** —
+  adversarial id corpus (colons, all Windows-illegal chars, unicode, >255 chars, gmail participant
+  slugs, malformed email; every summary-id shape × 3 tree kinds × levels) → assert host
+  `chunk_rel_path`/`summary_rel_path` **byte-equal** the crate's (P6). *(Landed; verified identical.)*
+- ✅ **`embedding_signature_host_crate_byte_parity`** — assert host
+  `embeddings::format_embedding_signature` == crate `store::vectors::format_embedding_signature` and
+  both == the golden `provider={name};model={model};dims={dims}` over a provider corpus (P10). The
+  seam's own `signature()` pass-through is separately pinned in `tinycortex/embeddings.rs`.
+- ⏳ **`frontmatter_parity`** — compose a fixed chunk+summary → byte-compare markdown incl.
+  frontmatter key order (P7). *(Not yet landed — needs the host/crate compose types aligned.)*
 
 ### Layer 2 — golden-workspace differential harness (the flip gate)
 
 The core mechanism from plan §0.3: **one on-disk workspace, opened by both engines, outputs compared.**
+
+> **Status (2026-07-10).** First cut landed as **`tests/memory_golden_parity_e2e.rs`** —
+> comparator **1** (schema composition) and comparator **5** (idempotent re-open) are green:
+> a real workspace is stood up through the host production surface (`memory::ops`), the crate
+> substrate init is forced deterministically, and **all `*.db` files under the workspace are scanned
+> path-agnostically** (union of tables). It asserts the crate chunk-DB substrate (15 `chunks/schema.rs`
+> tables) and the host `UnifiedMemory` tier (10 tables) **coexist without collision** (P3/P5/P11/P12),
+> and that re-running the flow adds/drops no tables (comparator 5). Still TODO: `vectors`/`store_meta`/
+> `kv_*` (created by the chunk/embed pipeline, need a widened ingest flow), the seeded golden fixture +
+> `scripts/gen-golden-workspace.sh`, and comparators **2** (recall/retrieval snapshot), **3** (tree
+> read), **4** (byte-compare vault) — these require a populated, sealed fixture and the W5 retrieval
+> surface, so they land alongside the W3/W5 flips.
 
 **Fixture.** Check in a small, deterministic `tests/fixtures/golden-workspace/` produced by the
 *pre-migration* build: a real `chunks.db` + content vault + diff `.git`, seeded via a fixed script
@@ -114,6 +131,45 @@ flip preserves *existing* data, not just that the API still functions.
 **Gate mapping:** Layer-1 asserters run every PR. Layer-2 golden harness is **green-before-merge** on
 **W3** (store+chunks), **W5** (tree+retrieval+score), **W6** (ingest). W4 (queue) additionally asserts
 job payload_json parity (P4/P9). Any red = upstream fix in tinycortex, re-bump submodule, re-run.
+
+**W-SYNC gates (amendment 2026-07-09, plan §8):**
+- **P13 sync-status parity** — `memory_sync_status_list` output (per-`source_kind` freshness rows)
+  byte-equal pre/post flip on a golden workspace; asserter added to
+  `src/openhuman/tinycortex/parity.rs`.
+- **P14 Composio sync test pair** — the crate's mocked-HTTP provider suite
+  (`vendor/tinycortex/tests/composio_sync_mock.rs`, wiremock, always-on) covers Gmail, Slack,
+  GitHub, Notion, Linear, and ClickUp, including pagination/cursors, request budgets, retries,
+  taint, idempotency, proxied envelopes, and secret redaction. The live `#[ignore]` test
+  (`composio_sync_live.rs`, `COMPOSIO_API_KEY`) remains the manual direct-mode smoke gate.
+
+### W8 test-ownership audit (2026-07-13)
+
+Engine tests now run at their ownership boundary rather than through OpenHuman re-export shims:
+
+- TinyCortex owns memory value/chunk/tree/queue/scoring behavior and the Composio sync pipelines.
+  Duplicate engine assertions were removed from the pure `chunks::types`, `trees::types`,
+  queue-backfill flag, retrieval-weight, and score re-export shims.
+- OpenHuman retains tests that cross a product boundary: config and credential mapping,
+  `SkillDocSink` persistence, event-bus subscribers, RPC envelopes, provider profile/task/catalog
+  surfaces, agent-tool response post-processing, source registry side effects, and the
+  security-critical `MemoryTaint` seam.
+- OpenHuman CI now runs `cargo test --manifest-path vendor/tinycortex/Cargo.toml --features
+  git-diff,sync` when the submodule pointer changes and in the reusable full Rust suite. This is
+  required because Cargo does not run dependency test targets while testing `openhuman`.
+
+The focused local verification commands are:
+
+```bash
+cargo test --manifest-path vendor/tinycortex/Cargo.toml --features git-diff,sync
+cargo test --test raw_coverage_all memory_sync -- --test-threads=1
+cargo test --test memory_sync_pipeline_e2e --test memory_artifacts_e2e \
+  --test memory_golden_parity_e2e --test memory_roundtrip_e2e --test memory_sources_e2e
+cargo test --test json_rpc_e2e json_rpc_memory
+```
+
+**W-EMB gate:** the existing **P10 `embedding_signature_parity`** asserter is the regression pin —
+the tinyagents-backed provider stack must emit byte-identical
+`provider={name};model={model};dims={dims}` signatures, or existing vector spaces split.
 
 ## Open divergences to resolve upstream before their flip
 

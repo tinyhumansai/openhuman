@@ -130,7 +130,7 @@ describe('RewardsCommunityTab — Connect Discord', () => {
 
     await waitFor(() => expect(openUrl).toHaveBeenCalledWith('https://discord.com/oauth'));
     // Return route is persisted only after the consent URL launches.
-    await waitFor(() => expect(setOAuthReturnRoute).toHaveBeenCalledWith('/rewards'));
+    await waitFor(() => expect(setOAuthReturnRoute).toHaveBeenCalledWith('/rewards?view=main'));
     expect(callCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.auth.oauth_connect',
       params: { provider: 'discord' },

@@ -93,7 +93,7 @@ pub(crate) async fn build_root_parent(
     Ok(ParentExecutionContext {
         agent_definition_id: agent_definition_id.to_string(),
         allowed_subagent_ids: HashSet::new(),
-        provider: agent.provider_arc(),
+        turn_model_source: agent.turn_model_source(),
         all_tools: agent.tools_arc(),
         all_tool_specs: agent.tool_specs_arc(),
         // No visibility filter for this spawned/background builder — empty means

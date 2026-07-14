@@ -153,7 +153,8 @@ pub(crate) async fn eval_rhai_cell(req: RhaiEvalRequest) -> Result<RhaiEvalRespo
     let policy =
         resolve_policy(tier, req.timeout_secs, req.limits.as_ref()).map_err(RhaiError::Denied)?;
 
-    let registry = build_capability_registry(&parent);
+    let registry = build_capability_registry(&parent)
+        .map_err(|error| RhaiError::CapabilityError(error.to_string()))?;
     run_cell(
         req,
         policy,

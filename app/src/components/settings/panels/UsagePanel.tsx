@@ -7,20 +7,26 @@ import CostDashboardPanel from '../../dashboard/CostDashboardPanel';
 import { SettingsStatusLine } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
 import { BackgroundLoopControls } from './AIPanel';
+import TokenUsagePanel from './TokenUsagePanel';
 
-type TabId = 'costs' | 'background';
+type TabId = 'costs' | 'tokens' | 'background';
 
-const TAB_HASH: Record<TabId, string> = { costs: '', background: '#background' };
+const TAB_HASH: Record<TabId, string> = { costs: '', tokens: '#tokens', background: '#background' };
 
-const hashToTab = (hash: string): TabId => (hash === '#background' ? 'background' : 'costs');
+const hashToTab = (hash: string): TabId => {
+  if (hash === '#background') return 'background';
+  if (hash === '#tokens') return 'tokens';
+  return 'costs';
+};
 
 /**
  * Single Settings entry for usage & limits. Combines the cost dashboard
- * (charts, budgets, usage log) and the background-activity controls
- * (heartbeat cadences + usage ledger, previously the separate Heartbeat and
- * Usage-ledger pages) as two tabs under one header. The active tab is
- * reflected in the URL hash (`#background`) so deep links and the legacy
- * heartbeat/ledger-usage redirects land on the right view.
+ * (charts, budgets, usage log), the Tokenjuice token-savings surface, and the
+ * background-activity controls (heartbeat cadences + usage ledger, previously
+ * the separate Heartbeat and Usage-ledger pages) as tabs under one header. The
+ * active tab is reflected in the URL hash (`#tokens` / `#background`) so deep
+ * links and the legacy heartbeat/ledger-usage/token-usage redirects land on
+ * the right view.
  */
 const UsagePanel = () => {
   const { t } = useT();
@@ -30,7 +36,7 @@ const UsagePanel = () => {
   const tab: TabId = hashToTab(location.hash);
 
   const selectTab = (next: TabId) => {
-    navigate(`${location.pathname}${TAB_HASH[next]}`, { replace: true });
+    navigate(`${location.pathname}${location.search}${TAB_HASH[next]}`, { replace: true });
   };
 
   return (
@@ -45,6 +51,11 @@ const UsagePanel = () => {
           id: 'costs',
           label: t('settings.costDashboard.title'),
           content: <CostDashboardPanel embedded />,
+        },
+        {
+          id: 'tokens',
+          label: t('settings.tokenUsage.title'),
+          content: <TokenUsagePanel embedded />,
         },
         {
           id: 'background',

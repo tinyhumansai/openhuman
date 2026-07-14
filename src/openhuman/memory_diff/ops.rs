@@ -1,82 +1,55 @@
-//! Business logic for memory diff: snapshot capture, diff computation,
-//! checkpoints, and cleanup — all backed by the git ledger (`git_store`).
+//! Business logic for memory diff — thin host async wrappers over
+//! `tinycortex::memory::diff::DiffEngine` (W7).
 //!
-//! `mem_tree_chunks` remains authoritative. Each `take_snapshot` materialises a
-//! source's current items as git blobs and records them as a commit; diffs are
-//! git tree diffs, checkpoints are tags, read markers are refs.
-
-use std::collections::HashMap;
-
-use anyhow::{anyhow, bail};
+//! The snapshot/diff/checkpoint/ledger engine is the crate's; the git ledger it
+//! writes lives at the same `<workspace>/memory_diff/repo` path with the same
+//! libgit2 layout, so existing ledgers keep working byte-for-byte. `DiffEngine`
+//! is synchronous and generic over a chunk-source seam, so each op here builds
+//! the host [`ChunkStoreItemSource`] (which reads the authoritative
+//! `mem_tree_chunks`) and drives the engine inside `spawn_blocking`, preserving
+//! the host's `async` + `Result<_, String>` signatures, the `DomainEvent`
+//! publishes, and the tracing that RPC/tools/sync/subconscious callers expect.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_sources::types::{MemorySourceEntry, SourceKind};
-use crate::openhuman::memory_store::chunks::store as chunk_store;
+use crate::openhuman::memory_sources::types::MemorySourceEntry;
 
-use super::git_store::{Ledger, SnapshotMeta};
+use tinycortex::memory::diff::{DiffEngine, SourceDescriptor};
+
+use super::source::ChunkStoreItemSource;
 use super::types::*;
+
+/// A crate [`SourceDescriptor`] from a host source entry.
+fn descriptor(source: &MemorySourceEntry) -> SourceDescriptor {
+    SourceDescriptor::new(
+        source.id.clone(),
+        source.kind.as_str().to_string(),
+        source.label.clone(),
+    )
+}
 
 /// Take a snapshot of the current chunk-store state for a source.
 ///
-/// Reads from `mem_tree_chunks` (already-ingested data), groups by item, and
-/// commits one blob per item to the git ledger. Returns the new [`Snapshot`]
-/// whose `id` is the commit SHA.
+/// Reads from `mem_tree_chunks` (already-ingested data) via the item-source
+/// seam, groups by item, and commits one blob per item to the git ledger.
+/// Returns the new [`Snapshot`] whose `id` is the commit SHA.
 pub async fn take_snapshot(
     source: &MemorySourceEntry,
     config: &Config,
     trigger: SnapshotTrigger,
 ) -> Result<Snapshot, String> {
-    let prefix = source_id_prefix(source);
+    let workspace_dir = config.workspace_dir.clone();
     let config_clone = config.clone();
+    let source_owned = source.clone();
+    let desc = descriptor(source);
 
-    // Group chunk content per item, in chunk order, into (item_id, content).
-    let items = tokio::task::spawn_blocking(move || {
-        chunk_store::with_connection(&config_clone, |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT source_id, content \
-                 FROM mem_tree_chunks \
-                 WHERE source_id LIKE ?1 \
-                 ORDER BY source_id, seq_in_source",
-            )?;
-
-            let mut groups: HashMap<String, Vec<String>> = HashMap::new();
-            let rows = stmt.query_map([&prefix], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?;
-            for row in rows {
-                let (composite_source_id, content) = row?;
-                let item_id = extract_item_id(&composite_source_id);
-                groups.entry(item_id).or_default().push(content);
-            }
-
-            let mut items: Vec<(String, String)> = groups
-                .into_iter()
-                .map(|(item_id, parts)| (item_id, parts.join("")))
-                .collect();
-            items.sort_by(|a, b| a.0.cmp(&b.0));
-            Ok(items)
-        })
+    let snapshot = tokio::task::spawn_blocking(move || -> anyhow::Result<Snapshot> {
+        let items = ChunkStoreItemSource::single(config_clone, &source_owned);
+        let engine = DiffEngine::new(workspace_dir, items);
+        engine.take_snapshot(&desc, trigger)
     })
     .await
     .map_err(|e| format!("snapshot join error: {e}"))?
-    .map_err(|e: anyhow::Error| format!("snapshot query error: {e:#}"))?;
-
-    let meta = SnapshotMeta {
-        source_id: source.id.clone(),
-        source_kind: source.kind.as_str().to_string(),
-        label: source.label.clone(),
-        trigger,
-    };
-    let workspace_dir = config.workspace_dir.clone();
-    let now_ms = chrono::Utc::now().timestamp_millis();
-
-    let snapshot = tokio::task::spawn_blocking(move || -> anyhow::Result<Snapshot> {
-        let ledger = Ledger::open(&workspace_dir)?;
-        ledger.commit_snapshot(&meta, &items, now_ms)
-    })
-    .await
-    .map_err(|e| format!("snapshot persist join: {e}"))?
-    .map_err(|e: anyhow::Error| format!("snapshot persist: {e:#}"))?;
+    .map_err(|e: anyhow::Error| format!("take_snapshot: {e:#}"))?;
 
     tracing::debug!(
         snapshot_id = %snapshot.id,
@@ -115,49 +88,13 @@ pub async fn compute_diff(
     include_text_diff: bool,
 ) -> Result<DiffResult, String> {
     let workspace_dir = config.workspace_dir.clone();
+    let config_clone = config.clone();
     let to_id = to_snapshot_id.to_string();
     let from_id = from_snapshot_id.map(|s| s.to_string());
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<DiffResult> {
-        let ledger = Ledger::open(&workspace_dir)?;
-        let to_snap = ledger
-            .get_snapshot(&to_id)?
-            .ok_or_else(|| anyhow!("snapshot not found: {to_id}"))?;
-
-        let from_snap = match &from_id {
-            Some(fid) => {
-                let s = ledger
-                    .get_snapshot(fid)?
-                    .ok_or_else(|| anyhow!("snapshot not found: {fid}"))?;
-                if s.source_id != to_snap.source_id {
-                    bail!(
-                        "cross-source diff not allowed: from={} to={}",
-                        s.source_id,
-                        to_snap.source_id
-                    );
-                }
-                Some(s)
-            }
-            None => None,
-        };
-
-        let (changes, summary) = ledger.compute_changes(
-            from_id.as_deref(),
-            &to_id,
-            &to_snap.source_id,
-            to_snap.item_count,
-            include_text_diff,
-        )?;
-
-        Ok(DiffResult {
-            source_id: to_snap.source_id.clone(),
-            source_kind: to_snap.source_kind.clone(),
-            source_label: to_snap.label.clone(),
-            from_snapshot_id: from_snap.map(|s| s.id),
-            to_snapshot_id: to_snap.id.clone(),
-            summary,
-            changes,
-        })
+        let engine = DiffEngine::new(workspace_dir, ChunkStoreItemSource::read_only(config_clone));
+        engine.compute_diff(from_id.as_deref(), &to_id, include_text_diff)
     })
     .await
     .map_err(|e| format!("diff join: {e}"))?
@@ -171,29 +108,16 @@ pub async fn diff_since_last(
     include_text_diff: bool,
 ) -> Result<DiffResult, String> {
     let workspace_dir = config.workspace_dir.clone();
+    let config_clone = config.clone();
     let source_id = source.id.clone();
 
-    let snapshots = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<Snapshot>> {
-        let ledger = Ledger::open(&workspace_dir)?;
-        ledger.latest_snapshots_for_source(&source_id, 2)
+    tokio::task::spawn_blocking(move || -> anyhow::Result<DiffResult> {
+        let engine = DiffEngine::new(workspace_dir, ChunkStoreItemSource::read_only(config_clone));
+        engine.diff_since_last(&source_id, include_text_diff)
     })
     .await
     .map_err(|e| format!("diff_since_last join: {e}"))?
-    .map_err(|e: anyhow::Error| format!("diff_since_last: {e:#}"))?;
-
-    match snapshots.len() {
-        0 => Err("no snapshots found for this source".to_string()),
-        1 => compute_diff(config, None, &snapshots[0].id, include_text_diff).await,
-        _ => {
-            compute_diff(
-                config,
-                Some(&snapshots[1].id),
-                &snapshots[0].id,
-                include_text_diff,
-            )
-            .await
-        }
-    }
+    .map_err(|e: anyhow::Error| format!("diff_since_last: {e:#}"))
 }
 
 /// Diff a source's latest snapshot against its read marker — i.e. everything
@@ -210,48 +134,21 @@ pub async fn diff_since_read(
     commit: bool,
 ) -> Result<DiffResult, String> {
     let workspace_dir = config.workspace_dir.clone();
+    let config_clone = config.clone();
     let source_id = source.id.clone();
 
-    // Resolve head (latest snapshot) and the marker's base snapshot. If the
-    // marker points at a commit that no longer resolves, treat it as unread.
-    let (head, base_id) = tokio::task::spawn_blocking(
-        move || -> anyhow::Result<(Option<Snapshot>, Option<String>)> {
-            let ledger = Ledger::open(&workspace_dir)?;
-            let head = ledger
-                .latest_snapshots_for_source(&source_id, 1)?
-                .into_iter()
-                .next();
-            let marker = ledger.get_read_marker(&source_id)?;
-            let base_id = match marker {
-                Some(snap_id) if ledger.get_snapshot(&snap_id)?.is_some() => Some(snap_id),
-                _ => None,
-            };
-            Ok((head, base_id))
-        },
-    )
+    let diff = tokio::task::spawn_blocking(move || -> anyhow::Result<DiffResult> {
+        let engine = DiffEngine::new(workspace_dir, ChunkStoreItemSource::read_only(config_clone));
+        engine.diff_since_read(&source_id, include_text_diff, commit)
+    })
     .await
     .map_err(|e| format!("diff_since_read join: {e}"))?
     .map_err(|e: anyhow::Error| format!("diff_since_read: {e:#}"))?;
 
-    let head = head.ok_or_else(|| "no snapshots found for this source".to_string())?;
-
-    let diff = compute_diff(config, base_id.as_deref(), &head.id, include_text_diff).await?;
-
     if commit {
-        let workspace_dir = config.workspace_dir.clone();
-        let source_id = source.id.clone();
-        let head_id = head.id.clone();
-        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let ledger = Ledger::open(&workspace_dir)?;
-            ledger.set_read_marker(&source_id, &head_id)
-        })
-        .await
-        .map_err(|e| format!("diff_since_read commit join: {e}"))?
-        .map_err(|e: anyhow::Error| format!("diff_since_read commit: {e:#}"))?;
-
         tracing::debug!(
             source_id = %source.id,
-            snapshot_id = %head.id,
+            snapshot_id = %diff.to_snapshot_id,
             added = diff.summary.added,
             modified = diff.summary.modified,
             removed = diff.summary.removed,
@@ -278,24 +175,23 @@ pub async fn mark_read(config: &Config, source_ids: Option<Vec<String>>) -> Resu
     };
 
     let workspace_dir = config.workspace_dir.clone();
+    let config_clone = config.clone();
     let ids_for_blocking = target_ids.clone();
+
     let (marked, snapshot_ids) =
         tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, Vec<String>)> {
-            let ledger = Ledger::open(&workspace_dir)?;
-            let mut count = 0u64;
+            let engine =
+                DiffEngine::new(workspace_dir, ChunkStoreItemSource::read_only(config_clone));
+            // Gather the head snapshot ids that will be marked, for the event
+            // payload (the crate `mark_read` returns only a count).
             let mut snapshot_ids = Vec::new();
             for sid in &ids_for_blocking {
-                if let Some(head) = ledger
-                    .latest_snapshots_for_source(sid, 1)?
-                    .into_iter()
-                    .next()
-                {
-                    ledger.set_read_marker(sid, &head.id)?;
+                if let Some(head) = engine.list_snapshots(Some(sid), 1)?.into_iter().next() {
                     snapshot_ids.push(head.id);
-                    count += 1;
                 }
             }
-            Ok((count, snapshot_ids))
+            let marked = engine.mark_read(&ids_for_blocking)?;
+            Ok((marked, snapshot_ids))
         })
         .await
         .map_err(|e| format!("mark_read join: {e}"))?
@@ -317,66 +213,26 @@ pub async fn mark_read(config: &Config, source_ids: Option<Vec<String>>) -> Resu
 }
 
 /// Create a checkpoint (git tag at HEAD) grouping the latest snapshot per
-/// enabled source.
+/// enabled source. Sources lacking a snapshot are baselined first.
 pub async fn create_checkpoint(label: &str, config: &Config) -> Result<Checkpoint, String> {
     let sources = crate::openhuman::memory_sources::registry::list_sources()
         .await
         .map_err(|e| format!("list sources: {e}"))?;
-    let enabled: Vec<_> = sources.into_iter().filter(|s| s.enabled).collect();
+    let enabled: Vec<MemorySourceEntry> = sources.into_iter().filter(|s| s.enabled).collect();
 
-    // Take a snapshot for any source that doesn't have one yet, so the
-    // checkpoint has a baseline for every source.
     let workspace_dir = config.workspace_dir.clone();
-    let enabled_ids: Vec<String> = enabled.iter().map(|s| s.id.clone()).collect();
-    let ids_clone = enabled_ids.clone();
-    let lacking = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<String>> {
-        let ledger = Ledger::open(&workspace_dir)?;
-        let mut lacking = Vec::new();
-        for sid in &ids_clone {
-            if ledger.snapshot_count_for_source(sid)? == 0 {
-                lacking.push(sid.clone());
-            }
-        }
-        Ok(lacking)
-    })
-    .await
-    .map_err(|e| format!("checkpoint check join: {e}"))?
-    .map_err(|e: anyhow::Error| format!("checkpoint check: {e:#}"))?;
-
-    for source in enabled.iter().filter(|s| lacking.contains(&s.id)) {
-        take_snapshot(source, config, SnapshotTrigger::Manual).await?;
-    }
-
-    // Gather the latest snapshot id per source, then tag HEAD.
-    let workspace_dir = config.workspace_dir.clone();
-    let checkpoint_id = format!("ckpt_{}", uuid::Uuid::new_v4());
-    let created_at_ms = chrono::Utc::now().timestamp_millis();
+    let config_clone = config.clone();
     let label_owned = label.to_string();
-    let ckpt_id_clone = checkpoint_id.clone();
 
     let checkpoint = tokio::task::spawn_blocking(move || -> anyhow::Result<Checkpoint> {
-        let ledger = Ledger::open(&workspace_dir)?;
-        let mut snapshot_ids = Vec::new();
-        for sid in &enabled_ids {
-            if let Some(snap) = ledger
-                .latest_snapshots_for_source(sid, 1)?
-                .into_iter()
-                .next()
-            {
-                snapshot_ids.push(snap.id);
-            }
-        }
-        ledger.create_checkpoint(&ckpt_id_clone, &label_owned, &snapshot_ids, created_at_ms)?;
-        Ok(Checkpoint {
-            id: ckpt_id_clone,
-            label: label_owned,
-            created_at_ms,
-            snapshot_ids,
-        })
+        let descriptors: Vec<SourceDescriptor> = enabled.iter().map(descriptor).collect();
+        let items = ChunkStoreItemSource::for_sources(config_clone, &enabled);
+        let engine = DiffEngine::new(workspace_dir, items);
+        engine.create_checkpoint(&label_owned, &descriptors)
     })
     .await
     .map_err(|e| format!("checkpoint persist join: {e}"))?
-    .map_err(|e: anyhow::Error| format!("checkpoint persist: {e:#}"))?;
+    .map_err(|e: anyhow::Error| format!("create_checkpoint: {e:#}"))?;
 
     tracing::debug!(
         checkpoint_id = %checkpoint.id,
@@ -394,61 +250,12 @@ pub async fn diff_since_checkpoint(
     include_text_diff: bool,
 ) -> Result<CrossSourceDiff, String> {
     let workspace_dir = config.workspace_dir.clone();
+    let config_clone = config.clone();
     let ckpt_id = checkpoint_id.to_string();
-    let computed_at_ms = chrono::Utc::now().timestamp_millis();
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<CrossSourceDiff> {
-        let ledger = Ledger::open(&workspace_dir)?;
-        let checkpoint = ledger
-            .get_checkpoint(&ckpt_id)?
-            .ok_or_else(|| anyhow!("checkpoint not found: {ckpt_id}"))?;
-
-        let mut per_source = Vec::new();
-        let mut agg = DiffSummary::default();
-
-        for snap_id in &checkpoint.snapshot_ids {
-            let Some(base) = ledger.get_snapshot(snap_id)? else {
-                continue;
-            };
-            let Some(head) = ledger
-                .latest_snapshots_for_source(&base.source_id, 1)?
-                .into_iter()
-                .next()
-            else {
-                continue;
-            };
-            if head.id == base.id {
-                continue; // unchanged since the checkpoint
-            }
-
-            let (changes, summary) = ledger.compute_changes(
-                Some(&base.id),
-                &head.id,
-                &head.source_id,
-                head.item_count,
-                include_text_diff,
-            )?;
-            agg.added += summary.added;
-            agg.removed += summary.removed;
-            agg.modified += summary.modified;
-            agg.unchanged += summary.unchanged;
-            per_source.push(DiffResult {
-                source_id: head.source_id.clone(),
-                source_kind: head.source_kind.clone(),
-                source_label: head.label.clone(),
-                from_snapshot_id: Some(base.id.clone()),
-                to_snapshot_id: head.id.clone(),
-                summary,
-                changes,
-            });
-        }
-
-        Ok(CrossSourceDiff {
-            checkpoint_id: Some(checkpoint.id),
-            computed_at_ms,
-            summary: agg,
-            per_source,
-        })
+        let engine = DiffEngine::new(workspace_dir, ChunkStoreItemSource::read_only(config_clone));
+        engine.diff_since_checkpoint(&ckpt_id, include_text_diff)
     })
     .await
     .map_err(|e| format!("diff_since_checkpoint join: {e}"))?
@@ -462,95 +269,21 @@ pub async fn diff_since_checkpoint(
 /// Returns the number of checkpoints deleted.
 pub async fn cleanup(config: &Config, older_than_days: u32) -> Result<u64, String> {
     let workspace_dir = config.workspace_dir.clone();
-    let cutoff =
-        chrono::Utc::now().timestamp_millis() - (older_than_days as i64 * 24 * 60 * 60 * 1000);
+    let config_clone = config.clone();
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
-        let ledger = Ledger::open(&workspace_dir)?;
-        ledger.cleanup_checkpoints(cutoff)
+        let engine = DiffEngine::new(workspace_dir, ChunkStoreItemSource::read_only(config_clone));
+        engine.cleanup(older_than_days)
     })
     .await
     .map_err(|e| format!("cleanup join: {e}"))?
     .map_err(|e: anyhow::Error| format!("cleanup: {e:#}"))
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────
-
-/// Build the `source_id LIKE` prefix that matches chunks belonging to a source.
-/// Mirrors `memory_sources::status::source_id_prefix`.
-fn source_id_prefix(source: &MemorySourceEntry) -> String {
-    match source.kind {
-        SourceKind::Composio => source
-            .toolkit
-            .as_deref()
-            .map(|t| format!("{t}:%"))
-            .unwrap_or_else(|| "__no_toolkit__:%".to_string()),
-        _ => format!("mem_src:{}:%", source.id),
-    }
-}
-
-/// Extract the item-level id from a composite chunk source_id.
-///
-/// For reader-backed: `mem_src:src_abc:readme.md` → `readme.md`
-/// For Composio: `gmail:user@example.com:msg_xxx` → `user@example.com:msg_xxx`
-fn extract_item_id(composite: &str) -> String {
-    if let Some(rest) = composite.strip_prefix("mem_src:") {
-        // Skip the source id segment
-        if let Some(pos) = rest.find(':') {
-            return rest[pos + 1..].to_string();
-        }
-    }
-    // Composio or other: strip first segment
-    if let Some(pos) = composite.find(':') {
-        return composite[pos + 1..].to_string();
-    }
-    composite.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory_diff::git_store::Ledger;
-
-    #[test]
-    fn extract_item_id_reader_backed() {
-        assert_eq!(extract_item_id("mem_src:src_abc:readme.md"), "readme.md");
-        assert_eq!(
-            extract_item_id("mem_src:src_abc:path/to/file.md"),
-            "path/to/file.md"
-        );
-    }
-
-    #[test]
-    fn extract_item_id_composio() {
-        assert_eq!(
-            extract_item_id("gmail:user@example.com:msg_xxx"),
-            "user@example.com:msg_xxx"
-        );
-    }
-
-    #[test]
-    fn extract_item_id_no_prefix() {
-        assert_eq!(extract_item_id("standalone"), "standalone");
-    }
-
-    #[test]
-    fn source_id_prefix_folder() {
-        assert_eq!(
-            source_id_prefix(&folder_source("src_abc")),
-            "mem_src:src_abc:%"
-        );
-    }
-
-    #[test]
-    fn source_id_prefix_composio() {
-        let mut entry = folder_source("src_cmp");
-        entry.kind = SourceKind::Composio;
-        entry.toolkit = Some("gmail".into());
-        assert_eq!(source_id_prefix(&entry), "gmail:%");
-    }
-
-    // ── Integration-style ops tests over a temp git ledger ────────────────
+    use tinycortex::memory::diff::{Ledger, SnapshotMeta};
 
     fn test_config() -> Config {
         let dir = tempfile::tempdir().unwrap();
@@ -564,7 +297,7 @@ mod tests {
     fn folder_source(id: &str) -> MemorySourceEntry {
         MemorySourceEntry {
             id: id.into(),
-            kind: SourceKind::Folder,
+            kind: crate::openhuman::memory_sources::types::SourceKind::Folder,
             label: "Docs".into(),
             enabled: true,
             toolkit: None,
@@ -587,7 +320,8 @@ mod tests {
         }
     }
 
-    /// Seed a snapshot directly through the ledger (bypassing the chunk store).
+    /// Seed a snapshot directly through the (crate) ledger, bypassing the chunk
+    /// store — exercises the host async wrappers over real ledger state.
     fn seed(
         config: &Config,
         source_id: &str,

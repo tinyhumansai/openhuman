@@ -424,7 +424,7 @@ pub fn skills_schemas(function: &str) -> ControllerSchema {
             inputs: vec![FieldSchema {
                 name: "workflow_id",
                 ty: TypeSchema::String,
-                comment: "Workflow id from `skills_list` (e.g. \"github-issue-crusher\", \"pr-review-shepherd\", \"dev-workflow\").",
+                comment: "Workflow id from `skills_list` (e.g. \"github-issue-crusher\", \"pr-review-shepherd\").",
                 required: true,
             }],
             outputs: vec![

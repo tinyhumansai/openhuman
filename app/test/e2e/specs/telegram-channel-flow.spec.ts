@@ -83,6 +83,9 @@ const BOB_USERNAME = 'bob_e2e';
 
 /** Bot username configured in the mock. */
 const BOT_USERNAME = 'e2e_test_bot';
+// Listener startup is optional in this harness because channels_connect can
+// require a core restart. Probe briefly, then take the documented RPC-only path.
+const LISTENER_PROBE_TIMEOUT_MS = 8_000;
 
 // ---------------------------------------------------------------------------
 // Suite
@@ -378,7 +381,7 @@ describe('Telegram channel — connect / receive / send / disconnect', () => {
 
     // Wait for the mock to receive a getUpdates call (confirms the channel
     // polling loop is active against the mock server).
-    const getUpdatesDeadline = Date.now() + 30_000;
+    const getUpdatesDeadline = Date.now() + LISTENER_PROBE_TIMEOUT_MS;
     let getUpdatesObserved = false;
     while (Date.now() < getUpdatesDeadline) {
       const log = getRequestLog() as Array<{ method: string; url: string }>;
@@ -399,7 +402,7 @@ describe('Telegram channel — connect / receive / send / disconnect', () => {
       // message round-trip requires a live listener restart and is
       // architecture-dependent in the E2E harness.
       console.warn(
-        `${LOG_PREFIX} C.5: getUpdates not observed within 30s — channel listener may require ` +
+        `${LOG_PREFIX} C.5: getUpdates not observed within the probe window — channel listener may require ` +
           `manual core restart. Asserting RPC-level path only.`
       );
       // Validate the mock server is reachable and configured correctly.
@@ -460,7 +463,7 @@ describe('Telegram channel — connect / receive / send / disconnect', () => {
     console.log(`${LOG_PREFIX} C.6: Bob's update injected`);
 
     // Wait for getUpdates poll to confirm listener is active.
-    const getUpdatesDeadline = Date.now() + 30_000;
+    const getUpdatesDeadline = Date.now() + LISTENER_PROBE_TIMEOUT_MS;
     let getUpdatesObserved = false;
     while (Date.now() < getUpdatesDeadline) {
       const log = getRequestLog() as Array<{ method: string; url: string }>;
@@ -514,7 +517,7 @@ describe('Telegram channel — connect / receive / send / disconnect', () => {
     });
 
     // Wait for listener to start (getUpdates poll) before injecting.
-    const listenerDeadline = Date.now() + 30_000;
+    const listenerDeadline = Date.now() + LISTENER_PROBE_TIMEOUT_MS;
     let listenerActive = false;
     while (Date.now() < listenerDeadline) {
       const log = getRequestLog() as Array<{ method: string; url: string }>;
@@ -671,7 +674,7 @@ describe('Telegram channel — connect / receive / send / disconnect', () => {
     await connectTelegramBot({ botToken: BOT_TOKEN, allowedUsers: [ALICE_USERNAME] });
 
     // Wait for listener.
-    const listenerDeadline = Date.now() + 30_000;
+    const listenerDeadline = Date.now() + LISTENER_PROBE_TIMEOUT_MS;
     let listenerActive = false;
     while (Date.now() < listenerDeadline) {
       const log = getRequestLog() as Array<{ method: string; url: string }>;

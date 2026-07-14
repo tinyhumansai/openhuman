@@ -7,10 +7,12 @@ pub mod audit;
 pub mod bubblewrap;
 pub mod detect;
 pub mod docker;
+pub mod egress;
 pub mod firejail;
 pub mod landlock;
 pub mod live_policy;
 pub mod pairing;
+pub mod pii;
 pub mod policy;
 pub mod secrets;
 pub mod traits;
@@ -25,6 +27,10 @@ pub use audit::{
 pub use core::*;
 #[allow(unused_imports)]
 pub use detect::create_sandbox;
+#[allow(unused_imports)]
+pub use egress::{
+    emit_external_transfer, DataKind, EgressDescriptor, EgressReason, IdentificationRisk,
+};
 pub use ops as rpc;
 pub use ops::*;
 #[allow(unused_imports)]
@@ -50,3 +56,6 @@ pub use schemas::{
     all_controller_schemas as all_security_controller_schemas,
     all_registered_controllers as all_security_registered_controllers,
 };
+
+#[allow(unused_imports)]
+pub use pii::{scan as scan_pii, CategoryHit, PiiCategory, PiiScanResult, RiskLevel};

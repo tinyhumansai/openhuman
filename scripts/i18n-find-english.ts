@@ -69,6 +69,7 @@ const INTENTIONAL_ENGLISH = new Set([
   "rewards.community.discordDetails", // "Discord" — brand/product name, same in every locale
   "rewards.community.rewardTokens", // "+{tokens} tokens" — "tokens" is the technical unit, kept in every locale (the recurring "/mo" variant IS translated)
   "nav.agentWorld",
+  "orchPage.medulla.title", // "Medulla" — brand/product name, same in every locale
   "memorySources.searchQueryPlaceholder",
   "migration.vendor.hermes",
   "namespaceOverview.entitiesShort",

@@ -41,9 +41,7 @@ mod ollama;
 pub(crate) mod process_util;
 pub mod profile;
 pub(crate) mod provider;
-pub(crate) use ollama::{
-    ollama_base_url, ollama_base_url_from_config, validate_ollama_url, OLLAMA_BASE_URL,
-};
+pub(crate) use ollama::{ollama_base_url, ollama_base_url_from_config, validate_ollama_url};
 pub mod service;
 pub(crate) mod voice_install_common;
 

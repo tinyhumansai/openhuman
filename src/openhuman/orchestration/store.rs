@@ -354,6 +354,18 @@ pub fn insert_message(conn: &Connection, m: &OrchestrationMessage) -> Result<boo
     Ok(changed > 0)
 }
 
+/// Clear a message's `event_kind` (set it NULL), making a previously hidden
+/// bookkeeping row visible again in the transcript / unread counts. Used to
+/// un-hide a `tool_completion` row whose forward to the hosted brain failed, so
+/// its result is not silently lost from the UI. Returns whether a row changed.
+pub fn clear_message_event_kind(conn: &Connection, id: &str) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE messages SET event_kind = NULL WHERE id = ?1",
+        params![id],
+    )?;
+    Ok(changed > 0)
+}
+
 /// Count persisted messages for a session (test/observability helper).
 pub fn count_messages(conn: &Connection, agent_id: &str, session_id: &str) -> Result<i64> {
     Ok(conn.query_row(
@@ -950,6 +962,30 @@ mod tests {
     }
 
     #[test]
+    fn clear_message_event_kind_unhides_a_hidden_row() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_connection(tmp.path(), |conn| {
+            upsert_session(conn, &session("@a", "master", 1))?;
+            let hidden = OrchestrationMessage {
+                event_kind: Some("lifecycle".into()),
+                ..msg("tool-completion:cyc:1", "@a", "master", 1)
+            };
+            insert_message(conn, &hidden)?;
+            // Hidden from the transcript while event_kind is an excluded kind.
+            assert!(list_messages_by_session(conn, "master", 50, None)?.is_empty());
+            // Un-hiding it (clear event_kind) makes it visible again.
+            assert!(clear_message_event_kind(conn, "tool-completion:cyc:1")?);
+            let visible = list_messages_by_session(conn, "master", 50, None)?;
+            assert_eq!(visible.len(), 1);
+            assert_eq!(visible[0].id, "tool-completion:cyc:1");
+            // A non-existent id changes nothing.
+            assert!(!clear_message_event_kind(conn, "nope")?);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn persists_and_reads_back_tool_result_outcome() {
         let tmp = tempfile::tempdir().unwrap();
         with_connection(tmp.path(), |conn| {
@@ -1447,17 +1483,20 @@ mod tests {
         // from several threads and assert every seq is distinct and contiguous.
         use std::sync::Arc;
         let tmp = Arc::new(tempfile::tempdir().unwrap());
+        with_connection(tmp.path(), |_| Ok(())).expect("initialise orchestration store");
+        let db_path = Arc::new(tmp.path().join("orchestration").join("orchestration.db"));
         let n = 8usize;
         let handles: Vec<_> = (0..n)
             .map(|i| {
-                let tmp = Arc::clone(&tmp);
+                let db_path = Arc::clone(&db_path);
                 std::thread::spawn(move || {
-                    with_connection(tmp.path(), |c| {
-                        in_immediate_txn(c, |c| {
-                            let seq = next_session_seq(c, "@peer", "s1")?;
-                            insert_message(c, &msg(&format!("m{i}"), "@peer", "s1", seq))?;
-                            Ok(seq)
-                        })
+                    let c = Connection::open(&*db_path).expect("open orchestration db");
+                    c.busy_timeout(std::time::Duration::from_secs(5))
+                        .expect("set busy timeout");
+                    in_immediate_txn(&c, |c| {
+                        let seq = next_session_seq(c, "@peer", "s1")?;
+                        insert_message(c, &msg(&format!("m{i}"), "@peer", "s1", seq))?;
+                        Ok(seq)
                     })
                     .expect("txn ok")
                 })
