@@ -4100,6 +4100,9 @@ const messages: TranslationMap = {
   'flows.copilot.tool.dryRunning': 'ওয়ার্কফ্লো ড্রাই-রান করা হচ্ছে…',
   'flows.copilot.tool.saving': 'ওয়ার্কফ্লো সংরক্ষণ করা হচ্ছে…',
   'flows.copilot.tool.usingTools': 'টুল ব্যবহার করা হচ্ছে…',
+  'flows.copilot.cappedNotice':
+    'এই ওয়ার্কফ্লো শেষ করার আগেই বিল্ডার তার পুনরাবৃত্তির সীমায় পৌঁছে গেছে। চালিয়ে গেলে এটি বর্তমান খসড়া থেকে নির্মাণ চালিয়ে যাবে।',
+  'flows.copilot.continueBuilding': 'নির্মাণ চালিয়ে যান',
   'flows.list.view': 'ওয়ার্কফ্লো দেখুন',
   'flows.list.export': 'রপ্তানি',
   'flows.list.exported': 'ওয়ার্কফ্লো রপ্তানি হয়েছে',
@@ -7239,6 +7242,28 @@ const messages: TranslationMap = {
   'safety.resumeFailed': 'পুনরায় শুরু করা যায়নি — অটোমেশন এখনও বন্ধ। আবার চেষ্টা করুন।',
   'safety.haltedTitle': 'অটোমেশন বন্ধ',
   'safety.haltedBody': 'সমস্ত ডেস্কটপ অটোমেশন বন্ধ করা হয়েছে। প্রস্তুত হলে পুনরায় শুরু করুন।',
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'গোপনীয়তা স্থিতি',
+  'privacy.status.external': 'ডিভাইসের বাইরে',
+  'privacy.status.local': 'ডিভাইসে',
+  'privacy.disclosure.title': 'আপনার ডিভাইস ছেড়ে যাচ্ছে',
+  'privacy.disclosure.body': 'এটি {kinds} কে {destination}-এ পাঠাবে কারণ {reason}।',
+  'privacy.disclosure.dismiss': 'বুঝেছি',
+  'privacy.disclosure.ariaLabel': 'বাহ্যিক ডেটা প্রকাশ',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'আপনার বার্তা',
+  'privacy.disclosure.kind.toolArguments': 'টুল ইনপুট',
+  'privacy.disclosure.kind.embeddingInput': 'সূচিবদ্ধ করার পাঠ্য',
+  'privacy.disclosure.kind.fileContent': 'ফাইলের বিষয়বস্তু',
+  'privacy.disclosure.kind.url': 'একটি ওয়েব ঠিকানা',
+  'privacy.disclosure.kind.metadata': 'অনুরোধের মেটাডেটা',
+  'privacy.disclosure.kind.unknown': 'ডেটা',
+  'privacy.disclosure.reason.inference': 'AI মডেলটিকে এটি প্রক্রিয়া করতে হবে',
+  'privacy.disclosure.reason.toolCall': 'একটি টুলের এটি প্রয়োজন',
+  'privacy.disclosure.reason.integration': 'একটি সংযুক্ত ইন্টিগ্রেশনের এটি প্রয়োজন',
+  'privacy.disclosure.reason.embedding': 'এটি অনুসন্ধানের জন্য সূচিবদ্ধ করা প্রয়োজন',
+  'privacy.disclosure.reason.networkFetch': 'একটি ওয়েব অনুরোধের এটি প্রয়োজন',
+  'privacy.disclosure.reason.unknown': 'এটি এই ক্রিয়ার জন্য প্রয়োজন',
 };
 
 export default messages;

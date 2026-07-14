@@ -4055,6 +4055,9 @@ const messages: TranslationMap = {
   'flows.copilot.tool.dryRunning': '워크플로 시험 실행 중…',
   'flows.copilot.tool.saving': '워크플로 저장 중…',
   'flows.copilot.tool.usingTools': '도구 사용 중…',
+  'flows.copilot.cappedNotice':
+    '빌더가 이 워크플로를 완료하기 전에 반복 한도에 도달했습니다. 계속하면 현재 초안을 기반으로 빌드를 이어갑니다.',
+  'flows.copilot.continueBuilding': '계속 빌드하기',
   'flows.list.view': '워크플로 보기',
   'flows.list.export': '내보내기',
   'flows.list.exported': '워크플로를 내보냈습니다',
@@ -7158,6 +7161,29 @@ const messages: TranslationMap = {
     '재개하지 못했습니다 — 자동화가 여전히 중단된 상태입니다. 다시 시도하세요.',
   'safety.haltedTitle': '자동화 중단됨',
   'safety.haltedBody': '모든 데스크톱 자동화가 중지되었습니다. 준비가 되면 재개하세요.',
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': '개인정보 상태',
+  'privacy.status.external': '기기 외',
+  'privacy.status.local': '기기 내',
+  'privacy.disclosure.title': '기기에서 나가는 중',
+  'privacy.disclosure.body':
+    '이 작업은 {destination}(으)로 다음 데이터를 보냅니다: {kinds}. ({reason})',
+  'privacy.disclosure.dismiss': '확인',
+  'privacy.disclosure.ariaLabel': '외부 데이터 공개',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': '메시지',
+  'privacy.disclosure.kind.toolArguments': '도구 입력값',
+  'privacy.disclosure.kind.embeddingInput': '색인할 텍스트',
+  'privacy.disclosure.kind.fileContent': '파일 내용',
+  'privacy.disclosure.kind.url': '웹 주소',
+  'privacy.disclosure.kind.metadata': '요청 메타데이터',
+  'privacy.disclosure.kind.unknown': '데이터',
+  'privacy.disclosure.reason.inference': 'AI 모델이 이를 처리해야 하기 때문에',
+  'privacy.disclosure.reason.toolCall': '도구가 이를 필요로 하기 때문에',
+  'privacy.disclosure.reason.integration': '연결된 통합 기능이 이를 필요로 하기 때문에',
+  'privacy.disclosure.reason.embedding': '검색을 위해 색인해야 하기 때문에',
+  'privacy.disclosure.reason.networkFetch': '웹 요청이 이를 필요로 하기 때문에',
+  'privacy.disclosure.reason.unknown': '이 작업에 필요하기 때문에',
 };
 
 export default messages;

@@ -4153,6 +4153,9 @@ const messages: TranslationMap = {
   'flows.copilot.tool.dryRunning': 'Testowe uruchamianie przepływu pracy…',
   'flows.copilot.tool.saving': 'Zapisywanie przepływu pracy…',
   'flows.copilot.tool.usingTools': 'Używanie narzędzi…',
+  'flows.copilot.cappedNotice':
+    'Kreator osiągnął limit iteracji przed ukończeniem tego przepływu pracy. Kontynuowanie oznacza dalsze budowanie na podstawie bieżącego szkicu.',
+  'flows.copilot.continueBuilding': 'Kontynuuj tworzenie',
   'flows.list.view': 'Wyświetl przepływ pracy',
   'flows.list.export': 'Eksportuj',
   'flows.list.exported': 'Wyeksportowano przepływ pracy',
@@ -7348,6 +7351,29 @@ const messages: TranslationMap = {
     'Nie udało się wznowić — automatyzacja nadal wstrzymana. Spróbuj ponownie.',
   'safety.haltedTitle': 'Automatyzacja wstrzymana',
   'safety.haltedBody': 'Cała automatyzacja pulpitu jest zatrzymana. Wznów, gdy będziesz gotowy.',
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Stan prywatności',
+  'privacy.status.external': 'Poza urządzeniem',
+  'privacy.status.local': 'Na urządzeniu',
+  'privacy.disclosure.title': 'Opuszcza Twoje urządzenie',
+  'privacy.disclosure.body':
+    'Spowoduje to wysłanie następujących danych do {destination}: {kinds}. Powód: {reason}.',
+  'privacy.disclosure.dismiss': 'Rozumiem',
+  'privacy.disclosure.ariaLabel': 'Ujawnienie danych zewnętrznych',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'Twoja wiadomość',
+  'privacy.disclosure.kind.toolArguments': 'dane wejściowe narzędzia',
+  'privacy.disclosure.kind.embeddingInput': 'tekst do zindeksowania',
+  'privacy.disclosure.kind.fileContent': 'zawartość pliku',
+  'privacy.disclosure.kind.url': 'adres internetowy',
+  'privacy.disclosure.kind.metadata': 'metadane żądania',
+  'privacy.disclosure.kind.unknown': 'dane',
+  'privacy.disclosure.reason.inference': 'model AI musi przetworzyć te dane',
+  'privacy.disclosure.reason.toolCall': 'narzędzie potrzebuje tych danych',
+  'privacy.disclosure.reason.integration': 'połączona integracja potrzebuje tych danych',
+  'privacy.disclosure.reason.embedding': 'te dane muszą zostać zindeksowane do wyszukiwania',
+  'privacy.disclosure.reason.networkFetch': 'żądanie sieciowe potrzebuje tych danych',
+  'privacy.disclosure.reason.unknown': 'jest to wymagane do tej akcji',
 };
 
 export default messages;

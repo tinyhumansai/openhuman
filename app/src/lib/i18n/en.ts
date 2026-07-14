@@ -1713,6 +1713,29 @@ const en: TranslationMap = {
   'privacy.mode.saved': 'Saved',
   'privacy.mode.saveError': 'Could not update privacy mode.',
 
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Privacy status',
+  'privacy.status.external': 'Off-device',
+  'privacy.status.local': 'On-device',
+  'privacy.disclosure.title': 'Leaving your device',
+  'privacy.disclosure.body': 'This will send {kinds} to {destination} because {reason}.',
+  'privacy.disclosure.dismiss': 'Got it',
+  'privacy.disclosure.ariaLabel': 'External data disclosure',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'your message',
+  'privacy.disclosure.kind.toolArguments': 'tool inputs',
+  'privacy.disclosure.kind.embeddingInput': 'text to index',
+  'privacy.disclosure.kind.fileContent': 'file contents',
+  'privacy.disclosure.kind.url': 'a web address',
+  'privacy.disclosure.kind.metadata': 'request metadata',
+  'privacy.disclosure.kind.unknown': 'data',
+  'privacy.disclosure.reason.inference': 'the AI model needs to process it',
+  'privacy.disclosure.reason.toolCall': 'a tool needs it',
+  'privacy.disclosure.reason.integration': 'a connected integration needs it',
+  'privacy.disclosure.reason.embedding': 'it needs to be indexed for search',
+  'privacy.disclosure.reason.networkFetch': 'a web request needs it',
+  'privacy.disclosure.reason.unknown': 'it is required for this action',
+
   // Settings: About
   'settings.about.version': 'Version',
   'settings.about.updateAvailable': 'is available',
@@ -4787,6 +4810,9 @@ const en: TranslationMap = {
   'flows.copilot.tool.dryRunning': 'Dry-running workflow…',
   'flows.copilot.tool.saving': 'Saving workflow…',
   'flows.copilot.tool.usingTools': 'Using tools…',
+  'flows.copilot.cappedNotice':
+    'The builder reached its iteration limit before finishing this workflow. Continuing will keep building from the current draft.',
+  'flows.copilot.continueBuilding': 'Continue building',
 
   // ── Workflow Canvas (issue B5b.1) — the read-only graph view of a saved
   // flow at /flows/:id. `flows.nodeKind.*` labels the 12 tinyflows node

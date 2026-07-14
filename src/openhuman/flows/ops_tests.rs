@@ -3156,6 +3156,51 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
     }
 }
 
+/// Regression for B31: `flows_build` must apply the `workflow_builder`
+/// `AgentDefinition`'s `effective_max_iterations()` (50, from `agent.toml`'s
+/// `iteration_policy = "extended"`), not the global `Config::default()`
+/// `agent.max_tool_iterations` (10) — see `apply_builder_iteration_cap`'s doc.
+#[tokio::test]
+async fn flows_build_applies_the_builder_definitions_effective_iteration_cap() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Precondition: the global default really is lower than the definition's
+    // effective cap, otherwise this test can't distinguish the two.
+    assert_eq!(config.agent.max_tool_iterations, 10);
+
+    crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
+        .expect("agent registry init");
+    let def = crate::openhuman::agent::harness::AgentDefinitionRegistry::global()
+        .expect("registry initialised")
+        .get("workflow_builder")
+        .expect("workflow_builder definition registered")
+        .clone();
+    let expected = def.effective_max_iterations();
+    assert_eq!(
+        expected, 50,
+        "workflow_builder's agent.toml is expected to declare iteration_policy = \"extended\", \
+         yielding an effective cap of EXTENDED_MAX_TOOL_ITERATIONS (50)"
+    );
+
+    let build_config = apply_builder_iteration_cap(&config);
+    assert_eq!(
+        build_config.agent.max_tool_iterations, expected,
+        "flows_build's build_config must carry the definition's effective cap, not the global \
+         default"
+    );
+    assert_ne!(
+        build_config.agent.max_tool_iterations, config.agent.max_tool_iterations,
+        "sanity: the override must actually differ from the unmodified global config"
+    );
+
+    // End-to-end: the agent actually built for this path carries the override.
+    let agent =
+        crate::openhuman::agent::Agent::from_config_for_agent(&build_config, "workflow_builder")
+            .expect("build workflow_builder agent");
+    assert_eq!(agent.agent_config().max_tool_iterations, expected);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // B23/B24 — condition node branch label must be on `from_port`, not `to_port`
 // ─────────────────────────────────────────────────────────────────────────────

@@ -973,6 +973,12 @@ impl Agent {
             .await;
         let outcome = outcome?;
 
+        // Record whether this turn paused at the tool-call cap (vs. finishing
+        // naturally) BEFORE anything below can early-return, so a caller
+        // inspecting `last_turn_hit_cap()` after `run_single` always reflects
+        // this turn, never a stale value from a prior one.
+        self.last_turn_hit_cap = outcome.hit_cap;
+
         // The stamped user turn is already in `self.history` (pushed by `turn()`),
         // so append only the structured messages this turn produced — assistant
         // tool calls + tool results + (for a clean finish) the final assistant —

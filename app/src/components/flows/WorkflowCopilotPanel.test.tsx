@@ -17,6 +17,7 @@ interface MockMessage {
 const hookState = vi.hoisted(() => ({
   sending: false,
   proposal: null as WorkflowProposal | null,
+  capped: false,
   // Panel renders `displayMessages` (already interim-filtered upstream by
   // `useWorkflowBuilderChat`) — kept separate from `messages` in these tests
   // so a mismatch between the two proves the panel is reading the right field.
@@ -51,6 +52,7 @@ describe('WorkflowCopilotPanel', () => {
   beforeEach(() => {
     hookState.sending = false;
     hookState.proposal = null;
+    hookState.capped = false;
     hookState.displayMessages = [];
     hookState.toolTimeline = [];
     hookState.liveResponse = '';
@@ -333,6 +335,98 @@ describe('WorkflowCopilotPanel', () => {
     expect(onReject).toHaveBeenCalledTimes(1);
     expect(onAccept).not.toHaveBeenCalled();
     expect(hookState.clearProposal).toHaveBeenCalledTimes(1);
+  });
+
+  it('B34: renders a "Continue building" card when the turn hit the iteration cap', () => {
+    hookState.capped = true;
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    expect(screen.getByTestId('workflow-copilot-capped')).toBeInTheDocument();
+    expect(screen.getByTestId('workflow-copilot-continue')).toBeInTheDocument();
+  });
+
+  it('B34: does NOT render the capped card for a normal (non-capped) turn', () => {
+    hookState.capped = false;
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    expect(screen.queryByTestId('workflow-copilot-capped')).not.toBeInTheDocument();
+  });
+
+  it('B34: does not render the capped card while a proposal is pending, even if capped is stale-true', () => {
+    // Defense-in-depth: the server already scopes `capped` to `proposal ===
+    // null`, but the panel re-checks `!proposal` itself too (see the JSX
+    // condition) in case a stale `capped=true` from a prior turn outlives a
+    // later turn's proposal.
+    hookState.capped = true;
+    hookState.proposal = proposalWith(['a', 'c']);
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    expect(screen.queryByTestId('workflow-copilot-capped')).not.toBeInTheDocument();
+  });
+
+  it('B34: clicking "Continue building" sends a follow-up turn', async () => {
+    hookState.capped = true;
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByTestId('workflow-copilot-continue'));
+    await waitFor(() => expect(hookState.send).toHaveBeenCalledTimes(1));
+    const arg = hookState.send.mock.calls[0][0];
+    expect(arg.request.mode).toBe('revise');
+    expect(arg.request.graph).toEqual(baseGraph);
+  });
+
+  // Codex review on #4865: "Continue building" must resume ON the current
+  // draft — a `revise` turn over the EXISTING `flowId`, never a blank/`create`
+  // restart — since `flows_build` spins up a fresh `workflow_builder` agent
+  // per RPC with no server-side session/checkpoint to resume. Carrying the
+  // live `graph` + `flowId` is what makes "Continue" a correct, working
+  // continuation instead of an empty restart.
+  it('B34: "Continue building" carries the current flowId, not a blank restart', async () => {
+    hookState.capped = true;
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        flowId="flow-123"
+        onProposal={vi.fn()}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByTestId('workflow-copilot-continue'));
+    await waitFor(() => expect(hookState.send).toHaveBeenCalledTimes(1));
+    const arg = hookState.send.mock.calls[0][0];
+    expect(arg.request.mode).toBe('revise');
+    expect(arg.request.flowId).toBe('flow-123');
+    expect(arg.request.graph).toEqual(baseGraph);
   });
 
   it('auto-sends a repair turn once when opened with a repair seed', () => {

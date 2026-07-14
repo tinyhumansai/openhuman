@@ -4115,6 +4115,9 @@ const messages: TranslationMap = {
   'flows.copilot.tool.dryRunning': 'Menjalankan uji coba alur kerja…',
   'flows.copilot.tool.saving': 'Menyimpan alur kerja…',
   'flows.copilot.tool.usingTools': 'Menggunakan alat…',
+  'flows.copilot.cappedNotice':
+    'Builder mencapai batas iterasinya sebelum menyelesaikan alur kerja ini. Jika dilanjutkan, builder akan terus membangun dari draf saat ini.',
+  'flows.copilot.continueBuilding': 'Lanjutkan membangun',
   'flows.list.view': 'Lihat alur kerja',
   'flows.list.export': 'Ekspor',
   'flows.list.exported': 'Alur kerja diekspor',
@@ -7271,6 +7274,28 @@ const messages: TranslationMap = {
   'safety.resumeFailed': 'Tidak dapat melanjutkan — otomasi masih dihentikan. Coba lagi.',
   'safety.haltedTitle': 'Otomasi dihentikan',
   'safety.haltedBody': 'Semua otomasi desktop dihentikan. Lanjutkan ketika Anda siap.',
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Status privasi',
+  'privacy.status.external': 'Di luar perangkat',
+  'privacy.status.local': 'Di perangkat',
+  'privacy.disclosure.title': 'Meninggalkan perangkat Anda',
+  'privacy.disclosure.body': 'Ini akan mengirim {kinds} ke {destination} karena {reason}.',
+  'privacy.disclosure.dismiss': 'Mengerti',
+  'privacy.disclosure.ariaLabel': 'Pengungkapan data eksternal',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'pesan Anda',
+  'privacy.disclosure.kind.toolArguments': 'masukan alat',
+  'privacy.disclosure.kind.embeddingInput': 'teks untuk diindeks',
+  'privacy.disclosure.kind.fileContent': 'isi berkas',
+  'privacy.disclosure.kind.url': 'alamat web',
+  'privacy.disclosure.kind.metadata': 'metadata permintaan',
+  'privacy.disclosure.kind.unknown': 'data',
+  'privacy.disclosure.reason.inference': 'model AI perlu memprosesnya',
+  'privacy.disclosure.reason.toolCall': 'sebuah alat memerlukannya',
+  'privacy.disclosure.reason.integration': 'integrasi yang terhubung memerlukannya',
+  'privacy.disclosure.reason.embedding': 'perlu diindeks untuk pencarian',
+  'privacy.disclosure.reason.networkFetch': 'permintaan web memerlukannya',
+  'privacy.disclosure.reason.unknown': 'diperlukan untuk tindakan ini',
 };
 
 export default messages;

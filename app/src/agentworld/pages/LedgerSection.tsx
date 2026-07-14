@@ -17,6 +17,7 @@ import { apiClient } from '../AgentWorldShell';
 import { decimalsForAsset, resolveAssetSymbol } from '../assets';
 import { formatUnits, friendlyNetwork } from '../components/X402ConfirmDialog';
 import { explorerTxUrl } from '../hooks/useX402Buy';
+import { relativeTime } from './relativeTime';
 
 // ── State types ───────────────────────────────────────────────────────────────
 
@@ -26,17 +27,6 @@ type LedgerState =
   | { status: 'ok'; transactions: GqlLedgerTransaction[] };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
 
 export function abbreviateAddress(addr: string | undefined): string {
   if (!addr) return '—';

@@ -4164,6 +4164,9 @@ const messages: TranslationMap = {
   'flows.copilot.tool.dryRunning': 'Executando teste do fluxo de trabalho…',
   'flows.copilot.tool.saving': 'Salvando fluxo de trabalho…',
   'flows.copilot.tool.usingTools': 'Usando ferramentas…',
+  'flows.copilot.cappedNotice':
+    'O construtor atingiu o limite de iterações antes de concluir este fluxo de trabalho. Ao continuar, a construção prosseguirá a partir do rascunho atual.',
+  'flows.copilot.continueBuilding': 'Continuar a construir',
   'flows.list.view': 'Ver fluxo de trabalho',
   'flows.list.export': 'Exportar',
   'flows.list.exported': 'Fluxo de trabalho exportado',
@@ -7361,6 +7364,28 @@ const messages: TranslationMap = {
   'safety.resumeFailed': 'Não foi possível retomar — automação ainda pausada. Tente novamente.',
   'safety.haltedTitle': 'Automação pausada',
   'safety.haltedBody': 'Toda a automação do desktop está parada. Retome quando estiver pronto.',
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Estado de privacidade',
+  'privacy.status.external': 'Fora do dispositivo',
+  'privacy.status.local': 'No dispositivo',
+  'privacy.disclosure.title': 'A sair do seu dispositivo',
+  'privacy.disclosure.body': 'Isto irá enviar {kinds} para {destination} porque {reason}.',
+  'privacy.disclosure.dismiss': 'Entendido',
+  'privacy.disclosure.ariaLabel': 'Divulgação de dados externos',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'a sua mensagem',
+  'privacy.disclosure.kind.toolArguments': 'entradas da ferramenta',
+  'privacy.disclosure.kind.embeddingInput': 'texto para indexar',
+  'privacy.disclosure.kind.fileContent': 'conteúdo do ficheiro',
+  'privacy.disclosure.kind.url': 'um endereço web',
+  'privacy.disclosure.kind.metadata': 'metadados do pedido',
+  'privacy.disclosure.kind.unknown': 'dados',
+  'privacy.disclosure.reason.inference': 'o modelo de IA precisa de processar estes dados',
+  'privacy.disclosure.reason.toolCall': 'uma ferramenta precisa destes dados',
+  'privacy.disclosure.reason.integration': 'uma integração ligada precisa destes dados',
+  'privacy.disclosure.reason.embedding': 'estes dados precisam de ser indexados para pesquisa',
+  'privacy.disclosure.reason.networkFetch': 'um pedido web precisa destes dados',
+  'privacy.disclosure.reason.unknown': 'é necessário para esta ação',
 };
 
 export default messages;

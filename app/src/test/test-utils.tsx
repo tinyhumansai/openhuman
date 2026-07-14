@@ -24,6 +24,7 @@ import localeReducer from '../store/localeSlice';
 import mascotReducer from '../store/mascotSlice';
 import notificationReducer from '../store/notificationSlice';
 import personaReducer from '../store/personaSlice';
+import privacyReducer from '../store/privacySlice';
 import { pttReducer } from '../store/pttSlice';
 import safetyReducer from '../store/safetySlice';
 import socketReducer from '../store/socketSlice';
@@ -54,6 +55,7 @@ const testRootReducer = combineReducers({
   mascot: mascotReducer,
   notifications: notificationReducer,
   persona: personaReducer,
+  privacy: privacyReducer,
   ptt: pttReducer,
   safety: safetyReducer,
   socket: socketReducer,

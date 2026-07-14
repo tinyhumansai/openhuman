@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
+mod messages;
+pub(crate) use messages::{COMPOSIO_INVALID_API_KEY_ANCHOR, COMPOSIO_INVALID_API_KEY_USER_MESSAGE};
+
 pub(crate) const DIRECT_INVALID_API_KEY_THRESHOLD: u32 = 3;
 
 static DIRECT_AUTH_FAILURES: LazyLock<Mutex<HashMap<u64, u32>>> =

@@ -4172,6 +4172,9 @@ const messages: TranslationMap = {
   'flows.copilot.tool.dryRunning': 'Ejecutando prueba del flujo de trabajo…',
   'flows.copilot.tool.saving': 'Guardando flujo de trabajo…',
   'flows.copilot.tool.usingTools': 'Usando herramientas…',
+  'flows.copilot.cappedNotice':
+    'El generador alcanzó su límite de iteraciones antes de terminar este flujo de trabajo. Al continuar, seguirá construyendo a partir del borrador actual.',
+  'flows.copilot.continueBuilding': 'Continuar creando',
   'flows.list.view': 'Ver flujo de trabajo',
   'flows.list.export': 'Exportar',
   'flows.list.exported': 'Flujo de trabajo exportado',
@@ -7390,6 +7393,28 @@ const messages: TranslationMap = {
   'safety.haltedTitle': 'Automatización detenida',
   'safety.haltedBody':
     'Toda la automatización de escritorio está detenida. Reanuda cuando estés listo.',
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Estado de privacidad',
+  'privacy.status.external': 'Fuera del dispositivo',
+  'privacy.status.local': 'En el dispositivo',
+  'privacy.disclosure.title': 'Sale de tu dispositivo',
+  'privacy.disclosure.body': 'Esto enviará {kinds} a {destination} porque {reason}.',
+  'privacy.disclosure.dismiss': 'Entendido',
+  'privacy.disclosure.ariaLabel': 'Divulgación de datos externos',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'tu mensaje',
+  'privacy.disclosure.kind.toolArguments': 'entradas de la herramienta',
+  'privacy.disclosure.kind.embeddingInput': 'texto para indexar',
+  'privacy.disclosure.kind.fileContent': 'contenido del archivo',
+  'privacy.disclosure.kind.url': 'una dirección web',
+  'privacy.disclosure.kind.metadata': 'metadatos de la solicitud',
+  'privacy.disclosure.kind.unknown': 'datos',
+  'privacy.disclosure.reason.inference': 'el modelo de IA necesita procesarlo',
+  'privacy.disclosure.reason.toolCall': 'una herramienta lo necesita',
+  'privacy.disclosure.reason.integration': 'una integración conectada lo necesita',
+  'privacy.disclosure.reason.embedding': 'necesita indexarse para la búsqueda',
+  'privacy.disclosure.reason.networkFetch': 'una solicitud web lo necesita',
+  'privacy.disclosure.reason.unknown': 'es necesario para esta acción',
 };
 
 export default messages;

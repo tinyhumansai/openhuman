@@ -4169,6 +4169,9 @@ const messages: TranslationMap = {
   'flows.copilot.tool.dryRunning': 'Esecuzione di prova del flusso di lavoro…',
   'flows.copilot.tool.saving': 'Salvataggio del flusso di lavoro…',
   'flows.copilot.tool.usingTools': 'Utilizzo degli strumenti…',
+  'flows.copilot.cappedNotice':
+    'Il builder ha raggiunto il limite di iterazioni prima di completare questo flusso di lavoro. Continuando, la costruzione riprenderà dalla bozza attuale.',
+  'flows.copilot.continueBuilding': 'Continua a costruire',
   'flows.list.view': 'Visualizza flusso di lavoro',
   'flows.list.export': 'Esporta',
   'flows.list.exported': 'Flusso di lavoro esportato',
@@ -7378,6 +7381,28 @@ const messages: TranslationMap = {
   'safety.resumeFailed': "Impossibile riprendere — l'automazione è ancora sospesa. Riprova.",
   'safety.haltedTitle': 'Automazione sospesa',
   'safety.haltedBody': "Tutta l'automazione del desktop è ferma. Riprendi quando sei pronto.",
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Stato privacy',
+  'privacy.status.external': 'Fuori dal dispositivo',
+  'privacy.status.local': 'Sul dispositivo',
+  'privacy.disclosure.title': 'Sta lasciando il tuo dispositivo',
+  'privacy.disclosure.body': 'Questo invierà {kinds} a {destination} perché {reason}.',
+  'privacy.disclosure.dismiss': 'Ho capito',
+  'privacy.disclosure.ariaLabel': 'Informativa sul trasferimento di dati esterni',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'il tuo messaggio',
+  'privacy.disclosure.kind.toolArguments': 'input dello strumento',
+  'privacy.disclosure.kind.embeddingInput': 'testo da indicizzare',
+  'privacy.disclosure.kind.fileContent': 'contenuto del file',
+  'privacy.disclosure.kind.url': 'un indirizzo web',
+  'privacy.disclosure.kind.metadata': 'metadati della richiesta',
+  'privacy.disclosure.kind.unknown': 'dati',
+  'privacy.disclosure.reason.inference': 'il modello di IA deve elaborare i dati',
+  'privacy.disclosure.reason.toolCall': 'uno strumento ne ha bisogno',
+  'privacy.disclosure.reason.integration': 'un’integrazione collegata ne ha bisogno',
+  'privacy.disclosure.reason.embedding': 'i dati devono essere indicizzati per la ricerca',
+  'privacy.disclosure.reason.networkFetch': 'una richiesta web ne ha bisogno',
+  'privacy.disclosure.reason.unknown': 'è necessario per questa azione',
 };
 
 export default messages;

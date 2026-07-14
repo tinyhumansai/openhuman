@@ -4098,6 +4098,9 @@ const messages: TranslationMap = {
   'flows.copilot.tool.dryRunning': 'वर्कफ़्लो का ड्राई-रन किया जा रहा है…',
   'flows.copilot.tool.saving': 'वर्कफ़्लो सहेजा जा रहा है…',
   'flows.copilot.tool.usingTools': 'टूल का उपयोग किया जा रहा है…',
+  'flows.copilot.cappedNotice':
+    'यह वर्कफ़्लो पूरा होने से पहले बिल्डर अपनी पुनरावृत्ति सीमा तक पहुँच गया। जारी रखने पर यह मौजूदा ड्राफ़्ट से आगे निर्माण करेगा।',
+  'flows.copilot.continueBuilding': 'निर्माण जारी रखें',
   'flows.list.view': 'वर्कफ़्लो देखें',
   'flows.list.export': 'निर्यात',
   'flows.list.exported': 'वर्कफ़्लो निर्यात किया गया',
@@ -7237,6 +7240,28 @@ const messages: TranslationMap = {
   'safety.resumeFailed': 'पुनः प्रारंभ नहीं हो सका — स्वचालन अभी भी रुका हुआ है। पुनः प्रयास करें।',
   'safety.haltedTitle': 'स्वचालन रोका गया',
   'safety.haltedBody': 'सभी डेस्कटॉप स्वचालन रोक दिया गया है। तैयार होने पर पुनः प्रारंभ करें।',
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'गोपनीयता स्थिति',
+  'privacy.status.external': 'डिवाइस के बाहर',
+  'privacy.status.local': 'डिवाइस पर',
+  'privacy.disclosure.title': 'आपके डिवाइस से बाहर जा रहा है',
+  'privacy.disclosure.body': 'यह {kinds} को {destination} पर भेजेगा क्योंकि {reason}।',
+  'privacy.disclosure.dismiss': 'समझ गया',
+  'privacy.disclosure.ariaLabel': 'बाहरी डेटा प्रकटीकरण',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'आपका संदेश',
+  'privacy.disclosure.kind.toolArguments': 'टूल इनपुट',
+  'privacy.disclosure.kind.embeddingInput': 'अनुक्रमित करने के लिए पाठ',
+  'privacy.disclosure.kind.fileContent': 'फ़ाइल सामग्री',
+  'privacy.disclosure.kind.url': 'एक वेब पता',
+  'privacy.disclosure.kind.metadata': 'अनुरोध मेटाडेटा',
+  'privacy.disclosure.kind.unknown': 'डेटा',
+  'privacy.disclosure.reason.inference': 'AI मॉडल को इसे संसाधित करना है',
+  'privacy.disclosure.reason.toolCall': 'एक टूल को इसकी ज़रूरत है',
+  'privacy.disclosure.reason.integration': 'एक कनेक्टेड इंटीग्रेशन को इसकी ज़रूरत है',
+  'privacy.disclosure.reason.embedding': 'इसे खोज के लिए अनुक्रमित करना आवश्यक है',
+  'privacy.disclosure.reason.networkFetch': 'एक वेब अनुरोध को इसकी ज़रूरत है',
+  'privacy.disclosure.reason.unknown': 'यह इस क्रिया के लिए आवश्यक है',
 };
 
 export default messages;

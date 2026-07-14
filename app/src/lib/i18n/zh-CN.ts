@@ -3884,6 +3884,9 @@ const messages: TranslationMap = {
   'flows.copilot.tool.dryRunning': '正在试运行工作流…',
   'flows.copilot.tool.saving': '正在保存工作流…',
   'flows.copilot.tool.usingTools': '正在使用工具…',
+  'flows.copilot.cappedNotice':
+    '构建器在完成此工作流之前达到了迭代次数上限。继续将基于当前草稿继续构建。',
+  'flows.copilot.continueBuilding': '继续构建',
   'flows.list.view': '查看工作流',
   'flows.list.export': '导出',
   'flows.list.exported': '工作流已导出',
@@ -6848,6 +6851,28 @@ const messages: TranslationMap = {
   'safety.resumeFailed': '无法恢复——自动化仍处于暂停状态。请重试。',
   'safety.haltedTitle': '自动化已暂停',
   'safety.haltedBody': '所有桌面自动化已停止。准备好后请恢复。',
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': '隐私状态',
+  'privacy.status.external': '设备外',
+  'privacy.status.local': '本地设备',
+  'privacy.disclosure.title': '正在离开你的设备',
+  'privacy.disclosure.body': '这将把 {kinds} 发送到 {destination}，因为{reason}。',
+  'privacy.disclosure.dismiss': '知道了',
+  'privacy.disclosure.ariaLabel': '外部数据披露',
+  'privacy.disclosure.kindSeparator': '、',
+  'privacy.disclosure.kind.prompt': '你的消息',
+  'privacy.disclosure.kind.toolArguments': '工具输入',
+  'privacy.disclosure.kind.embeddingInput': '待索引的文本',
+  'privacy.disclosure.kind.fileContent': '文件内容',
+  'privacy.disclosure.kind.url': '一个网址',
+  'privacy.disclosure.kind.metadata': '请求元数据',
+  'privacy.disclosure.kind.unknown': '数据',
+  'privacy.disclosure.reason.inference': 'AI 模型需要处理它',
+  'privacy.disclosure.reason.toolCall': '某个工具需要它',
+  'privacy.disclosure.reason.integration': '已连接的集成需要它',
+  'privacy.disclosure.reason.embedding': '它需要被索引以供搜索',
+  'privacy.disclosure.reason.networkFetch': '网络请求需要它',
+  'privacy.disclosure.reason.unknown': '此操作需要它',
 };
 
 export default messages;

@@ -452,6 +452,38 @@ Any acting node may carry:
 Prefer `retry` + `on_error: "route"` for flaky network/tool steps, and
 `requires_approval` for anything the user would not want to happen unattended.
 
+### Graph complexity — prefer the minimal viable graph
+
+Build the **smallest graph that fulfills the request**. Every node you add
+is a binding to get right, a dry-run cycle to verify, and a point of
+failure at runtime. Rules of thumb:
+
+- **An `agent` node can format its own output.** If the only purpose of a
+  downstream `code` or `transform` node is to reshape/format/template the
+  agent's structured output before passing it to a `tool_call`, fold that
+  formatting into the agent's `prompt` instruction and `output_parser.schema`
+  instead. The agent is a full LLM — it can produce markdown, HTML, or any
+  text shape you need. A separate formatting node is only warranted when the
+  formatting is purely mechanical (date math, string concatenation with no
+  judgment) and the agent's token cost would be wasted on it.
+
+- **Avoid split/merge for single-item flows.** `split_out` + downstream
+  processing + `merge` is for fan-out over a LIST (e.g. "for each issue,
+  do X"). If the flow processes one item end-to-end (a single calendar
+  brief, a single email reply), there is no list to fan out — skip the
+  split/merge entirely.
+
+- **One agent node can do multiple reasoning steps.** Don't chain two
+  `agent` nodes when one could handle both tasks in its prompt (e.g.
+  "extract the key fields AND compose a brief" in one node, rather than
+  "extract" → "compose" as two nodes). Chain agents only when they need
+  genuinely different models, schemas, or `agent_ref` profiles.
+
+- **Target: 3–6 nodes for a simple automation.** A schedule-trigger →
+  source-tool → agent-summarize → destination-tool flow is 4 nodes.
+  Most "when X happens, do Y" requests fit in 3–6. If your draft exceeds
+  8 nodes, re-examine whether any node can be folded into its neighbor.
+
 ## Style
 
 Be concise. Your posture is **clarify genuinely-ambiguous inputs, verify before
@@ -508,7 +540,8 @@ nothing.
 ### Interpreting dry-run results honestly
 
 `dry_run_workflow` runs against **mock** capabilities — no real LLM call,
-no real tool execution. Two classes of null or placeholder values appear:
+no real tool execution, no real HTTP. Two classes of null or placeholder
+values appear:
 
 1. **Mock-LLM-output placeholders** — an `agent` node with a correct
    `output_parser.schema` produces synthetic placeholder values (empty
@@ -528,17 +561,48 @@ no real tool execution. Two classes of null or placeholder values appear:
    entry and the dry run returns `ok: false`. **These are real bugs — never
    dismiss them.** Fix every one before proposing.
 
+#### Sandbox mock behavior per node type (authoritative — do NOT probe)
+
+| Node kind | Sandbox output | Enveloped? | What resolves downstream |
+|-----------|----------------|------------|---------------------------|
+| `trigger` | Passthrough — echoes the `input` value (default `{}`) | No | Whatever was passed as `input` |
+| `agent` (with `output_parser.schema`) | Typed placeholder per schema property (`string`→`""`, `number`/`integer`→`0`, `boolean`→`false`, `object`→`{}`, `array`→`[]`, `enum`→its first listed value) | Yes | `=nodes.<id>.item.json.<field>` → the placeholder (non-null) |
+| `agent` (no schema) | `{ "agent": "<agent_ref>", "request": {...}, "connection": ... }` | Yes | Only `.json.agent` / `.json.request` / `.json.connection` resolve; any other `.json.<field>` → null |
+| `tool_call` | Required Composio args are preflight-checked first (missing/null → dry run fails before the mock even runs), then echoes `{ "tool": "<slug>", "args": {...}, "connection": ... }` — NOT a real API response | Yes | `.json.tool` / `.json.args` / `.json.connection` resolve; a response-shaped field (e.g. `.json.data.<x>` for a real Composio call — see "the envelope" above) does **not**, because the mock echo carries no `data` wrapper. That is a mock-shape gap, not a wiring bug — don't "fix" a correctly-wired `.json.data.<field>` binding just because the dry run can't resolve it |
+| `http_request` | `{ "status": 200, "request": {...}, "connection": ... }` | Yes | `.json.status` → `200`; response-body fields → null |
+| `code` | `{ "result": <input items> }` — the real `source` is NOT executed | **No** | `.item.result` resolves directly (no `.json.` — `code` does not envelope) |
+| `transform` | **REAL** execution — evaluates `config.set` expressions against scope | No | Real resolved values |
+| `condition` | **REAL** execution — evaluates truthiness on the actual (mock) input data | No | Routes to the real "true"/"false" port |
+| `switch` | **REAL** execution — evaluates the routing expression/field | No | Routes to the real matching port |
+| `split_out` | **REAL** execution — fans out the array at `config.path` | No | Real fan-out of the mock data |
+| `merge` | **REAL** execution — concatenates input items | No | Passthrough |
+
+**NEVER run isolated probe graphs** (e.g. a throwaway `[trigger, agent,
+tool_call]` subgraph) to test whether a node type's output resolves in the
+sandbox. The table above is authoritative. If an `agent` node has a correct
+`output_parser.schema`, its `.json.<field>` bindings WILL resolve to typed
+placeholders — you do not need to verify this experimentally. Run
+`dry_run_workflow` on the REAL graph you're building to check your actual
+bindings; a probe graph burns tool calls re-discovering what's already
+documented above.
+
 **Never say "known sandbox limitation" or "at runtime this works perfectly"
 to dismiss a dry-run finding.** If the dry run returns `ok: false`, the
-graph has a real problem. If it returns `ok: true` with
-`routing_divergence_warnings`, say what was unverified and why (the mock
-trigger payload routed differently than a real one would), so the user
-knows which branches are untested — do not assert they "work perfectly."
+graph has a real problem (with the sole documented exception of the
+`tool_call` `.json.data.<field>` mock-shape gap above). If it returns
+`ok: true` with `routing_divergence_warnings`, say what was unverified and
+why (the mock trigger payload routed differently than a real one would), so
+the user knows which branches are untested — do not assert they "work
+perfectly."
 
-The only thing the sandbox genuinely cannot test is the CONTENT of an LLM's
-reply or a real tool's response shape. Everything else — expression paths,
-schema declarations, edge wiring, port labels, required args — is fully
-testable in the sandbox, and a failure there is a real failure.
+The only things the sandbox genuinely cannot test are:
+- The CONTENT of an LLM's reply (placeholders only)
+- The SHAPE of a real tool/HTTP response (echoes only)
+- Real code execution output (echoes input under `result`, does not run
+  `source`)
+Everything else — expression paths, schema declarations, edge wiring, port
+labels, required args, condition/switch routing — is fully testable in the
+sandbox, and a failure there is a real failure.
 
 ### Say what you inferred
 

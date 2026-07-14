@@ -4218,6 +4218,9 @@ const messages: TranslationMap = {
   'flows.copilot.tool.dryRunning': 'Workflow wird testweise ausgeführt…',
   'flows.copilot.tool.saving': 'Workflow wird gespeichert…',
   'flows.copilot.tool.usingTools': 'Werkzeuge werden verwendet…',
+  'flows.copilot.cappedNotice':
+    'Der Builder hat sein Iterationslimit erreicht, bevor dieser Workflow fertiggestellt wurde. Beim Fortsetzen wird auf Basis des aktuellen Entwurfs weitergebaut.',
+  'flows.copilot.continueBuilding': 'Weiter erstellen',
   'flows.list.view': 'Workflow anzeigen',
   'flows.list.export': 'Exportieren',
   'flows.list.exported': 'Workflow exportiert',
@@ -7456,6 +7459,28 @@ const messages: TranslationMap = {
   'safety.haltedTitle': 'Automatisierung angehalten',
   'safety.haltedBody':
     'Alle Desktop-Automatisierungen sind gestoppt. Fortsetzen, wenn Sie bereit sind.',
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Datenschutzstatus',
+  'privacy.status.external': 'Außerhalb des Geräts',
+  'privacy.status.local': 'Auf dem Gerät',
+  'privacy.disclosure.title': 'Verlässt Ihr Gerät',
+  'privacy.disclosure.body': 'Dadurch werden {kinds} an {destination} gesendet, weil {reason}.',
+  'privacy.disclosure.dismiss': 'Verstanden',
+  'privacy.disclosure.ariaLabel': 'Offenlegung externer Daten',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'Ihre Nachricht',
+  'privacy.disclosure.kind.toolArguments': 'Werkzeug-Eingaben',
+  'privacy.disclosure.kind.embeddingInput': 'zu indexierender Text',
+  'privacy.disclosure.kind.fileContent': 'Dateiinhalte',
+  'privacy.disclosure.kind.url': 'eine Webadresse',
+  'privacy.disclosure.kind.metadata': 'Anfrage-Metadaten',
+  'privacy.disclosure.kind.unknown': 'Daten',
+  'privacy.disclosure.reason.inference': 'das KI-Modell es verarbeiten muss',
+  'privacy.disclosure.reason.toolCall': 'ein Werkzeug es benötigt',
+  'privacy.disclosure.reason.integration': 'eine verbundene Integration es benötigt',
+  'privacy.disclosure.reason.embedding': 'es für die Suche indexiert werden muss',
+  'privacy.disclosure.reason.networkFetch': 'eine Webanfrage es benötigt',
+  'privacy.disclosure.reason.unknown': 'es für diese Aktion erforderlich ist',
 };
 
 export default messages;

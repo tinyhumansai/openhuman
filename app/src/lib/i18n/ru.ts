@@ -4136,6 +4136,9 @@ const messages: TranslationMap = {
   'flows.copilot.tool.dryRunning': 'Выполняется пробный запуск рабочего процесса…',
   'flows.copilot.tool.saving': 'Сохранение рабочего процесса…',
   'flows.copilot.tool.usingTools': 'Использование инструментов…',
+  'flows.copilot.cappedNotice':
+    'Конструктор достиг предела итераций до завершения этого рабочего процесса. При продолжении сборка возобновится на основе текущего черновика.',
+  'flows.copilot.continueBuilding': 'Продолжить создание',
   'flows.list.view': 'Просмотреть рабочий процесс',
   'flows.list.export': 'Экспорт',
   'flows.list.exported': 'Рабочий процесс экспортирован',
@@ -7319,6 +7322,28 @@ const messages: TranslationMap = {
   'safety.haltedTitle': 'Автоматизация приостановлена',
   'safety.haltedBody':
     'Вся автоматизация рабочего стола остановлена. Возобновите, когда будете готовы.',
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Состояние конфиденциальности',
+  'privacy.status.external': 'Вне устройства',
+  'privacy.status.local': 'На устройстве',
+  'privacy.disclosure.title': 'Покидает ваше устройство',
+  'privacy.disclosure.body': 'Это отправит {kinds} на {destination}, потому что {reason}.',
+  'privacy.disclosure.dismiss': 'Понятно',
+  'privacy.disclosure.ariaLabel': 'Раскрытие внешних данных',
+  'privacy.disclosure.kindSeparator': ', ',
+  'privacy.disclosure.kind.prompt': 'ваше сообщение',
+  'privacy.disclosure.kind.toolArguments': 'входные данные инструмента',
+  'privacy.disclosure.kind.embeddingInput': 'текст для индексации',
+  'privacy.disclosure.kind.fileContent': 'содержимое файла',
+  'privacy.disclosure.kind.url': 'веб-адрес',
+  'privacy.disclosure.kind.metadata': 'метаданные запроса',
+  'privacy.disclosure.kind.unknown': 'данные',
+  'privacy.disclosure.reason.inference': 'модели ИИ нужно обработать эти данные',
+  'privacy.disclosure.reason.toolCall': 'инструменту это нужно',
+  'privacy.disclosure.reason.integration': 'подключённой интеграции это нужно',
+  'privacy.disclosure.reason.embedding': 'эти данные нужно проиндексировать для поиска',
+  'privacy.disclosure.reason.networkFetch': 'веб-запросу это нужно',
+  'privacy.disclosure.reason.unknown': 'это требуется для данного действия',
 };
 
 export default messages;
