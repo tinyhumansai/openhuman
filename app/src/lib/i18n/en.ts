@@ -35,6 +35,45 @@ const en: TranslationMap = {
   'orchPage.group.network': 'Network',
   'orchPage.group.insights': 'Insights',
   'orchPage.overview.nav': 'Agent graph',
+  'orchPage.overview.desc': 'A live map of your agent and the sub-agents it coordinates.',
+  'orchPage.network.desc': 'Peer agents you’re connected to, discovery, and usage.',
+  'orchPage.medulla.nav': 'Overview',
+  'orchPage.medulla.badge': 'Coming soon',
+  'orchPage.medulla.title': 'Medulla',
+  'orchPage.medulla.tagline': "OpenHuman's orchestration model",
+  'orchPage.medulla.body':
+    "Medulla is OpenHuman's custom-built LLM, engineered to orchestrate thousands of agents at once — with a 10-million-token context window and radically low-cost orchestration.",
+  'orchPage.medulla.featAgents': 'Thousands of agents',
+  'orchPage.medulla.featContext': '10M-token context',
+  'orchPage.medulla.featCost': 'Low-cost orchestration',
+  'orchPage.medulla.subscriberTitle': 'OpenHuman subscribers',
+  'orchPage.medulla.subscriberNote': 'Get early access to Medulla and the orchestration engine.',
+  'orchPage.medulla.discordTitle': 'Join the Discord',
+  'orchPage.medulla.earlyAccess':
+    'Want in early? Join our Discord and grab an early-access invite.',
+  'orchPage.medulla.cta': 'Join our Discord',
+  'orchPage.demo.banner': 'This is an example of how orchestration would look at scale.',
+  'orchPage.demo.device': 'Device',
+  'orchPage.demo.taskRoute': 'Route inbound request',
+  'orchPage.demo.taskSummarize': 'Summarize conversation',
+  'orchPage.demo.taskEnrich': 'Enrich contact record',
+  'orchPage.demo.taskSchedule': 'Schedule follow-up',
+  'orchPage.demo.taskDraft': 'Draft reply',
+  'orchPage.demo.taskSync': 'Sync data source',
+  'orchPage.demo.networkTitle': 'Peer agents',
+  'orchPage.demo.networkSummary': '{peers} connected · {sessions} live sub-agents',
+  'orchPage.demo.peer.connected': 'Connected',
+  'orchPage.demo.peer.connecting': 'Connecting',
+  'orchPage.demo.peer.idle': 'Idle',
+  'orchPage.demo.peerSessions': '{count} sub-agents',
+  'orchPage.demo.chat.user1': 'Coordinate the outreach campaign across all my channels.',
+  'orchPage.demo.chat.assistant1':
+    'On it — spinning up 120 agents across 2 devices to run outreach, enrichment, and follow-ups in parallel.',
+  'orchPage.demo.chat.activity1': 'device 1 · 100 agents routing 1,284 conversations',
+  'orchPage.demo.chat.activity2': 'device 2 · 20 agents enriching 512 contacts',
+  'orchPage.demo.chat.activity3': 'drafting 640 personalized replies',
+  'orchPage.demo.chat.assistant2': 'Done. 120 agents processed 1,796 conversations in 38 seconds.',
+  'orchPage.demo.chat.composerDisabled': 'Chat is available with Medulla access',
   'orchPage.tasks.nav': 'Tasks',
   'orchPage.tasks.subtitle': "The orchestrator's global task board",
   'orchPage.tasks.colPending': 'Pending',
@@ -106,6 +145,22 @@ const en: TranslationMap = {
   // Agent World section sub-navigation labels
   'agentWorld.description':
     'Tiny.Place is a social network for AI agents. Use OpenHuman to interact, find and post jobs, trade, and grow together.',
+  // Welcome landing (first destination)
+  'agentWorld.welcome.nav': 'Welcome',
+  'agentWorld.welcome.eyebrow': 'TinyPlace',
+  'agentWorld.welcome.title': 'A world where your agents meet',
+  'agentWorld.welcome.body':
+    'TinyPlace is the social layer for AI agents — yours can discover other agents, message them, take on bounties, and trade, all on your behalf. Step into the world and see what they get up to.',
+  'agentWorld.welcome.ctaWorld': 'Enter the world',
+  'agentWorld.welcome.ctaFeed': 'Browse the feed',
+  'agentWorld.welcome.ctaDirectory': 'Find agents',
+  'agentWorld.welcome.featsLabel': 'What happens here',
+  'agentWorld.welcome.feat1Title': 'Meet other agents',
+  'agentWorld.welcome.feat1Body': 'Discover and message agents from across the network.',
+  'agentWorld.welcome.feat2Title': 'Take on bounties',
+  'agentWorld.welcome.feat2Body': 'Your agent can earn by completing posted work.',
+  'agentWorld.welcome.feat3Title': 'Trade & transact',
+  'agentWorld.welcome.feat3Body': 'Wallet-backed payments between agents, with your approval.',
   'agentWorld.world': 'World',
   'agentWorld.world.booting': 'Booting renderer...',
   'agentWorld.world.initError': 'Could not start the world renderer.',
@@ -194,6 +249,28 @@ const en: TranslationMap = {
 
   // Brain — full-page memory knowledge-graph surface
   'brain.subtitle': 'Your knowledge graph, memory sources, and controls.',
+  // Per-tab text headers (title reuses brain.tabs.*)
+  'brain.header.graph': "How your agent's knowledge connects — people, topics, and memories.",
+  'brain.header.goals': 'What your agent is working toward, and why.',
+  'brain.header.sources': 'The data your agent learns from.',
+  'brain.header.sync': 'Keep your memory fresh and review what changed.',
+  'brain.header.subconscious': 'Background thinking that runs while you’re away.',
+  // Welcome landing (first destination)
+  'brain.welcome.nav': 'Welcome',
+  'brain.welcome.eyebrow': 'Brain',
+  'brain.welcome.title': "Your agent's memory, mapped",
+  'brain.welcome.body':
+    'Brain is where your agent keeps what it knows — the people, conversations, sources, and goals it draws on to help you with real context instead of starting cold every time.',
+  'brain.welcome.ctaGraph': 'Open memory graph',
+  'brain.welcome.ctaGoals': 'Set goals',
+  'brain.welcome.ctaSources': 'Connect sources',
+  'brain.welcome.featsLabel': 'What lives here',
+  'brain.welcome.feat1Title': 'Memory graph',
+  'brain.welcome.feat1Body': 'See how people, topics, and messages connect at a glance.',
+  'brain.welcome.feat2Title': 'Goals & focus',
+  'brain.welcome.feat2Body': 'Tell your agent what matters so it prioritizes the right work.',
+  'brain.welcome.feat3Title': 'Sources & sync',
+  'brain.welcome.feat3Body': 'Connect the data your agent learns from and keep it fresh.',
   'brain.tabs.memory': 'Memory',
   'brain.tabs.subconscious': 'Subconscious',
   'brain.tabs.graph': 'Graph',
@@ -219,6 +296,24 @@ const en: TranslationMap = {
 
   // Feedback board
   'feedback.board': 'Feedback board',
+  'feedback.header.title': 'Feedback',
+  'feedback.header.desc': 'Share ideas and vote on what we build next.',
+  // Welcome landing (first destination)
+  'feedback.welcome.nav': 'Welcome',
+  'feedback.welcome.main': 'Feedback board',
+  'feedback.welcome.eyebrow': 'Feedback',
+  'feedback.welcome.title': 'Help shape what we build',
+  'feedback.welcome.body':
+    "Tell us what's working, what's missing, and what would make OpenHuman better. Post an idea, vote on what others suggest, and watch the best ones rise to the top of our roadmap.",
+  'feedback.welcome.ctaShare': 'Share an idea',
+  'feedback.welcome.ctaBoard': 'See the board',
+  'feedback.welcome.featsLabel': 'What you can do',
+  'feedback.welcome.feat1Title': 'Share ideas',
+  'feedback.welcome.feat1Body': 'Bugs, feature requests, rough thoughts — all welcome.',
+  'feedback.welcome.feat2Title': 'Vote',
+  'feedback.welcome.feat2Body': 'Upvote what matters so we know what to prioritize.',
+  'feedback.welcome.feat3Title': 'Track progress',
+  'feedback.welcome.feat3Body': "See what's planned, in progress, and shipped.",
   'feedback.empty': 'No feedback yet. Be the first to share an idea.',
   'feedback.loadMore': 'Load more',
   'feedback.loadError': 'Failed to load feedback',
@@ -721,7 +816,44 @@ const en: TranslationMap = {
   'connections.tabs.skills': 'Skills',
   'connections.tabs.meetings': 'Meetings',
   'connections.groups.integrations': 'Integrations',
+  'connections.groups.desktop': 'Desktop',
   'connections.groups.intelligence': 'Intelligence',
+  // Per-tab text headers (title reuses connections.tabs.*)
+  'connections.header.composio': 'Connect the apps your agent can act in.',
+  'connections.header.channels': 'Link the chat apps your community lives in.',
+  'connections.header.mcp': "Add MCP servers to extend your agent's tools.",
+  'connections.header.skills': 'Install and manage agent skills.',
+  'connections.header.meetings': 'Connect calendars and let your agent join calls.',
+  'connections.header.llm': 'Configure AI providers, local models, and the agent chat tester.',
+  'connections.header.embeddings': 'Choose the embedding model used for memory search.',
+  'connections.header.search': 'Configure web search for your agent.',
+  'connections.header.wallet': 'Your local wallet balance and recovery phrase.',
+  'connections.header.screen': 'Let your agent see your screen to offer timely, in-context help.',
+  'connections.header.desktopAgent':
+    'Let your agent open apps and control your desktop on your behalf.',
+  'connections.header.companion': 'A floating desktop companion for quick, always-on help.',
+  'connections.header.composioKey':
+    'Add a Composio API key to unlock hundreds of app integrations.',
+  'connections.llm.apiKeys': 'API keys & routing',
+  // Welcome landing (first destination)
+  'connections.welcome.nav': 'Welcome',
+  'connections.welcome.eyebrow': 'Connections',
+  'connections.welcome.title': 'Everything you use, in one place',
+  'connections.welcome.body':
+    'Connect your messaging apps, email, calendar, and tools so your agent can read context and take action across all of them — without copy-pasting between a dozen tabs. You stay in control of what it can touch.',
+  'connections.welcome.ctaChannel': 'Connect a channel',
+  'connections.welcome.ctaApps': 'Connect apps',
+  'connections.welcome.ctaSkills': 'Browse skills',
+  'connections.welcome.featsLabel': 'What you can do here',
+  'connections.welcome.feat1Title': 'Bring channels in',
+  'connections.welcome.feat1Body':
+    'Slack, WhatsApp, Telegram, Gmail and more — linked in a couple of clicks.',
+  'connections.welcome.feat2Title': 'Let your agent act',
+  'connections.welcome.feat2Body':
+    'It reads, drafts, and replies with full context from everything connected.',
+  'connections.welcome.feat3Title': 'Stay in control',
+  'connections.welcome.feat3Body':
+    'Grant or revoke access per channel, any time. Nothing runs without your say.',
   'connections.groups.apiKeys': 'API keys',
   // Intelligence / Memory
   'memory.title': 'Memory',
@@ -1150,12 +1282,44 @@ const en: TranslationMap = {
 
   // Notifications / Alerts
   'alerts.title': 'Alerts',
+  'alerts.header.desc': 'Agent activity and everything that needs your attention.',
   'alerts.empty': 'No alerts yet',
+  // Welcome landing (first destination)
+  'notifications.welcome.nav': 'Welcome',
+  'notifications.welcome.main': 'Alerts',
+  'notifications.welcome.eyebrow': 'Notifications',
+  'notifications.welcome.title': 'Only what actually needs you',
+  'notifications.welcome.body':
+    'A calm, scored digest of what your agents did and what needs a decision — so the important things surface and the noise stays out of your way.',
+  'notifications.welcome.ctaView': 'View alerts',
+  'notifications.welcome.featsLabel': "What you'll see",
+  'notifications.welcome.feat1Title': 'What needs you',
+  'notifications.welcome.feat1Body': 'Decisions and mentions your agents flagged for a human.',
+  'notifications.welcome.feat2Title': 'Agent activity',
+  'notifications.welcome.feat2Body': 'A running log of what ran and what it produced.',
+  'notifications.welcome.feat3Title': 'Filtered by category',
+  'notifications.welcome.feat3Body': 'Messages, meetings, reminders — sliced how you think.',
   'alerts.markAllRead': 'Mark all as read',
   'alerts.unread': 'unread',
 
   // Rewards
   'rewards.title': 'Rewards',
+  'rewards.header.desc': 'Your points, streaks, referrals, and perks.',
+  // Welcome landing (first destination)
+  'rewards.welcome.nav': 'Welcome',
+  'rewards.welcome.main': 'Rewards',
+  'rewards.welcome.eyebrow': 'Rewards',
+  'rewards.welcome.title': 'Get rewarded for showing up',
+  'rewards.welcome.body':
+    'Earn points as you use OpenHuman and invite others, keep your streak alive, and redeem what you’ve earned — all tracked in one place.',
+  'rewards.welcome.ctaView': 'View rewards',
+  'rewards.welcome.featsLabel': 'How it works',
+  'rewards.welcome.feat1Title': 'Earn points',
+  'rewards.welcome.feat1Body': 'Everyday actions and referrals add up over time.',
+  'rewards.welcome.feat2Title': 'Keep your streak',
+  'rewards.welcome.feat2Body': 'Show up regularly to unlock streak bonuses.',
+  'rewards.welcome.feat3Title': 'Redeem perks',
+  'rewards.welcome.feat3Body': 'Turn points into coupons and rewards.',
   'rewards.referrals': 'Referrals',
   'rewards.coupons': 'Redeem',
   'rewards.localUnavailable':
@@ -4510,6 +4674,22 @@ const en: TranslationMap = {
   // "chat.flowProposal.*" namespaces (kept apart here to avoid merge
   // conflicts with those in-flight branches).
   'flows.page.title': 'Workflows',
+  // Welcome landing (first destination)
+  'flows.welcome.nav': 'Welcome',
+  'flows.welcome.main': 'Workflows',
+  'flows.welcome.eyebrow': 'Workflows',
+  'flows.welcome.title': 'Put the busywork on autopilot',
+  'flows.welcome.body':
+    'Describe something you do over and over — triage, follow-ups, digests — and your agent turns it into a workflow it can run end to end, on a schedule or on demand.',
+  'flows.welcome.ctaNew': 'New workflow',
+  'flows.welcome.ctaBrowse': 'Browse workflows',
+  'flows.welcome.featsLabel': 'What you can automate',
+  'flows.welcome.feat1Title': 'Describe in words',
+  'flows.welcome.feat1Body': 'Say what you want in plain language; the builder drafts the flow.',
+  'flows.welcome.feat2Title': 'Run on a schedule',
+  'flows.welcome.feat2Body': 'Fire on a timer, an event, or a button — your call.',
+  'flows.welcome.feat3Title': 'Keep humans in the loop',
+  'flows.welcome.feat3Body': 'Approve sensitive steps before anything goes out.',
   'flows.page.description': 'Saved automations you can enable, run, and monitor.',
   'flows.page.emptyTitle': 'No workflows yet',
   'flows.page.emptyDescription':
@@ -4578,7 +4758,7 @@ const en: TranslationMap = {
   'flows.suggest.error': 'Could not run discovery. Please try again.',
   'flows.suggest.why': 'Why',
   'flows.suggest.build': 'Build this',
-  'flows.suggest.building': 'Building…',
+  'flows.suggest.opening': 'Opening…',
   'flows.suggest.dismiss': 'Dismiss',
   'flows.suggest.uses': 'Uses',
   'flows.suggest.trigger.schedule': 'Scheduled',
@@ -4877,7 +5057,8 @@ const en: TranslationMap = {
   'pages.settings.features.notifications': 'Notifications',
   'pages.settings.features.notificationsDesc': 'Notifications desc',
   'pages.settings.features.screenAwareness': 'Screen awareness',
-  'pages.settings.features.screenAwarenessDesc': 'Screen awareness desc',
+  'pages.settings.features.screenAwarenessDesc':
+    'Let your agent see your screen to offer timely, in-context help.',
   'pages.settings.features.tools': 'Tools',
   'pages.settings.features.toolsDesc': 'Tools desc',
   'pages.settings.featuresSection.description': 'Screen awareness, messaging, and tools.',
@@ -6900,6 +7081,10 @@ const en: TranslationMap = {
   // Settings > Account > Wallet Balances
   'pages.settings.account.walletBalances': 'Wallet Balances',
   'pages.settings.account.walletBalancesDesc': 'View multi-chain balances for your local wallet',
+  // Wallet tabbed view (Connections → Wallet)
+  'wallet.tabs.balance': 'Wallet balance',
+  'wallet.tabs.recovery': 'Recovery',
+  'wallet.ariaLabel': 'Wallet views',
   // WalletBalancesPanel strings
   'walletBalances.title': 'Wallet Balances',
   'walletBalances.refresh': 'Refresh',

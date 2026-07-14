@@ -184,7 +184,7 @@ export default function RewardsCommunityTab({
       await openUrl(oauthUrl);
       // Persist the return route only after the consent URL actually launched, so a failed
       // initiation never leaves a stale route that could misroute a later OAuth success.
-      setOAuthReturnRoute('/rewards');
+      setOAuthReturnRoute('/rewards?view=main');
       // Reset so the button is usable again if the user cancels; once the snapshot
       // refetches with discord.linked the connected state takes over.
       setConnectState('idle');

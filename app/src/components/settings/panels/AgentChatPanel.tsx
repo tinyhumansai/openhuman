@@ -17,7 +17,13 @@ type ChatMessage = { role: 'user' | 'agent'; text: string };
 
 const STORAGE_KEY = 'openhuman.settings.agentChat.history';
 
-const AgentChatPanel = () => {
+interface AgentChatPanelProps {
+  /** When true, render without the SettingsPanel chrome (used when embedded as
+   *  a chip inside the Connections LLM page). */
+  embedded?: boolean;
+}
+
+const AgentChatPanel = ({ embedded = false }: AgentChatPanelProps = {}) => {
   const { t } = useT();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -80,8 +86,8 @@ const AgentChatPanel = () => {
     }
   };
 
-  return (
-    <SettingsPanel description={t('settings.developerMenu.agentChat.desc')}>
+  const body = (
+    <>
       <SettingsSection title={t('chat.overrides')} description={t('chat.agentChatDesc')}>
         <div className="grid md:grid-cols-2">
           <SettingsRow
@@ -158,7 +164,12 @@ const AgentChatPanel = () => {
           </div>
         </div>
       </SettingsSection>
-    </SettingsPanel>
+    </>
+  );
+
+  if (embedded) return body;
+  return (
+    <SettingsPanel description={t('settings.developerMenu.agentChat.desc')}>{body}</SettingsPanel>
   );
 };
 

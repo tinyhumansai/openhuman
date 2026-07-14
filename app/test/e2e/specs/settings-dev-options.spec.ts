@@ -7,7 +7,6 @@
  * asserts the page's headline structure is present.
  *
  * Covers:
- *   - 13.4.1 Webhooks Debug panel
  *   - 13.4.2 Autocomplete Debug → Live Logs section
  *   - 13.4.3 Memory Debug panel
  */
@@ -31,24 +30,8 @@ describe('Settings - Developer Options', () => {
     await stopMockServer();
   });
 
-  it('mounts Webhooks Debug panel (13.4.1)', async function () {
-    this.timeout(90_000);
-    await navigateViaHash('/settings/webhooks-debug');
-
-    // Panel heading comes from the route registry titleKey
-    // (settings.developerMenu.webhooks.title = "Webhooks"); the old
-    // "Webhooks Debug" (webhooks.debugTitle) is no longer rendered.
-    await waitForText('Webhooks', 15_000);
-    await waitForText('Registered Webhooks', 15_000);
-    await waitForText('Captured Requests', 15_000);
-    expect(await textExists('Refresh')).toBe(true);
-  });
-
   it('mounts Memory Debug panel (13.4.3)', async function () {
     this.timeout(90_000);
-    // /settings/memory-debug now redirects to /brain?tab=memory-debug, where
-    // the relocated MemoryDebugPanel renders (no "Memory Debug" heading of its
-    // own). Assert on the section content that still renders there.
     await navigateViaHash('/settings/memory-debug');
 
     await waitForText('Documents', 15_000);

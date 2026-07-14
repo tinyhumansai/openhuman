@@ -1,14 +1,12 @@
 import type { ReactNode } from 'react';
 import { Navigate, Route, useLocation } from 'react-router-dom';
 
-import WorkflowsTab from '../intelligence/WorkflowsTab';
 import SettingsIndexRedirect from './layout/SettingsIndexRedirect';
 import AboutPanel from './panels/AboutPanel';
 import AccountPanel from './panels/AccountPanel';
 import AgentAccessPanel from './panels/AgentAccessPanel';
 import AgentActivityPanel from './panels/AgentActivityPanel';
 import AgentBoxPanel from './panels/AgentBoxPanel';
-import AgentChatPanel from './panels/AgentChatPanel';
 import AgentEditorPage from './panels/AgentEditorPage';
 import AgentsPanel from './panels/AgentsPanel';
 import AppearancePanel from './panels/AppearancePanel';
@@ -16,23 +14,16 @@ import ApprovalHistoryPanel from './panels/ApprovalHistoryPanel';
 import AutocompleteDebugPanel from './panels/AutocompleteDebugPanel';
 import AutocompletePanel from './panels/AutocompletePanel';
 import BillingPanel from './panels/BillingPanel';
-import CompanionPanel from './panels/CompanionPanel';
-import ComposioTriagePanel from './panels/ComposioTriagePanel';
 import CoreConnectionPanel from './panels/CoreConnectionPanel';
 import CronJobsPanel from './panels/CronJobsPanel';
-import DesktopAgentPanel from './panels/DesktopAgentPanel';
 import DeveloperOptionsPanel from './panels/DeveloperOptionsPanel';
 import DevicesPanel from './panels/DevicesPanel';
-import DevWorkflowPanel from './panels/DevWorkflowPanel';
 import EventLogPanel from './panels/EventLogPanel';
-import IntegrationsPanel from './panels/IntegrationsPanel';
 import KeyboardShortcutsPanel from './panels/KeyboardShortcutsPanel';
-import LocalModelDebugPanel from './panels/LocalModelDebugPanel';
 import McpServerPanel from './panels/McpServerPanel';
-import MeetingSettingsPanel from './panels/MeetingSettingsPanel';
-import MemorySyncPanel from './panels/MemorySyncPanel';
+import MemoryDataPanel from './panels/MemoryDataPanel';
+import MemoryDebugPanel from './panels/MemoryDebugPanel';
 import MigrationPanel from './panels/MigrationPanel';
-import ModelHealthPanel from './panels/ModelHealthPanel';
 import NotificationsTabbedPanel from './panels/NotificationsTabbedPanel';
 import PermissionsPanel from './panels/PermissionsPanel';
 import PersonalityPanel from './panels/PersonalityPanel';
@@ -42,21 +33,14 @@ import ProfilesPanel from './panels/ProfilesPanel';
 import RecoveryPhrasePanel from './panels/RecoveryPhrasePanel';
 import SandboxSettingsPanel from './panels/SandboxSettingsPanel';
 import ScreenAwarenessDebugPanel from './panels/ScreenAwarenessDebugPanel';
-import ScreenIntelligencePanel from './panels/ScreenIntelligencePanel';
 import SecurityPanel from './panels/SecurityPanel';
-import TasksPanel from './panels/TasksPanel';
 import TeamInvitesPanel from './panels/TeamInvitesPanel';
 import TeamManagementPanel from './panels/TeamManagementPanel';
 import TeamMembersPanel from './panels/TeamMembersPanel';
 import TeamPanel from './panels/TeamPanel';
 import ThemeStudioPanel from './panels/ThemeStudioPanel';
-import TokenUsagePanel from './panels/TokenUsagePanel';
 import ToolPolicyDiagnosticsPanel from './panels/ToolPolicyDiagnosticsPanel';
 import ToolsPanel from './panels/ToolsPanel';
-import UsagePanel from './panels/UsagePanel';
-import VoiceDebugPanel from './panels/VoiceDebugPanel';
-import WalletBalancesPanel from './panels/WalletBalancesPanel';
-import WebhooksDebugPanel from './panels/WebhooksDebugPanel';
 import WorkflowRunnerPanel from './panels/WorkflowRunnerPanel';
 
 /**
@@ -125,7 +109,9 @@ export function settingsRouteElements(): ReactNode {
       {/* LLM / Voice / Embeddings moved to the Connections page. */}
       <Route path="llm" element={<Navigate to="/connections?tab=llm" replace />} />
       <Route path="embeddings" element={<Navigate to="/connections?tab=embeddings" replace />} />
-      <Route path="usage" element={wrapSettingsPage(<UsagePanel />)} />
+      {/* Usage & limits moved to the Connections page (cost / token savings /
+          background loops as tabs). */}
+      <Route path="usage" element={<Navigate to="/connections?tab=usage" replace />} />
       <Route path="voice" element={<Navigate to="/connections?tab=voice" replace />} />
       <Route path="personality" element={wrapSettingsPage(<PersonalityPanel />)} />
       <Route path="agents" element={wrapSettingsPage(<AgentsPanel />)} />
@@ -141,17 +127,30 @@ export function settingsRouteElements(): ReactNode {
       <Route path="approval-history" element={wrapSettingsPage(<ApprovalHistoryPanel />)} />
 
       {/* ── Data ────────────────────────────────────────────────── */}
-      <Route path="memory-sync" element={wrapSettingsPage(<MemorySyncPanel />)} />
-      <Route path="wallet-balances" element={wrapSettingsPage(<WalletBalancesPanel />)} />
+      {/* Data Sync is a first-class surface on the Brain page now. */}
+      <Route path="memory-sync" element={<Navigate to="/brain?tab=sync" replace />} />
+      {/* Wallet balances moved to the Connections page (Integrations group). */}
+      <Route path="wallet-balances" element={<Navigate to="/connections?tab=wallet" replace />} />
       <Route path="recovery-phrase" element={wrapSettingsPage(<RecoveryPhrasePanel />)} />
 
       {/* ── Connections ─────────────────────────────────────────── */}
-      <Route path="integrations" element={wrapSettingsPage(<IntegrationsPanel />)} />
-      <Route path="screen-intelligence" element={wrapSettingsPage(<ScreenIntelligencePanel />)} />
-      <Route path="desktop-agent" element={wrapSettingsPage(<DesktopAgentPanel />)} />
+      {/* The Integrations settings section was retired; the composio/OAuth grid
+          lives on the Connections page. */}
+      <Route path="integrations" element={<Navigate to="/connections" replace />} />
+      {/* Screen Awareness / Desktop Agent / Desktop Companion moved to the
+          Connections page (Desktop group). */}
+      <Route
+        path="screen-intelligence"
+        element={<Navigate to="/connections?tab=screen-intelligence" replace />}
+      />
+      <Route
+        path="desktop-agent"
+        element={<Navigate to="/connections?tab=desktop-agent" replace />}
+      />
       <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
-      <Route path="companion" element={wrapSettingsPage(<CompanionPanel />)} />
-      <Route path="meetings" element={wrapSettingsPage(<MeetingSettingsPanel />)} />
+      <Route path="companion" element={<Navigate to="/connections?tab=companion" replace />} />
+      {/* Meeting settings moved to the Connections page (meetings tab). */}
+      <Route path="meetings" element={<Navigate to="/connections?tab=meetings" replace />} />
       <Route path="autocomplete" element={wrapSettingsPage(<AutocompletePanel />)} />
 
       {/* ── System ──────────────────────────────────────────────── */}
@@ -160,7 +159,8 @@ export function settingsRouteElements(): ReactNode {
       <Route path="core" element={wrapSettingsPage(<CoreConnectionPanel />)} />
       <Route path="keyboard-shortcuts" element={wrapSettingsPage(<KeyboardShortcutsPanel />)} />
       <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
-      <Route path="token-usage" element={wrapSettingsPage(<TokenUsagePanel />)} />
+      {/* Token savings merged into the Usage & limits surface on Connections. */}
+      <Route path="token-usage" element={<Navigate to="/connections?tab=usage#tokens" replace />} />
       <Route path="about" element={wrapSettingsPage(<AboutPanel />)} />
 
       {/* ── Developer & Diagnostics leaf panels ─────────────────── */}
@@ -172,58 +172,86 @@ export function settingsRouteElements(): ReactNode {
       <Route path="mcp-server" element={wrapSettingsPage(<McpServerPanel />)} />
       {/* Search engine settings moved to the Connections page. */}
       <Route path="search" element={<Navigate to="/connections?tab=search" replace />} />
-      <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
+      {/* Agent Chat debug tester moved to the Connections page. */}
+      {/* Agent Chat is a chip on the Connections → LLM page. */}
+      <Route
+        path="agent-chat"
+        element={<Navigate to="/connections?tab=llm#agent-chat" replace />}
+      />
       <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
-      <Route path="tasks" element={wrapSettingsPage(<TasksPanel />)} />
-      <Route path="automations" element={wrapSettingsPage(<WorkflowsTab asSettingsPanel />)} />
-      <Route path="dev-workflow" element={wrapSettingsPage(<DevWorkflowPanel />)} />
+      {/* Tasks now live on the Orchestration page's Kanban board. */}
+      <Route path="tasks" element={<Navigate to="/orchestration?tab=tasks" replace />} />
+      {/* Workflows is a first-level module now — /settings/automations bounces
+          to /flows (the Workflows page). */}
+      <Route path="automations" element={<Navigate to="/flows" replace />} />
+      {/* Dev Workflow panel retired — superseded by Workflows (/flows). */}
+      <Route path="dev-workflow" element={<Navigate to="/flows" replace />} />
       <Route path="skills-runner" element={wrapSettingsPage(<WorkflowRunnerPanel />)} />
       <Route
         path="screen-awareness-debug"
         element={wrapSettingsPage(<ScreenAwarenessDebugPanel />)}
       />
       <Route path="autocomplete-debug" element={wrapSettingsPage(<AutocompleteDebugPanel />)} />
-      <Route path="voice-debug" element={wrapSettingsPage(<VoiceDebugPanel />)} />
-      <Route path="local-model-debug" element={wrapSettingsPage(<LocalModelDebugPanel />)} />
-      <Route path="webhooks-debug" element={wrapSettingsPage(<WebhooksDebugPanel />)} />
+      {/* Voice Debug page retired. */}
+      <Route path="voice-debug" element={<SettingsRedirect to="/settings/developer-options" />} />
+      {/* Local Model Debug is a chip on the Connections → LLM page. */}
+      <Route
+        path="local-model-debug"
+        element={<Navigate to="/connections?tab=llm#local-model" replace />}
+      />
+      {/* Webhooks were retired from the UI — bounce old debug/trigger deep
+          links to the Connections page. */}
+      <Route path="webhooks-debug" element={<Navigate to="/connections" replace />} />
       <Route path="event-log" element={wrapSettingsPage(<EventLogPanel />)} />
-      <Route path="model-health" element={wrapSettingsPage(<ModelHealthPanel />)} />
-      {/* Knowledge & Memory panels moved to the Brain page. */}
-      <Route path="memory-data" element={<Navigate to="/brain?tab=memory-data" replace />} />
-      <Route path="memory-debug" element={<Navigate to="/brain?tab=memory-debug" replace />} />
-      <Route path="analysis-views" element={<Navigate to="/brain?tab=analysis-views" replace />} />
-      <Route path="intelligence" element={<Navigate to="/brain?tab=intelligence" replace />} />
-      <Route path="composio-triggers" element={wrapSettingsPage(<ComposioTriagePanel />)} />
+      {/* Model Health page retired. */}
+      <Route path="model-health" element={<SettingsRedirect to="/settings/developer-options" />} />
+      {/* Memory inspection remains the configuration surface for the memory
+          window, vault health, and connected-source controls. */}
+      <Route path="memory-data" element={wrapSettingsPage(<MemoryDataPanel />)} />
+      <Route path="memory-debug" element={wrapSettingsPage(<MemoryDebugPanel />)} />
+      <Route path="analysis-views" element={<Navigate to="/brain" replace />} />
+      <Route path="intelligence" element={<Navigate to="/brain" replace />} />
+      {/* Composio trigger-triage config merged into the Connections Composio page. */}
+      <Route
+        path="composio-triggers"
+        element={<Navigate to="/connections?tab=composio-key" replace />}
+      />
       <Route path="permissions" element={wrapSettingsPage(<PermissionsPanel />)} />
 
       {/* ── Legacy slugs → redirects (deep-link compatibility) ──── */}
       {/* Old hub pages */}
       <Route path="ai" element={<Navigate to="/connections?tab=llm" replace />} />
       <Route path="agents-settings" element={<SettingsRedirect to="/settings/agents" />} />
-      <Route path="features" element={<SettingsRedirect to="/settings/screen-intelligence" />} />
-      <Route path="crypto" element={<SettingsRedirect to="/settings/wallet-balances" />} />
+      <Route
+        path="features"
+        element={<Navigate to="/connections?tab=screen-intelligence" replace />}
+      />
+      <Route path="crypto" element={<Navigate to="/connections?tab=wallet" replace />} />
       <Route path="notifications-hub" element={<SettingsRedirect to="/settings/notifications" />} />
       {/* Composio (API key + routing) moved to Connections → API keys. */}
       <Route path="composio" element={<Navigate to="/connections?tab=composio-key" replace />} />
-      {/* Merged Usage & Limits page */}
-      <Route path="heartbeat" element={<SettingsRedirect to="/settings/usage#background" />} />
-      <Route path="ledger-usage" element={<SettingsRedirect to="/settings/usage#background" />} />
-      <Route path="cost-dashboard" element={<SettingsRedirect to="/settings/usage" />} />
+      {/* Merged Usage & Limits surface (now on Connections) */}
+      <Route
+        path="heartbeat"
+        element={<Navigate to="/connections?tab=usage#background" replace />}
+      />
+      <Route
+        path="ledger-usage"
+        element={<Navigate to="/connections?tab=usage#background" replace />}
+      />
+      <Route path="cost-dashboard" element={<Navigate to="/connections?tab=usage" replace />} />
       {/* Autonomy rate-limit lives inside Agent access now */}
       <Route path="autonomy" element={<SettingsRedirect to="/settings/agent-access" />} />
       {/* Merged Personality & Face page */}
       <Route path="mascot" element={<SettingsRedirect to="/settings/personality#face" />} />
       <Route path="persona" element={<SettingsRedirect to="/settings/personality" />} />
-      {/* Merged Integrations page */}
-      <Route path="task-sources" element={<SettingsRedirect to="/settings/integrations" />} />
+      {/* Retired Integrations settings section → Connections page */}
+      <Route path="task-sources" element={<Navigate to="/connections" replace />} />
       <Route
         path="composio-routing"
         element={<Navigate to="/connections?tab=composio-key" replace />}
       />
-      <Route
-        path="webhooks-triggers"
-        element={<SettingsRedirect to="/settings/integrations#webhooks" />}
-      />
+      <Route path="webhooks-triggers" element={<Navigate to="/connections" replace />} />
       {/* Notification routing tab */}
       <Route
         path="notification-routing"
