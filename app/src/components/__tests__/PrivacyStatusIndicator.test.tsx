@@ -23,15 +23,17 @@ function disclosure(over?: Partial<PrivacyDisclosure>): PrivacyDisclosure {
 describe('PrivacyStatusIndicator (#4437 / S3)', () => {
   it('renders nothing until the privacy mode is hydrated', () => {
     const { container } = renderWithProviders(<PrivacyStatusIndicator />, {
-      preloadedState: { privacy: { privacyMode: null, disclosuresByThread: {} } },
+      preloadedState: {
+        privacy: { privacyMode: null, disclosuresByThread: {}, activeExternalByThread: {} },
+      },
     });
     expect(container.firstChild).toBeNull();
   });
 
-  it('shows the mode + on-device state when no external disclosure exists', () => {
+  it('shows the mode + on-device state when no external transfer is active', () => {
     renderWithProviders(<PrivacyStatusIndicator />, {
       preloadedState: {
-        privacy: { privacyMode: 'standard', disclosuresByThread: {} },
+        privacy: { privacyMode: 'standard', disclosuresByThread: {}, activeExternalByThread: {} },
         thread: { selectedThreadId: 'thread-1' },
       },
     });
@@ -41,22 +43,30 @@ describe('PrivacyStatusIndicator (#4437 / S3)', () => {
     expect(pill).toHaveAttribute('title', 'Standard · On-device');
   });
 
-  it('shows the external state when the active thread has an external disclosure', () => {
+  it('shows the off-device state when the active thread has a live external transfer', () => {
     renderWithProviders(<PrivacyStatusIndicator />, {
       preloadedState: {
-        privacy: { privacyMode: 'standard', disclosuresByThread: { 'thread-1': [disclosure()] } },
+        privacy: {
+          privacyMode: 'standard',
+          disclosuresByThread: {},
+          activeExternalByThread: { 'thread-1': true },
+        },
         thread: { selectedThreadId: 'thread-1' },
       },
     });
     const pill = screen.getByRole('status');
-    expect(pill).toHaveTextContent('Sending externally');
-    expect(pill).toHaveAttribute('title', 'Standard · Sending externally');
+    expect(pill).toHaveTextContent('Off-device');
+    expect(pill).toHaveAttribute('title', 'Standard · Off-device');
   });
 
-  it('always reads on-device in local-only mode, even with a stale external disclosure', () => {
+  it('always reads on-device in local-only mode, even with a live external flag', () => {
     renderWithProviders(<PrivacyStatusIndicator />, {
       preloadedState: {
-        privacy: { privacyMode: 'local_only', disclosuresByThread: { 'thread-1': [disclosure()] } },
+        privacy: {
+          privacyMode: 'local_only',
+          disclosuresByThread: {},
+          activeExternalByThread: { 'thread-1': true },
+        },
         thread: { selectedThreadId: 'thread-1' },
       },
     });
@@ -65,12 +75,48 @@ describe('PrivacyStatusIndicator (#4437 / S3)', () => {
     expect(pill).toHaveTextContent('On-device');
   });
 
-  it('ignores an external disclosure that belongs to a different thread', () => {
+  it('ignores a live external transfer that belongs to a different thread', () => {
     renderWithProviders(<PrivacyStatusIndicator />, {
       preloadedState: {
         privacy: {
           privacyMode: 'standard',
-          disclosuresByThread: { 'other-thread': [disclosure()] },
+          disclosuresByThread: {},
+          activeExternalByThread: { 'other-thread': true },
+        },
+        thread: { selectedThreadId: 'thread-1' },
+      },
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('On-device');
+  });
+
+  // Regression (#4437 finding 1a): the pill's off-device state is driven by the
+  // live transfer flag, NOT the dismissible disclosure ledger — so it reads
+  // off-device even when the ledger has been emptied (e.g. the card dismissed)
+  // while the transfer is still active.
+  it('reads off-device from the live flag even when the disclosure ledger is empty', () => {
+    renderWithProviders(<PrivacyStatusIndicator />, {
+      preloadedState: {
+        privacy: {
+          privacyMode: 'standard',
+          disclosuresByThread: {},
+          activeExternalByThread: { 'thread-1': true },
+        },
+        thread: { selectedThreadId: 'thread-1' },
+      },
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('Off-device');
+  });
+
+  // Regression (#4437 finding 1b): a stale, un-dismissed ledger entry from an
+  // earlier turn must NOT keep the pill off-device once the turn boundary
+  // cleared the live flag. The pill ignores the ledger entirely.
+  it('stays on-device with a stale ledger entry once the live flag is cleared', () => {
+    renderWithProviders(<PrivacyStatusIndicator />, {
+      preloadedState: {
+        privacy: {
+          privacyMode: 'standard',
+          disclosuresByThread: { 'thread-1': [disclosure()] },
+          activeExternalByThread: {},
         },
         thread: { selectedThreadId: 'thread-1' },
       },

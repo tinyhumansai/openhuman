@@ -62,4 +62,10 @@ describe('disclosureLabels', () => {
       'privacy.mode.sensitive',
     ]);
   });
+
+  it('falls back to the standard mode key for an unexpected mode value', () => {
+    // Guards the always-visible pill against `t(undefined)` if the core ever
+    // emits a mode string the client does not yet know (#4437 finding 5).
+    expect(privacyModeLabelKey('some_future_mode')).toBe('privacy.mode.standard');
+  });
 });

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExternalTransferPendingEvent } from '../../services/chatService';
 import { callCoreRpc } from '../../services/coreRpcClient';
 import privacyReducer, {
+  clearActiveExternalForThread,
   clearDisclosuresForThread,
   disclosureFromEvent,
   dismissDisclosureForThread,
@@ -32,7 +33,11 @@ function initial() {
 
 describe('privacySlice — reducers', () => {
   it('has the expected initial state', () => {
-    expect(initial()).toEqual({ privacyMode: null, disclosuresByThread: {} });
+    expect(initial()).toEqual({
+      privacyMode: null,
+      disclosuresByThread: {},
+      activeExternalByThread: {},
+    });
   });
 
   it('setPrivacyMode updates the mode', () => {
@@ -103,14 +108,72 @@ describe('privacySlice — reducers', () => {
     expect(state.disclosuresByThread['thread-1']).toBeUndefined();
   });
 
-  it('resetUserScopedState wipes disclosures and mode', () => {
+  it('resetUserScopedState wipes disclosures, mode, and the active-external flags', () => {
     let state = privacyReducer(initial(), setPrivacyMode('standard'));
     state = privacyReducer(
       state,
       pushDisclosureForThread({ threadId: 't', disclosure: disclosureFromEvent(EVENT) })
     );
+    expect(state.activeExternalByThread['t']).toBe(true);
     state = privacyReducer(state, resetUserScopedState());
-    expect(state).toEqual({ privacyMode: null, disclosuresByThread: {} });
+    expect(state).toEqual({
+      privacyMode: null,
+      disclosuresByThread: {},
+      activeExternalByThread: {},
+    });
+  });
+});
+
+describe('privacySlice — active external-transfer flag (#4437 finding 1)', () => {
+  it('pushing an external disclosure marks the thread active-external', () => {
+    const state = privacyReducer(
+      initial(),
+      pushDisclosureForThread({ threadId: 'thread-1', disclosure: disclosureFromEvent(EVENT) })
+    );
+    expect(state.activeExternalByThread['thread-1']).toBe(true);
+  });
+
+  it('a non-external disclosure does NOT mark the thread active-external', () => {
+    const localEvent: ExternalTransferPendingEvent = { ...EVENT, is_external: false };
+    const state = privacyReducer(
+      initial(),
+      pushDisclosureForThread({ threadId: 'thread-1', disclosure: disclosureFromEvent(localEvent) })
+    );
+    expect(state.activeExternalByThread['thread-1']).toBeUndefined();
+  });
+
+  // Finding 1a: dismissing the card must NOT flip the pill off while the
+  // transfer is still active — the active flag survives dismissal.
+  it('dismissing the disclosure card leaves the active-external flag set', () => {
+    const d = disclosureFromEvent(EVENT);
+    let state = privacyReducer(
+      initial(),
+      pushDisclosureForThread({ threadId: 'thread-1', disclosure: d })
+    );
+    state = privacyReducer(state, dismissDisclosureForThread({ threadId: 'thread-1', id: d.id }));
+    // Ledger entry gone…
+    expect(state.disclosuresByThread['thread-1']).toBeUndefined();
+    // …but the live transfer flag remains until the turn boundary clears it.
+    expect(state.activeExternalByThread['thread-1']).toBe(true);
+  });
+
+  // Finding 1b: the turn boundary clears the active flag even though the
+  // (un-dismissed) ledger entry is still there for the card's history.
+  it('clearActiveExternalForThread clears the flag but keeps the ledger', () => {
+    const d = disclosureFromEvent(EVENT);
+    let state = privacyReducer(
+      initial(),
+      pushDisclosureForThread({ threadId: 'thread-1', disclosure: d })
+    );
+    state = privacyReducer(state, clearActiveExternalForThread({ threadId: 'thread-1' }));
+    expect(state.activeExternalByThread['thread-1']).toBeUndefined();
+    // The disclosure history is untouched — only the live flag was cleared.
+    expect(state.disclosuresByThread['thread-1']).toHaveLength(1);
+  });
+
+  it('clearActiveExternalForThread is a no-op for an unknown thread', () => {
+    const state = privacyReducer(initial(), clearActiveExternalForThread({ threadId: 'nope' }));
+    expect(state.activeExternalByThread).toEqual({});
   });
 });
 
