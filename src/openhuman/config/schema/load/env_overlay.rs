@@ -940,8 +940,8 @@ impl Config {
             }
         }
         // "Super context" — harness-driven first-turn context collection.
-        // On by default; `OPENHUMAN_SUPER_CONTEXT=0` opts out. Accepts
-        // the canonical short name and the namespaced form.
+        // Off by default (expensive); `OPENHUMAN_SUPER_CONTEXT=1` opts in.
+        // Accepts the canonical short name and the namespaced form.
         if let Some(flag) = env
             .get("OPENHUMAN_SUPER_CONTEXT")
             .or_else(|| env.get("OPENHUMAN_CONTEXT_SUPER_CONTEXT_ENABLED"))

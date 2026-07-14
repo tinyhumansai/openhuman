@@ -13,7 +13,7 @@ const ROUTES = {
   chat: '/chat',
   skills: '/connections',
   home: '/home',
-  notifications: '/notifications',
+  notifications: '/notifications?view=main',
 } as const;
 
 /**
@@ -60,7 +60,7 @@ function isSafeInAppPath(path: string): boolean {
  * Priority:
  *   1. Explicit `deep_link` set by the core triage pipeline.
  *   2. Provider default — message providers → /chat.
- *   3. `/notifications` fallback.
+ *   3. `/notifications?view=main` fallback.
  */
 export function resolveIntegrationRoute(n: IntegrationNotification): string {
   if (n.deep_link && isSafeInAppPath(n.deep_link)) {
@@ -77,7 +77,7 @@ export function resolveIntegrationRoute(n: IntegrationNotification): string {
   }
 
   log(
-    '[notification-router] integration id=%s provider=%s → /notifications (fallback)',
+    '[notification-router] integration id=%s provider=%s → /notifications?view=main (fallback)',
     n.id,
     n.provider
   );
@@ -90,7 +90,7 @@ export function resolveIntegrationRoute(n: IntegrationNotification): string {
  * Priority:
  *   1. Explicit `deepLink` stored on the item.
  *   2. Category default: messages/agents → /chat; skills → /skills; system → /home.
- *   3. `/notifications` fallback.
+ *   3. `/notifications?view=main` fallback.
  */
 export function resolveSystemRoute(item: NotificationItem): string {
   if (item.deepLink && isSafeInAppPath(item.deepLink)) {
@@ -115,17 +115,26 @@ export function resolveSystemRoute(item: NotificationItem): string {
       log('[notification-router] system id=%s category=system → /home', item.id);
       return ROUTES.home;
     case 'meetings':
-      log('[notification-router] system id=%s category=meetings → /notifications', item.id);
+      log(
+        '[notification-router] system id=%s category=meetings → /notifications?view=main',
+        item.id
+      );
       return ROUTES.notifications;
     case 'reminders':
-      log('[notification-router] system id=%s category=reminders → /notifications', item.id);
+      log(
+        '[notification-router] system id=%s category=reminders → /notifications?view=main',
+        item.id
+      );
       return ROUTES.notifications;
     case 'important':
-      log('[notification-router] system id=%s category=important → /notifications', item.id);
+      log(
+        '[notification-router] system id=%s category=important → /notifications?view=main',
+        item.id
+      );
       return ROUTES.notifications;
     default:
       log(
-        '[notification-router] system id=%s category=%s → /notifications (fallback)',
+        '[notification-router] system id=%s category=%s → /notifications?view=main (fallback)',
         item.id,
         item.category
       );

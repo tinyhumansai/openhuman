@@ -80,7 +80,7 @@ function renderPage(items: NotificationItem[]) {
     store,
     ...render(
       <Provider store={store}>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={['/?view=main']}>
           <Notifications />
         </MemoryRouter>
       </Provider>

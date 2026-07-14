@@ -7,7 +7,6 @@ export * from './window';
 export * from './core';
 export * from './memory';
 export * from './memoryTree';
-export * from './webhooks';
 export * from './composio';
 export * from './conscious';
 export * from './subconscious';

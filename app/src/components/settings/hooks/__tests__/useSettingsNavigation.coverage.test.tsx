@@ -70,9 +70,10 @@ describe('features section leaves', () => {
   test('companion resolves to companion', () => expectRoute('/settings/companion', 'companion'));
 });
 
-describe('integrations', () => {
-  test('integrations resolves to integrations', () =>
-    expectRoute('/settings/integrations', 'integrations'));
+describe('integrations (retired)', () => {
+  // The Integrations settings section was removed — the slug redirects to the
+  // Connections page, so it no longer resolves to a registry entry.
+  test('integrations resolves to home', () => expectRoute('/settings/integrations', 'home'));
 });
 
 describe('notifications', () => {
@@ -89,8 +90,11 @@ describe('crypto section leaves', () => {
 
 describe('developer section leaves', () => {
   test('cron-jobs resolves to cron-jobs', () => expectRoute('/settings/cron-jobs', 'cron-jobs'));
-  test('intelligence resolves to intelligence', () =>
-    expectRoute('/settings/intelligence', 'intelligence'));
+  // 'intelligence' was retired with the Brain Knowledge & Memory cleanup — the
+  // old settings slug now falls through to home (redirect handled at the
+  // route-elements layer, which bounces it to /brain).
+  test('intelligence (retired) resolves to home', () =>
+    expectRoute('/settings/intelligence', 'home'));
   test('developer-options resolves to developer-options', () =>
     expectRoute('/settings/developer-options', 'developer-options'));
 });
@@ -121,13 +125,15 @@ describe('unknown / removed routes', () => {
 // ---------------------------------------------------------------------------
 
 describe('no substring collision', () => {
-  test('/settings/voice resolves to voice, not voice-debug', () => {
-    // Exact first-segment extraction prevents "voice" from matching the longer
-    // "voice-debug" developer route (or vice-versa).
+  test('/settings/voice resolves to voice', () => {
+    // Exact first-segment extraction: "voice" resolves to the voice leaf and
+    // is not confused with any longer developer route.
     expectRoute('/settings/voice', 'voice');
   });
 
-  test('/settings/voice-debug resolves to voice-debug', () => {
-    expectRoute('/settings/voice-debug', 'voice-debug');
+  test('/settings/voice-debug (retired) resolves to home', () => {
+    // The voice-debug developer page was removed; its slug no longer resolves
+    // to a registry entry (the route now redirects out).
+    expectRoute('/settings/voice-debug', 'home');
   });
 });
