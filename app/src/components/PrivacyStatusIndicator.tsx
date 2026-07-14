@@ -78,7 +78,7 @@ const PrivacyStatusIndicator = ({ className = '' }: PrivacyStatusIndicatorProps)
       <div
         className={`inline-flex items-center gap-1.5 ${className}`}
         role="status"
-        aria-label={t('privacy.status.ariaLabel')}
+        aria-label={`${t('privacy.status.ariaLabel')}: ${modeLabel} · ${stateLabel}`}
         title={`${modeLabel} · ${stateLabel}`}>
         <div className={`h-2 w-2 rounded-full ${dotColor} ${isExternal ? 'animate-pulse' : ''}`} />
         <span className={`text-[10px] font-medium ${textColor}`}>
