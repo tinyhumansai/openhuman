@@ -34,3 +34,25 @@ pub fn all_x402_controller_schemas() -> Vec<ControllerSchema> {
 pub fn all_x402_registered_controllers() -> Vec<RegisteredController> {
     Vec::new()
 }
+
+// Compiled only in the disabled build (`#[cfg(not(feature = "web3"))] mod stub;`
+// in `super`), so a plain `#[cfg(test)]` here runs only when x402 is compiled
+// out — it pins the disabled facade's callable no-op + empty-registration
+// contract that `core/jsonrpc.rs` boot and `core/all.rs` rely on.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn init_ledger_is_callable_noop() {
+        // Must not panic — the boot path calls this unconditionally (itself
+        // runtime-gated on `DomainGroup::Web3`) even in a slim build.
+        init_ledger(Path::new("/tmp/openhuman-x402-stub-test"), "session-x");
+    }
+
+    #[test]
+    fn registration_entry_points_are_empty() {
+        assert!(all_x402_registered_controllers().is_empty());
+        assert!(all_x402_controller_schemas().is_empty());
+    }
+}
