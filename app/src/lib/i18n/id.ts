@@ -4406,7 +4406,8 @@ const messages: TranslationMap = {
   'settings.ai.getProviderApiKey': 'Dapatkan API Key',
   'settings.ai.or': 'Atau',
   'settings.ai.codexAuthButton': 'Autentikasi Codex',
-  'settings.ai.codexAuthHelper': 'Menggunakan login Codex CLI yang ada dari ~/.codex/auth.json.',
+  'settings.ai.codexAuthHelper':
+    'Menggunakan login Codex CLI yang sudah ada di ~/.codex/auth.json.',
   'settings.ai.codexOauthMissingAuthUrl':
     'Codex OAuth tidak mengembalikan URL otorisasi. Coba masuk lagi.',
   'settings.ai.codexOauthMissingCallbackUrl':
