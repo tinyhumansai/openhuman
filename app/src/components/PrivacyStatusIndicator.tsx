@@ -67,8 +67,11 @@ const PrivacyStatusIndicator = ({ className = '' }: PrivacyStatusIndicatorProps)
   // The leading separator travels WITH the pill so the sidebar footer never
   // renders a dangling `· ·` while the pill is un-hydrated (returns null). See
   // AppSidebar — the version item owns the separator that follows the pill.
+  // Separator + chip are grouped in one inline-flex item so the footer's
+  // flex-wrap can never split the leading `·` onto its own line — they wrap
+  // together or not at all.
   return (
-    <>
+    <span className="inline-flex items-center gap-2">
       <span aria-hidden="true" className="text-[10px] text-content-faint">
         &middot;
       </span>
@@ -84,7 +87,7 @@ const PrivacyStatusIndicator = ({ className = '' }: PrivacyStatusIndicatorProps)
           {stateLabel}
         </span>
       </div>
-    </>
+    </span>
   );
 };
 
