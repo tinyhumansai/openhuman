@@ -141,6 +141,77 @@ fn enforce_backend_egress_blocks_user_data_but_allows_control_plane() {
     enforce_backend_egress("/agent-integrations/composio/execute").expect("Standard allows");
 }
 
+/// Privacy epic S7 (#4441): the LocalOnly gate must fire through the PUBLIC verb
+/// methods, not only via the `enforce_backend_egress` helper. Each of the six
+/// verbs (`post`/`get`/`patch`/`delete`/`upload_multipart`/`get_bytes`) runs the
+/// gate synchronously on first poll — before any `.await` — so a user-data path
+/// is refused before the request leaves the device. The client points at an
+/// unreachable address, so a leaked call would surface a transport error, not
+/// the local-only message; asserting the policy string therefore proves the
+/// short-circuit fired end-to-end through the verb, not just the helper.
+#[tokio::test]
+async fn verb_methods_block_user_data_egress_under_local_only() {
+    use crate::openhuman::config::PrivacyMode;
+    use crate::openhuman::security::live_policy::test_privacy_scope;
+
+    let _mode = test_privacy_scope(PrivacyMode::LocalOnly);
+    let client = client_for("http://127.0.0.1:0".into());
+    let path = "/agent-integrations/composio/execute"; // user-data egress (blocked)
+    let body = json!({ "arguments": { "secret": "leak-me" } });
+
+    let assert_blocked = |verb: &str, msg: String| {
+        assert!(
+            msg.contains("Local-only privacy mode is active"),
+            "{verb}: expected a local-only block before network, got: {msg}"
+        );
+    };
+
+    assert_blocked(
+        "post",
+        client
+            .post::<serde_json::Value>(path, &body)
+            .await
+            .unwrap_err()
+            .to_string(),
+    );
+    assert_blocked(
+        "get",
+        client
+            .get::<serde_json::Value>(path)
+            .await
+            .unwrap_err()
+            .to_string(),
+    );
+    assert_blocked(
+        "patch",
+        client
+            .patch::<serde_json::Value>(path, &body)
+            .await
+            .unwrap_err()
+            .to_string(),
+    );
+    assert_blocked(
+        "delete",
+        client
+            .delete::<serde_json::Value>(path)
+            .await
+            .unwrap_err()
+            .to_string(),
+    );
+    assert_blocked(
+        "upload_multipart",
+        client
+            .upload_multipart::<serde_json::Value>(path, reqwest::multipart::Form::new())
+            .await
+            .unwrap_err()
+            .to_string(),
+    );
+    assert_blocked(
+        "get_bytes",
+        client.get_bytes(path).await.unwrap_err().to_string(),
+    );
+}
+
 // ── Integration: HTTP error propagation through `post`/`get` ──────
 
 async fn start_mock_backend(app: Router) -> String {
