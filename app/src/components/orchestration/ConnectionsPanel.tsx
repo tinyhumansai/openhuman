@@ -127,6 +127,36 @@ function SessionView({
     [body, sending, contactAddr, session.sessionId, refresh]
   );
 
+  // Runtime tool-approval decision → reply "allow"/"deny" to the runtime peer (the
+  // same send path as a typed reply). Returns the promise (rethrows on failure) so
+  // SessionTranscript rolls the card back to buttons for a retry.
+  const decide = useCallback(
+    (decision: 'allow' | 'deny'): Promise<void> => {
+      setSendError(null);
+      debug(
+        '[orchestration:connections] approval decision: send session=%s decision=%s',
+        session.sessionId,
+        decision
+      );
+      return orchestrationClient
+        .sendMasterMessage({ body: decision, recipient: contactAddr, sessionId: session.sessionId })
+        .then(() => {
+          void refresh();
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          debug(
+            '[orchestration:connections] approval decision: failed session=%s %s',
+            session.sessionId,
+            message
+          );
+          setSendError(message);
+          throw error;
+        });
+    },
+    [contactAddr, session.sessionId, refresh]
+  );
+
   return (
     <div className="space-y-3" data-testid="orch-session-view">
       <button
@@ -163,7 +193,10 @@ function SessionView({
             {t('tinyplaceOrchestration.noMessages')}
           </p>
         ) : (
-          <SessionTranscript messages={messages} />
+          <SessionTranscript
+            messages={messages}
+            onDecide={(_message, decision) => decide(decision === 'deny' ? 'deny' : 'allow')}
+          />
         )}
         {sendError ? (
           <p

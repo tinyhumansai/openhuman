@@ -84,6 +84,7 @@ describe('AgentChatPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     contactSessions.current = [];
+    transcript.current = { state: { status: 'ok' }, messages: [], refresh: vi.fn() };
     chatsApi.current = {
       ...chatsApi.current,
       selectedId: 'master',
@@ -139,6 +140,35 @@ describe('AgentChatPanel', () => {
     await waitFor(() =>
       expect(sendMasterMessage).toHaveBeenCalledWith({
         body: 'hi',
+        recipient: '@peer',
+        sessionId: 's-auth',
+      })
+    );
+  });
+
+  it('routes a runtime tool-approval decision back as an allow reply', async () => {
+    contactSessions.current = [pinged];
+    transcript.current = {
+      state: { status: 'ok' },
+      messages: [
+        {
+          id: 'ap',
+          from: 'agent',
+          body: 'gh pr status',
+          timestamp: '2026-07-08T00:00:00Z',
+          encrypted: false,
+          eventKind: 'approval_request',
+          toolName: 'shell',
+        },
+      ],
+      refresh: vi.fn(),
+    };
+    render(<AgentChatPanel />);
+    fireEvent.click(screen.getByTestId('orch-agent-view-session-s-auth'));
+    fireEvent.click(screen.getByText('chat.approval.approve'));
+    await waitFor(() =>
+      expect(sendMasterMessage).toHaveBeenCalledWith({
+        body: 'allow',
         recipient: '@peer',
         sessionId: 's-auth',
       })

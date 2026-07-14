@@ -28,7 +28,7 @@ async fn validate_direct_api_key_before_store(config: &Config, api_key: &str) ->
                 tracing::warn!(
                     "[composio-direct] validate_api_key: rejected invalid API key before storage"
                 );
-                Err("Invalid Composio API key. Re-enter a valid key in Settings > Connections > Composio.".into())
+                Err(direct_auth::COMPOSIO_INVALID_API_KEY_USER_MESSAGE.into())
             } else {
                 tracing::warn!(
                     error = %rendered,
