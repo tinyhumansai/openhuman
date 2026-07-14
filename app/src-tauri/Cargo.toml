@@ -132,7 +132,11 @@ cef = { version = "=146.4.1", default-features = false }
 # by tying the core's lifetime to the GUI process. The existing port-7788
 # probe in `core_process::ensure_running` still attaches to a running
 # `openhuman-core run` harness when one is already listening.
-openhuman_core = { path = "../..", package = "openhuman", default-features = false }
+# `default-features = false` drops the core's default gates, so any domain
+# moved behind a default-ON Cargo feature must be re-forwarded here or it
+# silently vanishes from the shipped desktop app. `web3` (#4802) keeps the
+# wallet/web3/x402 domains + their agent tools in the desktop build.
+openhuman_core = { path = "../..", package = "openhuman", default-features = false, features = ["web3"] }
 tinyjuice = { version = "0.2.1", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
