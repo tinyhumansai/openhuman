@@ -574,6 +574,27 @@ impl PolymarketTool {
             return Ok(creds.clone());
         }
 
+        // Egress spine (privacy epic S7, #4441): deriving CLOB credentials
+        // sends the wallet address + L1 EIP-712 signature to Polymarket's
+        // `/auth/api-key` (and `/auth/derive-api-key` fallback) directly on
+        // `self.http`, which does NOT pass through the `send_with_retry`
+        // egress chokepoint. Refuse BEFORE that round-trip under LocalOnly so
+        // no credential material leaves the device. A cached-credential hit
+        // (checked above) never reaches here, so a permitted local read is
+        // unaffected — every `self.http` path is now gated first (this +
+        // `send_with_retry`).
+        {
+            use crate::openhuman::security::egress::{DataKind, EgressDescriptor};
+            let host = reqwest::Url::parse(&self.clob_base_url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "clob.polymarket.com".to_string());
+            let desc = EgressDescriptor::network_fetch(host).with_data_kind(DataKind::Metadata);
+            if let Some(msg) = crate::openhuman::security::egress::local_only_tool_block(&desc) {
+                anyhow::bail!("{msg}");
+            }
+        }
+
         ensure_https(&self.clob_base_url)?;
         let creds =
             derive_credentials(&self.http, wallet, &self.clob_base_url, POLY_CHAIN_ID, user)
