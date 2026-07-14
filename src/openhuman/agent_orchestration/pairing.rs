@@ -443,7 +443,9 @@ fn load_local_agents() -> LocalAgentsFile {
 fn load_local_agents_from(path: &Path) -> LocalAgentsFile {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return LocalAgentsFile::default(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return LocalAgentsFile::default()
+        }
         Err(err) => {
             log::warn!(target: LOG_TARGET, "[orchestration_pairing] local_agents.read_failed: {err}");
             return LocalAgentsFile::default();
@@ -1076,7 +1078,11 @@ mod tests {
         std::fs::write(&path, handshake_body()).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         let file = load_local_agents_from(&path);
-        assert_eq!(file.agents.len(), 1, "a privately-owned handshake file is read");
+        assert_eq!(
+            file.agents.len(),
+            1,
+            "a privately-owned handshake file is read"
+        );
         assert_eq!(file.agents[0].agent_id, LINKED_BASE58);
     }
 
@@ -1111,6 +1117,9 @@ mod tests {
         let trusted_empty = load_local_agents_from(&path).agents.is_empty();
         // Restore private perms before the tempdir is cleaned up.
         std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o700)).ok();
-        assert!(trusted_empty, "a world-writable parent dir makes the handshake untrusted");
+        assert!(
+            trusted_empty,
+            "a world-writable parent dir makes the handshake untrusted"
+        );
     }
 }
