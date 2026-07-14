@@ -65,6 +65,7 @@ export function AutomationHaltedBanner() {
         {resumeFailed && (
           <span
             role="status"
+            aria-label={t('safety.resumeFailed')}
             data-analytics-id="emergency-resume-failed"
             className="rounded-md bg-[var(--color-coral-100,#fce8e8)] px-2 py-1 text-xs font-medium text-[var(--color-coral-800,#8f3a3a)]">
             {t('safety.resumeFailed')}
