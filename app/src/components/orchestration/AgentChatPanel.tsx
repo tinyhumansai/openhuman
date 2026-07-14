@@ -246,6 +246,11 @@ function SessionChatView({ session }: { session: SessionSummary }) {
   const decide = useCallback(
     async (decision: 'allow' | 'deny'): Promise<void> => {
       setSendError(null);
+      debug(
+        '[orchestration:agent-chat] approval decision: send session=%s decision=%s',
+        session.sessionId,
+        decision
+      );
       try {
         await orchestrationClient.sendMasterMessage({
           body: decision,
@@ -254,9 +259,13 @@ function SessionChatView({ session }: { session: SessionSummary }) {
         });
         if (mountedRef.current) void refresh();
       } catch (error) {
-        if (mountedRef.current) {
-          setSendError(error instanceof Error ? error.message : String(error));
-        }
+        const message = error instanceof Error ? error.message : String(error);
+        debug(
+          '[orchestration:agent-chat] approval decision: failed session=%s %s',
+          session.sessionId,
+          message
+        );
+        if (mountedRef.current) setSendError(message);
         throw error;
       }
     },

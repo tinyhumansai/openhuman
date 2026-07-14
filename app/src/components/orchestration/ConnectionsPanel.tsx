@@ -133,13 +133,24 @@ function SessionView({
   const decide = useCallback(
     (decision: 'allow' | 'deny'): Promise<void> => {
       setSendError(null);
+      debug(
+        '[orchestration:connections] approval decision: send session=%s decision=%s',
+        session.sessionId,
+        decision
+      );
       return orchestrationClient
         .sendMasterMessage({ body: decision, recipient: contactAddr, sessionId: session.sessionId })
         .then(() => {
           void refresh();
         })
         .catch((error: unknown) => {
-          setSendError(error instanceof Error ? error.message : String(error));
+          const message = error instanceof Error ? error.message : String(error);
+          debug(
+            '[orchestration:connections] approval decision: failed session=%s %s',
+            session.sessionId,
+            message
+          );
+          setSendError(message);
           throw error;
         });
     },

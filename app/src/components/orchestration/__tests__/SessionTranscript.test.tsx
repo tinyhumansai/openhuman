@@ -131,9 +131,7 @@ describe('SessionTranscript', () => {
       screen.queryByRole('button', { name: 'chat.approval.alwaysAllow' })
     ).not.toBeInTheDocument();
     rerender(<SessionTranscript messages={[approval]} onDecide={vi.fn()} alwaysAllow />);
-    expect(
-      screen.getByRole('button', { name: 'chat.approval.alwaysAllow' })
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'chat.approval.alwaysAllow' })).toBeInTheDocument();
   });
 
   it('rolls the card back to buttons if the decision send fails', async () => {
