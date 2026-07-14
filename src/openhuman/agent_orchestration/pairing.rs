@@ -401,6 +401,32 @@ fn local_agents_path() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(".openhuman").join("local-agents.json"))
 }
 
+/// Fail-closed ownership/permission gate for a handshake path (issue #4777
+/// review). Same-user filesystem access is the ONLY trust proof for
+/// auto-accepting a co-located CLI's contact request, so a path another local
+/// account could have written must never be trusted. On Unix, require the path
+/// to be owned by the current effective uid AND not group/world-writable —
+/// otherwise a permissive umask or shared home would let a different local user
+/// plant a fresh owner-matching entry and get auto-accepted with no human click.
+/// A missing/unreadable stat is untrusted (`false`). Non-Unix hosts trust the
+/// path (the handshake is a same-machine dev-CLI feature; Windows ACLs are out
+/// of scope) — every other trust source stays fail-closed regardless.
+#[cfg(unix)]
+fn path_is_privately_owned(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    // SAFETY: `geteuid` takes no arguments, mutates no state, and cannot fail.
+    let euid = unsafe { libc::geteuid() };
+    match std::fs::metadata(path) {
+        Ok(meta) => meta.uid() == euid && (meta.mode() & 0o022) == 0,
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn path_is_privately_owned(_path: &Path) -> bool {
+    true
+}
+
 /// Read + parse the local co-location handshake file. Missing file → empty (the
 /// common case: no local CLI connecting). A parse/read error is logged and also
 /// yields empty — fail-closed, trusts nothing. Cheap: local file read, no network.
@@ -408,17 +434,40 @@ fn load_local_agents() -> LocalAgentsFile {
     let Some(path) = local_agents_path() else {
         return LocalAgentsFile::default();
     };
-    match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
-            log::warn!(target: LOG_TARGET, "[orchestration_pairing] local_agents.parse_failed: {e}");
-            LocalAgentsFile::default()
-        }),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => LocalAgentsFile::default(),
+    load_local_agents_from(&path)
+}
+
+/// Perm-gated read + parse of a handshake file at `path`. Split from
+/// [`load_local_agents`] so the trust gate is unit-testable with a tempfile,
+/// without depending on the real home dir.
+fn load_local_agents_from(path: &Path) -> LocalAgentsFile {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return LocalAgentsFile::default(),
         Err(err) => {
             log::warn!(target: LOG_TARGET, "[orchestration_pairing] local_agents.read_failed: {err}");
-            LocalAgentsFile::default()
+            return LocalAgentsFile::default();
         }
+    };
+    // Trust proof (fail-closed): require the handshake file AND its parent
+    // `.openhuman` dir to be privately owned by us and not writable by others.
+    // On a multi-user host with a group/world-writable home (permissive umask,
+    // shared box), another local account could otherwise inject a fresh
+    // owner-matching entry and open a DM/orchestration channel to this brain
+    // with no human approval. The parent-dir check also closes the symlink
+    // vector (an attacker cannot plant a symlink in a dir they cannot write).
+    let parent_ok = path.parent().map(path_is_privately_owned).unwrap_or(false);
+    if !parent_ok || !path_is_privately_owned(path) {
+        log::warn!(
+            target: LOG_TARGET,
+            "[orchestration_pairing] local_agents.untrusted_perms — file or parent dir not privately owned; refusing to trust handshake"
+        );
+        return LocalAgentsFile::default();
     }
+    serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+        log::warn!(target: LOG_TARGET, "[orchestration_pairing] local_agents.parse_failed: {e}");
+        LocalAgentsFile::default()
+    })
 }
 
 /// True when `ts` is a parseable RFC3339 stamp within the handshake TTL of `now`
@@ -991,5 +1040,77 @@ mod tests {
         assert!(!entry_is_fresh(Some("2026-07-10T12:10:00Z"), now)); // 10 min future → skew reject
         assert!(!entry_is_fresh(Some("not-a-timestamp"), now)); // malformed
         assert!(!entry_is_fresh(None, now)); // absent
+    }
+
+    // ── Handshake-file trust gate (#4777 review — permission hardening) ───────
+
+    /// A well-formed one-entry handshake JSON body naming us as owner.
+    fn handshake_body() -> String {
+        serde_json::json!({
+            "agents": [{
+                "agentId": LINKED_BASE58,
+                "owner": UNLINKED_BASE58,
+                "ts": "2026-07-10T11:59:00Z",
+            }]
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn load_local_agents_from_missing_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("does-not-exist.json");
+        assert!(
+            load_local_agents_from(&path).agents.is_empty(),
+            "a missing handshake file yields an empty (fail-closed) set"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_local_agents_from_trusts_privately_owned_file() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = tmp.path().join("local-agents.json");
+        std::fs::write(&path, handshake_body()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let file = load_local_agents_from(&path);
+        assert_eq!(file.agents.len(), 1, "a privately-owned handshake file is read");
+        assert_eq!(file.agents[0].agent_id, LINKED_BASE58);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_local_agents_from_rejects_world_writable_file() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = tmp.path().join("local-agents.json");
+        std::fs::write(&path, handshake_body()).unwrap();
+        // A group/world-writable file could have been forged by another local
+        // user → fail closed and trust nothing.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(
+            load_local_agents_from(&path).agents.is_empty(),
+            "a world-writable handshake file is refused"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_local_agents_from_rejects_world_writable_dir() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("local-agents.json");
+        std::fs::write(&path, handshake_body()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        // A world-writable parent dir lets another user swap the file (or plant a
+        // symlink) → the file's own perms are not enough, so trust nothing.
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
+        let trusted_empty = load_local_agents_from(&path).agents.is_empty();
+        // Restore private perms before the tempdir is cleaned up.
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o700)).ok();
+        assert!(trusted_empty, "a world-writable parent dir makes the handshake untrusted");
     }
 }
