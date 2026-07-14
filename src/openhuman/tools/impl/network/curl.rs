@@ -188,9 +188,12 @@ impl Tool for CurlTool {
                 .and_then(|u| u.host_str().map(str::to_string))
                 .unwrap_or_else(|| "unknown".to_string());
             if let Some(msg) = crate::openhuman::security::egress::local_only_tool_block(
-                &crate::openhuman::security::egress::EgressDescriptor::network_fetch(host),
+                &crate::openhuman::security::egress::EgressDescriptor::network_fetch(host.clone()),
             ) {
-                tracing::debug!(target: "[curl]", url = %url, "blocked: local-only privacy mode");
+                // Log only the host, never the full URL: a raw URL can carry
+                // secrets in its query string (pre-signed links, tokens). The
+                // gate helper already logs `desc.service` (host only) too.
+                tracing::debug!(target: "[curl]", host = %host, "blocked: local-only privacy mode");
                 return Ok(ToolResult::error(msg));
             }
         }
