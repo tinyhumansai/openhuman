@@ -446,6 +446,37 @@ async fn list_markets_happy_path() {
 }
 
 #[tokio::test]
+async fn blocked_under_local_only_privacy_mode() {
+    // Privacy epic S7 (#4441): every Polymarket request funnels through
+    // `send_with_retry`, which refuses under LocalOnly before any network — so
+    // this passes against an unreachable base URL (a leaked request would fail
+    // with a transport error, not the policy-blocked message).
+    let _mode = super::super::local_only_scope();
+    let tool = test_tool(
+        "https://gamma.example.com".into(),
+        "https://clob.example.com".into(),
+        15,
+    );
+
+    let result = tool
+        .execute(json!({ "action": "list_markets", "limit": 2, "offset": 0, "active": true }))
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert!(
+        result.output().contains("[policy-blocked]"),
+        "got: {}",
+        result.output()
+    );
+    assert!(
+        result.output().contains("Local-only"),
+        "got: {}",
+        result.output()
+    );
+}
+
+#[tokio::test]
 async fn get_market_by_id_happy_path() {
     let (gamma_base, _) = start_mock_server(route(
         "/markets/12345",

@@ -925,6 +925,30 @@ impl PolymarketTool {
         let url = format!("{base_url}{path}");
         let method_label = method.as_str().to_string();
 
+        // Egress spine (privacy epic S2/S7, #4436/#4441): every Polymarket
+        // read/write funnels through here — the single network chokepoint for
+        // this tool. Enforce local-only (refuse before any request leaves the
+        // device), then disclose the destination for permitted calls. Body =>
+        // tool arguments, headers => metadata also ride along.
+        {
+            use crate::openhuman::security::egress::{DataKind, EgressDescriptor};
+            let host = reqwest::Url::parse(&url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "unknown".to_string());
+            let mut desc = EgressDescriptor::network_fetch(host);
+            if body.is_some() {
+                desc = desc.with_data_kind(DataKind::ToolArguments);
+            }
+            if headers.is_some() {
+                desc = desc.with_data_kind(DataKind::Metadata);
+            }
+            if let Some(msg) = crate::openhuman::security::egress::local_only_tool_block(&desc) {
+                anyhow::bail!("{msg}");
+            }
+            crate::openhuman::security::egress::emit_external_transfer(desc);
+        }
+
         for attempt in 1..=MAX_RETRY_ATTEMPTS {
             let mut request = self.http.request(method.clone(), &url);
             if !query.is_empty() {
