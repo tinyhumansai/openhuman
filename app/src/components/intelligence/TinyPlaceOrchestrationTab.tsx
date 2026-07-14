@@ -2,396 +2,209 @@ import debugFactory from 'debug';
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { apiClient } from '../../agentworld/AgentWorldShell';
-import {
-  type ContactRequestsResponse,
-  type ContactView,
-  type InboxItem,
-  type MessageEnvelope,
-  type PairingSnapshot,
-  PaymentRequiredError,
-} from '../../lib/agentworld/invokeApiClient';
+import { type PairingSnapshot, PaymentRequiredError } from '../../lib/agentworld/invokeApiClient';
 import { useT } from '../../lib/i18n/I18nContext';
-import Button from '../ui/Button';
+import {
+  type AttentionAction,
+  type AttentionQueue,
+  orchestrationClient,
+  type RelayInfo,
+  type SelfIdentity,
+} from '../../lib/orchestration/orchestrationClient';
+import {
+  type ChatWindow,
+  MASTER_CHAT_KEY,
+  useOrchestrationChats,
+} from '../../lib/orchestration/useOrchestrationChats';
+import { subconsciousTrigger } from '../../utils/tauriCommands/subconscious';
+import OrchestrationFocusPane from './OrchestrationFocusPane';
+import OrchestrationSidebar from './OrchestrationSidebar';
+import {
+  acceptedContactIds,
+  chatTime,
+  contactAddress,
+  extractHandle,
+  pendingContactIds,
+} from './orchestrationTabHelpers';
 
 const debug = debugFactory('brain:tinyplace-orchestration');
 
-const MESSAGE_LIMIT = 100;
-const INBOX_LIMIT = 40;
-const ACTIVE_WINDOW_MS = 45 * 60 * 1000;
+// ── Pairing (unchanged data source: apiClient.orchestrationPairing.*) ─────────
 
-type ChatKind = 'master' | 'subconscious' | 'session';
-
-interface ChatMessage {
-  id: string;
-  from: string;
-  body: string;
-  timestamp: string;
-  encrypted: boolean;
-}
-
-interface ChatWindow {
-  id: string;
-  kind: ChatKind;
-  title: string;
-  subtitle: string;
-  preview: string;
-  lastTimestamp: string | null;
-  unread: number;
-  active: boolean;
-  pinned: boolean;
-  peerAgentId: string | null;
-  messages: ChatMessage[];
-}
-
-interface TinyPlaceChatData {
-  messages: MessageEnvelope[];
-  inboxItems: InboxItem[];
-  pairing: PairingSnapshot;
-}
-
-type LoadState =
+type PairingState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'payment_required' }
-  | { status: 'ok'; data: TinyPlaceChatData };
-
-function asString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null;
-}
-
-function pickString(source: Record<string, unknown>, keys: string[]): string | null {
-  for (const key of keys) {
-    const value = asString(source[key]);
-    if (value) return value;
-  }
-  return null;
-}
-
-function chatKindForEnvelope(envelope: MessageEnvelope): ChatKind {
-  const type = (envelope.type ?? '').toLowerCase();
-  if (type.includes('subconscious') || type.includes('internal')) return 'subconscious';
-  if (type.includes('master') || type.includes('agent-human') || type.includes('human')) {
-    return 'master';
-  }
-  return 'session';
-}
-
-function sessionIdForEnvelope(envelope: MessageEnvelope): string {
-  return (
-    pickString(envelope, ['sessionId', 'appSessionId', 'threadId', 'conversationId', 'runId']) ??
-    `${envelope.from || 'unknown'}:${envelope.to || 'unknown'}`
-  );
-}
-
-function isEncrypted(envelope: MessageEnvelope): boolean {
-  const hint = (envelope.contentHint ?? '').toLowerCase();
-  const type = (envelope.type ?? '').toLowerCase();
-  return Boolean(envelope.signal) || hint.includes('encrypted') || type.includes('signal');
-}
-
-function displayBody(message: MessageEnvelope, encryptedText: string): string {
-  if (isEncrypted(message)) return encryptedText;
-  return message.body || message.contentHint || encryptedText;
-}
-
-function messageTime(message: Pick<ChatMessage, 'timestamp'>): number {
-  const parsed = Date.parse(message.timestamp);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function sortMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages.slice().sort((a, b) => messageTime(a) - messageTime(b));
-}
-
-function formatTime(timestamp: string | null): string {
-  if (!timestamp) return '';
-  const parsed = Date.parse(timestamp);
-  if (!Number.isFinite(parsed)) return '';
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(parsed));
-}
-
-function truncate(text: string, length = 96): string {
-  if (text.length <= length) return text;
-  return `${text.slice(0, length - 1)}…`;
-}
-
-function isActive(lastTimestamp: string | null, unread: number): boolean {
-  if (unread > 0) return true;
-  if (!lastTimestamp) return false;
-  const parsed = Date.parse(lastTimestamp);
-  return Number.isFinite(parsed) && Date.now() - parsed < ACTIVE_WINDOW_MS;
-}
-
-function emptyPinnedChats(t: (key: string) => string): ChatWindow[] {
-  return [
-    {
-      id: 'pinned:master',
-      kind: 'master',
-      title: t('tinyplaceOrchestration.master.title'),
-      subtitle: t('tinyplaceOrchestration.master.subtitle'),
-      preview: t('tinyplaceOrchestration.master.preview'),
-      lastTimestamp: null,
-      unread: 0,
-      active: true,
-      pinned: true,
-      peerAgentId: null,
-      messages: [],
-    },
-    {
-      id: 'pinned:subconscious',
-      kind: 'subconscious',
-      title: t('tinyplaceOrchestration.subconscious.title'),
-      subtitle: t('tinyplaceOrchestration.subconscious.subtitle'),
-      preview: t('tinyplaceOrchestration.subconscious.preview'),
-      lastTimestamp: null,
-      unread: 0,
-      active: true,
-      pinned: true,
-      peerAgentId: null,
-      messages: [],
-    },
-  ];
-}
-
-function buildChats(data: TinyPlaceChatData, t: (key: string) => string): ChatWindow[] {
-  const encryptedText = t('tinyplaceOrchestration.encryptedBody');
-  const unknownSender = t('tinyplaceOrchestration.unknownSender');
-  const pinned = emptyPinnedChats(t);
-  const byId = new Map<string, ChatWindow>(pinned.map(chat => [chat.id, chat]));
-
-  for (const envelope of data.messages) {
-    const kind = chatKindForEnvelope(envelope);
-    const id = kind === 'session' ? `session:${sessionIdForEnvelope(envelope)}` : `pinned:${kind}`;
-    const message: ChatMessage = {
-      id: envelope.id,
-      from: envelope.from || unknownSender,
-      body: displayBody(envelope, encryptedText),
-      timestamp: envelope.timestamp,
-      encrypted: isEncrypted(envelope),
-    };
-    const existing = byId.get(id);
-    const title =
-      kind === 'session'
-        ? (pickString(envelope, ['sessionLabel', 'appName', 'threadTitle']) ??
-          sessionIdForEnvelope(envelope))
-        : (existing?.title ?? id);
-    const subtitle =
-      kind === 'session'
-        ? (pickString(envelope, ['workspace', 'source', 'appSessionId']) ??
-          t('tinyplaceOrchestration.session.subtitle'))
-        : (existing?.subtitle ?? '');
-    const nextMessages = sortMessages([...(existing?.messages ?? []), message]);
-    const last = nextMessages[nextMessages.length - 1] ?? message;
-    byId.set(id, {
-      id,
-      kind,
-      title,
-      subtitle,
-      preview: truncate(last.body),
-      lastTimestamp: last.timestamp,
-      unread: existing?.unread ?? 0,
-      active: true,
-      pinned: kind !== 'session',
-      peerAgentId: kind === 'session' ? envelope.from || envelope.to || null : null,
-      messages: nextMessages,
-    });
-  }
-
-  for (const item of data.inboxItems) {
-    const sender = item.from ?? item.type ?? 'tiny.place';
-    const id = `session:${sender}`;
-    const message: ChatMessage = {
-      id: item.itemId,
-      from: sender,
-      body: item.summary ?? item.subject,
-      timestamp: item.timestamp,
-      encrypted: false,
-    };
-    const existing = byId.get(id);
-    const nextMessages = sortMessages([...(existing?.messages ?? []), message]);
-    const last = nextMessages[nextMessages.length - 1] ?? message;
-    const unread = (existing?.unread ?? 0) + (item.status === 'unread' ? 1 : 0);
-    byId.set(id, {
-      id,
-      kind: 'session',
-      title: sender,
-      subtitle: item.type || t('tinyplaceOrchestration.session.subtitle'),
-      preview: truncate(last.body),
-      lastTimestamp: last.timestamp,
-      unread,
-      active: isActive(last.timestamp, unread),
-      pinned: false,
-      peerAgentId: sender,
-      messages: nextMessages,
-    });
-  }
-
-  return Array.from(byId.values()).map(chat => ({
-    ...chat,
-    active: chat.pinned ? true : isActive(chat.lastTimestamp, chat.unread),
-  }));
-}
-
-function acceptedContactIds(contacts: ContactView[]): Set<string> {
-  return new Set(
-    contacts
-      .filter(contact => contact.status === 'accepted')
-      .map(contact => contact.agentId)
-      .filter(Boolean)
-  );
-}
-
-function pendingContactIds(requests: ContactRequestsResponse): Set<string> {
-  return new Set(
-    [...requests.incoming, ...requests.outgoing]
-      .filter(contact => contact.status === 'pending')
-      .map(contact => contact.agentId)
-      .filter(Boolean)
-  );
-}
-
-function contactBadgeKey(
-  chat: ChatWindow,
-  accepted: Set<string>,
-  pending: Set<string>
-): string | null {
-  if (chat.pinned || !chat.peerAgentId) return null;
-  if (accepted.has(chat.peerAgentId)) return 'tinyplaceOrchestration.pairing.linked';
-  if (pending.has(chat.peerAgentId)) return 'tinyplaceOrchestration.pairing.pending';
-  return 'tinyplaceOrchestration.pairing.unlinked';
-}
-
-function ChatListButton({
-  chat,
-  selected,
-  onSelect,
-  contactBadge,
-}: {
-  chat: ChatWindow;
-  selected: boolean;
-  onSelect: () => void;
-  contactBadge?: string | null;
-}) {
-  const { t } = useT();
-  return (
-    <button
-      type="button"
-      data-testid={`tinyplace-chat-${chat.id}`}
-      onClick={onSelect}
-      className={`flex w-full items-start gap-3 border-b border-line-subtle px-3 py-3 text-left transition last:border-b-0 hover:bg-surface-hover ${
-        selected ? 'bg-surface-muted' : ''
-      }`}>
-      <span className="mt-0.5 flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-line bg-surface-strong text-xs font-semibold text-content-secondary">
-        {chat.kind === 'subconscious' ? 'S' : chat.kind === 'master' ? 'M' : '#'}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-semibold text-content">{chat.title}</span>
-          <span className="flex-none text-[10px] text-content-faint">
-            {formatTime(chat.lastTimestamp)}
-          </span>
-        </span>
-        <span className="mt-0.5 block truncate text-[11px] text-content-muted">
-          {chat.subtitle}
-        </span>
-        <span className="mt-1 flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-xs text-content-faint">{chat.preview}</span>
-          {chat.unread > 0 ? (
-            <span className="flex-none rounded-full bg-ocean-500 px-1.5 py-0.5 text-[10px] font-semibold text-content-inverted">
-              {chat.unread}
-            </span>
-          ) : null}
-          {!chat.pinned ? (
-            <span
-              className={`flex-none rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                chat.active
-                  ? 'bg-sage-100 text-sage-700 dark:bg-sage-500/15 dark:text-sage-300'
-                  : 'bg-surface-strong text-content-faint'
-              }`}>
-              {chat.active
-                ? t('tinyplaceOrchestration.active')
-                : t('tinyplaceOrchestration.inactive')}
-            </span>
-          ) : null}
-          {contactBadge ? (
-            <span className="flex-none rounded-full bg-surface-strong px-1.5 py-0.5 text-[10px] font-medium text-content-faint">
-              {t(contactBadge)}
-            </span>
-          ) : null}
-        </span>
-      </span>
-    </button>
-  );
-}
-
-function MessageBubble({ message }: { message: ChatMessage }) {
-  return (
-    <div className="flex gap-2">
-      <div className="mt-1.5 h-2 w-2 flex-none rounded-full bg-ocean-500" />
-      <div className="min-w-0 rounded-lg border border-line bg-surface px-3 py-2 shadow-soft">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="text-xs font-semibold text-content-secondary">{message.from}</span>
-          <span className="text-[10px] text-content-faint">{formatTime(message.timestamp)}</span>
-        </div>
-        <p
-          className={`mt-1 whitespace-pre-wrap break-words text-sm ${
-            message.encrypted ? 'text-content-muted' : 'text-content'
-          }`}>
-          {message.body}
-        </p>
-      </div>
-    </div>
-  );
-}
+  | { status: 'ok'; snapshot: PairingSnapshot };
 
 export default function TinyPlaceOrchestrationTab() {
   const { t } = useT();
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
-  const [selectedId, setSelectedId] = useState('pinned:master');
+  const {
+    sessionsState,
+    messagesState,
+    chats,
+    selectedId,
+    selected,
+    status,
+    masterError,
+    selectChat,
+    refresh,
+    sendMessage,
+    createSession,
+  } = useOrchestrationChats(t);
+
+  const [pairingState, setPairingState] = useState<PairingState>({ status: 'loading' });
   const [linkAgentId, setLinkAgentId] = useState('');
   const [pairingAction, setPairingAction] = useState<string | null>(null);
   const [pairingError, setPairingError] = useState<string | null>(null);
+  const [composerBody, setComposerBody] = useState('');
+  const [sending, setSending] = useState(false);
+  // Resolved `@handle`s for agent ids seen in the pairing UI (address always shown).
+  const [agentHandles, setAgentHandles] = useState<Record<string, string | null>>({});
+  // Which contact rows are expanded to reveal their nested sessions.
+  const [expandedContacts, setExpandedContacts] = useState<Record<string, boolean>>({});
+  const [creatingSession, setCreatingSession] = useState<string | null>(null);
+  // Own tiny.place identity (discoverability) + the relay the core is on. Both
+  // best-effort: a failed read leaves the card/badge hidden rather than erroring
+  // the whole tab.
+  const [selfIdentity, setSelfIdentity] = useState<SelfIdentity | null>(null);
+  const [identityLoading, setIdentityLoading] = useState(true);
+  // "Make discoverable" remediation: publishes the directory card + Signal key
+  // when the identity card reports the agent is un-messageable.
+  const [publishingIdentity, setPublishingIdentity] = useState(false);
+  const [publishIdentityError, setPublishIdentityError] = useState<string | null>(null);
+  const [relayInfo, setRelayInfo] = useState<RelayInfo | null>(null);
+  // The aggregated "needs you" queue (approvals + blocked runs + unread). Read
+  // independently of chats so a failure leaves the zone empty, never the tab.
+  const [attentionQueue, setAttentionQueue] = useState<AttentionQueue | null>(null);
+  const [attentionLoading, setAttentionLoading] = useState(true);
   const mountedRef = useRef(true);
 
-  const load = useCallback(async () => {
-    debug('[tinyplace-orchestration] load entry');
-    setState({ status: 'loading' });
+  const toggleContact = useCallback((address: string) => {
+    setExpandedContacts(prev => ({ ...prev, [address]: !prev[address] }));
+  }, []);
+
+  const handleCreateSession = useCallback(
+    (address: string) => {
+      if (!address || creatingSession) return;
+      setCreatingSession(address);
+      setExpandedContacts(prev => ({ ...prev, [address]: true }));
+      void createSession(address).finally(() => {
+        if (mountedRef.current) setCreatingSession(null);
+      });
+    },
+    [createSession, creatingSession]
+  );
+
+  const loadPairing = useCallback(async () => {
+    debug('[tinyplace-orchestration] pairing load entry');
+    setPairingState({ status: 'loading' });
     try {
-      const [messages, inbox, pairing] = await Promise.all([
-        apiClient.messages.list({ limit: MESSAGE_LIMIT }),
-        apiClient.inbox.list({ limit: INBOX_LIMIT }),
-        apiClient.orchestrationPairing.list(),
-      ]);
+      const snapshot = await apiClient.orchestrationPairing.list();
       if (!mountedRef.current) return;
       debug(
-        '[tinyplace-orchestration] load exit messages=%d inbox=%d contacts=%d incoming=%d outgoing=%d',
-        messages.messages.length,
-        inbox.items.length,
-        pairing.contacts.contacts.length,
-        pairing.requests.incoming.length,
-        pairing.requests.outgoing.length
+        '[tinyplace-orchestration] pairing load exit contacts=%d incoming=%d outgoing=%d',
+        snapshot.contacts.contacts.length,
+        snapshot.requests.incoming.length,
+        snapshot.requests.outgoing.length
       );
-      setState({
-        status: 'ok',
-        data: { messages: messages.messages, inboxItems: inbox.items, pairing },
-      });
+      setPairingState({ status: 'ok', snapshot });
     } catch (error) {
       if (!mountedRef.current) return;
       if (error instanceof PaymentRequiredError) {
-        debug('[tinyplace-orchestration] load payment_required');
-        setState({ status: 'payment_required' });
+        debug('[tinyplace-orchestration] pairing payment_required');
+        setPairingState({ status: 'payment_required' });
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
-      debug('[tinyplace-orchestration] load error %s', message);
-      setState({ status: 'error', message });
+      debug('[tinyplace-orchestration] pairing load error %s', message);
+      setPairingState({ status: 'error', message });
     }
   }, []);
+
+  const loadIdentity = useCallback(async () => {
+    debug('[tinyplace-orchestration] identity load entry');
+    // Identity and relay are independent reads: selfIdentity() builds the
+    // tiny.place client from the wallet and can reject (locked/unconfigured
+    // wallet), but relayInfo() only reads the configured base URL and must
+    // stay visible regardless. Settle them separately so one failure never
+    // hides the other. Neither failure may break the chat surface.
+    const [identityResult, relayResult] = await Promise.allSettled([
+      orchestrationClient.selfIdentity(),
+      orchestrationClient.relayInfo(),
+    ]);
+    if (!mountedRef.current) return;
+    if (identityResult.status === 'fulfilled') {
+      debug(
+        '[tinyplace-orchestration] identity load ok discoverable=%s',
+        identityResult.value.discoverable
+      );
+      setSelfIdentity(identityResult.value);
+    } else {
+      const reason = identityResult.reason;
+      const message = reason instanceof Error ? reason.message : String(reason);
+      debug('[tinyplace-orchestration] identity load error %s', message);
+    }
+    if (relayResult.status === 'fulfilled') {
+      debug('[tinyplace-orchestration] relay load ok network=%s', relayResult.value.network);
+      setRelayInfo(relayResult.value);
+    } else {
+      const reason = relayResult.reason;
+      const message = reason instanceof Error ? reason.message : String(reason);
+      debug('[tinyplace-orchestration] relay load error %s', message);
+    }
+    setIdentityLoading(false);
+  }, []);
+
+  // Publish (or refresh) the directory card + Signal key, then adopt the fresh
+  // identity the RPC echoes back so the card flips to "discoverable" without a
+  // separate reload. A failure surfaces on the card, not the whole tab.
+  const publishIdentity = useCallback(async () => {
+    debug('[tinyplace-orchestration] publish identity entry');
+    setPublishingIdentity(true);
+    setPublishIdentityError(null);
+    try {
+      const identity = await orchestrationClient.publishIdentity();
+      if (!mountedRef.current) return;
+      debug('[tinyplace-orchestration] publish identity ok discoverable=%s', identity.discoverable);
+      setSelfIdentity(identity);
+    } catch (error) {
+      if (!mountedRef.current) return;
+      const message = error instanceof Error ? error.message : String(error);
+      debug('[tinyplace-orchestration] publish identity error %s', message);
+      setPublishIdentityError(message);
+    } finally {
+      if (mountedRef.current) setPublishingIdentity(false);
+    }
+  }, []);
+
+  const loadAttention = useCallback(async () => {
+    debug('[tinyplace-orchestration] attention load entry');
+    try {
+      const queue = await orchestrationClient.attention();
+      if (!mountedRef.current) return;
+      debug('[tinyplace-orchestration] attention load ok total=%d', queue.counts.total);
+      setAttentionQueue(queue);
+    } catch (error) {
+      if (!mountedRef.current) return;
+      const message = error instanceof Error ? error.message : String(error);
+      debug('[tinyplace-orchestration] attention load error %s', message);
+    } finally {
+      if (mountedRef.current) setAttentionLoading(false);
+    }
+  }, []);
+
+  // Route an attention item to its target. Only orchestration sessions have an
+  // in-tab surface today; approvals/threads/runs live elsewhere (wired later).
+  const handleAttentionAction = useCallback(
+    (action: AttentionAction) => {
+      debug('[tinyplace-orchestration] attention action type=%s', action.type);
+      if (action.type === 'open-session') {
+        selectChat(action.sessionId);
+      }
+    },
+    [selectChat]
+  );
 
   const runPairingAction = useCallback(
     async (actionId: string, action: () => Promise<unknown>) => {
@@ -402,7 +215,7 @@ export default function TinyPlaceOrchestrationTab() {
         await action();
         if (!mountedRef.current) return;
         debug('[tinyplace-orchestration] pairing action success id=%s', actionId);
-        await load();
+        await loadPairing();
       } catch (error) {
         if (!mountedRef.current) return;
         const message = error instanceof Error ? error.message : String(error);
@@ -414,7 +227,7 @@ export default function TinyPlaceOrchestrationTab() {
         }
       }
     },
-    [load]
+    [loadPairing]
   );
 
   const submitLink = useCallback(
@@ -430,267 +243,194 @@ export default function TinyPlaceOrchestrationTab() {
     [linkAgentId, runPairingAction]
   );
 
+  const refreshAll = useCallback(() => {
+    void refresh();
+    void loadPairing();
+    void loadIdentity();
+    void loadAttention();
+  }, [refresh, loadPairing, loadIdentity, loadAttention]);
+
+  const submitComposer = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const body = composerBody.trim();
+      if (!body || sending) return;
+      setSending(true);
+      void sendMessage(selected, body).then(ok => {
+        if (!mountedRef.current) return;
+        if (ok) setComposerBody('');
+        setSending(false);
+      });
+    },
+    [composerBody, sending, sendMessage, selected]
+  );
+
   useEffect(() => {
     mountedRef.current = true;
-    const handle = window.setTimeout(() => void load(), 0);
+    const handle = window.setTimeout(() => {
+      void loadPairing();
+      void loadIdentity();
+      void loadAttention();
+    }, 0);
     return () => {
       window.clearTimeout(handle);
       mountedRef.current = false;
     };
-  }, [load]);
+  }, [loadPairing, loadIdentity, loadAttention]);
 
-  const chats = useMemo(
-    () => (state.status === 'ok' ? buildChats(state.data, t) : emptyPinnedChats(t)),
-    [state, t]
-  );
-
-  const resolvedSelectedId = chats.some(chat => chat.id === selectedId)
-    ? selectedId
-    : (chats[0]?.id ?? 'pinned:master');
-  const selected = chats.find(chat => chat.id === resolvedSelectedId) ?? chats[0];
   const pinned = chats.filter(chat => chat.pinned);
   const sessions = chats
     .filter(chat => !chat.pinned)
-    .sort(
-      (a, b) =>
-        Number(b.active) - Number(a.active) || messageTimeFromChat(b) - messageTimeFromChat(a)
-    );
-  const contactData = state.status === 'ok' ? state.data : null;
+    .sort((a, b) => Number(b.active) - Number(a.active) || chatTime(b) - chatTime(a));
+
+  const pairingSnapshot = pairingState.status === 'ok' ? pairingState.snapshot : null;
   const acceptedContacts = useMemo(
-    () => acceptedContactIds(contactData?.pairing.contacts.contacts ?? []),
-    [contactData?.pairing.contacts.contacts]
+    () => acceptedContactIds(pairingSnapshot?.contacts.contacts ?? []),
+    [pairingSnapshot?.contacts.contacts]
   );
   const pendingContacts = useMemo(
-    () => pendingContactIds(contactData?.pairing.requests ?? { incoming: [], outgoing: [] }),
-    [contactData?.pairing.requests]
+    () => pendingContactIds(pairingSnapshot?.requests ?? { incoming: [], outgoing: [] }),
+    [pairingSnapshot?.requests]
   );
-  const incomingRequests = contactData?.pairing.requests.incoming ?? [];
-  const contactStats = contactData?.pairing.stats ?? null;
+  const incomingRequests = pairingSnapshot?.requests.incoming ?? [];
+  const acceptedContactList = useMemo(
+    () =>
+      (pairingSnapshot?.contacts.contacts ?? []).filter(contact => contact.status === 'accepted'),
+    [pairingSnapshot?.contacts.contacts]
+  );
+  const contactStats = pairingSnapshot?.stats ?? null;
+
+  // Group session chats under their peer contact for the nested sidebar tree.
+  const sessionsByContact = new Map<string, ChatWindow[]>();
+  for (const chat of sessions) {
+    if (!chat.peerAgentId) continue;
+    const list = sessionsByContact.get(chat.peerAgentId) ?? [];
+    list.push(chat);
+    sessionsByContact.set(chat.peerAgentId, list);
+  }
+  const contactAddressSet = new Set(acceptedContactList.map(contactAddress).filter(Boolean));
+  // Sessions whose peer is not a known accepted contact still need a home.
+  const ungroupedSessions = sessions.filter(
+    chat => !chat.peerAgentId || !contactAddressSet.has(chat.peerAgentId)
+  );
+
+  // Resolve @handles for the agent ids seen in the pairing UI (incoming
+  // requests + accepted contacts) via the directory reverse lookup
+  // (best-effort; the raw address is always rendered).
+  const directoryIdsKey = [...incomingRequests, ...acceptedContactList]
+    .map(contactAddress)
+    .filter(Boolean)
+    .join(',');
+  useEffect(() => {
+    const ids = directoryIdsKey ? Array.from(new Set(directoryIdsKey.split(','))) : [];
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void Promise.all(
+      ids.map(async id => {
+        try {
+          return [id, extractHandle(await apiClient.directory.reverse(id))] as const;
+        } catch {
+          return [id, null] as const;
+        }
+      })
+    ).then(entries => {
+      if (cancelled) return;
+      setAgentHandles(prev => {
+        const next = { ...prev };
+        for (const [id, handle] of entries) {
+          if (!(id in next)) next[id] = handle;
+        }
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [directoryIdsKey]);
+
+  const steeringText = status?.steering?.text?.trim() || null;
+  const [runningReview, setRunningReview] = useState(false);
+  const runSteeringReview = useCallback(async () => {
+    setRunningReview(true);
+    try {
+      // Steering review runs on the hosted brain now; this nudges the device
+      // subconscious worlds (memory) so a manual tick still works locally.
+      await subconsciousTrigger('all');
+    } catch (err) {
+      debug('steering review trigger failed: %o', err);
+    } finally {
+      setRunningReview(false);
+    }
+  }, []);
+  const isMasterSelected = selected?.id === MASTER_CHAT_KEY;
+  // The composer is available for the Master chat and for any per-contact
+  // session (session sends thread under that session id).
+  const canCompose = isMasterSelected || selected?.kind === 'session';
 
   return (
-    <div className="flex min-h-[620px] overflow-hidden rounded-xl border border-line bg-surface shadow-soft">
-      <aside className="flex w-80 flex-none flex-col border-r border-line bg-surface-muted/40">
-        <div className="border-b border-line px-4 py-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className="truncate text-sm font-semibold text-content">
-                {t('tinyplaceOrchestration.title')}
-              </h3>
-              <p className="mt-0.5 truncate text-[11px] text-content-muted">
-                {t('tinyplaceOrchestration.subtitle')}
-              </p>
-            </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void load()}
-              aria-label={t('tinyplaceOrchestration.refresh')}
-              disabled={state.status === 'loading'}>
-              {t('tinyplaceOrchestration.refresh')}
-            </Button>
-          </div>
+    <>
+      {status?.cloudReachable === false && (
+        <div
+          role="status"
+          className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
+          {t('orchestration.cloudUnreachable')}
         </div>
+      )}
+      <div className="flex min-h-[620px] overflow-hidden rounded-xl border border-line bg-surface shadow-soft">
+        <OrchestrationSidebar
+          relayInfo={relayInfo}
+          onRefreshAll={refreshAll}
+          refreshDisabled={sessionsState.status === 'loading'}
+          steeringText={steeringText}
+          selfIdentity={selfIdentity}
+          identityLoading={identityLoading}
+          onPublishIdentity={publishIdentity}
+          publishingIdentity={publishingIdentity}
+          publishIdentityError={publishIdentityError}
+          attentionQueue={attentionQueue}
+          attentionLoading={attentionLoading}
+          onAttentionAction={handleAttentionAction}
+          linkAgentId={linkAgentId}
+          onLinkAgentIdChange={setLinkAgentId}
+          onSubmitLink={submitLink}
+          pairingAction={pairingAction}
+          contactStats={contactStats}
+          incomingRequests={incomingRequests}
+          outgoingCount={pairingSnapshot?.requests.outgoing.length ?? 0}
+          pairingError={pairingError}
+          agentHandles={agentHandles}
+          runPairingAction={runPairingAction}
+          pinned={pinned}
+          selectedId={selectedId}
+          onSelectChat={selectChat}
+          acceptedContactList={acceptedContactList}
+          expandedContacts={expandedContacts}
+          onToggleContact={toggleContact}
+          sessionsByContact={sessionsByContact}
+          creatingSession={creatingSession}
+          onCreateSession={handleCreateSession}
+          acceptedContacts={acceptedContacts}
+          pendingContacts={pendingContacts}
+          ungroupedSessions={ungroupedSessions}
+        />
 
-        <section className="border-b border-line px-4 py-3">
-          <form className="space-y-2" onSubmit={submitLink}>
-            <label
-              htmlFor="tinyplace-session-agent-id"
-              className="block text-[10px] font-semibold uppercase tracking-wide text-content-muted">
-              {t('tinyplaceOrchestration.pairing.linkLabel')}
-            </label>
-            <div className="flex gap-2">
-              <input
-                id="tinyplace-session-agent-id"
-                value={linkAgentId}
-                onChange={event => setLinkAgentId(event.target.value)}
-                placeholder={t('tinyplaceOrchestration.pairing.linkPlaceholder')}
-                className="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-content outline-none transition focus:border-ocean-500 focus:ring-2 focus:ring-ocean-500/20"
-              />
-              <Button
-                type="submit"
-                variant="secondary"
-                size="sm"
-                disabled={!linkAgentId.trim() || pairingAction !== null}>
-                {t('tinyplaceOrchestration.pairing.linkAction')}
-              </Button>
-            </div>
-          </form>
-
-          <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-content-faint">
-            <span className="rounded-full bg-surface-strong px-2 py-0.5">
-              {t('tinyplaceOrchestration.pairing.linked')}: {contactStats?.contactCount ?? 0}
-            </span>
-            <span className="rounded-full bg-surface-strong px-2 py-0.5">
-              {t('tinyplaceOrchestration.pairing.incoming')}: {incomingRequests.length}
-            </span>
-            <span className="rounded-full bg-surface-strong px-2 py-0.5">
-              {t('tinyplaceOrchestration.pairing.outgoing')}:{' '}
-              {contactData?.pairing.requests.outgoing.length ?? 0}
-            </span>
-          </div>
-
-          {pairingError ? (
-            <p className="mt-2 rounded-md bg-coral-50 px-2 py-1 text-xs text-coral-700 dark:bg-coral-500/10 dark:text-coral-300">
-              {pairingError}
-            </p>
-          ) : null}
-
-          {incomingRequests.length > 0 ? (
-            <div className="mt-3 space-y-2">
-              <h4 className="text-[10px] font-semibold uppercase tracking-wide text-content-muted">
-                {t('tinyplaceOrchestration.pairing.requests')}
-              </h4>
-              {incomingRequests.map(request => (
-                <div
-                  key={request.agentId}
-                  className="rounded-lg border border-line bg-surface px-2 py-2">
-                  <div className="truncate text-xs font-medium text-content">{request.agentId}</div>
-                  <div className="mt-2 flex gap-1.5">
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      disabled={pairingAction !== null}
-                      onClick={() =>
-                        void runPairingAction(`accept:${request.agentId}`, () =>
-                          apiClient.orchestrationPairing.acceptRequest(request.agentId)
-                        )
-                      }>
-                      {t('tinyplaceOrchestration.pairing.accept')}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={pairingAction !== null}
-                      onClick={() =>
-                        void runPairingAction(`remove:${request.agentId}`, () =>
-                          apiClient.orchestrationPairing.declineRequest(request.agentId)
-                        )
-                      }>
-                      {t('tinyplaceOrchestration.pairing.decline')}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={pairingAction !== null}
-                      onClick={() =>
-                        void runPairingAction(`block:${request.agentId}`, () =>
-                          apiClient.orchestrationPairing.blockRequest(request.agentId)
-                        )
-                      }>
-                      {t('tinyplaceOrchestration.pairing.block')}
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </section>
-
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <section>
-            <h4 className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wide text-content-muted">
-              {t('tinyplaceOrchestration.pinned')}
-            </h4>
-            <div>
-              {pinned.map(chat => (
-                <ChatListButton
-                  key={chat.id}
-                  chat={chat}
-                  selected={selected?.id === chat.id}
-                  onSelect={() => {
-                    debug('[tinyplace-orchestration] open pinned id=%s', chat.id);
-                    setSelectedId(chat.id);
-                  }}
-                />
-              ))}
-            </div>
-          </section>
-
-          <section>
-            <h4 className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wide text-content-muted">
-              {t('tinyplaceOrchestration.sessions')}
-            </h4>
-            {sessions.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-content-faint">
-                {t('tinyplaceOrchestration.noSessions')}
-              </div>
-            ) : (
-              <div>
-                {sessions.map(chat => (
-                  <ChatListButton
-                    key={chat.id}
-                    chat={chat}
-                    selected={selected?.id === chat.id}
-                    contactBadge={contactBadgeKey(chat, acceptedContacts, pendingContacts)}
-                    onSelect={() => {
-                      debug('[tinyplace-orchestration] open session id=%s', chat.id);
-                      setSelectedId(chat.id);
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-          </section>
-        </div>
-      </aside>
-
-      <main className="flex min-w-0 flex-1 flex-col bg-surface">
-        <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-4">
-          <div className="min-w-0">
-            <h3 className="truncate text-base font-semibold text-content">{selected?.title}</h3>
-            <p className="mt-0.5 truncate text-xs text-content-muted">{selected?.subtitle}</p>
-          </div>
-          {selected && !selected.pinned ? (
-            <span
-              className={`rounded-full px-2 py-1 text-xs font-medium ${
-                selected.active
-                  ? 'bg-sage-100 text-sage-700 dark:bg-sage-500/15 dark:text-sage-300'
-                  : 'bg-surface-strong text-content-muted'
-              }`}>
-              {selected.active
-                ? t('tinyplaceOrchestration.active')
-                : t('tinyplaceOrchestration.inactive')}
-            </span>
-          ) : null}
-        </div>
-
-        {state.status === 'loading' ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-content-muted">
-            {t('tinyplaceOrchestration.loading')}
-          </div>
-        ) : state.status === 'payment_required' ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-amber-600 dark:text-amber-300">
-            {t('tinyplaceOrchestration.paymentRequired')}
-          </div>
-        ) : state.status === 'error' ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-coral-600 dark:text-coral-300">
-            <p>
-              {t('tinyplaceOrchestration.failedToLoad')}: {state.message}
-            </p>
-            <Button variant="secondary" size="sm" onClick={() => void load()}>
-              {t('common.retry')}
-            </Button>
-          </div>
-        ) : selected?.messages.length ? (
-          <div className="min-h-0 flex-1 overflow-y-auto bg-surface-muted/20 p-5">
-            <div className="space-y-3" data-testid="tinyplace-chat-messages">
-              {selected.messages.map(message => (
-                <MessageBubble key={message.id} message={message} />
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-content-faint">
-            {t('tinyplaceOrchestration.noMessages')}
-          </div>
-        )}
-      </main>
-    </div>
+        <OrchestrationFocusPane
+          selected={selected}
+          sessionsState={sessionsState}
+          messagesState={messagesState}
+          status={status}
+          masterError={masterError}
+          refresh={refresh}
+          steeringText={steeringText}
+          runningReview={runningReview}
+          onRunSteeringReview={() => void runSteeringReview()}
+          canCompose={canCompose}
+          composerBody={composerBody}
+          onComposerChange={setComposerBody}
+          sending={sending}
+          onSubmitComposer={submitComposer}
+        />
+      </div>
+    </>
   );
-}
-
-function messageTimeFromChat(chat: ChatWindow): number {
-  if (!chat.lastTimestamp) return 0;
-  const parsed = Date.parse(chat.lastTimestamp);
-  return Number.isFinite(parsed) ? parsed : 0;
 }

@@ -1,53 +1,44 @@
-//! Memory archivist — chat conversation → tree.
+//! Memory archivist — thin host shim over `tinycortex::memory::archivist` (W7).
 //!
-//! The archivist's one job is to take a chat conversation, strip the
-//! noisy tool-call payloads from it, and push the resulting text into a
-//! memory tree as a single leaf. The tree owns persistence + retrieval
-//! from there on.
+//! The archivist engine (clip / compose / tree-writer / episodic store + its
+//! types) lives in the crate now. This module keeps the host's
+//! `memory_archivist::…` import paths stable and adapts the host [`Config`] to
+//! the crate's `MemoryConfig` for the two episodic-store functions host callers
+//! use (`store::record_turn` / `store::session_entries`, from the agent
+//! archivist hook + recap).
 //!
-//! ## Flow
-//!
-//! ```text
-//!   Vec<Turn>          (raw conversation, tool calls included)
-//!         │
-//!         ▼
-//!   clip::clean()      (strip tool_calls_json; keep role + content)
-//!         │
-//!         ▼
-//!   compose::md()      (one md blob: ## role\n<content>\n\n... per turn)
-//!         │
-//!         ▼
-//!   memory_tree::TreeWriteRequest
-//!         │
-//!         ▼
-//!   memory_store::trees                 (append_leaf + cascade seal)
-//! ```
-//!
-//! ## API
-//!
-//! - [`Turn`] — input shape, one per role/content/tool_calls record.
-//! - [`clean_conversation`] — pure transform; returns a `Vec<Turn>` with
-//!   tool-call payloads dropped.
-//! - [`compose_conversation_md`] — pure transform; returns the markdown
-//!   blob that will become a single tree leaf.
-//! - [`archive_to_tree`] — end-to-end: clean → compose → append leaf to
-//!   the named tree via `memory_tree`.
-//!
-//! ## Why "clip"?
-//!
-//! Tool-call JSON is verbose, model-specific, and rarely meaningful out
-//! of context. Stripping it before the conversation lands in the tree
-//! keeps summaries focused on natural-language content and keeps the
-//! vector embedding signal clean.
+//! On-disk layout is unchanged — the crate writes to the same path the host
+//! did: `<workspace>/memory_tree/content/episodic/<sanitized-session>/<seq>.md`.
+//! `Config::workspace_dir` maps to the crate `MemoryConfig.workspace`, so
+//! `memory_tree_content_root()` (`<workspace>/memory_tree/content`) resolves
+//! identically on both sides.
 
-pub mod clip;
-pub mod compose;
-pub mod store;
-pub mod tree_writer;
-pub mod types;
+pub use tinycortex::memory::archivist::types::{ArchivedTurn, Turn};
 
-pub use clip::clean_conversation;
-pub use compose::compose_conversation_md;
+/// Episodic conversation archive — thin adapters over the crate store that
+/// convert the host [`Config`](crate::openhuman::config::Config) into the
+/// crate's `MemoryConfig`.
+pub mod store {
+    use anyhow::Result;
+
+    use super::ArchivedTurn;
+    use crate::openhuman::config::Config;
+    use crate::openhuman::tinycortex::memory_config_from;
+
+    fn engine_config(config: &Config) -> tinycortex::memory::MemoryConfig {
+        memory_config_from(config, config.workspace_dir.clone())
+    }
+
+    /// Append one turn to its session's episodic archive, assigning the next
+    /// per-session sequence number.
+    pub fn record_turn(config: &Config, turn: ArchivedTurn) -> Result<ArchivedTurn> {
+        tinycortex::memory::archivist::store::record_turn(&engine_config(config), turn)
+    }
+
+    /// All turns recorded for a session, ordered by sequence.
+    pub fn session_entries(config: &Config, session_id: &str) -> Result<Vec<ArchivedTurn>> {
+        tinycortex::memory::archivist::store::session_entries(&engine_config(config), session_id)
+    }
+}
+
 pub use store::{record_turn, session_entries};
-pub use tree_writer::archive_to_tree;
-pub use types::{ArchivedTurn, Turn};

@@ -105,7 +105,7 @@ async function resetEverything(label: string): Promise<void> {
   // scenario arrive and can be discarded — then clear AFTER the pause so
   // stale requests don't appear in the next scenario's waitForMockRequest
   // polls. (Clearing before the pause caused a race: in-flight /auth/me or
-  // /telegram/login-tokens/ requests from scenario N arrived during the
+  // /auth/login-token/consume requests from scenario N arrived during the
   // 800 ms window, landed in the fresh log, and were matched by scenario
   // N+1's waitForMockRequest — causing composio RPCs to fire before the
   // new deep-link's auth flow completed.)
@@ -145,7 +145,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
 
   // -------------------------------------------------------------------------
   // Scenario 1 — login via real token-consume deep link.
-  // Expectation: the app POSTs to `/telegram/login-tokens/:t/consume`, gets a
+  // Expectation: the app POSTs to `/auth/login-token/consume`, gets a
   // JWT back from the mock, and follows up with `GET /auth/me`.
   // -------------------------------------------------------------------------
   it('login: consume deep link triggers /consume + /auth/me on the mock', async () => {
@@ -154,7 +154,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
 
     await triggerDeepLink('openhuman://auth?token=mega-login-token');
 
-    const consume = await waitForMockRequest('POST', '/telegram/login-tokens/', 20_000);
+    const consume = await waitForMockRequest('POST', '/auth/login-token/consume', 20_000);
     expect(consume).toBeDefined();
     console.log(`${LOG} consume hit:`, consume?.url);
 
@@ -187,7 +187,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     expect(me).toBeDefined();
 
     const consume = getRequestLog().find(
-      r => r.method === 'POST' && r.url.includes('/telegram/login-tokens/')
+      r => r.method === 'POST' && r.url.includes('/auth/login-token/consume')
     );
     expect(consume).toBeUndefined();
     console.log(`${LOG} bypass: no consume call, /auth/me succeeded`);
@@ -211,7 +211,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
 
     // Login first — `oauth:success` is only meaningful for an authenticated user.
     await triggerDeepLink('openhuman://auth?token=mega-gmail-token');
-    await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
     expect(await waitForMockRequest('GET', '/auth/me', 10_000)).toBeDefined();
     clearRequestLog();
 
@@ -306,7 +306,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     await resetEverything('after Scenario 4');
 
     await triggerDeepLink('openhuman://auth?token=mega-error-token');
-    await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
     clearRequestLog();
 
     await triggerDeepLink('openhuman://oauth/error?provider=google&error=access_denied');
@@ -337,7 +337,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
 
     // Login so the RPC layer has an authenticated session.
     await triggerDeepLink('openhuman://auth?token=mega-stale-thread-token');
-    await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
     clearRequestLog();
 
     // Attempt to append a message to a thread ID that does not exist.
@@ -373,7 +373,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
 
     // Login so the RPC relay is authenticated.
     await triggerDeepLink('openhuman://auth?token=mega-unknown-method-token');
-    await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
     clearRequestLog();
 
     // Call a method name that no controller has registered.
@@ -401,7 +401,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     await resetEverything('final');
 
     await triggerDeepLink('openhuman://auth?token=mega-post-reset-token');
-    const consume = await waitForMockRequest('POST', '/telegram/login-tokens/', 20_000);
+    const consume = await waitForMockRequest('POST', '/auth/login-token/consume', 20_000);
     expect(consume).toBeDefined();
     const me = await waitForMockRequest('GET', '/auth/me', 15_000);
     expect(me).toBeDefined();
@@ -422,7 +422,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     await resetEverything('after Scenario 6');
 
     await triggerDeepLink('openhuman://auth?token=mega-whatsapp-token');
-    await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
     clearRequestLog();
 
     // Seed two chats via the internal ingest path.
@@ -504,7 +504,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
 
     // ── User A login ──────────────────────────────────────────────────────
     await triggerDeepLink('openhuman://auth?token=mega-acct-switch-user-a');
-    await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
     clearRequestLog();
 
     // Create a thread as user A.
@@ -530,7 +530,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     await resetEverything('account switch to user B');
 
     await triggerDeepLink('openhuman://auth?token=mega-acct-switch-user-b');
-    await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
     clearRequestLog();
 
     // Verify RPC is healthy for "User B". The thread list is a valid array
@@ -551,7 +551,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     await resetEverything('account switch back to user A');
 
     await triggerDeepLink('openhuman://auth?token=mega-acct-switch-user-a');
-    await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
     clearRequestLog();
 
     const listA2 = await callOpenhumanRpc('openhuman.threads_list', {});
@@ -680,7 +680,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
 
     // Login so the RPC relay is authenticated.
     await triggerDeepLink('openhuman://auth?token=mega-update-version-token');
-    await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
     clearRequestLog();
 
     const result = await callOpenhumanRpc('openhuman.update_version', {});
@@ -721,9 +721,14 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     console.log(`${LOG} update.version: asset_prefix = ${prefix}`);
 
     // No outbound HTTP call should have been made — version is purely local.
-    const outbound = getRequestLog().find(
-      r => r.url.includes('github.com') || r.url.includes('update.openhuman.app')
-    );
+    const outbound = getRequestLog().find(r => {
+      try {
+        const url = new URL(r.url, 'http://mock.local');
+        return url.hostname === 'github.com' || url.hostname === 'update.openhuman.app';
+      } catch {
+        return false;
+      }
+    });
     expect(outbound).toBeUndefined();
 
     const ping = await callOpenhumanRpc('core.ping', {});
@@ -741,7 +746,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     await resetEverything('before notification-dedup scenario');
 
     await triggerDeepLink('openhuman://auth?token=mega-notification-dedup-token');
-    await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
     clearRequestLog();
 
     const notifPayload = {
@@ -805,7 +810,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     await resetEverything('before thread-crud-smoke scenario');
 
     await triggerDeepLink('openhuman://auth?token=mega-thread-crud-token');
-    await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    await waitForMockRequest('POST', '/auth/login-token/consume', 15_000);
     clearRequestLog();
 
     // Step 1 — create a fresh thread.

@@ -71,6 +71,7 @@ fn inbound_event(sender: &str, reply_target: &str, thread_ts: Option<&str>) -> D
         reply_target: reply_target.to_string(),
         content: "hi".to_string(),
         thread_ts: thread_ts.map(str::to_string),
+        inbound_envelope: None,
         workspace_dir: PathBuf::from("/tmp"),
     }
 }
@@ -101,6 +102,7 @@ async fn channel_message_received_ignores_non_telegram_channels() {
         reply_target: "channel-9".to_string(),
         content: "hi".to_string(),
         thread_ts: None,
+        inbound_envelope: None,
         workspace_dir: PathBuf::from("/tmp"),
     };
     sub.handle(&discord_event).await;

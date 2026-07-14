@@ -5,6 +5,12 @@ use serde_json::json;
 
 pub struct WalletChainStatusTool;
 
+impl Default for WalletChainStatusTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WalletChainStatusTool {
     pub fn new() -> Self {
         Self

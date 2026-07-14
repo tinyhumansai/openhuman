@@ -86,6 +86,20 @@ impl EventHandler for MeetCalendarSubscriber {
             return;
         }
 
+        // If Recall.ai calendar is the active source, ignore Composio calendar
+        // triggers so meetings aren't double-detected.
+        if let Ok(config) = crate::openhuman::config::rpc::load_config_with_timeout().await {
+            if matches!(
+                config.meet.calendar_provider,
+                crate::openhuman::config::schema::CalendarProvider::Recall
+            ) {
+                tracing::debug!(
+                    "[meet:calendar] ignoring googlecalendar trigger (recall provider active)"
+                );
+                return;
+            }
+        }
+
         tracing::debug!(
             trigger = %trigger,
             "[meet:calendar] received googlecalendar trigger"
@@ -318,18 +332,12 @@ pub async fn handle_calendar_meeting_candidate(
 
     // Resolve the reply anchor. Callers without payload context (the heartbeat
     // poller passes `None`) fall back to the signed-in account identity here so
-    // the bot still knows who to reply to.
+    // the bot still knows who to reply to. The user's saved Meetings-page
+    // display name is applied as a final fallback below, once config is loaded.
     let owner_display_name = owner_display_name
         .or_else(fallback_owner_from_account)
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let has_anchor = owner_display_name.is_some();
-    if !has_anchor {
-        tracing::warn!(
-            meet_url = %meet_url,
-            "[meet:calendar] no reply anchor resolved — auto-join will fall back to listen-only"
-        );
-    }
 
     // Check the auto-join policy.
     let config = match config_rpc::load_config_with_timeout().await {
@@ -352,6 +360,22 @@ pub async fn handle_calendar_meeting_candidate(
             return false;
         }
     };
+
+    // Final anchor fallback: the display name the user saved on the Meetings
+    // page. Applied after config load so a Recall-connected user (whose
+    // heartbeat events carry no `self` attendee) still gets a reply anchor and
+    // can speak — instead of being force-downgraded to listen-only.
+    let owner_display_name = owner_display_name.or_else(|| {
+        let saved = config.meet.reply_display_name.trim();
+        (!saved.is_empty()).then(|| saved.to_string())
+    });
+    let has_anchor = owner_display_name.is_some();
+    if !has_anchor {
+        tracing::warn!(
+            meet_url = %meet_url,
+            "[meet:calendar] no reply anchor resolved — auto-join will fall back to listen-only"
+        );
+    }
 
     // Resolve the effective join policy using the three-tier precedence:
     // per-event override → per-platform default → global default.
@@ -411,6 +435,16 @@ pub async fn handle_calendar_meeting_candidate(
                     meet_url = %meet_url,
                     "[meet:calendar] forcing listen-only auto-join (no reply anchor)"
                 );
+            }
+
+            // Active mode (listen_only = false) enables in-call agency for THIS
+            // meeting so wake-word commands are actually dispatched — mirrors the
+            // manual `handle_join` path (ops.rs). Without this the auto-joined bot
+            // transcribes fine but the core drops every in-call reply request
+            // (`config.meet.enable_in_call_agency` defaults off), so the bot never
+            // speaks even after "Hey Tiny".
+            if !listen_only {
+                super::in_call::mark_meeting_active(Some(&correlation_id)).await;
             }
 
             // Persist a session keyed by correlation_id so future trigger
@@ -784,6 +818,13 @@ fn build_action_payload(
 /// Pure function so the `respondToParticipant` anchor wiring is unit-testable
 /// without a live socket. A `None`/empty owner omits `respondToParticipant`,
 /// which the backend bot treats as "respond to everyone".
+///
+/// Active mode (`listen_only = false`) also sets `wakePhrase` so the backend
+/// only forwards captions that address the bot (`"Hey Tiny, …"`) as in-call
+/// commands. Without it the bot joined `bot:join` with no wake gate, so every
+/// caption from `respondToParticipant` would be treated as a command — matching
+/// the manual reply-mode join (`ops::build_notification_join_map` /
+/// `MeetComposer`), which both pass a wake phrase.
 fn build_auto_join_payload(
     meet_url: &str,
     platform: &str,
@@ -801,6 +842,12 @@ fn build_auto_join_payload(
     if let Some(map) = payload.as_object_mut() {
         if let Some(owner) = owner_display_name.map(str::trim).filter(|s| !s.is_empty()) {
             map.insert("respondToParticipant".to_string(), serde_json::json!(owner));
+        }
+        // Reply mode: gate in-call agency behind the "Hey Tiny" wake phrase so
+        // the bot only reacts when addressed, never to every caption. The bot
+        // joins as "Tiny" (see `displayName` above), so the phrase matches.
+        if !listen_only {
+            map.insert("wakePhrase".to_string(), serde_json::json!("Hey Tiny"));
         }
     }
     payload
@@ -1134,6 +1181,8 @@ mod tests {
         assert_eq!(p["displayName"], json!("Tiny"));
         assert_eq!(p["listenOnly"], json!(false));
         assert_eq!(p["correlationId"], json!("corr-1"));
+        // Active mode gates in-call agency behind the "Hey Tiny" wake phrase.
+        assert_eq!(p["wakePhrase"], json!("Hey Tiny"));
     }
 
     #[test]
@@ -1141,6 +1190,23 @@ mod tests {
         let p =
             build_auto_join_payload("https://meet.google.com/abc", "gmeet", "corr-1", true, None);
         assert!(p.get("respondToParticipant").is_none());
+    }
+
+    #[test]
+    fn auto_join_payload_sets_wake_phrase_only_in_active_mode() {
+        // Listen-only auto-join: no wake phrase (bot never speaks anyway).
+        let listen =
+            build_auto_join_payload("https://meet.google.com/abc", "gmeet", "corr-1", true, None);
+        assert!(listen.get("wakePhrase").is_none());
+        // Active auto-join: wake phrase gates which captions become commands.
+        let active = build_auto_join_payload(
+            "https://meet.google.com/abc",
+            "gmeet",
+            "corr-1",
+            false,
+            Some("Aditya"),
+        );
+        assert_eq!(active["wakePhrase"], json!("Hey Tiny"));
     }
 
     #[test]
@@ -1328,6 +1394,135 @@ mod tests {
             fetched.calendar_event_id.as_deref(),
             Some("cal-ev-xyz"),
             "calendar_event_id must survive store round-trip (finding #3)"
+        );
+    }
+
+    // ── reply-anchor fallback + Always in-call agency ───────────
+    //
+    // These exercise `handle_calendar_meeting_candidate` end-to-end against a
+    // throwaway workspace so the changed config-driven branches actually run:
+    //   1. the reply-anchor fallback to `config.meet.reply_display_name` when no
+    //      per-payload/account owner resolves, and
+    //   2. `super::in_call::mark_meeting_active` on a reply-mode `Always` join.
+    // They serialize on `TEST_ENV_LOCK` because they override the process-global
+    // `OPENHUMAN_WORKSPACE` (same pattern as the config/ops tests).
+
+    /// RAII guard that points `OPENHUMAN_WORKSPACE` at a temp dir for the
+    /// duration of a test and restores the prior value on drop.
+    struct WorkspaceEnvGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl WorkspaceEnvGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+            std::env::set_var("OPENHUMAN_WORKSPACE", path);
+            Self { previous }
+        }
+    }
+
+    impl Drop for WorkspaceEnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+                None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn always_join_with_saved_reply_anchor_marks_meeting_active() {
+        use crate::openhuman::config::schema::AutoJoinPolicy;
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _env = WorkspaceEnvGuard::set(tmp.path());
+
+        // Config: auto-join Always, reply-mode default (listen_only_default =
+        // false), and a saved Meetings-page display name. A blank owner is
+        // passed: it trims away to None *before* the account-identity peek is
+        // consulted, so the ONLY way an anchor can resolve is the new
+        // `config.meet.reply_display_name` fallback — proving `has_anchor` is
+        // computed from the final value (and keeping the test independent of any
+        // globally cached account identity).
+        let mut cfg = crate::openhuman::config::Config::load_or_init()
+            .await
+            .unwrap();
+        cfg.meet.auto_join_policy = AutoJoinPolicy::Always;
+        cfg.meet.listen_only_default = false;
+        cfg.meet.reply_display_name = "Saved Anchor".to_string();
+        cfg.save().await.unwrap();
+
+        let meet_url = "https://meet.google.com/always-anchor".to_string();
+        let owned = handle_calendar_meeting_candidate(
+            meet_url.clone(),
+            "Anchored".to_string(),
+            Some("   ".to_string()),
+            None,
+        )
+        .await;
+        // Always never surfaces its own actionable card.
+        assert!(!owned);
+
+        // The saved anchor made this a reply-mode join, so in-call agency must be
+        // enabled for THIS meeting (mirrors the manual handle_join path).
+        let session =
+            crate::openhuman::agent_meetings::store::get_session_by_meet_url(&cfg, &meet_url)
+                .unwrap()
+                .expect("always-join must persist a session");
+        assert!(
+            crate::openhuman::agent_meetings::in_call::is_meeting_active(Some(session.id.as_str()))
+                .await,
+            "reply-mode auto-join must mark the meeting in-call-active"
+        );
+        // Don't leak the global active-set entry into sibling tests.
+        crate::openhuman::agent_meetings::in_call::clear_meeting_agent(Some(session.id.as_str()))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn always_join_without_reply_anchor_stays_listen_only_and_unmarked() {
+        use crate::openhuman::config::schema::AutoJoinPolicy;
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _env = WorkspaceEnvGuard::set(tmp.path());
+
+        // Always policy, reply-mode default on, but NO saved reply anchor. A
+        // blank owner trims to None (short-circuiting the account-identity peek),
+        // and the empty `reply_display_name` fallback also yields None → has_anchor
+        // is false → the join is force-downgraded to listen-only, so in-call
+        // agency must NOT be enabled.
+        let mut cfg = crate::openhuman::config::Config::load_or_init()
+            .await
+            .unwrap();
+        cfg.meet.auto_join_policy = AutoJoinPolicy::Always;
+        cfg.meet.listen_only_default = false;
+        cfg.meet.reply_display_name = String::new();
+        cfg.save().await.unwrap();
+
+        let meet_url = "https://meet.google.com/always-no-anchor".to_string();
+        let owned = handle_calendar_meeting_candidate(
+            meet_url.clone(),
+            "No anchor".to_string(),
+            Some("   ".to_string()),
+            None,
+        )
+        .await;
+        assert!(!owned);
+
+        let session =
+            crate::openhuman::agent_meetings::store::get_session_by_meet_url(&cfg, &meet_url)
+                .unwrap()
+                .expect("always-join persists a session even when listen-only");
+        assert!(
+            !crate::openhuman::agent_meetings::in_call::is_meeting_active(Some(
+                session.id.as_str()
+            ))
+            .await,
+            "listen-only auto-join must not enable in-call agency"
         );
     }
 }

@@ -20,7 +20,7 @@ Contact resolution + relationship scoring (the "A5" module). Maps any of three h
 | `src/openhuman/people/types.rs` | Domain types: `PersonId`, `Handle` (with `canonicalize` / `as_key`), `Person`, `Interaction`, `ScoreComponents`, `AddressBookContact`. |
 | `src/openhuman/people/resolver.rs` | `HandleResolver` — `resolve`, `resolve_or_create(_with_status)`, `link`, `seed_from_address_book`. The deterministic handle→PersonId logic + cross-source merge-safety contract. |
 | `src/openhuman/people/scorer.rs` | Pure `score(interactions, now) -> ScoreComponents`. Recency half-life, frequency window/cap, reciprocity balance, depth cap as module constants. |
-| `src/openhuman/people/store.rs` | SQLite-backed `PeopleStore` (`Arc<Mutex<Connection>>`) + process-global `OnceCell` accessor (`init` / `get`). CRUD, lookup, interaction read/write, batched interaction fetch. |
+| `src/openhuman/people/store.rs` | SQLite-backed `PeopleStore` (`Arc<Mutex<Connection>>`) + rebindable process-global accessor (`init_from_workspace` / `get`). CRUD, lookup, interaction read/write, batched interaction fetch. |
 | `src/openhuman/people/address_book.rs` | `ContactsSource` trait + `SystemContactsSource` (macOS `CNContactStore` FFI via objc2) and non-mac stub; `MockContactsSource` for tests; `AddressBookError`. |
 | `src/openhuman/people/rpc.rs` | Domain RPC handlers (`handle_list`, `handle_resolve`, `handle_score`, `handle_refresh_address_book`) returning `RpcOutcome<Value>`; callable directly in tests with a constructed `PeopleStore`. |
 | `src/openhuman/people/schemas.rs` | Controller schemas + param-parsing adapter handlers that fetch the global store and delegate to `rpc.rs`. |
@@ -58,14 +58,14 @@ Dedicated SQLite DB managed by `PeopleStore` (open via `open_at(path)` or `open_
 - `handle_aliases` — `(kind, value)` primary key → `person_id` (FK, `ON DELETE CASCADE`); `value` is the canonicalized form. This table *is* the resolver index.
 - `interactions` — `(person_id, ts, is_outbound, length)` rows the scorer aggregates; indexed by `(person_id, ts DESC)` and `ts DESC`.
 
-Migrations are tracked in `_people_migrations` and applied idempotently in a transaction. The store is exposed process-globally through a `tokio::sync::OnceCell` (`get` from controller handlers). Core boot seeds it via `store::init_from_workspace(workspace_dir)` (`src/core/jsonrpc.rs`, alongside `memory::global` and `whatsapp_data::global`), opening `<workspace>/people/people.db`; tests construct stores directly with `open_in_memory`.
+Migrations are tracked in `_people_migrations` and applied idempotently in a transaction. The store is exposed process-globally through a workspace-tagged `RwLock<Option<…>>` slot (`get` from controller handlers). `store::init_from_workspace(workspace_dir)` seeds it, opening `<workspace>/people/people.db`; it is called at core boot (`src/core/jsonrpc.rs`, alongside `memory::global` and `whatsapp_data::global`) and again on active-user switch (`credentials::ops`, `app_state::ops`), where a **different** workspace rebinds the store — mirroring `memory::global` so people never keeps writing the pre-login workspace. Same-workspace calls are a no-op. Tests construct stores directly with `open_in_memory`.
 
 ## Dependencies
 
 - `crate::core::all::{ControllerFuture, RegisteredController}` — controller registry types for RPC exposure.
 - `crate::core::{ControllerSchema, FieldSchema, TypeSchema}` — controller schema definitions.
 - `crate::rpc::RpcOutcome` — standard RPC result envelope (`RpcOutcome<T>`).
-- External crates: `rusqlite` (storage), `tokio` (async + `spawn_blocking` for sync SQL, `OnceCell`, `Mutex`), `chrono` (timestamps/scoring), `uuid` (`PersonId`), `serde`; on macOS, `block2` / `objc2` / `objc2-contacts` / `objc2-foundation` for the `CNContactStore` FFI in `address_book.rs`.
+- External crates: `rusqlite` (storage), `tokio` (async + `spawn_blocking` for sync SQL, `Mutex`), `chrono` (timestamps/scoring), `uuid` (`PersonId`), `serde`; on macOS, `block2` / `objc2` / `objc2-contacts` / `objc2-foundation` for the `CNContactStore` FFI in `address_book.rs`. The global store slot uses `std::sync::{OnceLock, RwLock}`.
 
 Notably it depends on **no other `openhuman` domain** — consistent with its "self-contained" docstring.
 
@@ -82,4 +82,4 @@ Notably it depends on **no other `openhuman` domain** — consistent with its "s
 - **Scoring constants are module-level**, not config-driven yet — kept fixed so tests stay stable; the docstring notes they can move to config later without breaking the API.
 - **Composite is a product:** any zero component (e.g. a one-sided conversation → reciprocity 0) zeroes the whole score.
 - **SQL runs on `spawn_blocking`:** the connection is sync `rusqlite` behind `Arc<Mutex<Connection>>`; `JoinError`s from blocking tasks are mapped into a synthetic `rusqlite` IO error.
-- **Tests bypass the global store:** they construct `PeopleStore::open_in_memory()` and call `rpc::*` / `HandleResolver` directly rather than going through the schema adapters (which require the `OnceCell`-initialized global).
+- **Tests bypass the global store:** they construct `PeopleStore::open_in_memory()` and call `rpc::*` / `HandleResolver` directly rather than going through the schema adapters (which require the workspace-seeded global).

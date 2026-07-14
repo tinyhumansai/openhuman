@@ -1,3 +1,4 @@
+use crate::openhuman::config::PrivacyMode;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -10,9 +11,10 @@ use tokio::sync::OnceCell;
 /// rejection: the identical `(tool, args)` call can never succeed in the
 /// current tier (read-only blocking a write, a forbidden/credential path, a
 /// disallowed high-risk or hidden-execution command, an off-allowlist command).
-/// The agent harness ([`crate::openhuman::agent::harness::tool_loop`]) detects
-/// this and halts on the **first verbatim repeat** rather than reiterating a
-/// provably-futile call. Kept short and bracketed so it survives the
+/// The agent harness's repeated-failure middleware
+/// ([`crate::openhuman::tinyagents::middleware::RepeatedToolFailureMiddleware`])
+/// detects this and halts on the **first verbatim repeat** rather than
+/// reiterating a provably-futile call. Kept short and bracketed so it survives the
 /// `Error: …` wrapping the tool layer adds and is easy to grep in logs.
 pub const POLICY_BLOCKED_MARKER: &str = "[policy-blocked]";
 
@@ -204,6 +206,18 @@ pub(super) const WORKSPACE_INTERNAL_FILES: &[&str] = &[
 #[derive(Debug, Clone)]
 pub struct SecurityPolicy {
     pub autonomy: AutonomyLevel,
+    /// Data-egress posture (Privacy Mode) — DISTINCT from `autonomy`, which
+    /// governs act-power. `LocalOnly` blocks external model calls at the
+    /// inference chokepoint (see
+    /// [`create_chat_provider_from_string`](crate::openhuman::inference::provider::factory)).
+    /// Sourced from `config.privacy.mode` at policy-build time and hot-swapped
+    /// via [`live_policy::reload_privacy`](crate::openhuman::security::live_policy::reload_privacy).
+    ///
+    /// HOOK (later slices): `Sensitive` mode enforcement (approval / redaction /
+    /// destination disclosure — S2/S4/S7) and `LocalOnly` enforcement for
+    /// integrations / network tools (S5/S6) branch on this field. Those arms are
+    /// intentionally NOT implemented in S1 (#4435).
+    pub privacy_mode: PrivacyMode,
     pub workspace_dir: PathBuf,
     /// Agent action sandbox root — tools resolve relative paths and default
     /// their cwd here instead of `workspace_dir`. Kept separate so internal
@@ -260,6 +274,7 @@ impl Default for SecurityPolicy {
     fn default() -> Self {
         Self {
             autonomy: AutonomyLevel::Supervised,
+            privacy_mode: PrivacyMode::Standard,
             workspace_dir: PathBuf::from("."),
             action_dir: PathBuf::from("."),
             workspace_only: true,

@@ -282,6 +282,63 @@ describe('threadSlice loadThreadMessages thunk', () => {
     expect(state.isLoadingMessages).toBe(false);
     expect(state.messagesError).toBe('boom');
   });
+
+  it('merges a locally-appended message not yet reflected in the fetch instead of wiping it out', async () => {
+    // Simulates a rehydrate racing a concurrent append on the same thread
+    // (e.g. useWorkflowBuilderChat's copilot rehydrate vs. an auto-sent
+    // repair/build turn): the local message already persisted server-side
+    // (it only lands via a `.fulfilled` reducer) but this particular GET's
+    // snapshot predates it.
+    const store = createStore();
+    const persisted = makeMessage({ id: 'local-new', content: 'just sent', sender: 'user' });
+    mockedThreadApi.appendMessage.mockResolvedValueOnce(persisted);
+    await store.dispatch(addMessageLocal({ threadId: 't-1', message: persisted }));
+    expect(store.getState().thread.messagesByThreadId['t-1']).toEqual([persisted]);
+
+    mockedThreadApi.getThreadMessages.mockResolvedValueOnce({
+      messages: [makeMessage({ id: 'srv-older', content: 'older, server-known' })],
+      count: 1,
+    });
+    await store.dispatch(loadThreadMessages('t-1'));
+
+    const merged = store.getState().thread.messagesByThreadId['t-1'];
+    expect(merged.map(m => m.id)).toEqual(['srv-older', 'local-new']);
+  });
+
+  it('does not duplicate a message already present in the fetched snapshot', async () => {
+    const store = createStore();
+    const shared = makeMessage({ id: 'shared' });
+    const persisted = makeMessage({ id: 'shared', content: 'server version' });
+    // Prime the cache with a local entry sharing the fetched id.
+    mockedThreadApi.appendMessage.mockResolvedValueOnce(shared);
+    await store.dispatch(addMessageLocal({ threadId: 't-1', message: shared }));
+
+    mockedThreadApi.getThreadMessages.mockResolvedValueOnce({ messages: [persisted], count: 1 });
+    await store.dispatch(loadThreadMessages('t-1'));
+
+    const merged = store.getState().thread.messagesByThreadId['t-1'];
+    expect(merged).toHaveLength(1);
+    expect(merged[0].content).toBe('server version');
+  });
+
+  it('clears stale thread state and rejects with THREAD_NOT_FOUND_MESSAGE when the thread was deleted', async () => {
+    const store = createStore();
+    store.dispatch(setSelectedThread('t-1'));
+    mockedThreadApi.getThreadMessages.mockRejectedValueOnce(
+      new CoreRpcError('thread t-1 not found', 'thread_not_found', undefined, {
+        kind: 'ThreadNotFound',
+        thread_id: 't-1',
+      })
+    );
+    mockedThreadApi.getThreads.mockResolvedValueOnce({ threads: [], count: 0 });
+
+    const result = await store.dispatch(loadThreadMessages('t-1'));
+
+    expect(result.type).toBe('thread/loadThreadMessages/rejected');
+    expect(result.payload).toBe(THREAD_NOT_FOUND_MESSAGE);
+    expect(store.getState().thread.selectedThreadId).toBeNull();
+    expect(store.getState().thread.messagesByThreadId['t-1']).toBeUndefined();
+  });
 });
 
 describe('threadSlice addMessageLocal thunk', () => {

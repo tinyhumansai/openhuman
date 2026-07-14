@@ -67,14 +67,6 @@ fn all_variants_have_correct_domain() {
             "agent",
         ),
         (
-            DomainEvent::RunQueueMessageDelivered {
-                thread_id: "t".into(),
-                mode: "steer".into(),
-                iteration: 2,
-            },
-            "agent",
-        ),
-        (
             DomainEvent::RunQueueFollowupDispatched {
                 thread_id: "t".into(),
                 followup_count: 1,
@@ -125,6 +117,7 @@ fn all_variants_have_correct_domain() {
                 reply_target: "r".into(),
                 content: "hi".into(),
                 thread_ts: None,
+                inbound_envelope: None,
                 workspace_dir: std::path::PathBuf::from("/test"),
             },
             "channel",
@@ -208,6 +201,12 @@ fn all_variants_have_correct_domain() {
                 source: "cron:morning_briefing".into(),
                 message: "Good morning!".into(),
                 job_name: Some("morning_briefing".into()),
+            },
+            "cron",
+        ),
+        (
+            DomainEvent::FlowScheduleTick {
+                flow_id: "flow-1".into(),
             },
             "cron",
         ),

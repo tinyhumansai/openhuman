@@ -3,8 +3,8 @@
 //! Plain text has no structural skeleton to exploit, so high-quality
 //! compression needs a learned model (ModernBERT token/sentence salience). That
 //! runs inside the shared [`crate::openhuman::runtime_python_server`] as the
-//! `kompress` backend — this module is just the thin Rust entry the
-//! [`crate::openhuman::tokenjuice::compressors::ml_text`] compressor calls.
+//! `kompress` backend — this module is just the thin Rust callback the
+//! TinyJuice `ml_text` compressor calls.
 //!
 //! Opt-in at runtime via `config.tokenjuice.ml_compression_enabled` (default
 //! off) — there is no build-time feature gate, since torch is provisioned at

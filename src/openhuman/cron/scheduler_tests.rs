@@ -705,6 +705,121 @@ fn is_api_key_unset_failure_does_not_halt_shell_jobs() {
     assert!(!is_api_key_unset_failure(&JobType::Shell, Some(wire), wire));
 }
 
+// TAURI-RUST-12K — a cron agent job pinned to a local LLM provider (LM Studio
+// on localhost:1234) fails with a loopback connection-refused because the
+// user's server isn't running. `is_local_provider_unreachable_failure` must
+// consult the shared loopback matcher so the retry loop halts on the first
+// occurrence (retries can't bring the port up) instead of re-emitting the
+// `failure=retries_exhausted` bare `report_error` the classifier already
+// demotes everywhere else.
+#[test]
+fn is_local_provider_unreachable_failure_matches_localized_loopback_in_agent_error() {
+    // Verbatim from the Sentry event: zh-CN Windows host, localized
+    // WSAECONNREFUSED text, only the errno + `tcp connect error` survive.
+    let wire = "error sending request for url \
+                (http://localhost:1234/v1/chat/completions): client error (Connect): \
+                tcp connect error: 由于目标计算机积极拒绝，无法连接。 (os error 10061)";
+    assert!(
+        is_local_provider_unreachable_failure(
+            &JobType::Agent,
+            Some(wire),
+            AGENT_JOB_USER_FAILURE_MESSAGE
+        ),
+        "raw agent error carrying the localized loopback connect-refused must trip the halt"
+    );
+}
+
+// Defense-in-depth: classify even if a future path surfaces the raw error in
+// `last_output` rather than `last_agent_error`.
+#[test]
+fn is_local_provider_unreachable_failure_matches_when_only_output_carries_signal() {
+    let wire = "error sending request for url (http://localhost:1234/v1/chat/completions) \
+                → tcp connect error → Connection refused (os error 10061)";
+    assert!(is_local_provider_unreachable_failure(
+        &JobType::Agent,
+        None,
+        wire
+    ));
+}
+
+#[test]
+fn is_local_provider_unreachable_failure_keeps_short_loopback_send_error_retryable() {
+    let wire = "error sending request for url (http://localhost:1234/v1/chat/completions)";
+    assert!(
+        !is_local_provider_unreachable_failure(
+            &JobType::Agent,
+            Some(wire),
+            AGENT_JOB_USER_FAILURE_MESSAGE
+        ),
+        "short reqwest send errors can represent transient timeout/reset shapes and must stay retryable without a refused errno/tcp-connect signal"
+    );
+}
+
+#[test]
+fn is_local_provider_unreachable_failure_matches_raw_no_models_loaded_body() {
+    let raw = "LM Studio API error (400 Bad Request): {\"error\":\"No models loaded. \
+               Please load a model in the developer page first.\"}";
+    assert!(
+        is_local_provider_unreachable_failure(
+            &JobType::Agent,
+            Some(raw),
+            AGENT_JOB_USER_FAILURE_MESSAGE
+        ),
+        "raw OpenAI-compatible no-model body should halt without retries"
+    );
+}
+
+#[test]
+fn is_local_provider_unreachable_failure_checks_output_when_raw_is_generic() {
+    let output =
+        "Your local inference server (e.g. LM Studio) is running but has no model loaded. \
+                  Load a model, then try again.";
+    assert!(
+        is_local_provider_unreachable_failure(
+            &JobType::Agent,
+            Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+            output
+        ),
+        "friendly no-model output should halt even when raw agent error is generic"
+    );
+}
+
+// Negative guard: a transient REMOTE provider / backend network error must NOT
+// halt — it may recover on retry and stays actionable in Sentry. Narrowing to
+// loopback is what keeps this guard from blinding real outages.
+#[test]
+fn is_local_provider_unreachable_failure_does_not_match_remote_network_errors() {
+    assert!(!is_local_provider_unreachable_failure(
+        &JobType::Agent,
+        Some(AGENT_JOB_USER_FAILURE_MESSAGE),
+        AGENT_JOB_USER_FAILURE_MESSAGE,
+    ));
+    let remote = "error sending request for url (https://api.tinyhumans.ai/v1/chat/completions) \
+                  → tcp connect error → Connection refused (os error 61)";
+    assert!(
+        !is_local_provider_unreachable_failure(&JobType::Agent, Some(remote), ""),
+        "a remote-host connect-refused must retry + report, not halt as loopback"
+    );
+}
+
+// Scope guard: shell jobs that echo a loopback-refused string keep their retry
+// semantics — only agent jobs route through the inference layer.
+#[test]
+fn is_local_provider_unreachable_failure_does_not_halt_shell_jobs() {
+    let wire = "error sending request for url (http://localhost:1234/v1/chat/completions) \
+                → tcp connect error → Connection refused (os error 10061)";
+    assert!(!is_local_provider_unreachable_failure(
+        &JobType::Shell,
+        None,
+        wire
+    ));
+    assert!(!is_local_provider_unreachable_failure(
+        &JobType::Shell,
+        Some(wire),
+        wire
+    ));
+}
+
 #[tokio::test]
 async fn run_agent_job_returns_error_without_provider_key() {
     let tmp = TempDir::new().unwrap();
@@ -1132,7 +1247,7 @@ fn agent_error_to_user_message_classifies_provider_non_retryable() {
     let msg = agent_error_to_user_message(&err);
     assert!(msg.contains("provider"));
     assert!(msg.contains("credentials"));
-    assert!(msg.contains("Settings"));
+    assert!(msg.contains("Connections \u{2192} API keys \u{2192} LLM"));
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
 }
 
@@ -1164,7 +1279,7 @@ fn agent_error_to_user_message_classifies_max_iterations() {
     let err = AgentError::MaxIterationsExceeded { max: 10 };
     let msg = agent_error_to_user_message(&err);
     assert!(msg.contains("tool iterations"));
-    assert!(msg.contains("Settings"));
+    assert!(msg.contains("Connections \u{2192} API keys \u{2192} LLM"));
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
 }
 
@@ -1185,11 +1300,11 @@ fn agent_error_to_user_message_classifies_empty_provider_response_for_3335() {
         "must not claim a local provider exists: {msg}"
     );
     assert!(
-        msg.contains("different model"),
+        msg.contains("another model"),
         "must keep the model-switch remedy: {msg}"
     );
     assert!(
-        msg.contains("Settings \u{2192} AI \u{2192} LLM"),
+        msg.contains("Connections \u{2192} API keys \u{2192} LLM"),
         "must keep the provider-config deep link: {msg}"
     );
     assert_ne!(msg, AGENT_JOB_USER_FAILURE_MESSAGE);
@@ -1738,4 +1853,46 @@ fn publish_cron_user_error_broadcasts_metadata_only_for_each_kind() {
         assert!(ev.thread_id.is_empty(), "cron user_error is thread-less");
         assert!(ev.request_id.is_empty());
     }
+}
+
+// TAURI-RUST-12K (end-to-end) — the predicate tests above key on hand-written
+// wire strings; this test proves the REAL provider-generated error remains
+// retryable when it only preserves reqwest's short send-error prefix. A cron
+// agent job is routed to a keyless local provider (`AuthStyle::None`, LM Studio
+// shape) whose server is offline: the chat workload skips the credential guard
+// and attempts loopback HTTP. If the provider layer surfaces only
+// `error sending request for url (...)`, without the refused errno/tcp-connect
+// chain, cron must not treat it as a permanent local-provider halt because the
+// same short prefix is also used for transient timeout/reset shapes.
+#[tokio::test]
+async fn cron_agent_job_short_loopback_send_error_stays_retryable() {
+    use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp).await;
+    // Keyless local provider (`AuthStyle::None` → no credential requirement, so
+    // the request proceeds to the HTTP connect). `chat_provider` routes the
+    // chat workload to it; the slug resolves to LM Studio's default endpoint.
+    config.cloud_providers = vec![CloudProviderCreds {
+        id: "lmstudio-offline".into(),
+        slug: "lmstudio".into(),
+        label: "LM Studio".into(),
+        endpoint: "http://127.0.0.1:1".into(),
+        auth_style: AuthStyle::None,
+        ..Default::default()
+    }];
+    config.default_model = Some("lmstudio:local-model".into());
+    config.chat_provider = Some("lmstudio:local-model".into());
+    let mut job = test_job("");
+    job.job_type = JobType::Agent;
+    job.prompt = Some("Say hello".into());
+
+    let (success, output, raw) = run_agent_job(&config, &job).await;
+    assert!(
+        !success,
+        "a cron agent job against an offline local provider must fail"
+    );
+    assert!(
+        !is_local_provider_unreachable_failure(&JobType::Agent, raw.as_deref(), &output),
+        "provider-generated short loopback send error must stay retryable without refused errno/tcp-connect evidence; got raw={raw:?}"
+    );
 }

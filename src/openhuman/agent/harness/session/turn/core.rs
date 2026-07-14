@@ -9,11 +9,11 @@ use crate::openhuman::agent::harness;
 use crate::openhuman::agent::harness::definition::TriggerMemoryAgent;
 use crate::openhuman::agent::harness::fork_context::ParentExecutionContext;
 use crate::openhuman::agent::hooks::{self, TurnContext};
-use crate::openhuman::agent::memory_loader::collect_recall_citations;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent_experience::{
     prepend_experience_block, render_experience_hits, AgentExperienceStore, ExperienceQuery,
 };
+use crate::openhuman::agent_memory::memory_loader::collect_recall_citations;
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage};
 use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::util::truncate_with_ellipsis;
@@ -75,7 +75,13 @@ fn tool_records_from_conversation(
         if let ConversationMessage::AssistantToolCalls { tool_calls, .. } = msg {
             for call in tool_calls {
                 let outcome = tool_outcomes.iter().find(|o| o.call_id == call.id);
-                let success = outcome.map(|o| o.success).unwrap_or(true);
+                // Default a MISSING outcome to `false` (#4467, item 7): a call
+                // with no captured outcome is a hallucinated/unknown tool the
+                // crate recovered via `ReturnToolError` without running
+                // `after_tool` (so the capture sink never saw it). Recording it as
+                // succeeded misreports the timeline; real executed tools always
+                // have an outcome, so this only flips the genuinely-unknown case.
+                let success = outcome.map(|o| o.success).unwrap_or(false);
                 let output_summary = outcome
                     .map(|o| hooks::sanitize_tool_output(&o.content, &call.name, success))
                     .unwrap_or_default();
@@ -133,7 +139,6 @@ impl Agent {
     /// 6. **Background Tasks**: Triggers episodic memory indexing and facts
     ///    extraction asynchronously.
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
-        let turn_started = std::time::Instant::now();
         // Capture before any system-prompt push mutates `history`: this is the
         // signal that gates first-turn-only work (system prompt build, and the
         // "super context" harness-driven context-collection pass below).
@@ -467,6 +472,29 @@ impl Agent {
             }
         }
 
+        // ── Active sub-agents (ambient fleet awareness) ──────────────────────
+        // When this agent has async/parallel workers registered under its own
+        // session, prepend a compact `[active_subagents]` roster (agent type,
+        // subagent_session_id, live status) so it tracks the fleet from the turn
+        // context instead of relying on remembered `[async_subagent_ref]` blocks
+        // that may have scrolled away. Children register under the parent's
+        // `session_id`, which is this agent's `event_session_id` (see
+        // `build_parent_execution_context`). Gated on presence: agents that never
+        // spawn get an empty block and no injection. Rides per-turn context (like
+        // the goal block) so status is always live.
+        if let Some(block) =
+            crate::openhuman::agent_orchestration::running_subagents::active_subagents_context_block(
+                &self.event_session_id,
+            )
+        {
+            log::info!(
+                "[running_subagents] injecting active_subagents block session={} ({} chars)",
+                self.event_session_id,
+                block.chars().count()
+            );
+            context.push_str(&block);
+        }
+
         let enriched = if context.is_empty() {
             log::info!("[agent] no memory context found — using raw user message");
             self.last_memory_context = None;
@@ -546,10 +574,6 @@ impl Agent {
         // model prompt, not in the Rust-side classifier. Sub-agents pick
         // their own tier via `ModelSpec::Hint(...)` in their definition.
         let effective_model = self.model_name.clone();
-        // Capture before `self` is borrowed by the turn observer below, so it can
-        // be installed as the `current_model_vision` task-local around the engine
-        // call (read by the image gate for custom/BYOK vision models).
-        let model_vision = self.model_vision;
         log::info!(
             "[agent_loop] model pinned model={} (per-turn classification disabled for KV cache stability)",
             effective_model
@@ -561,6 +585,7 @@ impl Agent {
         // model field with the post-classification effective model.
         let mut parent_context = self.build_parent_execution_context();
         parent_context.model_name = effective_model.clone();
+        let session_memory_parent_context = parent_context.clone();
 
         let mut agent_context_prepared_sources: Vec<harness::AgentContextPreparedSource> =
             Vec::new();
@@ -661,31 +686,11 @@ impl Agent {
         self.context.tick_turn();
 
         let turn_body = async {
-            // Capture everything the engine seams need as locals/clones *before*
-            // the observer takes `&mut self`, so the borrow checker is happy:
-            // the tool source + parser + checkpoint hold clones disjoint from
-            // the `Agent`, and the observer alone borrows it mutably.
-            let dispatcher = self.tool_dispatcher.clone();
-            let provider = self.provider.clone();
-            let provider_name = self.event_channel().to_string();
+            // Keep the scalar turn settings outside the pinned future arguments;
+            // the TinyAgents session path reads provider/tool/multimodal state
+            // directly from `self` when preparing the request.
             let temperature = self.temperature;
             let max_iterations = self.config.max_tool_iterations;
-            // Source multimodal limits from the session's runtime config when
-            // present so [IMAGE:…] / [FILE:…] markers in user messages are
-            // resolved with the operator-configured caps (max files, max size,
-            // max extracted text). Without this, agents fall back to the
-            // crate-default caps and `MultimodalFileConfig::default()`
-            // disables file expansion entirely.
-            let multimodal = self
-                .integration_runtime_config
-                .as_ref()
-                .map(|c| c.multimodal.clone())
-                .unwrap_or_default();
-            let multimodal_files = self
-                .integration_runtime_config
-                .as_ref()
-                .map(|c| c.multimodal_files.clone())
-                .unwrap_or_default();
             let artifact_store = Some(
                 crate::openhuman::agent::harness::tool_result_artifacts::ToolResultArtifactStore::new(
                     self.action_dir.clone(),
@@ -703,6 +708,7 @@ impl Agent {
                 temperature,
                 max_iterations,
                 run_super_context,
+                artifact_store,
             ))
             .await
         }; // end of `turn_body` async block
@@ -712,10 +718,13 @@ impl Agent {
         // read the parent's provider, tools, model, and workspace via
         // the PARENT_CONTEXT task-local.
         // Arm the thread-goal budget stop hook for this turn when an active,
-        // budgeted goal exists — it hard-stops the loop the moment running usage
-        // would exceed the cap (so an autonomous run can't blow past it between
-        // accounting points). Merge with any ambient stop hooks rather than
-        // clobbering them. No budgeted active goal → no extra hook, no wrap.
+        // budgeted goal exists — it votes to stop the loop as soon as running
+        // usage would exceed the cap. #4469 item 1: the stop is a graceful pause
+        // drained at the next iteration boundary, not an instantaneous abort, so
+        // the current tool round + one wrap-up summary call can still run past the
+        // cap (a small, bounded overshoot) before the partial transcript returns.
+        // Merge with any ambient stop hooks rather than clobbering them. No
+        // budgeted active goal → no extra hook, no wrap.
         let mut turn_stop_hooks = crate::openhuman::agent::stop_hooks::current_stop_hooks();
         if let Some(ref goal) = active_goal {
             if let Some(hook) =
@@ -786,7 +795,8 @@ impl Agent {
         // later), which is the right amount of retry behaviour for a
         // librarian task that's idempotent across reruns.
         if result.is_ok() && self.context.should_extract_session_memory() {
-            self.spawn_session_memory_extraction().await;
+            self.spawn_session_memory_extraction(session_memory_parent_context)
+                .await;
             // Sibling pipeline (#1399): heuristic transcript ingestion
             // turns the just-written transcript into durable
             // conversational memory + reflections so a brand-new chat
@@ -807,7 +817,7 @@ impl Agent {
     ///
     /// Full-fidelity with the legacy `run_turn_engine`: live tool-timeline /
     /// text-delta progress and the cost/token footer are mirrored from the
-    /// harness event stream via the [`OpenhumanEventBridge`] (tinyagents 0.2.0),
+    /// harness event stream via `OpenhumanEventBridge` (tinyagents harness),
     /// `[IMAGE:…]`/`[FILE:…]` markers are expanded for the provider, and history
     /// is trimmed to the provider's context window.
     async fn run_turn_via_tinyagents_session(
@@ -820,6 +830,9 @@ impl Agent {
         // by `should_run_super_context` in `turn()`, before the user row was
         // pushed to history — so it can't be recomputed here).
         run_super_context: bool,
+        artifact_store: Option<
+            crate::openhuman::agent::harness::tool_result_artifacts::ToolResultArtifactStore,
+        >,
     ) -> Result<String> {
         let turn_started = std::time::Instant::now();
         // This turn's stamped user message is already the last entry in
@@ -856,10 +869,22 @@ impl Agent {
             .as_ref()
             .map(|c| c.multimodal_files.clone())
             .unwrap_or_default();
+        // Resolve the effective context window and build the turn's tiered crate
+        // `ChatModel` set from the session source up front (issue #4249, Phase 3 /
+        // Motion A) — the harness holds crate model types, and the vision read
+        // below comes off the built models, not a raw provider.
+        let context_window = self
+            .turn_model_source
+            .effective_context_window(effective_model)
+            .await;
+        let turn_models =
+            self.turn_model_source
+                .build(effective_model, temperature, context_window)?;
+
         // Honor custom/BYOK vision models too: they can set `model_vision` even
         // when the provider capability bit is false, and must still rehydrate
         // `[IMAGE:…]` placeholders (else image chat silently degrades to text).
-        if (self.provider.supports_vision() || self.model_vision)
+        if (turn_models.supports_vision() || self.model_vision)
             && crate::openhuman::agent::multimodal::has_image_placeholders(&messages)
         {
             messages = crate::openhuman::agent::multimodal::rehydrate_image_placeholders(&messages);
@@ -880,24 +905,22 @@ impl Agent {
             "[agent_loop] routing chat turn through the tinyagents harness"
         );
 
-        // Resolve the provider's effective context window so the harness can
-        // trim long threads to budget (autocompaction parity).
-        let context_window = self
-            .provider
-            .effective_context_window(effective_model)
-            .await;
-
         // Dispatch through the chat turn graph (this folder's `graph.rs`): a thin
         // wrapper over the shared tinyagents seam that pins the chat path's fixed
         // arguments (no child scope, no early-exit tools, graceful cap pause,
         // per-turn output cap) and runs the context-window summarization step.
         // Context middlewares sourced from this session's ContextManager: the
-        // per-tool-result byte cap + payload summarizer (after_tool), the
-        // cache-align warning and microcompact tool-body clearing (before_model).
+        // per-tool-result byte cap + payload summarizer (after_tool) and
+        // microcompact tool-body clearing (before_model). KV-cache-prefix drift
+        // detection is owned by the crate `PromptCacheGuardMiddleware` (fed by
+        // `PromptCacheSegmentMiddleware`); the warn-only `CacheAlignMiddleware`
+        // was deleted in C3.
         let context_mw = crate::openhuman::tinyagents::TurnContextMiddleware {
             tool_result_budget_bytes: self.context.tool_result_budget_bytes(),
             payload_summarizer: self.payload_summarizer.clone(),
-            cache_align: self.context.compaction_enabled(),
+            artifact_store,
+            tokenjuice_compaction_enabled: self.context.compaction_enabled(),
+            tokenjuice_compression: self.tokenjuice_compression,
             microcompact_keep_recent: self.context.microcompact_keep_recent(),
             // Honor the [context].enabled / autocompact_enabled opt-outs: when off,
             // the summarization middleware is not installed (no summarizer tokens,
@@ -914,6 +937,9 @@ impl Agent {
             // Progressive-disclosure handoff is a sub-agent (integrations_agent)
             // concern; the top-level chat turn never sets it.
             handoff: None,
+            // Live transcript snapshotting is a sub-agent error-recovery concern
+            // (#4466); the chat path persists its transcript post-run.
+            transcript_snapshot: None,
         };
 
         // Gather any sub-agent spend delegated during this turn (synchronous
@@ -923,9 +949,8 @@ impl Agent {
         let (outcome, subagent_usage_entries) =
             crate::openhuman::agent::harness::turn_subagent_usage::with_turn_collector(
                 super::graph::run_chat_turn_graph(super::graph::ChatTurnGraph {
-                    provider: self.provider.clone(),
+                    turn_models,
                     model: effective_model.to_string(),
-                    temperature,
                     messages,
                     tools: self.tools.clone(),
                     visible_tool_names: self.visible_tool_names.clone(),
@@ -973,10 +998,11 @@ impl Agent {
             // cycle. Fold the extra call's usage into the turn accounting.
             let base = self.tool_dispatcher.to_provider_messages(&self.history);
             let (summary, summary_usage) = self
-                .summarize_iteration_checkpoint(
+                .summarize_turn_wrapup(
                     &base,
                     effective_model,
                     outcome.model_calls as u32 + 1,
+                    super::super::turn_checkpoint::MAX_ITER_CHECKPOINT_INSTRUCTION,
                 )
                 .await;
             if let Some(u) = summary_usage {
@@ -1002,11 +1028,88 @@ impl Agent {
             // A completion with no text and no tool calls is never a valid final
             // answer — surface it as an error instead of wedging the thread on a
             // blank reply (bug-report-2026-05-26 A1, defect B).
+            //
+            // #4457 (defect A): the empty terminal assistant response was already
+            // folded into `self.history` via `outcome.conversation` at the
+            // `history.extend` above (an empty `Chat(assistant(""))`). The #4093
+            // branch below pops that dangling blank row before re-prompting, but
+            // this `tool_calls == 0` path returned the error with the empty row
+            // still in history — so the *next* request carried an empty-content
+            // assistant message and strict providers (Anthropic: "text content
+            // blocks must be non-empty") 400 the whole thread, not just this turn.
+            // Pop the trailing empty assistant row before returning so a retry
+            // sends a clean transcript.
+            if matches!(
+                self.history.last(),
+                Some(ConversationMessage::Chat(msg))
+                    if msg.role == "assistant" && msg.content.trim().is_empty()
+            ) {
+                log::debug!(
+                    "[agent_loop] EmptyProviderResponse at iteration {}: popping dangling empty assistant row before returning — #4457 defect A",
+                    outcome.model_calls
+                );
+                self.history.pop();
+            }
             return Err(anyhow::Error::new(
                 crate::openhuman::agent::error::AgentError::EmptyProviderResponse {
                     iteration: outcome.model_calls,
                 },
             ));
+        } else if outcome.text.trim().is_empty() {
+            // #4093: the loop ran tool calls (tool_calls > 0, so the branch
+            // above did not fire) and then yielded a terminating response with
+            // no final text — the turn did work but would otherwise end
+            // silently, leaving the user with nothing. Enforce the
+            // "must produce a final response" terminal step: re-prompt the
+            // model (tools disabled) for a closing summary of what it did,
+            // falling back to a deterministic summary of the tool calls so the
+            // synthesized message is never itself empty. Fold the extra call's
+            // usage into the turn accounting, exactly like the cap path above.
+            let base = self.tool_dispatcher.to_provider_messages(&self.history);
+            let (summary, summary_usage) = self
+                .summarize_turn_wrapup(
+                    &base,
+                    effective_model,
+                    outcome.model_calls as u32 + 1,
+                    super::super::turn_checkpoint::FINAL_ANSWER_INSTRUCTION,
+                )
+                .await;
+            if let Some(u) = summary_usage {
+                input_tokens += u.input_tokens;
+                output_tokens += u.output_tokens;
+                cached_input_tokens += u.cached_input_tokens;
+                charged_amount_usd += u.charged_amount_usd;
+            }
+            let final_answer = if summary.trim().is_empty() {
+                super::super::turn_checkpoint::build_deterministic_final_summary(
+                    &tool_records_from_conversation(&outcome.conversation, &outcome.tool_outcomes),
+                )
+            } else {
+                summary
+            };
+            log::info!(
+                "[agent_loop] turn produced no final text after {} tool call(s); synthesized a closing summary ({} chars) — #4093",
+                outcome.tool_calls,
+                final_answer.chars().count()
+            );
+            // The empty terminal assistant response was already folded into
+            // `self.history` via `outcome.conversation` above (an empty
+            // `Chat(assistant(""))` — see `messages_to_conversation`). Drop that
+            // blank turn before appending the synthesized answer so the
+            // transcript and the next prompt don't carry a dangling empty
+            // assistant message immediately before the real reply (Codex review).
+            if matches!(
+                self.history.last(),
+                Some(ConversationMessage::Chat(msg))
+                    if msg.role == "assistant" && msg.content.trim().is_empty()
+            ) {
+                self.history.pop();
+            }
+            self.history
+                .push(ConversationMessage::Chat(ChatMessage::assistant(
+                    final_answer.clone(),
+                )));
+            final_answer
         } else {
             outcome.text.clone()
         };
@@ -1078,6 +1181,34 @@ impl Agent {
             turn_started.elapsed().as_secs(),
         )
         .await;
+
+        // Content (prompt + reply) rides its own event so a tracing consumer can
+        // attach it to the turn span. Gated on the opt-in
+        // `observability.agent_tracing.capture_content` flag (#4454): with the
+        // default off, we don't even emit the content event, so prompt/reply text
+        // never reaches the span store or any exporter. The collector applies the
+        // same storage-level gate as defense in depth.
+        let capture_content = self
+            .integration_runtime_config
+            .as_ref()
+            .map(|c| c.observability.agent_tracing.capture_content)
+            .unwrap_or(false);
+        if capture_content {
+            log::debug!(
+                target: "agent-tracing",
+                "[agent-tracing] emitting TurnContent (capture_content=true)"
+            );
+            self.emit_progress(AgentProgress::TurnContent {
+                input: Some(user_message.to_string()),
+                output: Some(reply.clone()),
+            })
+            .await;
+        } else {
+            log::debug!(
+                target: "agent-tracing",
+                "[agent-tracing] skipping TurnContent emit (capture_content=false)"
+            );
+        }
 
         self.emit_progress(AgentProgress::TurnCompleted {
             iterations: outcome.model_calls as u32,

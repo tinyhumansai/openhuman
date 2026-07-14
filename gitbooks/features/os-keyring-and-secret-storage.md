@@ -103,20 +103,20 @@ Current desktop builds migrate that material into the OS keyring and keep the en
 
 ## Consent flow when the keyring is unavailable
 
-When the OS keyring is unreachable — for example on Linux without a Secret Service daemon, or macOS when keychain access is denied — OpenHuman **stops and asks** before falling back to local encrypted storage.
+Sometimes the OS keyring is unreachable, for example on Linux without a Secret Service daemon, or on macOS when keychain access is denied. When that happens, OpenHuman **stops and asks** before falling back to local encrypted storage.
 
 ### How it works
 
-1. **Detection** — On startup the core probes the OS keychain. If the probe fails, it classifies the reason (no daemon, locked, denied) and reports a structured `KeyringStatus` via the `openhuman.keyring_consent_status` RPC and the app snapshot.
+1. **Detection.** On startup the core probes the OS keychain. If the probe fails, it classifies the reason (no daemon, locked, denied) and reports a structured `KeyringStatus` via the `openhuman.keyring_consent_status` RPC and the app snapshot.
 
-2. **Consent prompt** — The first time a secret must be read or written and no consent has been recorded, a modal overlay explains what happened, what "store locally" means, and what the risks are. The user can:
-   - **Use Local Encrypted Storage** — consent to ChaCha20-Poly1305 encrypted files (master key also on disk).
-   - **Retry OS Keychain** — re-probe (useful after granting OS permission).
-   - **Skip** — decline local storage; features that need secrets will be unavailable.
+2. **Consent prompt.** The first time a secret must be read or written and no consent has been recorded, a modal overlay explains what happened, what "store locally" means, and what the risks are. The user can:
+   - **Use Local Encrypted Storage**: consent to ChaCha20-Poly1305 encrypted files (master key also on disk).
+   - **Retry OS Keychain**: re-probe (useful after granting OS permission).
+   - **Skip**: decline local storage; features that need secrets will be unavailable.
 
-3. **Persisted preference** — The choice is recorded in `app-state.json` (`keyringConsent` field) and cached in-process. The app re-probes on each launch and re-prompts if the keyring becomes available after a local-only session.
+3. **Persisted preference.** The choice is recorded in `app-state.json` (`keyringConsent` field) and cached in-process. The app re-probes on each launch and re-prompts if the keyring becomes available after a local-only session.
 
-4. **Settings visibility** — **Settings → Security** shows the active storage mode, keychain availability, failure reason, and buttons to retry or change consent.
+4. **Settings visibility.** **Settings → Security** shows the active storage mode, keychain availability, failure reason, and buttons to retry or change consent.
 
 ### Unified fallback policy
 
@@ -125,8 +125,8 @@ Auth profiles, config secrets, wallet mnemonic, and the `secrets.enc` backend al
 | Policy decision | Meaning |
 | --- | --- |
 | `Proceed` | OS keyring available, or user consented to local encrypted |
-| `ConsentRequired` | Keyring unavailable, no consent yet — block and prompt |
-| `Declined` | User refused local storage — skip the secret operation |
+| `ConsentRequired` | Keyring unavailable, no consent yet; block and prompt |
+| `Declined` | User refused local storage; skip the secret operation |
 
 ***
 

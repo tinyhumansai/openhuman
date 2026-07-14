@@ -253,7 +253,7 @@ default_model = "e2e-mock-model"
 TOMLEOF
 echo "[runner] Wrote E2E config.toml routing inference to mock at http://127.0.0.1:${E2E_MOCK_PORT}"
 
-DIST_JS="$(ls dist/assets/index-*.js 2>/dev/null | head -1)"
+DIST_JS="$(find dist/assets -maxdepth 1 -name 'index-*.js' -print -quit 2>/dev/null || true)"
 if [ -z "$DIST_JS" ]; then
   echo "ERROR: No frontend bundle found at dist/assets/index-*.js." >&2
   echo "       Run 'pnpm test:e2e:build' first." >&2

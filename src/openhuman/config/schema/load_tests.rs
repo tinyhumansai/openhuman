@@ -1,3 +1,5 @@
+use super::dirs::{ACTION_DIR_ENV_VAR, MEMORY_SYNC_INTERVAL_SECS_ENV_VAR};
+use super::env::EnvLookup;
 use super::*;
 use crate::openhuman::config::schema::{StreamMode, TelegramConfig};
 
@@ -522,6 +524,31 @@ impl EnvLookup for HashMapEnv {
     fn contains(&self, key: &str) -> bool {
         self.entries.contains_key(key)
     }
+}
+
+#[test]
+fn env_overlay_toggles_agent_tracing_capture_content() {
+    // Serialize with the sibling env-overlay tests (TEST_ENV_LOCK note at the
+    // top of the file) so a concurrent test's env mutation can't race in.
+    let _g = env_lock();
+
+    // ON by default since #4498 (`default_capture_content() == true` — traces
+    // without content aren't actionable in Langfuse). This assertion was left
+    // asserting the pre-#4498 `false` default and is corrected here.
+    let mut cfg = Config::default();
+    assert!(cfg.observability.agent_tracing.capture_content);
+
+    // An explicit falsy env value turns it off.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT", "off"),
+    );
+    assert!(!cfg.observability.agent_tracing.capture_content);
+
+    // A truthy value turns it back on.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT", "true"),
+    );
+    assert!(cfg.observability.agent_tracing.capture_content);
 }
 
 #[test]
@@ -1060,28 +1087,28 @@ fn env_overlay_compaction_default_on_and_kill_switch() {
 }
 
 #[test]
-fn env_overlay_super_context_default_on_and_toggle() {
-    // Default is on.
-    assert!(Config::default().context.super_context_enabled);
+fn env_overlay_super_context_default_off_and_toggle() {
+    // Default is off — it's an expensive pass, so it's opt-in.
+    assert!(!Config::default().context.super_context_enabled);
 
-    // `OPENHUMAN_SUPER_CONTEXT=0` opts out.
+    // `OPENHUMAN_SUPER_CONTEXT=1` opts in.
     let mut cfg = Config::default();
-    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_SUPER_CONTEXT", "0"));
-    assert!(!cfg.context.super_context_enabled);
-
-    // The namespaced alias works and `on` re-enables it.
-    let mut cfg = Config::default();
-    cfg.context.super_context_enabled = false;
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUPER_CONTEXT_ENABLED", "on"),
-    );
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_SUPER_CONTEXT", "1"));
     assert!(cfg.context.super_context_enabled);
+
+    // The namespaced alias works and `off` disables it again.
+    let mut cfg = Config::default();
+    cfg.context.super_context_enabled = true;
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUPER_CONTEXT_ENABLED", "off"),
+    );
+    assert!(!cfg.context.super_context_enabled);
 
     // Garbage is ignored (leaves the prior value untouched).
     let mut cfg = Config::default();
-    cfg.context.super_context_enabled = false;
+    cfg.context.super_context_enabled = true;
     cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_SUPER_CONTEXT", "maybe"));
-    assert!(!cfg.context.super_context_enabled);
+    assert!(cfg.context.super_context_enabled);
 }
 
 #[test]

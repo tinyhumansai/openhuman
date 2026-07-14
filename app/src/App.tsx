@@ -295,7 +295,15 @@ export function AppShellDesktop() {
       <AppRoutes location={baseLocation} />
       {activeProviderAccount && !accountsOverlayOpen && (
         <div className="absolute inset-0 z-30">
+          {/* key on the account id so switching provider accounts fully
+              unmounts the previous host (running its cleanup → hideWebviewAccount)
+              and mounts a fresh one, instead of React reusing one instance with
+              new props. Guarantees deterministic hide-old-before-show-new
+              ordering and stops a deselected provider's CEF view from bleeding
+              into the newly-selected account's slot on rapid rail switches
+              (#4421). */}
           <WebviewHost
+            key={activeProviderAccount.id}
             accountId={activeProviderAccount.id}
             provider={activeProviderAccount.provider}
           />

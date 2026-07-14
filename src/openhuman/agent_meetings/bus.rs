@@ -257,11 +257,13 @@ impl EventHandler for MeetingEventSubscriber {
                 command_text,
                 recent_transcript,
                 timestamp_ms,
+                mascot_slot,
             } => {
                 tracing::info!(
                     correlation_id = ?correlation_id,
                     speaker = %speaker,
                     cmd_len = command_text.len(),
+                    mascot_slot = ?mascot_slot,
                     "{LOG_PREFIX} in-call request received"
                 );
                 // The orchestrator turn can run for tens of seconds (tools,
@@ -271,6 +273,7 @@ impl EventHandler for MeetingEventSubscriber {
                 let command_text = command_text.clone();
                 let recent_transcript = recent_transcript.clone();
                 let timestamp_ms = *timestamp_ms;
+                let mascot_slot = *mascot_slot;
                 tokio::spawn(async move {
                     super::in_call::handle_in_call_request(
                         correlation_id,
@@ -278,6 +281,7 @@ impl EventHandler for MeetingEventSubscriber {
                         command_text,
                         recent_transcript,
                         timestamp_ms,
+                        mascot_slot,
                     )
                     .await;
                 });

@@ -93,7 +93,7 @@ pub async fn mcp_setup_request_secret(
 
     let (r, rx) = setup::mint_request(&key_name).await;
 
-    let _ = publish_global(DomainEvent::McpSetupSecretRequested {
+    publish_global(DomainEvent::McpSetupSecretRequested {
         ref_id: r.as_str().to_string(),
         key_name: key_name.clone(),
         prompt: prompt.clone(),
@@ -308,7 +308,7 @@ pub async fn mcp_setup_install_and_connect(
     store::insert_server(config, &server).map_err(|e| e.to_string())?;
     store::set_env_values(config, &server_id, &env_map).map_err(|e| e.to_string())?;
 
-    let _ = publish_global(DomainEvent::McpServerInstalled {
+    publish_global(DomainEvent::McpServerInstalled {
         server_id: server_id.clone(),
         qualified_name: server.qualified_name.clone(),
     });

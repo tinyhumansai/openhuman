@@ -232,10 +232,12 @@ describe('ArtifactCard', () => {
   // ─── kind variants (icon paths) ─────────────────────────────────────────
 
   it.each(['presentation', 'document', 'image', 'other'] as const)(
-    'renders the in-progress spinner for kind=%s without crashing',
+    'renders the in-progress spinner with the kind-specific label for kind=%s',
     kind => {
       render(<ArtifactCard artifact={inProgress({ kind })} />);
-      expect(screen.getByText(/Generating /)).toBeInTheDocument();
+      // The generating sub-label reflects the artifact kind (e.g. "Generating
+      // image") — folded in from the former sibling ArtifactCard.test.tsx.
+      expect(screen.getByText(new RegExp(`Generating ${kind}`, 'i'))).toBeInTheDocument();
     }
   );
 

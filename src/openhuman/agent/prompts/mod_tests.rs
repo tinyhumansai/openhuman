@@ -153,17 +153,18 @@ fn grounding_contract_requires_exact_numeric_evidence() {
         .build(&ctx)
         .unwrap();
 
-    assert!(rendered.contains("Preserve numeric evidence exactly"));
-    assert!(rendered.contains(
-        "numbers, counts, sizes, dates, timestamps, durations, currencies, percentages, quotas, and ids"
-    ));
-    assert!(rendered.contains(
-        "copy the exact value from the observed tool result, user message, or cited memory"
-    ));
-    assert!(rendered.contains("Do not round, convert units, rewrite relative times"));
-    assert!(rendered.contains(
-        "If sources disagree, name the discrepancy instead of choosing a plausible value"
-    ));
+    // WORDING LOCK (deliberate, plan.md §3): pin ONE representative clause of
+    // the numeric-evidence grounding rule so a copy edit that silently drops
+    // the "preserve numbers exactly" guidance trips review — rather than five
+    // verbatim prose substrings that break on any harmless rewording. The
+    // *structural* guarantee (the grounding contract is appended on every build
+    // path) is covered behaviourally by
+    // grounding_contract_appended_to_every_build_path. Update this string only
+    // on a deliberate rewrite of GROUNDING_BODY.
+    assert!(
+        rendered.contains("Preserve numeric evidence exactly"),
+        "numeric-evidence grounding clause missing from the built prompt"
+    );
 }
 
 #[test]
@@ -204,13 +205,27 @@ fn identity_section_creates_missing_workspace_files() {
             "expected workspace file to be created: {file}"
         );
     }
+    // Seeded SOUL.md must equal the checked-in template verbatim (plan.md §3):
+    // compare against the embedded template rather than pinning brand-voice
+    // prose here — a missing file is seeded straight from
+    // default_workspace_file_content, which is this same `include_str!`.
     let soul = std::fs::read_to_string(workspace.join("SOUL.md")).unwrap();
-    assert!(
-        soul.starts_with("# OpenHuman"),
-        "SOUL.md should be seeded from src/openhuman/agent/prompts/SOUL.md"
+    assert_eq!(
+        soul,
+        include_str!("SOUL.md"),
+        "seeded SOUL.md must be the checked-in template verbatim"
     );
-    // #3604: the brand-voice guardrail must ship in the seeded soul so the
-    // agent defends the product constructively instead of validating FUD.
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[test]
+fn soul_template_carries_brand_voice_guardrail() {
+    // BRAND-VOICE LOCK (#3604, plan.md §3): a narrow, deliberately-labeled
+    // wording pin on the *source* SOUL.md template — the constructive-defense
+    // guardrail must survive edits so the agent defends the product instead of
+    // validating FUD. Update only on an intentional brand-voice change.
+    let soul = include_str!("SOUL.md");
     assert!(
         soul.contains("## When OpenHuman is criticized"),
         "SOUL.md must carry the brand-voice section (#3604)"
@@ -219,8 +234,6 @@ fn identity_section_creates_missing_workspace_files() {
         soul.contains("Don't validate FUD"),
         "SOUL.md brand-voice section must keep the do-not-validate-FUD directive (#3604)"
     );
-
-    let _ = std::fs::remove_dir_all(workspace);
 }
 
 #[test]
@@ -921,6 +934,100 @@ fn render_subagent_system_prompt_skips_profile_md_when_include_profile_false() {
 }
 
 #[test]
+fn render_subagent_system_prompt_frames_memory_md_as_background() {
+    // GH-4745 regression for the sub-agent path: Inline/File sub-agents inject
+    // MEMORY.md through `render_subagent_system_prompt`, a separate renderer
+    // from `UserFilesSection`. It must share the same background-memory frame,
+    // otherwise a fresh thread reads the bare `### MEMORY.md` block as prior
+    // in-thread conversation and asserts continuity that isn't there.
+    let workspace = std::env::temp_dir().join(format!(
+        "openhuman_subagent_memory_framing_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(
+        workspace.join("MEMORY.md"),
+        "# Long-term memory\nReviewed `def f(x)` last week; user prefers terse notes.",
+    )
+    .unwrap();
+
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+    let rendered = render_subagent_system_prompt(
+        &workspace,
+        "test-model",
+        &[0],
+        &tools,
+        &[],
+        "You are a specialist agent.",
+        SubagentRenderOptions {
+            include_identity: false,
+            include_safety_preamble: false,
+            include_skills_catalog: false,
+            include_profile: false,
+            include_memory_md: true,
+        },
+        ToolCallFormat::PFormat,
+        &[],
+    );
+
+    assert!(
+        rendered.contains("### MEMORY.md") && rendered.contains("terse notes"),
+        "MEMORY.md must still be injected in the sub-agent path, got:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("background — not this conversation"),
+        "sub-agent MEMORY.md must be framed as durable background memory, got:\n{rendered}"
+    );
+    let frame_at = rendered.find("background — not this conversation").unwrap();
+    let heading_at = rendered.find("### MEMORY.md").unwrap();
+    assert!(
+        frame_at < heading_at,
+        "the guardrail note must precede the MEMORY.md block, got:\n{rendered}"
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[test]
+fn render_subagent_system_prompt_omits_memory_framing_when_no_memory_content() {
+    // Companion to the framing test: with `include_memory_md = true` but no
+    // MEMORY.md on disk (a genuinely fresh workspace) the dangling frame must
+    // NOT appear — emitting a "background memory" note pointing at nothing
+    // would itself imply phantom history.
+    let workspace = std::env::temp_dir().join(format!(
+        "openhuman_subagent_memory_noframe_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+    let rendered = render_subagent_system_prompt(
+        &workspace,
+        "test-model",
+        &[0],
+        &tools,
+        &[],
+        "You are a specialist agent.",
+        SubagentRenderOptions {
+            include_identity: false,
+            include_safety_preamble: false,
+            include_skills_catalog: false,
+            include_profile: false,
+            include_memory_md: true,
+        },
+        ToolCallFormat::PFormat,
+        &[],
+    );
+
+    assert!(
+        !rendered.contains("background — not this conversation"),
+        "no MEMORY.md content → no dangling framing note in sub-agent path, got:\n{rendered}"
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[test]
 fn render_subagent_system_prompt_injects_profile_md_when_identity_included() {
     // When identity is on, PROFILE.md must still be injected alongside
     // SOUL/IDENTITY — the split must not regress the non-welcome path.
@@ -1392,6 +1499,101 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
     );
 
     let _ = std::fs::remove_dir_all(workspace);
+}
+
+/// Shared `PromptContext` for the MEMORY.md-framing tests below. Both
+/// exercise `UserFilesSection` with memory injection enabled and differ
+/// only in workspace contents, so they build an identical 19-field
+/// context — factor it out so the two can't drift when `PromptContext`
+/// gains fields. Borrows the caller's `workspace` and pre-built
+/// `prompt_tools` so the returned context outlives neither.
+fn memory_framing_ctx<'a>(
+    workspace: &'a std::path::Path,
+    prompt_tools: &'a [PromptTool<'a>],
+) -> PromptContext<'a> {
+    PromptContext {
+        workspace_dir: workspace,
+        model_name: "test-model",
+        agent_id: "",
+        tools: prompt_tools,
+        workflows: &[],
+        dispatcher_instructions: "",
+        learned: LearnedContextData::default(),
+        visible_tool_names: &NO_FILTER,
+        tool_call_format: ToolCallFormat::PFormat,
+        connected_integrations: &[],
+        connected_identities_md: String::new(),
+        include_profile: false,
+        include_memory_md: true,
+        curated_snapshot: None,
+        user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+    }
+}
+
+#[test]
+fn memory_md_injection_is_framed_as_background_not_prior_chat() {
+    // GH-4745 regression: MEMORY.md is durable cross-session memory. Without
+    // a frame, a relevant curated observation reads to the model as prior
+    // *in-thread* conversation, so on a brand-new thread it opens with
+    // "already covered this in a previous chat" and shortcuts its answer.
+    // Pin that the rendered prompt frames the block as background memory and
+    // that the guardrail precedes the injected `### MEMORY.md` heading.
+    //
+    // `tempfile::tempdir()` cleans up via `Drop` even when an assertion
+    // below panics — a bare `remove_dir_all` at the tail would leak the
+    // dir exactly on the failing run we most want to inspect.
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(
+        workspace.path().join("MEMORY.md"),
+        "# Long-term memory\nReviewed `def f(x)` last week; user prefers terse notes.",
+    )
+    .unwrap();
+
+    let tools: Vec<Box<dyn Tool>> = vec![];
+    let prompt_tools = PromptTool::from_tools(&tools);
+    let ctx = memory_framing_ctx(workspace.path(), &prompt_tools);
+
+    let rendered = UserFilesSection.build(&ctx).unwrap();
+
+    assert!(
+        rendered.contains("### MEMORY.md") && rendered.contains("terse notes"),
+        "MEMORY.md must still be injected, got:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("background — not this conversation"),
+        "MEMORY.md must be framed as durable background memory, got:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("already covered this in a previous chat"),
+        "framing must explicitly forbid asserting prior-chat continuity, got:\n{rendered}"
+    );
+    let frame_at = rendered.find("background — not this conversation").unwrap();
+    let heading_at = rendered.find("### MEMORY.md").unwrap();
+    assert!(
+        frame_at < heading_at,
+        "the guardrail note must precede the MEMORY.md block, got:\n{rendered}"
+    );
+}
+
+#[test]
+fn memory_md_framing_absent_when_no_memory_content() {
+    // The frame must never appear on its own: when MEMORY.md is missing/empty
+    // (a genuinely fresh workspace) there is nothing to scope, so emitting a
+    // dangling "background memory" note would itself imply phantom history.
+    let workspace = tempfile::tempdir().unwrap();
+
+    let tools: Vec<Box<dyn Tool>> = vec![];
+    let prompt_tools = PromptTool::from_tools(&tools);
+    let ctx = memory_framing_ctx(workspace.path(), &prompt_tools);
+
+    let rendered = UserFilesSection.build(&ctx).unwrap();
+    assert!(
+        !rendered.contains("background — not this conversation"),
+        "no MEMORY.md content → no dangling framing note, got:\n{rendered}"
+    );
 }
 
 #[test]

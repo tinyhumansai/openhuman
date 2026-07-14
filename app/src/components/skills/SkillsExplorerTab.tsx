@@ -5,9 +5,9 @@ import { useT } from '../../lib/i18n/I18nContext';
 import { type CatalogEntry, skillRegistryApi } from '../../services/api/skillRegistryApi';
 import {
   type InstallWorkflowFromUrlResult,
-  workflowsApi,
+  skillsApi,
   type WorkflowSummary,
-} from '../../services/api/workflowsApi';
+} from '../../services/api/skillsApi';
 import EmptyStateCard from '../EmptyStateCard';
 import ChipTabs from '../layout/ChipTabs';
 import Button from '../ui/Button';
@@ -574,7 +574,7 @@ export default function SkillsExplorerTab({ onToast }: SkillsExplorerTabProps) {
     try {
       // Include `skills/`-root installs (registry installs land there) so they
       // appear in the Installed tab and flip the catalog Install button.
-      const result = await workflowsApi.listWorkflows({ includeSkills: true });
+      const result = await skillsApi.listWorkflows({ includeSkills: true });
       log('fetchSkills: count=%d', result.length);
       setSkills(result);
     } catch (err) {

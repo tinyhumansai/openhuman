@@ -66,4 +66,59 @@ if [ -f "$HOME/.cargo/env" ]; then
   # shellcheck disable=SC1091
   source "$HOME/.cargo/env"
 fi
-cargo test --manifest-path Cargo.toml --workspace "$@"
+
+cargo_test() {
+  cargo test --manifest-path Cargo.toml --workspace "$@"
+}
+
+integration_test_targets() {
+  find tests -maxdepth 1 -type f -name '*.rs' -print |
+    sed -e 's#^tests/##' -e 's#\.rs$##' |
+    sort
+}
+
+raw_coverage_modules() {
+  find tests/raw_coverage -maxdepth 1 -type f -name '*.rs' -print |
+    sed -e 's#^tests/raw_coverage/##' -e 's#\.rs$##' |
+    sort
+}
+
+run_raw_coverage_modules() {
+  while IFS= read -r module; do
+    [ -n "$module" ] || continue
+    echo "[test-rust-with-mock] raw coverage module: ${module}"
+    cargo_test --test raw_coverage_all -- "${module}::" --test-threads=1 "$@"
+  done < <(raw_coverage_modules)
+}
+
+run_full_suite() {
+  cargo_test --lib --bins -- "$@"
+  cargo_test --doc -- "$@"
+
+  while IFS= read -r target; do
+    [ -n "$target" ] || continue
+    if [ "$target" = "raw_coverage_all" ]; then
+      # These suites used to run as separate integration-test binaries. Run
+      # each generated module filter in its own cargo process so local
+      # `pnpm test:rust` preserves the same process-global isolation as CI.
+      run_raw_coverage_modules "$@"
+    else
+      cargo_test --test "$target" -- "$@"
+    fi
+  done < <(integration_test_targets)
+}
+
+if [ "$#" -eq 0 ]; then
+  run_full_suite
+elif [ "$1" = "--" ]; then
+  shift
+  run_full_suite "$@"
+elif [ "$#" -ge 2 ] && [ "$1" = "--test" ] && [ "$2" = "raw_coverage_all" ]; then
+  shift 2
+  if [ "${1:-}" = "--" ]; then
+    shift
+  fi
+  run_raw_coverage_modules "$@"
+else
+  cargo_test "$@"
+fi

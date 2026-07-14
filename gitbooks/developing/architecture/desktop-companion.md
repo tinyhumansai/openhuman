@@ -1,5 +1,5 @@
 ---
-description: Desktop companion domain — Clicky-style interaction loop tying hotkey, voice, screen intelligence, LLM, TTS, and visual pointing into a single product experience.
+description: Desktop companion domain, a Clicky-style interaction loop tying hotkey, voice, screen intelligence, LLM, TTS, and visual pointing into a single product experience.
 icon: robot
 ---
 
@@ -55,26 +55,26 @@ Valid transitions are enforced by `session::is_valid_transition()`. Key paths:
 
 `pipeline.rs` orchestrates a single turn:
 
-1. **Activation** — state transitions to Listening (will be driven by Tauri shell hotkey bridge in PR 2)
-2. **STT** — audio samples transcribed via `voice::cloud_transcribe` (Whisper)
-3. **Screen context** — `accessibility::foreground_context()` for app name + window title
-4. **LLM** — chat-completions via `BackendOAuthClient` with system prompt, screen context, and rolling conversation history (last 20 turns as context)
-5. **Parse response** — extract `[POINT:x,y:label:screenN]` tags via `pointing::parse_and_map()`
-6. **Handoff check** — scan response for provider keywords, match against `provider_surfaces` queue
-7. **TTS** — synthesize speech via `voice::reply_speech` (ElevenLabs)
-8. **Pointing** — emit pointing targets for overlay animation
+1. **Activation**: state transitions to Listening (will be driven by Tauri shell hotkey bridge in PR 2)
+2. **STT**: audio samples transcribed via `voice::cloud_transcribe` (Whisper)
+3. **Screen context**: `accessibility::foreground_context()` for app name + window title
+4. **LLM**: chat-completions via `BackendOAuthClient` with system prompt, screen context, and rolling conversation history (last 20 turns as context)
+5. **Parse response**: extract `[POINT:x,y:label:screenN]` tags via `pointing::parse_and_map()`
+6. **Handoff check**: scan response for provider keywords, match against `provider_surfaces` queue
+7. **TTS**: synthesize speech via `voice::reply_speech` (ElevenLabs)
+8. **Pointing**: emit pointing targets for overlay animation
 9. **Return to Idle**
 
-The pipeline supports cancellation via `CancellationToken` — the Tauri shell can cancel at any checkpoint (between STT, LLM, TTS stages).
+The pipeline supports cancellation via `CancellationToken`: the Tauri shell can cancel at any checkpoint (between STT, LLM, TTS stages).
 
 Text input is also supported via `run_text_turn()` which skips STT.
 
 ## Session lifecycle
 
-- **One session at a time** — enforced by a process-global `Mutex<Option<CompanionSessionInner>>`
-- **Consent required** — `start_session` rejects `consent=false`
-- **TTL enforcement** — sessions auto-expire when `status()` detects elapsed TTL
-- **Conversation history** — capped at 50 turns, oldest drained on overflow
+- **One session at a time**: enforced by a process-global `Mutex<Option<CompanionSessionInner>>`
+- **Consent required**: `start_session` rejects `consent=false`
+- **TTL enforcement**: sessions auto-expire when `status()` detects elapsed TTL
+- **Conversation history**: capped at 50 turns, oldest drained on overflow
 
 ## RPC surface
 
@@ -112,8 +112,8 @@ LLM responses can embed `[POINT:x,y:label:screenN]` tags. `pointing.rs`:
 
 ## Platform scope
 
-- **macOS**: Full support — hotkey, screen capture, pointing, TTS, overlay
-- **Windows/Linux**: Partial — hotkey works (rdev), screen context stubbed, no pointing
+- **macOS**: Full support (hotkey, screen capture, pointing, TTS, overlay)
+- **Windows/Linux**: Partial (hotkey works via rdev, screen context stubbed, no pointing)
 
 Platform-specific code is gated with `#[cfg(target_os = "macos")]`.
 

@@ -16,7 +16,8 @@ use crate::openhuman::codegraph::{
 };
 use crate::openhuman::config::Config;
 use crate::openhuman::embeddings;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
+use tinyagents::harness::tool::ToolExecutionContext;
 
 fn codegraph_db(workspace_dir: &Path) -> std::path::PathBuf {
     workspace_dir.join("codegraph").join("index.db")
@@ -86,6 +87,24 @@ fn resolve_repo_dir(path: &str, workspace_dir: &Path) -> anyhow::Result<PathBuf>
     Ok(repo_dir)
 }
 
+fn workspace_dir_for_context(
+    default_workspace_dir: &Path,
+    context: Option<&ToolExecutionContext>,
+    tool_name: &str,
+) -> PathBuf {
+    if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+        debug!(
+            tool = tool_name,
+            workspace_root = %workspace.root.display(),
+            policy_id = %workspace.policy_id,
+            "[codegraph] using ToolExecutionContext workspace root"
+        );
+        return workspace.root.clone();
+    }
+
+    default_workspace_dir.to_path_buf()
+}
+
 /// `codegraph_index { path, ref? }` — (re)index the worktree at `path` under its
 /// current branch (or `ref`). Incremental: only changed blobs are embedded.
 pub struct CodegraphIndexTool {
@@ -100,35 +119,8 @@ impl CodegraphIndexTool {
             workspace_dir,
         }
     }
-}
 
-#[async_trait]
-impl Tool for CodegraphIndexTool {
-    fn name(&self) -> &str {
-        "codegraph_index"
-    }
-
-    fn description(&self) -> &str {
-        "Index a checked-out repo for fast retrieval. Args: `path` (repo working dir, required), \
-         `ref` (branch/commit; defaults to the current checkout), `mode` (`auto` (default) | `lexical` | `dense`). \
-         `auto` builds BM25-only for small repos and adds dense embeddings above a file-count threshold. \
-         Incremental and content-addressed — only changed files are (re)processed. \
-         Returns {mode, files, computed, cached, skipped}."
-    }
-
-    fn parameters_schema(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Repo working directory to index."},
-                "ref": {"type": "string", "description": "Branch/commit to index (defaults to current checkout)."},
-                "mode": {"type": "string", "enum": ["auto", "lexical", "dense"], "description": "auto (size-gated, default), lexical (BM25 only), or dense (embeddings)."}
-            },
-            "required": ["path"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+    async fn run(&self, args: Value, workspace_dir: &Path) -> anyhow::Result<ToolResult> {
         let path = match arg_str(&args, "path") {
             Some(p) => p,
             None => {
@@ -138,7 +130,7 @@ impl Tool for CodegraphIndexTool {
                 ));
             }
         };
-        let repo_dir = resolve_repo_dir(path, &self.workspace_dir)?;
+        let repo_dir = resolve_repo_dir(path, workspace_dir)?;
         let git_ref = match arg_str(&args, "ref") {
             Some(r) => r.to_string(),
             None => current_ref(&repo_dir)?,
@@ -148,6 +140,7 @@ impl Tool for CodegraphIndexTool {
         debug!(
             repo = %rid,
             git_ref = %git_ref,
+            workspace_dir = %workspace_dir.display(),
             ?mode,
             "[codegraph:index] resolved mode; indexing"
         );
@@ -158,7 +151,7 @@ impl Tool for CodegraphIndexTool {
                 return Err(e);
             }
         };
-        let mut store = match CodegraphStore::open(&codegraph_db(&self.workspace_dir)) {
+        let mut store = match CodegraphStore::open(&codegraph_db(workspace_dir)) {
             Ok(s) => s,
             Err(e) => {
                 debug!(repo = %rid, error = %e, "[codegraph:index] store open error");
@@ -202,6 +195,47 @@ impl Tool for CodegraphIndexTool {
     }
 }
 
+#[async_trait]
+impl Tool for CodegraphIndexTool {
+    fn name(&self) -> &str {
+        "codegraph_index"
+    }
+
+    fn description(&self) -> &str {
+        "Index a checked-out repo for fast retrieval. Args: `path` (repo working dir, required), \
+         `ref` (branch/commit; defaults to the current checkout), `mode` (`auto` (default) | `lexical` | `dense`). \
+         `auto` builds BM25-only for small repos and adds dense embeddings above a file-count threshold. \
+         Incremental and content-addressed — only changed files are (re)processed. \
+         Returns {mode, files, computed, cached, skipped}."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Repo working directory to index."},
+                "ref": {"type": "string", "description": "Branch/commit to index (defaults to current checkout)."},
+                "mode": {"type": "string", "enum": ["auto", "lexical", "dense"], "description": "auto (size-gated, default), lexical (BM25 only), or dense (embeddings)."}
+            },
+            "required": ["path"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.run(args, &self.workspace_dir).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let workspace_dir = workspace_dir_for_context(&self.workspace_dir, context, self.name());
+        self.run(args, &workspace_dir).await
+    }
+}
+
 /// `codegraph_search { query, path, ref?, k? }` — the seed: BM25 ∪ dense,
 /// RRF-fused, with a `coverage` flag (`full`/`partial`/`none`). On `none`/`partial`
 /// the agent should treat hits as hints and lean on grep.
@@ -217,37 +251,8 @@ impl CodegraphSearchTool {
             workspace_dir,
         }
     }
-}
 
-#[async_trait]
-impl Tool for CodegraphSearchTool {
-    fn name(&self) -> &str {
-        "codegraph_search"
-    }
-
-    fn description(&self) -> &str {
-        "Find the files most relevant to a query in a repo (lexical + semantic, fused). \
-         Indexes the repo first if it hasn't been indexed yet (synchronous; BM25-only for small \
-         repos, dense embeddings for larger ones). \
-         Args: `query` (required), `path` (repo working dir, required), `ref` (defaults to current), \
-         `k` (max hits, default 10). Returns {hits:[paths], coverage:full|partial|none, indexed, total}. \
-         If coverage is not `full`, treat hits as hints and also use grep."
-    }
-
-    fn parameters_schema(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "What to find (issue text / symbols)."},
-                "path": {"type": "string", "description": "Repo working directory."},
-                "ref": {"type": "string", "description": "Branch/commit (defaults to current checkout)."},
-                "k": {"type": "integer", "description": "Max hits to return (default 10)."}
-            },
-            "required": ["query", "path"]
-        })
-    }
-
-    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+    async fn run(&self, args: Value, workspace_dir: &Path) -> anyhow::Result<ToolResult> {
         let query = match arg_str(&args, "query") {
             Some(q) => q,
             None => {
@@ -264,7 +269,7 @@ impl Tool for CodegraphSearchTool {
                 ));
             }
         };
-        let repo_dir = resolve_repo_dir(path, &self.workspace_dir)?;
+        let repo_dir = resolve_repo_dir(path, workspace_dir)?;
         let git_ref = match arg_str(&args, "ref") {
             Some(r) => r.to_string(),
             None => current_ref(&repo_dir)?,
@@ -278,7 +283,7 @@ impl Tool for CodegraphSearchTool {
                 return Err(e);
             }
         };
-        let mut store = match CodegraphStore::open(&codegraph_db(&self.workspace_dir)) {
+        let mut store = match CodegraphStore::open(&codegraph_db(workspace_dir)) {
             Ok(s) => s,
             Err(e) => {
                 debug!(repo = %rid, error = %e, "[codegraph:search] store open error");
@@ -293,6 +298,7 @@ impl Tool for CodegraphSearchTool {
             debug!(
                 repo = %rid,
                 git_ref = %git_ref,
+                workspace_dir = %workspace_dir.display(),
                 ?mode,
                 "[codegraph:search] no manifest; auto-indexing before search"
             );
@@ -327,5 +333,48 @@ impl Tool for CodegraphSearchTool {
             "[codegraph:search] success"
         );
         Ok(ToolResult::success(serde_json::to_string_pretty(&outcome)?))
+    }
+}
+
+#[async_trait]
+impl Tool for CodegraphSearchTool {
+    fn name(&self) -> &str {
+        "codegraph_search"
+    }
+
+    fn description(&self) -> &str {
+        "Find the files most relevant to a query in a repo (lexical + semantic, fused). \
+         Indexes the repo first if it hasn't been indexed yet (synchronous; BM25-only for small \
+         repos, dense embeddings for larger ones). \
+         Args: `query` (required), `path` (repo working dir, required), `ref` (defaults to current), \
+         `k` (max hits, default 10). Returns {hits:[paths], coverage:full|partial|none, indexed, total}. \
+         If coverage is not `full`, treat hits as hints and also use grep."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to find (issue text / symbols)."},
+                "path": {"type": "string", "description": "Repo working directory."},
+                "ref": {"type": "string", "description": "Branch/commit (defaults to current checkout)."},
+                "k": {"type": "integer", "description": "Max hits to return (default 10)."}
+            },
+            "required": ["query", "path"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.run(args, &self.workspace_dir).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let workspace_dir = workspace_dir_for_context(&self.workspace_dir, context, self.name());
+        self.run(args, &workspace_dir).await
     }
 }

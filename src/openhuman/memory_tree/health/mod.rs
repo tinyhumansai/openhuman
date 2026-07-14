@@ -242,6 +242,20 @@ pub fn classify_embed_error_str(msg: &str) -> PipelineFailure {
             .with_detail(truncate_detail(msg));
     }
 
+    // Sibling of the #13021 case above: `OpenHumanCloudEmbedding::resolve_bearer`
+    // bails *before any HTTP round-trip* when the desktop/backend session
+    // bearer is absent (user signed out), with the literal phrase
+    // "No backend session for cloud embeddings ..." (see
+    // `src/openhuman/embeddings/cloud.rs`). Being a client-side bail it carries
+    // no `Embedding API error (<status>)` shape, so without this match it falls
+    // through to `Transient` — the Memory Tree then shows "temporary error…
+    // will retry automatically" and the worker retries an auth failure that a
+    // retry can never fix. Classify as `AuthMissing` so the health banner
+    // surfaces the "log in to OpenHuman" remediation and the job fails fast.
+    if lower.contains("no backend session") {
+        return PipelineFailure::new(FailureCode::AuthMissing).with_detail(truncate_detail(msg));
+    }
+
     // Dimension mismatch — the trait validator / CloudEmbedder rejects a
     // vector whose length isn't EMBEDDING_DIM. Check before status parsing:
     // it's a 2xx-but-wrong-shape case with no HTTP status to match.
@@ -720,6 +734,44 @@ mod tests {
             .context("reembed_backfill chunk_id=c");
         let f = classify_embed_error(&wrapped);
         assert_eq!(f.code, FailureCode::EmptyInputRefused);
+        assert!(f.is_unrecoverable());
+    }
+
+    /// #4359: `OpenHumanCloudEmbedding::resolve_bearer` bails with "No backend
+    /// session for cloud embeddings ..." *before any HTTP call* when the user
+    /// is signed out. This must classify as `AuthMissing` (unrecoverable, "log
+    /// in to OpenHuman" remediation) rather than falling through to `Transient`
+    /// ("will retry automatically" — a loop that an auth failure can never win).
+    #[test]
+    fn classify_no_backend_session_as_auth_missing() {
+        let msg = "No backend session for cloud embeddings: log in to OpenHuman, or set \
+                   memory.embedding_provider to \"ollama\" / \"none\" in config.toml";
+        let f = classify_embed_error_str(msg);
+        assert_eq!(
+            f.code,
+            FailureCode::AuthMissing,
+            "expected AuthMissing for {msg:?}"
+        );
+        assert_eq!(f.class, FailureClass::Unrecoverable);
+        assert_eq!(f.remediation_key, "memory.health.remediation.auth_missing");
+        assert!(f.is_unrecoverable());
+    }
+
+    /// The match must be case-insensitive and survive `anyhow` context wrapping:
+    /// the bail is `.context()`-wrapped on its way up through the embed pipeline
+    /// (e.g. `embed_each_via_provider` adds "cloud embeddings failed"), and
+    /// `classify_embed_error` flattens the chain via `{err:#}`.
+    #[test]
+    fn classify_no_backend_session_through_anyhow_context_chain() {
+        let base = anyhow::anyhow!(
+            "No backend session for cloud embeddings: log in to OpenHuman, or set \
+             memory.embedding_provider to \"ollama\" / \"none\" in config.toml"
+        );
+        let wrapped = base
+            .context("cloud embeddings failed")
+            .context("reembed_backfill chunk_id=c");
+        let f = classify_embed_error(&wrapped);
+        assert_eq!(f.code, FailureCode::AuthMissing);
         assert!(f.is_unrecoverable());
     }
 

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { WorkflowSummary } from '../../../services/api/workflowsApi';
+import type { WorkflowSummary } from '../../../services/api/skillsApi';
 import WorkflowsTab from '../WorkflowsTab';
 
 vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
@@ -83,14 +83,11 @@ const seeded = (overrides: Partial<WorkflowSummary>): WorkflowSummary => ({
 });
 
 const listWorkflows = vi.fn();
-vi.mock('../../../services/api/workflowsApi', async () => {
-  const actual = await vi.importActual<typeof import('../../../services/api/workflowsApi')>(
-    '../../../services/api/workflowsApi'
+vi.mock('../../../services/api/skillsApi', async () => {
+  const actual = await vi.importActual<typeof import('../../../services/api/skillsApi')>(
+    '../../../services/api/skillsApi'
   );
-  return {
-    ...actual,
-    workflowsApi: { ...actual.workflowsApi, listWorkflows: () => listWorkflows() },
-  };
+  return { ...actual, skillsApi: { ...actual.skillsApi, listWorkflows: () => listWorkflows() } };
 });
 
 describe('WorkflowsTab', () => {
@@ -99,7 +96,7 @@ describe('WorkflowsTab', () => {
     listWorkflows.mockReset();
   });
 
-  it('lists workflows from workflowsApi with the create entry point', async () => {
+  it('lists workflows from skillsApi with the create entry point', async () => {
     listWorkflows.mockResolvedValue([
       seeded({ id: 'user-wf', name: 'User WF', scope: 'user' }),
       seeded({ id: 'project-wf', name: 'Project WF', scope: 'project' }),

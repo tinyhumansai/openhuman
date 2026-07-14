@@ -43,5 +43,5 @@ pub mod types;
 
 pub use capture::ToolMemoryCaptureHook;
 pub use prompt::{render_tool_memory_rules, ToolMemoryRulesSection, TOOL_MEMORY_HEADING};
-pub use store::{ToolMemoryStore, TOOL_MEMORY_PROMPT_CAP};
+pub use store::{tool_memory_store, ToolMemoryStore, TOOL_MEMORY_PROMPT_CAP};
 pub use types::{tool_memory_namespace, ToolMemoryPriority, ToolMemoryRule, ToolMemorySource};

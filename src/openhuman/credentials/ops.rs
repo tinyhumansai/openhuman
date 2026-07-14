@@ -55,6 +55,12 @@ pub async fn start_login_gated_services(config: &Config) {
     // 5. Autocomplete (text suggestions + Swift overlay helper)
     crate::openhuman::autocomplete::start_if_enabled(config).await;
 
+    // 6. Orchestration hosted-client: read-sync loop + world-diff uploader +
+    //    one-shot history migration. Idempotent (aborts a prior session's loops
+    //    first); no-op when orchestration is disabled. Runs here so both startup
+    //    (already logged in) and a fresh login start the hosted-client tail.
+    crate::openhuman::orchestration::start_hosted_client_services(config).await;
+
     log::info!("[services] all login-gated services started");
 }
 
@@ -100,6 +106,9 @@ pub async fn stop_login_gated_services(config: &Config) {
     //    stops transcribing/delivering after logout (no audio processed while
     //    logged out). Symmetric with start_login_gated_services step 3b.
     crate::openhuman::voice::always_on::stop();
+
+    // 7. Orchestration hosted-client loops (read-sync + world-diff uploader).
+    crate::openhuman::orchestration::stop_hosted_client_services();
 
     log::info!("[services] all login-gated services stopped");
 }
@@ -433,6 +442,31 @@ async fn store_session_inner(
             logs.push(format!("memory client bind warning: {e}"));
         }
     }
+    match crate::core::runtime::context::CoreContext::rebind_default_workspace_dir(
+        &effective_config.workspace_dir,
+    ) {
+        Ok(_) => logs.push(format!(
+            "core context bound to workspace {}",
+            effective_config.workspace_dir.display()
+        )),
+        Err(e) => {
+            tracing::warn!(error = %e, "[credentials] failed to rebind core context after login");
+            logs.push(format!("core context bind warning: {e}"));
+        }
+    }
+    // Rebind the people store to the per-user workspace too — the boot seed may
+    // have bound it to the pre-login workspace, and it must follow the active
+    // user like the memory client does (#4378).
+    match crate::openhuman::people::store::init_from_workspace(&effective_config.workspace_dir) {
+        Ok(_) => logs.push(format!(
+            "people store bound to workspace {}",
+            effective_config.workspace_dir.display()
+        )),
+        Err(e) => {
+            tracing::warn!(error = %e, "[credentials] failed to bind people store after login");
+            logs.push(format!("people store bind warning: {e}"));
+        }
+    }
     crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
         effective_config.workspace_dir.clone(),
     );
@@ -443,7 +477,7 @@ async fn store_session_inner(
     // heartbeat loop. Idempotent — no-op on subsequent logins of the same
     // process. Bootstrap failures are non-fatal: the session itself is
     // already stored above, so we only warn.
-    if let Err(e) = crate::openhuman::subconscious::global::bootstrap_after_login().await {
+    if let Err(e) = crate::openhuman::subconscious::registry::bootstrap_after_login().await {
         tracing::warn!(error = %e, "[subconscious] post-login bootstrap failed");
         logs.push(format!("subconscious bootstrap warning: {e}"));
     } else {
@@ -460,6 +494,13 @@ async fn store_session_inner(
     // in place. Workers that were sleeping in the paused poll loop will
     // pick this up at their next iteration and resume LLM-bound work.
     crate::openhuman::scheduler_gate::set_signed_out(false);
+    tracing::debug!(
+        domain = "credentials",
+        operation = "store_session",
+        "[credentials][auth-store] scheduler gate cleared; ensuring re-embed backfill after login"
+    );
+    crate::openhuman::memory_queue::ensure_reembed_backfill(&effective_config);
+    logs.push("memory re-embed backfill checked after login".to_string());
 
     // Bind the Sentry scope to this user so background events that fire
     // before the frontend's `app_state_snapshot` warms the user cache still
@@ -584,7 +625,7 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
     // cached engine would keep pointing at the previous user's workspace_dir
     // and the heartbeat task would leak, ticking against the wrong DB when a
     // different user signs in to the same sidecar process.
-    crate::openhuman::subconscious::global::reset_engine_for_user_switch().await;
+    crate::openhuman::subconscious::registry::reset_engine_for_user_switch().await;
 
     // Drop the Sentry scope user so events surfaced during/after teardown
     // (and before the next login) are no longer attributed to the

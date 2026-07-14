@@ -146,6 +146,18 @@ impl Tool for WebFetchTool {
             Err(e) => return Ok(ToolResult::error(format!("URL rejected: {e}"))),
         };
 
+        // Egress spine (privacy epic S2, #4436): disclose the fetch destination
+        // before contacting the host.
+        {
+            let host = reqwest::Url::parse(&url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "unknown".to_string());
+            crate::openhuman::security::egress::emit_external_transfer(
+                crate::openhuman::security::egress::EgressDescriptor::network_fetch(host),
+            );
+        }
+
         // Disable automatic redirect following: reqwest follows up to 10
         // redirects by default, and a redirect target may be on a host
         // outside the allowed-domains list. We surface 3xx responses to

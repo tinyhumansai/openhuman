@@ -61,7 +61,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_u64("session_id", "Optional caller-provided correlation id (PTT session id)."),
                 optional_string(
                     "queue_mode",
-                    "Queue mode: 'interrupt' (default), 'steer', 'followup', or 'collect'.",
+                    "Queue mode: 'interrupt' (default), 'steer', 'followup', 'collect', or 'parallel'.",
                 ),
             ],
             outputs: vec![json_output("ack", "Acceptance payload.")],
@@ -73,6 +73,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![
                 required_string("client_id", "Client stream identifier."),
                 required_string("thread_id", "Thread identifier."),
+                optional_string(
+                    "request_id",
+                    "Request id to cancel. When set, only that turn is cancelled (a stale cancel for a superseded request is ignored so the newer turn survives). Omit to stop whatever is running on the thread.",
+                ),
             ],
             outputs: vec![json_output("ack", "Cancellation payload.")],
         },
@@ -122,6 +126,9 @@ fn handle_chat(params: Map<String, Value>) -> ControllerFuture {
                     speak_reply: p.speak_reply,
                     source: p.source,
                     session_id: p.session_id,
+                    // Attribution is stamped later by run_chat_task once the
+                    // target agent is resolved.
+                    agent_id: None,
                 },
             )
             .await?,
@@ -146,7 +153,7 @@ fn handle_queue_clear(params: Map<String, Value>) -> ControllerFuture {
 fn handle_cancel(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<WebCancelParams>(params)?;
-        to_json(channel_web_cancel(&p.client_id, &p.thread_id).await?)
+        to_json(channel_web_cancel(&p.client_id, &p.thread_id, p.request_id.as_deref()).await?)
     })
 }
 

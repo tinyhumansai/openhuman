@@ -129,9 +129,10 @@ impl Provider for CannedProvider {
 
 fn mock_parent(provider: Arc<dyn Provider>) -> ParentExecutionContext {
     ParentExecutionContext {
+        workspace_descriptor: None,
         agent_definition_id: "agent_team_runtime".to_string(),
         allowed_subagent_ids: HashSet::new(),
-        provider,
+        turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(provider),
         all_tools: Arc::new(Vec::<Box<dyn Tool>>::new()),
         all_tool_specs: Arc::new(Vec::<ToolSpec>::new()),
         visible_tool_names: std::collections::HashSet::new(),

@@ -89,13 +89,19 @@ pub async fn start<R: Runtime>(
     meet_url: String,
     owner_display_name: String,
     bot_display_name: String,
+    primary_voice_id: Option<String>,
+    secondary_voice_id: Option<String>,
 ) -> Result<(), String> {
     log::info!(
         "[meet-audio] start request_id={request_id} url_prefix={} \
-         owner_chars={} bot_chars={}",
+         owner_chars={} bot_chars={} voices={}",
         truncate_for_log(&meet_url, 64),
         owner_display_name.chars().count(),
-        bot_display_name.chars().count()
+        bot_display_name.chars().count(),
+        [&primary_voice_id, &secondary_voice_id]
+            .into_iter()
+            .filter(|v| v.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false))
+            .count()
     );
 
     if let Some(state) = app.try_state::<MeetAudioState>() {
@@ -125,6 +131,11 @@ pub async fn start<R: Runtime>(
             // <code>" in the history list. The URL the shell built
             // the CEF window with is the canonical value.
             "meet_url": meet_url,
+            // Per-mascot TTS voices for speaker alternation (issue #4277).
+            // Null for single-mascot calls → core keeps the backend
+            // default voice (unchanged behavior).
+            "primary_voice_id": primary_voice_id,
+            "secondary_voice_id": secondary_voice_id,
         }),
     )
     .await?;

@@ -32,8 +32,11 @@ use super::handoff::{chunk_content, ResultHandoffCache, HANDOFF_MAX_ENTRIES};
 use crate::openhuman::agent::harness::session::transcript::{
     resolve_keyed_transcript_path, write_transcript, MessageUsage, TranscriptMeta, TurnUsage,
 };
-use crate::openhuman::inference::provider::{ChatMessage, Provider};
+use crate::openhuman::inference::provider::ChatMessage;
+use crate::openhuman::tinyagents::TurnModelSource;
 use crate::openhuman::tools::{Tool, ToolCategory, ToolResult};
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::ModelRequest;
 
 // ── Tunables ──────────────────────────────────────────────────────────
 
@@ -85,8 +88,11 @@ empty string — do not invent information.";
 /// with a toolkit scope).
 pub(super) struct ExtractFromResultTool {
     cache: Arc<ResultHandoffCache>,
-    provider: Arc<dyn Provider>,
-    /// Model id for the extraction `chat_with_system` calls. Resolved by the
+    /// The turn's model source (issue #4249, Phase 3 / Motion A): the tool builds
+    /// a summarizer crate `ChatModel` from it per call and queries the model's
+    /// context window through it, so it no longer names the `Provider` trait.
+    source: TurnModelSource,
+    /// Model id for the extraction summary calls. Resolved by the
     /// runner through the `summarization` role (alongside `provider`), so it
     /// tracks the user's `memory_provider` routing + `cloud_llm_model` override
     /// instead of a hardcoded tier string.
@@ -108,7 +114,7 @@ pub(super) struct ExtractFromResultTool {
 impl ExtractFromResultTool {
     pub(super) fn new(
         cache: Arc<ResultHandoffCache>,
-        provider: Arc<dyn Provider>,
+        source: TurnModelSource,
         model: String,
         workspace_dir: PathBuf,
         parent_chain: String,
@@ -116,7 +122,7 @@ impl ExtractFromResultTool {
     ) -> Self {
         Self {
             cache,
-            provider,
+            source,
             model,
             workspace_dir,
             parent_chain,
@@ -137,7 +143,7 @@ impl ExtractFromResultTool {
     /// [`chunk_char_budget_for_window`].
     async fn extract_chunk_char_budget(&self) -> usize {
         let window = self
-            .provider
+            .source
             .effective_context_window(&self.model)
             .await
             .or_else(|| crate::openhuman::inference::context_window_for_model(&self.model));
@@ -273,13 +279,22 @@ impl Tool for ExtractFromResultTool {
         let workspace_dir = self.workspace_dir.clone();
         let parent_chain = self.parent_chain.clone();
         let owner_agent_id = self.owner_agent_id.clone();
+        // One summarizer model for the whole chunk fan-out; each concurrent
+        // future clones the Arc (issue #4249, Phase 3 / Motion A). Model +
+        // temperature are baked into the model, so the per-call request only
+        // carries the messages.
+        let chat = self
+            .source
+            .build_summarizer(&self.model, EXTRACT_TEMPERATURE)?;
+        // Model id for the per-chunk transcript metadata (the chat call itself
+        // bakes it into `chat`).
         let model = self.model.clone();
 
         // Consume `chunks` with `into_iter` so each async block owns
         // its `String` — `buffer_unordered` polls the stream lazily
         // and needs futures with no borrows into the enclosing scope.
         let map_futures = chunks.into_iter().enumerate().map(|(i, chunk)| {
-            let provider = self.provider.clone();
+            let chat = chat.clone();
             let tool_name = cached.tool_name.clone();
             let query = query.to_string();
             let workspace_dir = workspace_dir.clone();
@@ -298,14 +313,17 @@ impl Tool for ExtractFromResultTool {
                     idx = i + 1,
                     total = total_chunks,
                 );
-                let result = provider
-                    .chat_with_system(
-                        Some(EXTRACT_SYSTEM_PROMPT),
-                        &user_prompt,
-                        &model,
-                        EXTRACT_TEMPERATURE,
+                let result = chat
+                    .invoke(
+                        &(),
+                        ModelRequest::new(vec![
+                            Message::system(EXTRACT_SYSTEM_PROMPT.to_string()),
+                            Message::user(user_prompt.clone()),
+                        ]),
                     )
-                    .await;
+                    .await
+                    .map(|r| r.text())
+                    .map_err(|e| anyhow::anyhow!(e.to_string()));
 
                 // Persist this chunk's transcript before returning, so
                 // a partial failure higher up the stream still leaves
@@ -396,14 +414,18 @@ impl ExtractFromResultTool {
 
         let call_seq = self.next_call_seq();
         let provider_result = self
-            .provider
-            .chat_with_system(
-                Some(EXTRACT_SYSTEM_PROMPT),
-                &user_prompt,
-                &self.model,
-                EXTRACT_TEMPERATURE,
+            .source
+            .build_summarizer(&self.model, EXTRACT_TEMPERATURE)?
+            .invoke(
+                &(),
+                ModelRequest::new(vec![
+                    Message::system(EXTRACT_SYSTEM_PROMPT.to_string()),
+                    Message::user(user_prompt.clone()),
+                ]),
             )
-            .await;
+            .await
+            .map(|r| r.text())
+            .map_err(|e| anyhow::anyhow!(e.to_string()));
 
         // Persist the transcript before returning — the LLM call cost
         // tokens regardless of whether we ultimately return success.

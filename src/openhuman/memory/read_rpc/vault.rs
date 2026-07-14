@@ -74,7 +74,7 @@ pub async fn vault_health_check_rpc(
         .map_err(|e| format!("vault_health_check pipeline_status: {e}"))?;
 
     let (content_root_abs, exists, readable, writable, obsidian_registered) = fs_probe;
-    let pipeline_healthy = pipeline.value.status != "error" && !pipeline.value.is_paused;
+    let pipeline_healthy = pipeline_is_healthy(&pipeline.value.status);
     let last_sync_ms = pipeline.value.last_sync_ms.max(0);
 
     let resp = VaultHealthCheckResponse {
@@ -101,6 +101,23 @@ pub async fn vault_health_check_rpc(
     Ok(RpcOutcome::single_log(resp, log))
 }
 
+/// Whether the memory pipeline status counts as "healthy" for the Vault setup
+/// checklist.
+///
+/// #4691: the Vault checklist and the Memory Sync panel read the SAME signal
+/// (`pipeline_status_rpc` → `derive_pipeline_status`), so they must never
+/// disagree. The prior denylist (`status != "error" && !is_paused`) let
+/// `"degraded"` slip through as healthy, so the Vault surface reported
+/// "Memory pipeline is healthy" while Memory Sync reported "Degraded".
+///
+/// This is an allowlist of the fully-operational states so any future
+/// non-operational status added to `derive_pipeline_status` defaults to
+/// unhealthy rather than silently reading as healthy. `paused`/`error`/
+/// `degraded` are all excluded.
+fn pipeline_is_healthy(status: &str) -> bool {
+    matches!(status, "idle" | "running" | "syncing")
+}
+
 fn probe_directory_writable(dir: &std::path::Path) -> bool {
     use std::io::Write;
     let ts = std::time::SystemTime::now()
@@ -124,5 +141,52 @@ fn probe_directory_writable(dir: &std::path::Path) -> bool {
             write_ok
         }
         Err(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pipeline_is_healthy;
+
+    // The full set of statuses `derive_pipeline_status` can return. Kept in sync
+    // with `memory_tree::tree::rpc::derive_pipeline_status` so a new status forces
+    // an explicit decision here.
+    const OPERATIONAL: &[&str] = &["idle", "running", "syncing"];
+    const NON_OPERATIONAL: &[&str] = &["paused", "error", "degraded"];
+
+    #[test]
+    fn operational_statuses_are_healthy() {
+        for status in OPERATIONAL {
+            assert!(
+                pipeline_is_healthy(status),
+                "expected `{status}` to be healthy"
+            );
+        }
+    }
+
+    #[test]
+    fn non_operational_statuses_are_not_healthy() {
+        for status in NON_OPERATIONAL {
+            assert!(
+                !pipeline_is_healthy(status),
+                "expected `{status}` to be unhealthy"
+            );
+        }
+    }
+
+    #[test]
+    fn degraded_is_not_healthy_regression_4691() {
+        // #4691: "degraded" previously leaked through the denylist and made the
+        // Vault checklist report "Memory pipeline is healthy" while Memory Sync
+        // reported "Degraded". It must read as unhealthy.
+        assert!(!pipeline_is_healthy("degraded"));
+    }
+
+    #[test]
+    fn unknown_status_defaults_to_unhealthy() {
+        // Allowlist semantics: any future/unexpected status is treated as
+        // unhealthy rather than silently reported as healthy.
+        assert!(!pipeline_is_healthy("boom"));
+        assert!(!pipeline_is_healthy(""));
     }
 }

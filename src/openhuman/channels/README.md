@@ -9,7 +9,7 @@ Multi-platform messaging integration. Owns the `Channel` trait, per-provider con
 - `pub fn start_channels` — `runtime/startup.rs` (re-exported `mod.rs:65`) — boot all enabled channels under the supervisor.
 - `pub fn doctor_channels` — `commands.rs` — diagnose connectivity for the doctor CLI.
 - `pub fn build_system_prompt` — re-exported from `crate::openhuman::context::channels_prompt`.
-- Per-provider channel structs: `pub struct CliChannel`, `DingTalkChannel`, `DiscordChannel`, `EmailChannel`, `IMessageChannel`, `IrcChannel`, `LarkChannel`, `LinqChannel`, `MattermostChannel`, `QQChannel`, `SignalChannel`, `SlackChannel`, `TelegramChannel`, `WhatsAppChannel` — `providers/<name>.rs`. Cargo-feature-gated: `MatrixChannel` (`channel-matrix`), `WhatsAppWebChannel` (`whatsapp-web`).
+- Per-provider channel structs: `pub struct CliChannel`, `DingTalkChannel`, `DiscordChannel`, `EmailChannel`, `IMessageChannel`, `IrcChannel`, `LarkChannel`, `LinqChannel`, `MattermostChannel`, `QQChannel`, `SignalChannel`, `SlackChannel`, `TelegramChannel`, `WhatsAppChannel` — `providers/<name>.rs`. Cargo-feature-gated: `WhatsAppWebChannel` (`whatsapp-web`).
 - Stable `pub use providers::<name>` paths for every provider — `mod.rs:18-36`.
 - RPC `channels.{list, describe, connect, disconnect, status, test, telegram_login_start, telegram_login_check, discord_link_start, discord_link_check, discord_list_guilds, discord_list_channels, discord_check_permissions, send_message, send_reaction, create_thread, update_thread, list_threads}` — `controllers/schemas.rs`.
 
@@ -33,7 +33,7 @@ Multi-platform messaging integration. Owns the `Channel` trait, per-provider con
 
 ## Tests
 
-- Unit: `bus_tests.rs`, `routes_tests.rs`, plus per-provider `*_tests.rs` (`email_channel_tests.rs`, `imessage_tests.rs`, `irc_tests.rs`, `lark_tests.rs`, `linq_tests.rs`, `matrix_tests.rs`, `mattermost_tests.rs`, `qq_tests.rs`, `signal_tests.rs`, `web_tests.rs`, `whatsapp_tests.rs`, `whatsapp_web_tests.rs`, `presentation_tests.rs`).
+- Unit: `bus_tests.rs`, `routes_tests.rs`, plus per-provider `*_tests.rs` (`email_channel_tests.rs`, `imessage_tests.rs`, `irc_tests.rs`, `lark_tests.rs`, `linq_tests.rs`, `mattermost_tests.rs`, `qq_tests.rs`, `signal_tests.rs`, `web_tests.rs`, `whatsapp_tests.rs`, `whatsapp_web_tests.rs`, `presentation_tests.rs`).
 - Cross-channel integration tests: `tests/discord_integration.rs`, `tests/telegram_integration.rs`, `tests/runtime_dispatch.rs`, `tests/common.rs`.
 - Telegram channel-level: `providers/telegram/channel_tests.rs`.
 - Controller tests: `controllers/{definitions_tests,ops_tests,schemas_tests}.rs`.

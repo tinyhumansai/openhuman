@@ -57,6 +57,7 @@ export function levelColor(level: number | null | undefined): string {
 }
 
 export function nodeColor(node: GraphNode): string {
+  if (node.color) return node.color; // UI override (e.g. dimmed offline agents)
   if (node.kind === 'root') return ROOT_COLOR;
   if (node.kind === 'source') return SOURCE_COLOR;
   if (node.kind === 'summary') return levelColor(node.level);
@@ -104,12 +105,15 @@ export const ROOT_NODE_ID = '__root__';
 export function buildGraph(
   nodes: GraphNode[],
   edges: GraphEdge[],
-  mode: GraphMode
+  mode: GraphMode,
+  rootLabel = 'Memory'
 ): { simNodes: SimNode[]; links: SimLink[] } {
   const ids = new Set(nodes.map(n => n.id));
 
   // Synthetic master root at the origin — all source nodes fan out from it.
-  const rootNode: SimNode = { kind: 'root', id: ROOT_NODE_ID, label: 'Memory', x: 0, y: 0 };
+  // `rootLabel` lets non-memory reuses (e.g. the orchestration overview) name
+  // the hub; defaults to "Memory".
+  const rootNode: SimNode = { kind: 'root', id: ROOT_NODE_ID, label: rootLabel, x: 0, y: 0 };
 
   const simNodes: SimNode[] = [rootNode];
   for (let i = 0; i < nodes.length; i++) {
@@ -143,24 +147,47 @@ export function buildGraph(
 }
 
 /**
+ * Optional per-graph tuning of the force simulation. Every field defaults to
+ * `1` (identity), so callers that omit it — including the Brain memory graph —
+ * get exactly the previous physics. Reuses that want a wider/looser layout
+ * (e.g. the orchestration scale showcase, which fans ~120 agents out from a
+ * core) scale the repulsion and link length up.
+ */
+export interface SimTuning {
+  /** Multiplies the Coulomb repulsion (bigger → nodes push apart harder). */
+  chargeScale?: number;
+  /** Multiplies rest link length (bigger → longer springs, wider fan-out). */
+  linkDistanceScale?: number;
+  /** Multiplies the `distanceMax` cutoff so far-apart nodes still repel. */
+  distanceMaxScale?: number;
+  /** Multiplies the centring pull (smaller → nodes drift out from centre). */
+  centerScale?: number;
+}
+
+/**
  * A cooled d3-force simulation (call `.tick()` from the render loop). Charge
  * = Coulomb repulsion (Barnes–Hut), link = Hooke spring, plus centring and
  * a soft collide so nodes don't stack.
  */
 export function createSimulation(
   simNodes: SimNode[],
-  links: SimLink[]
+  links: SimLink[],
+  tuning: SimTuning = {}
 ): Simulation<SimNode, SimLink> {
+  const charge = tuning.chargeScale ?? 1;
+  const linkDist = tuning.linkDistanceScale ?? 1;
+  const distMax = tuning.distanceMaxScale ?? 1;
+  const center = tuning.centerScale ?? 1;
   return forceSimulation(simNodes)
     .force(
       'charge',
       forceManyBody<SimNode>()
         .strength(n => {
-          if (n.kind === 'root') return -650;
-          if (n.kind === 'source') return -280;
-          return -140;
+          if (n.kind === 'root') return -650 * charge;
+          if (n.kind === 'source') return -280 * charge;
+          return -140 * charge;
         })
-        .distanceMax(300)
+        .distanceMax(300 * distMax)
     )
     .force(
       'link',
@@ -169,13 +196,13 @@ export function createSimulation(
         .distance(link => {
           const src = link.source as SimNode;
           const tgt = link.target as SimNode;
-          if (src.kind === 'root' || tgt.kind === 'root') return 90;
-          if (src.kind === 'source' || tgt.kind === 'source') return 40;
-          return 22;
+          if (src.kind === 'root' || tgt.kind === 'root') return 90 * linkDist;
+          if (src.kind === 'source' || tgt.kind === 'source') return 40 * linkDist;
+          return 22 * linkDist;
         })
         .strength(0.7)
     )
-    .force('center', forceCenter(0, 0).strength(0.12))
+    .force('center', forceCenter(0, 0).strength(0.12 * center))
     .force(
       'collide',
       forceCollide<SimNode>().radius(n => {

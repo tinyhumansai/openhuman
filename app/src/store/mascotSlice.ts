@@ -41,6 +41,17 @@ export const MAX_MASCOT_VOICE_ID_LEN = 128;
 export const MAX_CUSTOM_MASCOT_GIF_URL_LEN = 2048;
 
 /**
+ * Upper bound on how many per-mascot voice overrides we persist (issue
+ * #4277). A user only ever drives two mascots in a meeting, but they may
+ * try several before settling; the cap keeps the persisted map bounded
+ * against a runaway writer while comfortably covering real use. Once the
+ * cap is reached the reducer refuses NEW keys (an existing mascot can
+ * still be re-voiced); on rehydrate the first `MAX_MASCOT_VOICES` valid
+ * entries are kept and the rest dropped.
+ */
+export const MAX_MASCOT_VOICES = 16;
+
+/**
  * Loose shape check for a stored mascot voice id. Issue #1762 lets users
  * paste a custom ElevenLabs voice id, so we cannot enumerate the valid
  * set — instead we accept any non-empty trimmed string under the length
@@ -119,6 +130,21 @@ export interface MascotState {
    */
   selectedMascotId: string | null;
   /**
+   * Second mascot enabled for meetings (issue #4277). When set (and
+   * distinct from `selectedMascotId`) the meeting bot shows both mascots
+   * together and alternates who speaks each reply. `null` = single-mascot
+   * behavior, unchanged. Same validation/length cap as `selectedMascotId`.
+   */
+  secondaryMascotId: string | null;
+  /**
+   * Per-mascot reply-voice overrides (issue #4277), keyed by manifest
+   * mascot id → ElevenLabs voice id. Lets each mascot in a two-mascot
+   * meeting speak in its own voice. Empty map = no per-mascot override,
+   * so every mascot falls back to `selectEffectiveMascotVoiceId` (the
+   * single-voice behavior). Bounded by `MAX_MASCOT_VOICES`.
+   */
+  mascotVoices: Record<string, string>;
+  /**
    * User-supplied animated avatar source. Kept as a plain validated
    * string so the renderer can fall back to YellowMascot whenever the
    * override is absent or scrubbed during rehydrate.
@@ -134,10 +160,30 @@ const initialState: MascotState = {
   voiceGender: DEFAULT_MASCOT_VOICE_GENDER,
   voiceUseLocaleDefault: false,
   selectedMascotId: null,
+  secondaryMascotId: null,
+  mascotVoices: {},
   customMascotGifUrl: null,
   customPrimaryColor: '#F7D145',
   customSecondaryColor: '#B23C05',
 };
+
+/**
+ * Scrub a persisted / raw `mascotVoices` blob down to valid
+ * `mascotId → voiceId` entries under the size cap. Non-object inputs and
+ * any entry whose key or value fails `isMascotVoiceId` are dropped, so a
+ * corrupted localStorage blob can never poison the meeting TTS payload.
+ */
+function sanitizeMascotVoices(value: unknown): Record<string, string> {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    if (Object.keys(out).length >= MAX_MASCOT_VOICES) break;
+    if (isMascotVoiceId(key) && isMascotVoiceId(val)) {
+      out[key.trim()] = (val as string).trim();
+    }
+  }
+  return out;
+}
 
 function isMascotColor(value: unknown): value is MascotColor {
   return (
@@ -170,6 +216,49 @@ const mascotSlice = createSlice({
         state.selectedMascotId = null;
       }
     },
+    /**
+     * Enable / clear the second meeting mascot (issue #4277). Trimmed;
+     * empty / oversize / null clears it (back to single-mascot). A custom
+     * GIF avatar and a second Rive mascot are mutually exclusive, so
+     * setting one clears the GIF override — mirroring `setSelectedMascotId`.
+     */
+    setSecondaryMascotId(state, action: PayloadAction<string | null>) {
+      if (action.payload == null) {
+        state.secondaryMascotId = null;
+        return;
+      }
+      if (isMascotVoiceId(action.payload)) {
+        state.secondaryMascotId = action.payload.trim();
+        state.customMascotGifUrl = null;
+      } else {
+        state.secondaryMascotId = null;
+      }
+    },
+    /**
+     * Set or clear a per-mascot reply voice (issue #4277). A non-empty
+     * valid `voiceId` records `mascotId → voiceId`; a `null`/invalid
+     * `voiceId` removes the entry (that mascot falls back to the effective
+     * single voice). Both key and value are validated + trimmed so junk
+     * can't grow the persisted map. Over-cap writes are ignored.
+     */
+    setMascotVoice(state, action: PayloadAction<{ mascotId: string; voiceId: string | null }>) {
+      const { mascotId, voiceId } = action.payload;
+      if (!isMascotVoiceId(mascotId)) return;
+      const key = mascotId.trim();
+      if (voiceId == null || !isMascotVoiceId(voiceId)) {
+        delete state.mascotVoices[key];
+        return;
+      }
+      // Only enforce the cap when introducing a NEW key — updating an
+      // existing mascot's voice must always be allowed.
+      if (
+        !(key in state.mascotVoices) &&
+        Object.keys(state.mascotVoices).length >= MAX_MASCOT_VOICES
+      ) {
+        return;
+      }
+      state.mascotVoices[key] = voiceId.trim();
+    },
     setCustomMascotGifUrl(state, action: PayloadAction<string | null>) {
       if (action.payload == null) {
         state.customMascotGifUrl = null;
@@ -178,6 +267,7 @@ const mascotSlice = createSlice({
       if (isCustomMascotGifUrl(action.payload)) {
         state.customMascotGifUrl = action.payload.trim();
         state.selectedMascotId = null;
+        state.secondaryMascotId = null;
       } else {
         state.customMascotGifUrl = null;
       }
@@ -231,6 +321,8 @@ const mascotSlice = createSlice({
           voiceGender?: unknown;
           voiceUseLocaleDefault?: unknown;
           selectedMascotId?: unknown;
+          secondaryMascotId?: unknown;
+          mascotVoices?: unknown;
           customMascotGifUrl?: unknown;
           customPrimaryColor?: unknown;
           customSecondaryColor?: unknown;
@@ -246,6 +338,17 @@ const mascotSlice = createSlice({
           : isMascotVoiceId(restoredSelectedMascotId)
             ? (restoredSelectedMascotId as string).trim()
             : null;
+      // Second mascot + per-mascot voices are absent in pre-#4277 blobs;
+      // the `null` / `{}` fallbacks match a fresh install and keep
+      // single-mascot users unchanged. Invalid values are scrubbed.
+      const restoredSecondaryMascotId = rehydrateAction.payload?.secondaryMascotId;
+      state.secondaryMascotId =
+        restoredSecondaryMascotId == null
+          ? null
+          : isMascotVoiceId(restoredSecondaryMascotId)
+            ? (restoredSecondaryMascotId as string).trim()
+            : null;
+      state.mascotVoices = sanitizeMascotVoices(rehydrateAction.payload?.mascotVoices);
       const restoredCustomMascotGifUrl = rehydrateAction.payload?.customMascotGifUrl;
       state.customMascotGifUrl =
         restoredCustomMascotGifUrl == null
@@ -253,7 +356,12 @@ const mascotSlice = createSlice({
           : isCustomMascotGifUrl(restoredCustomMascotGifUrl)
             ? (restoredCustomMascotGifUrl as string).trim()
             : null;
-      if (state.customMascotGifUrl) state.selectedMascotId = null;
+      // A custom GIF avatar is mutually exclusive with Rive mascots —
+      // drop both mascot selections if a GIF override survived.
+      if (state.customMascotGifUrl) {
+        state.selectedMascotId = null;
+        state.secondaryMascotId = null;
+      }
       // `voiceId` is optional in older persisted blobs (pre-#1762) — the
       // `null` fallback is the intended default and matches a fresh
       // install. Invalid values are scrubbed so a corrupted localStorage
@@ -289,6 +397,8 @@ export const {
   setMascotVoiceGender,
   setMascotVoiceUseLocaleDefault,
   setSelectedMascotId,
+  setSecondaryMascotId,
+  setMascotVoice,
   setCustomMascotGifUrl,
   setCustomPrimaryColor,
   setCustomSecondaryColor,
@@ -308,6 +418,32 @@ export const selectMascotVoiceUseLocaleDefault = (state: { mascot: MascotState }
 
 export const selectSelectedMascotId = (state: { mascot: MascotState }): string | null =>
   state.mascot.selectedMascotId;
+
+export const selectSecondaryMascotId = (state: { mascot: MascotState }): string | null =>
+  state.mascot.secondaryMascotId;
+
+export const selectMascotVoices = (state: { mascot: MascotState }): Record<string, string> =>
+  state.mascot.mascotVoices ?? {};
+
+/**
+ * Explicit per-mascot voice override for `mascotId`, or `null` when none
+ * is set (caller falls back to the effective single voice). Curried so it
+ * reads like the other parameterised selectors at call sites.
+ */
+export const selectMascotVoiceFor =
+  (mascotId: string | null) =>
+  (state: { mascot: MascotState }): string | null =>
+    mascotId ? (state.mascot.mascotVoices?.[mascotId] ?? null) : null;
+
+/**
+ * True when a distinct second mascot is enabled — the single gate the
+ * meeting render + join paths use to decide dual vs single behavior.
+ * Guards against the same mascot being picked twice.
+ */
+export const selectDualMascotEnabled = (state: { mascot: MascotState }): boolean => {
+  const { selectedMascotId, secondaryMascotId } = state.mascot;
+  return secondaryMascotId != null && secondaryMascotId !== selectedMascotId;
+};
 
 export const selectCustomMascotGifUrl = (state: { mascot: MascotState }): string | null =>
   state.mascot.customMascotGifUrl;
@@ -352,6 +488,52 @@ export const selectEffectiveMascotVoiceId = (state: {
   // curated preset list, fall back to the first preset rather than a
   // bogus empty string.
   return MASCOT_VOICE_ID || ELEVENLABS_VOICE_PRESETS[0].id;
+};
+
+export interface MeetingMascotSlot {
+  /** Manifest mascot id, or `null` for the primary when the user is on
+   *  the default (first-`ready`) mascot. */
+  mascotId: string | null;
+  /** Resolved voice id: the per-mascot override, else the effective
+   *  single voice — never empty, so the join payload always carries one. */
+  voiceId: string;
+}
+
+export interface MeetingMascotVoicePair {
+  primary: MeetingMascotSlot;
+  secondary: MeetingMascotSlot | null;
+}
+
+/**
+ * Resolve the (up to two) mascots + voices a meeting join should use
+ * (issue #4277). Single source of truth for both join paths — the CEF
+ * `meet_call_open_window` sender and the backend `agent_meetings_join`
+ * sender — and for tests, so they can't drift.
+ *
+ * `secondary` is non-null only when a distinct second mascot is enabled
+ * (`selectDualMascotEnabled`). Each slot's voice is its per-mascot
+ * override, falling back to `selectEffectiveMascotVoiceId`; when the user
+ * hasn't set distinct voices both slots resolve to that same voice
+ * (harmless — alternation still works, it just sounds the same).
+ */
+export const selectMeetingMascotVoicePair = (state: {
+  mascot: MascotState;
+  locale?: { current: Locale };
+}): MeetingMascotVoicePair => {
+  const effective = selectEffectiveMascotVoiceId(state);
+  const { selectedMascotId, secondaryMascotId } = state.mascot;
+  // Tolerate a partial / pre-migration mascot slice (e.g. a legacy persisted
+  // blob or a test's preloadedState) that predates `mascotVoices`.
+  const mascotVoices = state.mascot.mascotVoices ?? {};
+  const primary: MeetingMascotSlot = {
+    mascotId: selectedMascotId,
+    voiceId: (selectedMascotId && mascotVoices[selectedMascotId]) || effective,
+  };
+  const dualEnabled = secondaryMascotId != null && secondaryMascotId !== selectedMascotId;
+  const secondary: MeetingMascotSlot | null = dualEnabled
+    ? { mascotId: secondaryMascotId, voiceId: mascotVoices[secondaryMascotId] || effective }
+    : null;
+  return { primary, secondary };
 };
 
 export { mascotSlice };

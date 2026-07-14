@@ -347,7 +347,7 @@ impl SttProvider for ExternalSttProvider {
                 text: result,
                 provider: self.slug.clone(),
             },
-            &format!("voice-factory: external STT completed via {}", self.slug),
+            format!("voice-factory: external STT completed via {}", self.slug),
         ))
     }
 }

@@ -37,6 +37,7 @@ const WalkthroughTooltip = ({
         {/* Progress bar — thin, smooth fill */}
         <div className="h-1 bg-surface-subtle">
           <div
+            data-testid="walkthrough-progress-bar"
             className="h-full bg-gradient-to-r from-[#2F6EF4] to-[#5B9BF3] transition-all duration-500 ease-out rounded-r-full"
             style={{ width: `${progress}%` }}
           />

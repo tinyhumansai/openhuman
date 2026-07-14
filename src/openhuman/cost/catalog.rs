@@ -16,6 +16,9 @@
 //! - power the fallback estimate in
 //!   [`crate::openhuman::agent::cost::lookup_pricing`] when a backend doesn't
 //!   echo an authoritative `charged_amount_usd`.
+//! - project OpenHuman's static rows into TinyAgents catalog entries so later
+//!   phases can hydrate crate-native model profiles from the same pricing and
+//!   window source instead of carrying a second table.
 //!
 //! ## Authority & freshness
 //!
@@ -40,6 +43,8 @@ use crate::openhuman::config::schema::ModelRegistryEntry;
 
 /// Month the published values below were last verified. Bump when refreshing.
 pub const PRICING_AS_OF: &str = "2026-06";
+
+const TINYAGENTS_CATALOG_SOURCE: &str = "openhuman-cost-catalog";
 
 /// A single model's published per-million-token rates (USD) and context window.
 #[derive(Debug, Clone, Copy)]
@@ -71,7 +76,7 @@ pub struct ModelPrice {
 /// rate); other providers' cached rates use the published discount where known
 /// and a conservative provider-typical fraction otherwise. Context windows are
 /// the published maximums.
-pub const KNOWN_MODEL_PRICING: &[ModelPrice] = &[
+const KNOWN_MODEL_PRICING: &[ModelPrice] = &[
     // ── Anthropic (authoritative prices; cache read = 0.1× input) ────────────
     ModelPrice {
         provider: "anthropic",
@@ -176,7 +181,7 @@ pub const KNOWN_MODEL_PRICING: &[ModelPrice] = &[
         input_per_mtok_usd: 2.00,
         cached_input_per_mtok_usd: 0.50,
         output_per_mtok_usd: 8.00,
-        context_window: 1_000_000,
+        context_window: 1_047_576,
     },
     ModelPrice {
         provider: "openai",
@@ -184,7 +189,7 @@ pub const KNOWN_MODEL_PRICING: &[ModelPrice] = &[
         input_per_mtok_usd: 0.40,
         cached_input_per_mtok_usd: 0.10,
         output_per_mtok_usd: 1.60,
-        context_window: 1_000_000,
+        context_window: 1_047_576,
     },
     ModelPrice {
         provider: "openai",
@@ -366,16 +371,38 @@ pub fn lookup(model: &str) -> Option<&'static ModelPrice> {
     }
     KNOWN_MODEL_PRICING
         .iter()
-        .filter(|p| norm.contains(p.model_id) || bare.contains(p.model_id))
+        .filter(|p| {
+            contains_at_boundary(&norm, p.model_id) || contains_at_boundary(bare, p.model_id)
+        })
         .max_by_key(|p| p.model_id.len())
 }
 
-/// Published maximum context window (tokens) for a model, if catalogued.
-///
-/// Convenience wrapper over [`lookup`] for callers that only need the window
-/// to budget prompts / trigger compaction / pick a route. `None` ⇒ unknown.
-pub fn context_window(model: &str) -> Option<u32> {
-    lookup(model).map(|p| p.context_window)
+/// Whether `needle` occurs in `haystack` at a token boundary — i.e. the
+/// characters immediately flanking the match are non-alphanumeric (or the string
+/// ends). This keeps the longest-substring fallback matching dated/suffixed ids
+/// (`gpt-5.4-mini-2026-05-01` → `gpt-5.4-mini`, flanked by `-`/string end) while
+/// refusing spurious mid-token collisions for short canonical ids
+/// (`proto3-chat` must NOT match the `o3` row, `solo1-7b` must NOT match `o1`).
+/// A naive `contains` overmatches those and, since [`context_window_for_model`]
+/// now routes windows through this catalog, that leaked a bogus 200K window
+/// (issue #4249 regression guard).
+fn contains_at_boundary(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let bytes = haystack.as_bytes();
+    let mut search_from = 0;
+    while let Some(rel) = haystack[search_from..].find(needle) {
+        let start = search_from + rel;
+        let end = start + needle.len();
+        let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        let after_ok = end == haystack.len() || !bytes[end].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        search_from = start + 1;
+    }
+    false
 }
 
 /// Estimate the USD cost of a single model call from catalogued per-MTok rates.
@@ -420,6 +447,218 @@ pub fn default_registry_entries() -> Vec<ModelRegistryEntry> {
             vision: false,
         })
         .collect()
+}
+
+fn per_token(rate_per_mtok: f64) -> Option<f64> {
+    (rate_per_mtok > 0.0).then_some(rate_per_mtok / 1_000_000.0)
+}
+
+/// Project one OpenHuman catalog row into a TinyAgents model-catalog entry.
+///
+/// This is intentionally a pricing/window projection only. OpenHuman still
+/// derives live runtime capability flags (tools, vision, streaming) from the
+/// provider adapter at construction time, because the static cost catalog does
+/// not yet encode those fields authoritatively for every provider/model.
+pub fn tinyagents_catalog_entry(price: &ModelPrice) -> tinyagents::registry::ModelCatalogEntry {
+    tinyagents::registry::ModelCatalogEntry {
+        provider: price.provider.to_string(),
+        model_id: price.model_id.to_string(),
+        aliases: Vec::new(),
+        mode: "chat".to_string(),
+        max_input_tokens: Some(u64::from(price.context_window)),
+        max_output_tokens: None,
+        deprecation_date: None,
+        pricing: tinyagents::registry::ModelPricing {
+            input_per_token: per_token(price.input_per_mtok_usd),
+            output_per_token: per_token(price.output_per_mtok_usd),
+            cache_read_input_per_token: per_token(price.cached_input_per_mtok_usd),
+            cache_creation_input_per_token: None,
+            input_audio_per_token: None,
+            output_reasoning_per_token: None,
+        },
+        capabilities: tinyagents::registry::ModelCapabilities {
+            prompt_caching: price.cached_input_per_mtok_usd > 0.0,
+            ..tinyagents::registry::ModelCapabilities::default()
+        },
+        source: TINYAGENTS_CATALOG_SOURCE.to_string(),
+        source_url: None,
+        raw: serde_json::json!({ "pricing_as_of": PRICING_AS_OF }),
+    }
+}
+
+/// Resolve a model id and return its TinyAgents catalog projection.
+pub fn tinyagents_catalog_entry_for_model(
+    model: &str,
+) -> Option<tinyagents::registry::ModelCatalogEntry> {
+    lookup(model).map(tinyagents_catalog_entry)
+}
+
+/// Source tag for local (runtime-discovered) model entries in the unified
+/// catalog. Distinct from [`TINYAGENTS_CATALOG_SOURCE`] so consumers can tell a
+/// priced vendor row apart from a free local runtime model.
+const TINYAGENTS_LOCAL_SOURCE: &str = "openhuman-local-runtime";
+
+/// A local model discovered at runtime (e.g. an installed Ollama tag) to overlay
+/// onto the unified catalog.
+///
+/// Local runtimes are enumerated at runtime, not from any static table, so the
+/// caller supplies these. Pricing is intentionally left unset (a local model is
+/// not billed per-token); only identity, context window, and the runtime's
+/// capability flags are carried.
+#[derive(Debug, Clone)]
+pub struct LocalCatalogModel {
+    /// Local provider slug (e.g. `"ollama"`, `"lmstudio"`, `"mlx"`).
+    pub provider: String,
+    /// Concrete local model id / tag (e.g. `"qwen3:14b"`).
+    pub model_id: String,
+    /// Loaded/declared context window in tokens, when known. `None` falls back to
+    /// the pattern-window backfill in [`unified_model_catalog`].
+    pub context_window: Option<u64>,
+    /// Whether the runtime advertises native tool calling for this model.
+    pub tool_calling: bool,
+    /// Whether the runtime streams tokens.
+    pub streaming: bool,
+}
+
+/// Project one runtime-discovered local model into a TinyAgents catalog entry.
+fn local_catalog_entry(model: &LocalCatalogModel) -> tinyagents::registry::ModelCatalogEntry {
+    tinyagents::registry::ModelCatalogEntry {
+        provider: model.provider.clone(),
+        model_id: model.model_id.clone(),
+        aliases: Vec::new(),
+        mode: "chat".to_string(),
+        max_input_tokens: model.context_window,
+        max_output_tokens: None,
+        deprecation_date: None,
+        // Local runtimes are not billed per token; leave every price unset (not
+        // zero — `None` means "not applicable", not "free of charge").
+        pricing: tinyagents::registry::ModelPricing::default(),
+        capabilities: tinyagents::registry::ModelCapabilities {
+            streaming: model.streaming,
+            tool_calling: model.tool_calling,
+            ..tinyagents::registry::ModelCapabilities::default()
+        },
+        source: TINYAGENTS_LOCAL_SOURCE.to_string(),
+        source_url: None,
+        raw: serde_json::json!({}),
+    }
+}
+
+/// Upsert `entry` into `models` keyed by `(provider, model_id)`: replace an
+/// existing row for that key, otherwise append. Later overlays win.
+fn upsert_catalog_entry(
+    models: &mut Vec<tinyagents::registry::ModelCatalogEntry>,
+    entry: tinyagents::registry::ModelCatalogEntry,
+) {
+    if let Some(existing) = models
+        .iter_mut()
+        .find(|m| m.provider == entry.provider && m.model_id == entry.model_id)
+    {
+        *existing = entry;
+    } else {
+        models.push(entry);
+    }
+}
+
+/// Build the single unified model catalog snapshot.
+///
+/// This is the **one** catalog projection consumers point at for pricing,
+/// context windows, and capability flags. It is assembled by layering sources in
+/// increasing precedence, so a later layer overrides an earlier one for the same
+/// `(provider, model_id)`:
+///
+/// 1. **Crate seed** — `tinyagents::registry::ModelCatalog::seed()`, the crate's
+///    checked-in offline catalog. This is the base/fallback set.
+/// 2. **OpenHuman static rows** — [`KNOWN_MODEL_PRICING`], projected via
+///    [`tinyagents_catalog_entry`]. OpenHuman's published rates/windows are
+///    authoritative for the models the product routes to, so they overwrite any
+///    crate-seed row for the same model. This is what keeps cost numbers
+///    identical: the priced rows are the exact same `KNOWN_MODEL_PRICING` values
+///    the cost bridge reads, only reshaped into crate entries.
+/// 3. **Local runtime models** — `local_models` (e.g. installed Ollama tags),
+///    appended (or overriding) as free, per-runtime entries.
+///
+/// After layering, any entry still missing a context window is backfilled from
+/// [`crate::openhuman::inference::model_context::context_window_for_model`] (which
+/// itself consults [`KNOWN_MODEL_PRICING`] then the pattern-window fallbacks) —
+/// this folds the `model_context.rs` pattern table into the one projection
+/// without inventing windows for rows a source already declared.
+///
+/// Cost note: this snapshot is a *superset projection* of the cost catalog, not a
+/// competing pricing source. `estimate_cost_usd` / `lookup` still read
+/// [`KNOWN_MODEL_PRICING`] directly (their normalization + longest-substring
+/// matching is not reproducible through the crate's exact-id lookup), so cost
+/// estimates are unchanged; deleting `KNOWN_MODEL_PRICING` in favour of a
+/// snapshot lookup is deferred until that lookup is proven numerically identical.
+pub fn unified_model_catalog(
+    local_models: &[LocalCatalogModel],
+) -> tinyagents::registry::ModelCatalogSnapshot {
+    // 1. Crate seed as the base layer.
+    let (mut models, mut sources) = match tinyagents::registry::ModelCatalog::seed() {
+        Ok(catalog) => {
+            let snapshot = catalog.snapshot();
+            (snapshot.models.clone(), snapshot.sources.clone())
+        }
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "[cost][catalog] tinyagents crate seed failed to load; unified catalog omits crate-seed rows"
+            );
+            (Vec::new(), Vec::new())
+        }
+    };
+
+    // 2. Overlay OpenHuman authoritative rates/windows (OpenHuman wins).
+    for price in KNOWN_MODEL_PRICING {
+        upsert_catalog_entry(&mut models, tinyagents_catalog_entry(price));
+    }
+
+    // 3. Overlay runtime-discovered local models.
+    for local in local_models {
+        upsert_catalog_entry(&mut models, local_catalog_entry(local));
+    }
+
+    // 4. Backfill still-missing context windows from the pattern fallbacks.
+    //    Only fills `None` — never overwrites a window a source already set.
+    for entry in models.iter_mut() {
+        if entry.max_input_tokens.is_none() {
+            if let Some(window) =
+                crate::openhuman::inference::model_context::context_window_for_model(
+                    &entry.model_id,
+                )
+            {
+                entry.max_input_tokens = Some(window);
+            }
+        }
+    }
+
+    // Record OpenHuman's own provenance alongside the crate seed's sources.
+    sources.push(tinyagents::registry::ModelCatalogSource {
+        name: TINYAGENTS_CATALOG_SOURCE.to_string(),
+        url: "repo:src/openhuman/cost/catalog.rs".to_string(),
+        retrieved_at: format!("{PRICING_AS_OF}-01T00:00:00Z"),
+    });
+
+    tinyagents::registry::ModelCatalogSnapshot {
+        schema_version: 1,
+        snapshot_id: format!("{TINYAGENTS_CATALOG_SOURCE}-unified-{PRICING_AS_OF}"),
+        created_at: format!("{PRICING_AS_OF}-01T00:00:00Z"),
+        currency: "USD".to_string(),
+        unit: "token".to_string(),
+        description: Some(
+            "Unified OpenHuman model catalog: crate seed overlaid with OpenHuman cost/window rows and runtime-discovered local models.".to_string(),
+        ),
+        sources,
+        models,
+    }
+}
+
+/// Convenience wrapper: the unified catalog with **no** runtime-discovered local
+/// models. Callers that cannot enumerate local runtimes (no config/network in
+/// hand) use this; callers that can pass discovered models to
+/// [`unified_model_catalog`] directly.
+pub fn tinyagents_catalog_snapshot() -> tinyagents::registry::ModelCatalogSnapshot {
+    unified_model_catalog(&[])
 }
 
 /// Pre-fill any **missing** (zero) price or context-window field on a registry
@@ -515,14 +754,6 @@ mod tests {
     }
 
     #[test]
-    fn context_window_helper_resolves_known_models() {
-        assert_eq!(context_window("claude-opus-4-8"), Some(1_000_000));
-        assert_eq!(context_window("openai/gpt-4.1-mini"), Some(1_000_000));
-        assert_eq!(context_window("deepseek-chat"), Some(128_000));
-        assert_eq!(context_window("totally-made-up"), None);
-    }
-
-    #[test]
     fn default_registry_entries_are_fully_populated() {
         let entries = default_registry_entries();
         assert_eq!(entries.len(), KNOWN_MODEL_PRICING.len());
@@ -532,6 +763,102 @@ mod tests {
             assert!(e.context_window > 0, "{} missing context window", e.id);
             assert!(!e.provider.is_empty());
         }
+    }
+
+    #[test]
+    fn tinyagents_projection_uses_per_token_rates_and_context_window() {
+        let entry = tinyagents_catalog_entry_for_model("anthropic/claude-opus-4-8")
+            .expect("projected catalog entry");
+        assert_eq!(entry.provider, "anthropic");
+        assert_eq!(entry.model_id, "claude-opus-4-8");
+        assert_eq!(entry.mode, "chat");
+        assert_eq!(entry.max_input_tokens, Some(1_000_000));
+        assert_eq!(entry.pricing.input_per_token, Some(5.0 / 1_000_000.0));
+        assert_eq!(entry.pricing.output_per_token, Some(25.0 / 1_000_000.0));
+        assert_eq!(
+            entry.pricing.cache_read_input_per_token,
+            Some(0.50 / 1_000_000.0)
+        );
+        assert_eq!(entry.pricing.cache_creation_input_per_token, None);
+        assert_eq!(entry.pricing.output_reasoning_per_token, None);
+        assert!(entry.capabilities.prompt_caching);
+        assert_eq!(entry.source, TINYAGENTS_CATALOG_SOURCE);
+    }
+
+    #[test]
+    fn tinyagents_snapshot_contains_all_known_rows() {
+        let snapshot = tinyagents_catalog_snapshot();
+        assert_eq!(snapshot.schema_version, 1);
+        assert_eq!(snapshot.currency, "USD");
+        assert_eq!(snapshot.unit, "token");
+        // Unified snapshot is a superset (crate seed + OpenHuman overlay), so it
+        // is at least as large as the OpenHuman table and carries every
+        // OpenHuman row with its authoritative pricing/window.
+        assert!(snapshot.models.len() >= KNOWN_MODEL_PRICING.len());
+        for price in KNOWN_MODEL_PRICING {
+            let entry = snapshot
+                .models
+                .iter()
+                .find(|m| m.provider == price.provider && m.model_id == price.model_id)
+                .unwrap_or_else(|| panic!("missing {} in unified snapshot", price.model_id));
+            assert_eq!(
+                entry.max_input_tokens,
+                Some(u64::from(price.context_window))
+            );
+            assert_eq!(
+                entry.pricing.input_per_token,
+                Some(price.input_per_mtok_usd / 1_000_000.0)
+            );
+        }
+        // OpenHuman provenance is recorded alongside any crate-seed sources.
+        assert!(snapshot
+            .sources
+            .iter()
+            .any(|s| s.name == TINYAGENTS_CATALOG_SOURCE));
+    }
+
+    #[test]
+    fn unified_catalog_overlays_local_models() {
+        let local = vec![LocalCatalogModel {
+            provider: "ollama".to_string(),
+            model_id: "qwen3:14b".to_string(),
+            context_window: Some(32_768),
+            tool_calling: true,
+            streaming: true,
+        }];
+        let snapshot = unified_model_catalog(&local);
+        let entry = snapshot
+            .models
+            .iter()
+            .find(|m| m.provider == "ollama" && m.model_id == "qwen3:14b")
+            .expect("local model present");
+        assert_eq!(entry.max_input_tokens, Some(32_768));
+        assert!(entry.capabilities.tool_calling);
+        // Local runtime models are not billed per token.
+        assert_eq!(entry.pricing.input_per_token, None);
+        assert_eq!(entry.pricing.output_per_token, None);
+        assert_eq!(entry.source, TINYAGENTS_LOCAL_SOURCE);
+    }
+
+    #[test]
+    fn unified_catalog_backfills_missing_window_without_source_window() {
+        // A local model with no declared window falls back to the pattern table
+        // via `context_window_for_model` (deepseek pattern → 128k) instead of
+        // staying unbounded.
+        let local = vec![LocalCatalogModel {
+            provider: "ollama".to_string(),
+            model_id: "deepseek-r1:7b".to_string(),
+            context_window: None,
+            tool_calling: false,
+            streaming: true,
+        }];
+        let snapshot = unified_model_catalog(&local);
+        let entry = snapshot
+            .models
+            .iter()
+            .find(|m| m.provider == "ollama" && m.model_id == "deepseek-r1:7b")
+            .expect("local model present");
+        assert_eq!(entry.max_input_tokens, Some(128_000));
     }
 
     #[test]

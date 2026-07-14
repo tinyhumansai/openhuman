@@ -17,7 +17,7 @@ function fakeSocket() {
     on: vi.fn((event: string, cb: (payload: unknown) => void) => {
       handlers.set(event, cb);
     }),
-    off: vi.fn((event: string) => {
+    off: vi.fn((event: string, _cb?: (payload: unknown) => void) => {
       handlers.delete(event);
     }),
     emit: (event: string, payload: unknown) => handlers.get(event)?.(payload),
@@ -32,6 +32,12 @@ describe('subscribeChatEvents — subagent delta events', () => {
     socket = fakeSocket();
     vi.spyOn(socketService, 'getSocket').mockReturnValue(
       socket as unknown as ReturnType<typeof socketService.getSocket>
+    );
+    vi.spyOn(socketService, 'on').mockImplementation((event, cb) =>
+      socket.on(event, cb as (payload: unknown) => void)
+    );
+    vi.spyOn(socketService, 'off').mockImplementation((event, cb) =>
+      socket.off(event, cb as (payload: unknown) => void)
     );
   });
 
@@ -78,10 +84,12 @@ describe('subscribeChatEvents — subagent delta events', () => {
     expect(socket.has('subagent_thinking_delta')).toBe(false);
   });
 
-  it('returns a no-op unsubscribe when there is no socket', () => {
+  it('does not require a raw socket when the socketService wrapper handles subscription', () => {
     vi.spyOn(socketService, 'getSocket').mockReturnValue(
       null as unknown as ReturnType<typeof socketService.getSocket>
     );
+    vi.spyOn(socketService, 'on').mockImplementation(() => {});
+    vi.spyOn(socketService, 'off').mockImplementation(() => {});
     expect(() => subscribeChatEvents({ onSubagentTextDelta: vi.fn() })()).not.toThrow();
   });
 });

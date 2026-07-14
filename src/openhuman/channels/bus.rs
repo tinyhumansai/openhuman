@@ -6,7 +6,7 @@
 
 use crate::core::event_bus::{DomainEvent, EventHandler};
 use async_trait::async_trait;
-use serde_json::json;
+use serde_json::{json, Value};
 
 /// Subscribes to `ChannelInboundMessage` events and runs the agent loop,
 /// sending replies back to the originating channel via the backend REST API.
@@ -16,6 +16,11 @@ impl Default for ChannelInboundSubscriber {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn channel_message_body_with_idempotency(channel: &str, body: Value) -> Value {
+    let intent = tinychannels::outbound_intent_from_legacy_message(channel, body);
+    tinychannels::legacy_message_value_from_outbound_intent(&intent)
 }
 
 impl ChannelInboundSubscriber {
@@ -94,7 +99,12 @@ impl EventHandler for ChannelInboundSubscriber {
             None,
             None,
             None,
-            crate::openhuman::channels::providers::web::ChatRequestMetadata::default(),
+            crate::openhuman::channels::providers::web::ChatRequestMetadata {
+                // Tag inbound provider messages so traces classify as
+                // run:channel_inbound instead of interactive chat.
+                source: Some("channel_inbound".to_string()),
+                ..Default::default()
+            },
         )
         .await
         {
@@ -245,11 +255,16 @@ impl EventHandler for ChannelInboundSubscriber {
                     }
                 }
                 _ = edit_timer.tick() => {
-                    if streaming_state.thinking_dirty && !streaming_state.thinking_edit_disabled {
-                        flush_thinking_message(channel, &mut streaming_state).await;
-                    }
-                    if streaming_state.dirty && !streaming_state.edit_disabled {
-                        flush_streaming_edit(channel, &mut streaming_state).await;
+                    // Progressive draft/thinking bubbles require edit+delete
+                    // support; skip them on channels that lack it (Discord) so
+                    // they don't leave un-cleanable placeholder messages.
+                    if channel_supports_progressive_ui(channel) {
+                        if streaming_state.thinking_dirty && !streaming_state.thinking_edit_disabled {
+                            flush_thinking_message(channel, &mut streaming_state).await;
+                        }
+                        if streaming_state.dirty && !streaming_state.edit_disabled {
+                            flush_streaming_edit(channel, &mut streaming_state).await;
+                        }
                     }
                 }
                 _ = typing_timer.tick() => {
@@ -258,7 +273,9 @@ impl EventHandler for ChannelInboundSubscriber {
                     }
                 }
                 _ = filler_timer.tick() => {
-                    if !streaming_state.filler_disabled {
+                    // Fillers ("💭 Still working on it…") are ephemeral and
+                    // deleted on finalize — only post them where cleanup works.
+                    if channel_supports_progressive_ui(channel) && !streaming_state.filler_disabled {
                         send_filler_message(channel, &mut streaming_state).await;
                     }
                 }
@@ -296,6 +313,28 @@ const MAX_TYPING_FAILURES: u32 = 2;
 /// so the user keeps seeing activity during long agent turns. Deleted
 /// on finalization alongside the ephemeral thinking bubble.
 const FILLER_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_secs(13);
+
+/// Whether a channel supports the progressive-UI placeholders — the
+/// evolving draft bubble, the rotating "💭" fillers, and the ephemeral
+/// "thinking" bubble. All three rely on the backend supporting **both**
+/// message *edit* and *delete*: edit keeps a single bubble evolving in
+/// place, delete removes it once the final reply lands. Telegram supports
+/// both. Discord's adapter supports **neither** (edits 404, delete is a
+/// hard `Delete not supported` stub), so every placeholder becomes a
+/// permanent, un-editable, un-deletable message — the channel fills with
+/// "💭 Still working on it…" bubbles.
+///
+/// This is an **allowlist**, not a denylist: only channels confirmed to
+/// support edit+delete opt in. A new/unknown adapter therefore fails *safe*
+/// (placeholders suppressed) rather than silently re-introducing the spam bug
+/// this gate was added to fix.
+fn channel_supports_progressive_ui(channel: &str) -> bool {
+    // Inbound channels arrive provider-prefixed from the socket layer
+    // (e.g. `discord:<guild>`, `tg:<chat>`), so compare the provider prefix,
+    // not the whole id — mirroring `channel_is_telegram`.
+    let provider = channel.split(':').next().unwrap_or(channel);
+    matches!(provider, "telegram" | "tg")
+}
 
 /// Maximum consecutive filler-send failures before we stop trying.
 /// Same rationale as the thinking/typing latches.
@@ -504,7 +543,7 @@ async fn flush_streaming_edit(channel: &str, state: &mut StreamingState) {
             }
         }
     } else {
-        let body = json!({ "text": draft });
+        let body = channel_message_body_with_idempotency(channel, json!({ "text": draft }));
         match client.send_channel_message(channel, &jwt, body).await {
             Ok(resp) => {
                 // A message was posted to the user — record that fact
@@ -618,7 +657,7 @@ async fn flush_thinking_message(channel: &str, state: &mut StreamingState) {
         }
     } else {
         // Send initial thinking message.
-        let body = json!({ "text": text });
+        let body = channel_message_body_with_idempotency(channel, json!({ "text": text }));
         match client.send_channel_message(channel, &jwt, body).await {
             Ok(resp) => {
                 state.thinking_sent = true;
@@ -699,7 +738,7 @@ async fn send_filler_message(channel: &str, state: &mut StreamingState) {
     let Some((client, jwt)) = build_channel_client().await else {
         return;
     };
-    let body = json!({ "text": text });
+    let body = channel_message_body_with_idempotency(channel, json!({ "text": text }));
     match client.send_channel_message(channel, &jwt, body).await {
         Ok(resp) => {
             state.filler_failures = 0;
@@ -938,7 +977,7 @@ async fn send_channel_reply(channel: &str, text: &str) {
         }
     };
 
-    let body = json!({ "text": text });
+    let body = channel_message_body_with_idempotency(channel, json!({ "text": text }));
     match client.send_channel_message(channel, &jwt, body).await {
         Ok(resp) => {
             tracing::info!(
@@ -1042,7 +1081,57 @@ fn channel_is_telegram(channel: &str) -> bool {
 
 #[cfg(test)]
 mod inbound_thread_id_tests {
-    use super::{derive_inbound_client_id, derive_inbound_thread_id};
+    use super::{
+        channel_message_body_with_idempotency, channel_supports_progressive_ui,
+        derive_inbound_client_id, derive_inbound_thread_id,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn progressive_ui_is_an_allowlist_failing_safe_for_unknown_channels() {
+        // Only edit+delete-capable providers opt in. Telegram supports both;
+        // everything else (Discord's stub delete / 404 edits, and any new or
+        // unknown adapter) is suppressed so the "💭" spam can't reappear.
+        assert!(channel_supports_progressive_ui("telegram"));
+        assert!(channel_supports_progressive_ui("tg"));
+        // Inbound channels arrive provider-prefixed — the prefix must still match.
+        assert!(channel_supports_progressive_ui("tg:12345"));
+        assert!(!channel_supports_progressive_ui("discord"));
+        assert!(!channel_supports_progressive_ui("discord:guild-1"));
+        // Unknown/new adapters fail safe (allowlist, not denylist).
+        assert!(!channel_supports_progressive_ui("slack"));
+        assert!(!channel_supports_progressive_ui("whatsapp:123"));
+    }
+
+    #[test]
+    fn channel_message_body_adds_deterministic_idempotency_key() {
+        let left = channel_message_body_with_idempotency(
+            "telegram",
+            json!({ "text": "hello", "threadId": "topic-1" }),
+        );
+        let right = channel_message_body_with_idempotency(
+            "telegram",
+            json!({ "threadId": "topic-1", "text": "hello" }),
+        );
+
+        assert_eq!(left["text"], "hello");
+        assert_eq!(left["threadId"], "topic-1");
+        assert_eq!(left["idempotencyKey"], right["idempotencyKey"]);
+        assert!(left["idempotencyKey"]
+            .as_str()
+            .expect("idempotency key")
+            .starts_with("legacy-send:telegram:"));
+    }
+
+    #[test]
+    fn channel_message_body_preserves_caller_idempotency_key() {
+        let body = channel_message_body_with_idempotency(
+            "discord",
+            json!({ "text": "hello", "idempotencyKey": "caller-key" }),
+        );
+
+        assert_eq!(body["idempotencyKey"], "caller-key");
+    }
 
     #[test]
     fn socket_inbound_client_id_keys_per_sender() {

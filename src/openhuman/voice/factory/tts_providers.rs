@@ -174,7 +174,7 @@ impl TtsProvider for ExternalTtsProvider {
                 visemes: Vec::new(),
                 alignment: None,
             },
-            &format!("voice-factory: external TTS completed via {}", self.slug),
+            format!("voice-factory: external TTS completed via {}", self.slug),
         ))
     }
 }

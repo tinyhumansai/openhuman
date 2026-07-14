@@ -12,8 +12,8 @@ icon: shield-halved
 
 It does **not** own:
 
-- The cross-domain `EncryptionEngine` — that lives in `src/openhuman/encryption/`.
-- Per-channel credential storage — that lives in `src/openhuman/credentials/`.
+- The cross-domain `EncryptionEngine`, which lives in `src/openhuman/encryption/`.
+- Per-channel credential storage, which lives in `src/openhuman/credentials/`.
 
 This module is the place to look first when asking "is this agent action allowed, and if so, how is it confined?"
 
@@ -49,15 +49,15 @@ SecurityConfig ─►│ create_sandbox│
                        └─► Noop        (last resort; logs only)
 ```
 
-The agent never sees the choice — it just calls into `Sandbox::run(...)` and the active backend handles the rest. Every backend lives in a sibling file (`docker.rs`, `bubblewrap.rs`, `firejail.rs`, `landlock.rs`); the noop fallback is in `traits.rs`.
+The agent never sees the choice; it just calls into `Sandbox::run(...)` and the active backend handles the rest. Every backend lives in a sibling file (`docker.rs`, `bubblewrap.rs`, `firejail.rs`, `landlock.rs`); the noop fallback is in `traits.rs`.
 
 ## Autonomy ladder
 
 `AutonomyLevel` is a three-step ladder that controls how aggressively the policy gates tool calls:
 
-- **Supervised** — every higher-risk tool call requires an explicit approval round-trip.
-- **SemiAutonomous** — low / medium-risk tool calls flow through; higher-risk ones still approval-gate.
-- **Autonomous** — the policy lets the agent run unattended within budget and risk caps.
+- **Supervised**: every higher-risk tool call requires an explicit approval round-trip.
+- **SemiAutonomous**: low / medium-risk tool calls flow through; higher-risk ones still approval-gate.
+- **Autonomous**: the policy lets the agent run unattended within budget and risk caps.
 
 `CommandRiskLevel` + `ToolOperation` classify a given tool call; `ActionTracker` keeps the per-session counts that the policy compares against caps. The agent harness asks `SecurityPolicy` for a decision before every executable tool dispatch.
 
@@ -75,7 +75,7 @@ The agent never sees the choice — it just calls into `Sandbox::run(...)` and t
 
 ## `redact()`
 
-`redact(value)` returns a uniform 4-char-prefix string (e.g. `"sk-a"` -> `"sk-a…"`) for use in logs and error messages. Use it whenever a secret, credential, token, or PII string is about to be formatted into a `log::` / `tracing::` call. Other domains call it directly — `credentials/`, `webhooks/`, `composio/`, the integration adapters.
+`redact(value)` returns a uniform 4-char-prefix string (e.g. `"sk-a"` -> `"sk-a…"`) for use in logs and error messages. Use it whenever a secret, credential, token, or PII string is about to be formatted into a `log::` / `tracing::` call. Other domains call it directly: `credentials/`, `webhooks/`, `composio/`, the integration adapters.
 
 ## Layout
 
@@ -83,7 +83,7 @@ The agent never sees the choice — it just calls into `Sandbox::run(...)` and t
 | ------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `policy.rs`, `policy_tests.rs`                                | `SecurityPolicy`, `AutonomyLevel`, risk classification, action tracking.  |
 | `traits.rs`                                                   | `Sandbox` trait + `NoopSandbox` fallback.                                 |
-| `detect.rs`                                                   | `create_sandbox` — best-available-backend selection.                      |
+| `detect.rs`                                                   | `create_sandbox`: best-available-backend selection.                      |
 | `docker.rs` / `bubblewrap.rs` / `firejail.rs` / `landlock.rs` | Per-backend `Sandbox` implementations.                                    |
 | `core.rs`                                                     | `redact()` + small shared helpers (has its own `#[cfg(test)] mod tests`). |
 | `audit.rs`                                                    | Append-only audit log types.                                              |
@@ -95,27 +95,27 @@ The agent never sees the choice — it just calls into `Sandbox::run(...)` and t
 
 ## Calls into
 
-- `src/openhuman/config/` — `SecurityConfig`, `AutonomyConfig` for policy + sandbox selection.
-- OS-level sandbox tools — `docker`, `bwrap`, `firejail`, Landlock syscalls (per backend).
-- Workspace filesystem — for the audit log and secret store.
+- `src/openhuman/config/`: `SecurityConfig`, `AutonomyConfig` for policy + sandbox selection.
+- OS-level sandbox tools: `docker`, `bwrap`, `firejail`, Landlock syscalls (per backend).
+- Workspace filesystem, for the audit log and secret store.
 
 ## Called by
 
-- `src/openhuman/cron/scheduler.rs` — wraps shell jobs in `SecurityPolicy::from_config`.
-- `src/openhuman/tools/local_cli.rs`, `tools/ops.rs`, and most `tools/impl/{system,network,memory,agent}/*.rs` — every executable tool consults `SecurityPolicy`.
-- `src/openhuman/tools/impl/network/{curl,http_request,composio}.rs` — risk-classify outbound calls.
-- `src/openhuman/memory/tools/{store,forget}.rs` — sensitive-write tracking.
-- `src/openhuman/agent/tools/delegate.rs` — sub-agent dispatch goes through the autonomy gate.
-- `src/openhuman/credentials/` — uses `SecretStore` and `redact`.
+- `src/openhuman/cron/scheduler.rs`: wraps shell jobs in `SecurityPolicy::from_config`.
+- `src/openhuman/tools/local_cli.rs`, `tools/ops.rs`, and most `tools/impl/{system,network,memory,agent}/*.rs`: every executable tool consults `SecurityPolicy`.
+- `src/openhuman/tools/impl/network/{curl,http_request,composio}.rs`: risk-classify outbound calls.
+- `src/openhuman/memory/tools/{store,forget}.rs`: sensitive-write tracking.
+- `src/openhuman/agent/tools/delegate.rs`: sub-agent dispatch goes through the autonomy gate.
+- `src/openhuman/credentials/`: uses `SecretStore` and `redact`.
 
 ## Tests
 
 - Unit: `pairing_tests.rs`, `policy_tests.rs`, `secrets_tests.rs`.
-- `core.rs` has its own `#[cfg(test)] mod tests` — round-trips `SecretStore` encrypt / decrypt, `redact()` cases, `PairingGuard` defaults.
+- `core.rs` has its own `#[cfg(test)] mod tests`, which round-trips `SecretStore` encrypt / decrypt, `redact()` cases, `PairingGuard` defaults.
 - Sandbox-backend smoke tests: each backend file has its own `#[cfg(test)]` blocks where the binary is available on the host.
 
 ## Related
 
-- [`security/README.md`](https://github.com/tinyhumansai/openhuman/blob/main/src/openhuman/security/README.md) — authoritative internal-audience overview this page mirrors.
-- [Architecture overview](../architecture.md) — wider system context.
-- [Agent Harness](agent-harness.md) — where `SecurityPolicy` is consulted on every tool dispatch.
+- [`security/README.md`](https://github.com/tinyhumansai/openhuman/blob/main/src/openhuman/security/README.md): authoritative internal-audience overview this page mirrors.
+- [Architecture overview](../architecture.md): wider system context.
+- [Agent Harness](agent-harness.md): where `SecurityPolicy` is consulted on every tool dispatch.

@@ -301,7 +301,7 @@ pub async fn execute_tron_quote(mut quote: PreparedTransaction) -> Result<Execut
     sig_bytes[64] = rec_id.to_i32() as u8;
     let sig_hex = hex::encode(sig_bytes);
 
-    let mut tx_with_sig = serde_json::to_value(&serde_json::json!({
+    let mut tx_with_sig = serde_json::to_value(serde_json::json!({
         "txID": raw_tx.tx_id,
         "raw_data": raw_tx.raw_data,
         "raw_data_hex": raw_tx.raw_data_hex,

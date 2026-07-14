@@ -61,6 +61,94 @@ pub fn register_artifact_surface_subscriber() {
     }
 }
 
+static EGRESS_SURFACE_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
+
+/// Register the egress-surface bridge that turns
+/// [`DomainEvent::ExternalTransferPending`] events into
+/// `external_transfer_pending` web-channel socket events (privacy epic S2,
+/// #4436). Idempotent via a process-level [`OnceLock`].
+pub fn register_egress_surface_subscriber() {
+    if EGRESS_SURFACE_HANDLE.get().is_some() {
+        return;
+    }
+    match crate::core::event_bus::subscribe_global(Arc::new(EgressSurfaceSubscriber)) {
+        Some(handle) => {
+            let _ = EGRESS_SURFACE_HANDLE.set(handle);
+            log::info!(
+                "[web-channel] egress-surface subscriber registered (domain=egress) — bridges ExternalTransferPending → external_transfer_pending socket events"
+            );
+        }
+        None => {
+            log::warn!(
+                "[web-channel] failed to register egress-surface subscriber — bus not initialized"
+            );
+        }
+    }
+}
+
+/// Bridge [`DomainEvent::ExternalTransferPending`] → `external_transfer_pending`
+/// web-channel socket event so the frontend can disclose the transfer (S3
+/// renders the card; S4 will add an approve/deny arm). Only surfaces transfers
+/// that carry chat routing — background/CLI/cron egress has no chat client to
+/// fan out to and is dropped here (still observable on the domain bus for
+/// non-chat consumers such as an audit log).
+struct EgressSurfaceSubscriber;
+
+#[async_trait]
+impl EventHandler for EgressSurfaceSubscriber {
+    fn name(&self) -> &str {
+        "channels::web::egress_surface"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["egress"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        let DomainEvent::ExternalTransferPending {
+            descriptor,
+            thread_id,
+            client_id,
+        } = event
+        else {
+            return;
+        };
+        let (Some(thread_id), Some(client_id)) = (thread_id, client_id) else {
+            log::debug!(
+                "[web-channel] egress-surface skip ExternalTransferPending provider={} service={} reason={:?}: no chat context",
+                descriptor.provider_slug,
+                descriptor.service,
+                descriptor.reason,
+            );
+            return;
+        };
+        let args = match serde_json::to_value(descriptor) {
+            Ok(value) => value,
+            Err(e) => {
+                log::warn!(
+                    "[web-channel] egress-surface failed to serialize descriptor provider={} service={}: {e}",
+                    descriptor.provider_slug,
+                    descriptor.service,
+                );
+                return;
+            }
+        };
+        log::info!(
+            "[web-channel] egress-surface emitting external_transfer_pending provider={} service={} reason={:?} thread_id={thread_id} client_id={client_id}",
+            descriptor.provider_slug,
+            descriptor.service,
+            descriptor.reason,
+        );
+        publish_web_channel_event(WebChannelEvent {
+            event: "external_transfer_pending".to_string(),
+            client_id: client_id.clone(),
+            thread_id: thread_id.clone(),
+            args: Some(args),
+            ..Default::default()
+        });
+    }
+}
+
 struct ArtifactSurfaceSubscriber;
 
 #[async_trait]
@@ -327,5 +415,111 @@ mod tests {
         // Both handles are alive — drop explicitly to show they're independent.
         drop(h1);
         drop(h2);
+    }
+
+    /// Drain the web-channel receiver until an `external_transfer_pending` event
+    /// whose `args.service` matches `marker` arrives (the bus is process-wide).
+    async fn find_egress_web_event(
+        rx: &mut broadcast::Receiver<WebChannelEvent>,
+        marker: &str,
+    ) -> WebChannelEvent {
+        loop {
+            match rx.recv().await {
+                Ok(ev)
+                    if ev.event == "external_transfer_pending"
+                        && ev
+                            .args
+                            .as_ref()
+                            .and_then(|a| a.get("service"))
+                            .and_then(|s| s.as_str())
+                            == Some(marker) =>
+                {
+                    return ev
+                }
+                Ok(_) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => {
+                    panic!("web-channel bus closed before external_transfer_pending arrived")
+                }
+            }
+        }
+    }
+
+    /// Egress-surface bridges an `ExternalTransferPending` that carries chat
+    /// routing into an `external_transfer_pending` web-channel event whose args
+    /// mirror the descriptor (privacy epic S2, #4436).
+    #[tokio::test]
+    async fn egress_surface_bridges_pending_with_chat_context() {
+        crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+        let _handle = crate::core::event_bus::subscribe_global(Arc::new(EgressSurfaceSubscriber));
+        let mut web_rx = subscribe_web_channel_events();
+
+        let marker = "svc-bridge-with-context";
+        crate::core::event_bus::publish_global(DomainEvent::ExternalTransferPending {
+            descriptor: crate::openhuman::security::egress::EgressDescriptor::composio(marker),
+            thread_id: Some("thread-1".to_string()),
+            client_id: Some("client-1".to_string()),
+        });
+
+        let ev = find_egress_web_event(&mut web_rx, marker).await;
+        assert_eq!(ev.thread_id, "thread-1");
+        assert_eq!(ev.client_id, "client-1");
+        let args = ev.args.expect("args present");
+        assert_eq!(args["provider_slug"], "composio");
+        assert_eq!(args["reason"], "tool_call");
+        assert_eq!(args["is_external"], true);
+    }
+
+    /// A pending event with no chat routing is NOT surfaced to the web channel
+    /// (background/CLI/cron egress has no client to fan out to).
+    #[tokio::test]
+    async fn egress_surface_drops_pending_without_chat_context() {
+        crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+        let _handle = crate::core::event_bus::subscribe_global(Arc::new(EgressSurfaceSubscriber));
+        let mut web_rx = subscribe_web_channel_events();
+
+        let dropped_marker = "svc-bridge-no-context";
+        let sentinel_marker = "svc-bridge-sentinel";
+        // No context → must be dropped. A following event WITH context must be
+        // surfaced; reaching the sentinel proves the first was suppressed.
+        crate::core::event_bus::publish_global(DomainEvent::ExternalTransferPending {
+            descriptor: crate::openhuman::security::egress::EgressDescriptor::composio(
+                dropped_marker,
+            ),
+            thread_id: None,
+            client_id: None,
+        });
+        crate::core::event_bus::publish_global(DomainEvent::ExternalTransferPending {
+            descriptor: crate::openhuman::security::egress::EgressDescriptor::composio(
+                sentinel_marker,
+            ),
+            thread_id: Some("thread-2".to_string()),
+            client_id: Some("client-2".to_string()),
+        });
+
+        loop {
+            match web_rx.recv().await {
+                Ok(ev) if ev.event == "external_transfer_pending" => {
+                    let svc = ev
+                        .args
+                        .as_ref()
+                        .and_then(|a| a.get("service"))
+                        .and_then(|s| s.as_str());
+                    assert_ne!(
+                        svc,
+                        Some(dropped_marker),
+                        "no-context transfer must not surface to the web channel"
+                    );
+                    if svc == Some(sentinel_marker) {
+                        break;
+                    }
+                }
+                Ok(_) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => {
+                    panic!("web-channel bus closed before sentinel arrived")
+                }
+            }
+        }
     }
 }

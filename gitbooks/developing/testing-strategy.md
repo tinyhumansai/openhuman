@@ -16,7 +16,7 @@ How OpenHuman tests its product. Source of truth for "where does my test go?". C
 | **Rust unit**        | `#[cfg(test)] mod tests` inside the same `*.rs` file, or sibling `tests.rs`, or `tests/` subdir under a domain (e.g. `src/openhuman/channels/tests/`) | Pure domain logic, schemas, RPC handler shape, in-memory state machines                                                                         | `cargo test`                                                                                                               |
 | **Rust integration** | `tests/*.rs` at repo root                                                                                                                             | Full domain wiring with real Tokio runtime, mock external services, JSON-RPC end-to-end (`tests/json_rpc_e2e.rs`), domain × domain interactions | `pnpm test:rust` (which calls `bash scripts/test-rust-with-mock.sh`)                                                       |
 | **Vitest unit**      | Co-located as `*.test.ts(x)` next to source under `app/src/**`, or under `app/src/**/__tests__/`                                                      | React components, hooks, store slices, pure utilities, service-layer adapters                                                                   | `pnpm test:unit`                                                                                                           |
-| **WDIO E2E**         | `app/test/e2e/specs/*.spec.ts`                                                                                                                        | Full desktop flow: UI → Tauri → core sidecar → JSON-RPC; user-visible behaviour                                                                 | Linux CI: `tauri-driver` (port 4444). macOS local: Appium Mac2 (port 4723). See [E2E Testing](e2e-testing.md). |
+| **WDIO E2E**         | `app/test/e2e/specs/*.spec.ts`                                                                                                                        | Full desktop flow: UI → Tauri → in-process core → JSON-RPC; user-visible behaviour                                                                 | All platforms: Appium Chromium driver (port 4723) against the CEF runtime. See [E2E Testing](e2e-testing.md). |
 | **Manual smoke**     | [`docs/RELEASE-MANUAL-SMOKE.md`](../../docs/RELEASE-MANUAL-SMOKE.md)                                                                                           | OS-level surfaces drivers cannot assert: TCC permission prompts, Gatekeeper, code signing, DMG install, OS-native toasts                        | Human at release-cut, signed off in release PR                                                                             |
 
 ---
@@ -68,7 +68,7 @@ A spec that asserts only the happy path is incomplete.
 - No shared filesystem state, every E2E spec runs inside an isolated `OPENHUMAN_WORKSPACE` (created/cleaned by `app/scripts/e2e-run-spec.sh`).
 - No order-dependent specs, each spec must pass when run alone.
 - No reliance on absolute coordinates or animation timing.
-- No real keyboard via `browser.keys()` on tauri-driver, synthesize via `browser.execute(...)` (see `command-palette.spec.ts` for the pattern).
+- Prefer synthesizing keyboard input via `browser.execute(...)` over `browser.keys()` (see `command-palette.spec.ts` for the pattern).
 
 ---
 
@@ -79,7 +79,7 @@ A spec that asserts only the happy path is incomplete.
 - **Element helpers**: `clickNativeButton`, `waitForWebView`, `clickToggle` in `helpers/element-helpers.ts`, use these instead of raw `XCUIElementType*` selectors.
 - **Shared flows**: `completeOnboardingIfVisible`, `navigateViaHash`, `navigateToSkills`, `walkOnboarding` in `helpers/shared-flows.ts`.
 - **Core RPC from spec**: `callOpenhumanRpc` in `helpers/core-rpc.ts`, drives the sidecar directly when a UI step would be brittle.
-- **Platform guards**: `isTauriDriver`, `isMac2`, `supportsExecuteScript` in `helpers/platform.ts`.
+- **Platform guards**: `isTauriDriver`, `isMac2`, `supportsExecuteScript` in `helpers/platform.ts` (the first two are legacy shims — everything runs on the Appium Chromium driver now).
 - **Artifact capture on failure**: `captureFailureArtifacts` runs from `wdio.conf.ts`, screenshots + DOM dumps land under `app/test/e2e/artifacts/`.
 
 ---

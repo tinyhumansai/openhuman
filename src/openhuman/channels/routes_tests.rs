@@ -133,7 +133,7 @@ impl Channel for RecordingChannel {
 fn runtime_context(workspace_dir: PathBuf) -> ChannelRuntimeContext {
     ChannelRuntimeContext {
         channels_by_name: Arc::new(HashMap::new()),
-        provider: Arc::new(DummyProvider),
+        provider: Some(Arc::new(DummyProvider)),
         default_provider: Arc::new("openai".into()),
         memory: Arc::new(DummyMemory),
         tools_registry: Arc::new(vec![Box::new(DummyTool) as Box<dyn Tool>]),
@@ -155,6 +155,7 @@ fn runtime_context(workspace_dir: PathBuf) -> ChannelRuntimeContext {
         message_timeout_secs: 60,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     }
 }
 
@@ -526,6 +527,7 @@ async fn handle_runtime_command_telegram_new_status_and_sessions_round_trip() {
             reply_target: "chat-remote".into(),
             content: "work".into(),
             thread_ts: Some("42".into()),
+            inbound_envelope: None,
             workspace_dir: tempdir.path().to_path_buf(),
         })
         .await;

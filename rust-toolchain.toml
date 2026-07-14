@@ -1,6 +1,11 @@
 [toolchain]
-# Pin below Rust 1.94 until matrix-sdk resolves recursion limit overflow in async
-# (see https://github.com/matrix-org/matrix-rust-sdk/issues/6254).
-channel = "1.93.0"
+# Rust 1.96 is required by rusqlite 0.40 / libsqlite3-sys 0.38: their build
+# scripts use the `cfg_select!` macro, stabilized in 1.96 (unstable through
+# 1.95 — rust-lang/rust#115585). Pinning here lets us consume both crates
+# straight from crates.io and drop the vendored copies that previously
+# backported `cfg_select!` to `#[cfg]`. The former "pin below 1.94" existed only
+# for matrix-sdk's async recursion overflow (matrix-rust-sdk#6254); the
+# `channel-matrix` feature and its matrix-sdk dependency have since been removed.
+channel = "1.96.1"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

@@ -4,7 +4,9 @@ import { aiRegenerate, subscribeChatEvents } from '../chatService';
 import { callCoreRpc } from '../coreRpcClient';
 import { socketService } from '../socketService';
 
-vi.mock('../socketService', () => ({ socketService: { getSocket: vi.fn() } }));
+vi.mock('../socketService', () => ({
+  socketService: { getSocket: vi.fn(), on: vi.fn(), off: vi.fn() },
+}));
 vi.mock('../coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 
 type Handler = (...args: unknown[]) => void;
@@ -31,6 +33,12 @@ function createMockSocket() {
   return { id: 'socket-1', on, off, emit };
 }
 
+function bindMockSocket(socket: ReturnType<typeof createMockSocket>) {
+  vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+  vi.mocked(socketService.on).mockImplementation((event, cb) => socket.on(event, cb as Handler));
+  vi.mocked(socketService.off).mockImplementation((event, cb) => socket.off(event, cb as Handler));
+}
+
 describe('chatService — artifact_ready / artifact_failed handlers (#2779)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -38,7 +46,7 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
 
   it('subscribes to artifact events under canonical snake_case names', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
 
     subscribeChatEvents({ onArtifactReady: () => {}, onArtifactFailed: () => {} });
 
@@ -48,7 +56,7 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
 
   it('flattens the wire envelope into a typed ArtifactReadyEvent', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactReady = vi.fn();
 
     subscribeChatEvents({ onArtifactReady });
@@ -81,7 +89,7 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
 
   it('drops an artifact_ready payload missing required fields', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactReady = vi.fn();
 
     subscribeChatEvents({ onArtifactReady });
@@ -109,7 +117,7 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
 
   it('rejects artifact_ready with an unknown kind (not in the allowlist)', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactReady = vi.fn();
 
     subscribeChatEvents({ onArtifactReady });
@@ -131,7 +139,7 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
 
   it('accepts every allowlisted kind for artifact_ready', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactReady = vi.fn();
 
     subscribeChatEvents({ onArtifactReady });
@@ -161,7 +169,7 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
 
   it('flattens artifact_failed into a typed ArtifactFailedEvent', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactFailed = vi.fn();
 
     subscribeChatEvents({ onArtifactFailed });
@@ -192,7 +200,7 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
 
   it('drops an artifact_failed payload missing required fields', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactFailed = vi.fn();
 
     subscribeChatEvents({ onArtifactFailed });
@@ -218,7 +226,7 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
 
   it('rejects artifact_failed with an unknown kind', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactFailed = vi.fn();
 
     subscribeChatEvents({ onArtifactFailed });
@@ -234,7 +242,7 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
   it('preserves the full error string on the dispatched event even when huge', () => {
     // The handler caps only the LOG line, not the dispatched payload.
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactFailed = vi.fn();
 
     subscribeChatEvents({ onArtifactFailed });
@@ -259,7 +267,7 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
 
   it('removes both artifact handlers on cleanup', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
 
     const cleanup = subscribeChatEvents({ onArtifactReady: () => {}, onArtifactFailed: () => {} });
     cleanup();
@@ -276,7 +284,7 @@ describe('chatService — artifact_pending handler (#3162)', () => {
 
   it('subscribes to artifact_pending under its canonical snake_case name', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
 
     subscribeChatEvents({ onArtifactPending: () => {} });
 
@@ -286,7 +294,7 @@ describe('chatService — artifact_pending handler (#3162)', () => {
 
   it('flattens the wire envelope into a typed ArtifactPendingEvent', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactPending = vi.fn();
 
     subscribeChatEvents({ onArtifactPending });
@@ -317,7 +325,7 @@ describe('chatService — artifact_pending handler (#3162)', () => {
 
   it('drops a pending payload missing required args', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactPending = vi.fn();
 
     subscribeChatEvents({ onArtifactPending });

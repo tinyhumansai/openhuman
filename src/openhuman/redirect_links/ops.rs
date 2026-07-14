@@ -43,7 +43,7 @@ fn public_url_regex() -> &'static Regex {
 /// Strip trailing sentence punctuation (`.`, `,`, `;`, `:`, `!`) so that
 /// "see https://example.com/path." doesn't capture the period.
 fn trim_trailing_punct(s: &str) -> &str {
-    s.trim_end_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!'))
+    s.trim_end_matches(['.', ',', ';', ':', '!'])
 }
 
 /// Shorten a single URL, persisting it in the global store. Idempotent.

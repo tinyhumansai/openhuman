@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   GENERAL_TAB_VALUE,
   isThreadVisibleInTab,
-} from '../../../pages/conversations/utils/threadFilter';
+} from '../../../features/conversations/utils/threadFilter';
 import { setActiveAccount } from '../../../store/accountsSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { createNewThread, loadThreadMessages, setSelectedThread } from '../../../store/threadSlice';

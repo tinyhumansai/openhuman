@@ -10,23 +10,23 @@
 use tinyagents::graph::export::{self, GraphTopology};
 
 /// A rendered topology for one graph.
-pub struct GraphTopologyReport {
+pub(crate) struct GraphTopologyReport {
     /// Stable graph label (e.g. `"agent_teams:member"`).
-    pub name: &'static str,
+    pub(crate) name: &'static str,
     /// Mermaid `flowchart TD` rendering.
-    pub mermaid: String,
+    pub(crate) mermaid: String,
     /// Pretty-printed JSON of the full topology.
-    pub json: String,
+    pub(crate) json: String,
     /// `true` when the structural validation found no errors.
-    pub ok: bool,
+    pub(crate) ok: bool,
     /// Structural defects (missing nodes, unreachable routes, …).
-    pub errors: Vec<String>,
+    pub(crate) errors: Vec<String>,
     /// Non-fatal observations.
-    pub warnings: Vec<String>,
+    pub(crate) warnings: Vec<String>,
 }
 
 /// Render a [`GraphTopology`] into a [`GraphTopologyReport`].
-pub fn describe(name: &'static str, topology: &GraphTopology) -> GraphTopologyReport {
+fn describe(name: &'static str, topology: &GraphTopology) -> GraphTopologyReport {
     GraphTopologyReport {
         name,
         mermaid: export::to_mermaid(topology),
@@ -42,19 +42,39 @@ pub fn describe(name: &'static str, topology: &GraphTopology) -> GraphTopologyRe
 /// Graphs that fail to build (should not happen for the fixed-structure graphs)
 /// are silently skipped. Each entry carries a Mermaid + JSON rendering and the
 /// structural validation report.
-pub fn all_graph_topologies() -> Vec<GraphTopologyReport> {
+pub(crate) fn all_graph_topologies() -> Vec<GraphTopologyReport> {
     let mut out = Vec::new();
 
     if let Ok(t) = crate::openhuman::agent_orchestration::agent_teams::member_graph_topology() {
         out.push(describe("agent_teams:member", &t));
     }
 
-    // Follow-ups (same `build_*` extract-and-reuse pattern as the member graph):
-    // the `delegation` graph (injected `run_stage` — clean to add) and the
-    // `workflow_runs` scheduler graph (its node closures capture engine locals,
-    // so it needs a small refactor first). The generic item-count-driven
-    // fan-outs (`model_council`, `run_parallel_fanout` — dispatch → N workers →
-    // collect) are the fan-out pattern rather than a fixed named topology.
+    if let Ok(t) = super::delegation::delegation_graph_topology() {
+        out.push(describe("delegation", &t));
+    }
+
+    if let Ok(t) = crate::openhuman::agent_orchestration::workflow_runs::scheduler_graph_topology()
+    {
+        out.push(describe("workflow_runs:scheduler", &t));
+    }
+
+    if let Ok(t) = super::subagent_graph::subagent_pipeline_topology() {
+        out.push(describe("subagent:pipeline", &t));
+    }
+
+    if let Ok(t) = crate::openhuman::agent_registry::agents::researcher::graph::topology() {
+        out.push(describe("agent:researcher", &t));
+    }
+
+    if let Ok(t) =
+        crate::openhuman::agent_orchestration::spawn_parallel_graph::spawn_parallel_graph_topology()
+    {
+        out.push(describe("spawn_parallel_agents", &t));
+    }
+
+    // Not exported: generic item-count-driven `map_reduce` fan-outs such as
+    // `model_council`, whose node set is determined per run rather than by a
+    // fixed named topology.
 
     out
 }
@@ -78,6 +98,39 @@ mod tests {
             member.errors
         );
         assert!(member.errors.is_empty());
+    }
+
+    #[test]
+    fn all_topologies_includes_delegation_and_workflow_scheduler() {
+        let reports = all_graph_topologies();
+        for name in ["delegation", "workflow_runs:scheduler"] {
+            let report = reports
+                .iter()
+                .find(|r| r.name == name)
+                .unwrap_or_else(|| panic!("the {name} graph should be exported"));
+            assert!(
+                report.ok,
+                "{name} graph should validate structurally: {:?}",
+                report.errors
+            );
+            assert!(
+                report.mermaid.contains("flowchart"),
+                "{name} mermaid should render: {}",
+                report.mermaid
+            );
+        }
+    }
+
+    #[test]
+    fn delegation_topology_names_the_revision_loop_nodes() {
+        let t = super::super::delegation::delegation_graph_topology().expect("builds");
+        let names: Vec<&str> = t.nodes.iter().map(|n| n.id.as_str()).collect();
+        for expected in ["plan", "execute", "review", "finalize"] {
+            assert!(
+                names.contains(&expected),
+                "missing node {expected}: {names:?}"
+            );
+        }
     }
 
     #[test]

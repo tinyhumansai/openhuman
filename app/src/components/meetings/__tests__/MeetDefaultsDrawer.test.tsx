@@ -284,4 +284,32 @@ describe('MeetDefaultsDrawer', () => {
       expect(autoJoinSelect).toHaveValue('never');
     });
   });
+
+  // ── reply_display_name text field ──────────────────────────────────────────
+
+  it('loads the saved reply_display_name into the input', async () => {
+    getMock.mockResolvedValueOnce({
+      result: { ...DEFAULT_SETTINGS.result, reply_display_name: 'Saved Name' },
+    });
+    renderWithProviders(<MeetDefaultsDrawer open onClose={vi.fn()} />);
+    const input = await screen.findByRole('textbox', { name: /your name in meetings/i });
+    expect(input).toHaveValue('Saved Name');
+  });
+
+  it('persists the trimmed reply_display_name on blur', async () => {
+    getMock.mockResolvedValueOnce({ ...DEFAULT_SETTINGS });
+    renderWithProviders(<MeetDefaultsDrawer open onClose={vi.fn()} />);
+    const input = await screen.findByRole('textbox', { name: /your name in meetings/i });
+
+    fireEvent.change(input, { target: { value: '  Alex Kim  ' } });
+    fireEvent.blur(input);
+
+    await waitFor(() =>
+      expect(updateMock).toHaveBeenCalledWith(
+        expect.objectContaining({ reply_display_name: 'Alex Kim' })
+      )
+    );
+    // The input reflects the trimmed value after blur.
+    expect(input).toHaveValue('Alex Kim');
+  });
 });

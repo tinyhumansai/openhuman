@@ -206,6 +206,10 @@ fn thread_key_from_messages(messages: &[ChatMessage]) -> String {
 
 #[async_trait]
 impl Provider for ClaudeCodeProvider {
+    fn telemetry_provider_id(&self) -> String {
+        "claude-code".to_string()
+    }
+
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             native_tool_calling: true,

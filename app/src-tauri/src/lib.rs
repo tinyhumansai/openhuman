@@ -20,6 +20,13 @@ mod cef_profile;
 // logic is unit-tested on any host; the Win32 glue is windows-only.
 #[cfg(any(target_os = "windows", test))]
 mod cef_singleton_wait;
+// macOS/Linux pre-CEF reap of a wedged prior instance that still holds the CEF
+// SingletonLock after an update relaunch (issue #4395, follow-up to #3605).
+// Marker-gated so it never reaps a healthy running instance. Compiled under
+// `test` too so the pure decision logic is unit-tested on any host; the
+// filesystem/signal glue is macOS/Linux-only.
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+mod cef_stale_reap;
 mod claude_code;
 mod companion_commands;
 mod core_process;
@@ -601,6 +608,11 @@ async fn apply_app_update(
     log::info!("[app-update] install complete — relaunching");
     let _ = app.emit("app-update:status", "restarting");
 
+    // Drop a post-update relaunch marker so the freshly launched process can
+    // safely reap this instance if it wedges instead of exiting (issue #4395).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    cef_stale_reap::write_update_relaunch_marker();
+
     log::info!("[app-update] starting early teardown before restart");
     perform_early_teardown_async(&app).await;
 
@@ -813,6 +825,11 @@ async fn install_app_update(
 
     log::info!("[app-update] install complete — relaunching");
     let _ = app.emit("app-update:status", "restarting");
+
+    // Drop a post-update relaunch marker so the freshly launched process can
+    // safely reap this instance if it wedges instead of exiting (issue #4395).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    cef_stale_reap::write_update_relaunch_marker();
 
     log::info!("[app-update] starting early teardown before restart");
     perform_early_teardown_async(&app).await;
@@ -1275,13 +1292,12 @@ fn set_main_window_hidden(hide: bool) {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, ShowWindow, SW_HIDE,
-        SW_SHOW,
+        EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, ShowWindow,
     };
 
     struct EnumCtx {
         target_pid: u32,
-        action: i32,
+        hide: bool,
         require_visible: bool,
         matched: u32,
     }
@@ -1307,15 +1323,20 @@ fn set_main_window_hidden(hide: bool) {
         if class != "Chrome_WidgetWin_1" {
             return 1;
         }
-        unsafe { ShowWindow(hwnd, ctx.action) };
+        // Choose the restore command per frame: a minimized frame needs
+        // SW_RESTORE to un-minimize, but a hidden-but-maximized frame must be
+        // shown with SW_SHOW so it stays maximized (#4818). IsIconic is only
+        // consulted on the restore path.
+        let is_iconic = !ctx.hide && unsafe { IsIconic(hwnd) } != 0;
+        let action = window_show_command(ctx.hide, is_iconic);
+        unsafe { ShowWindow(hwnd, action) };
         ctx.matched += 1;
         1
     }
 
-    let action = if hide { SW_HIDE } else { SW_SHOW };
     let mut ctx = EnumCtx {
         target_pid: std::process::id(),
-        action,
+        hide,
         // Hide path: only touch currently-visible frames. Show path: also
         // pick up frames already in the SW_HIDE state.
         require_visible: hide,
@@ -1324,10 +1345,47 @@ fn set_main_window_hidden(hide: bool) {
     unsafe { EnumWindows(Some(enum_proc), &mut ctx as *mut _ as LPARAM) };
     log::info!(
         "[window-hide] EnumWindows: action={} matched={} pid={}",
-        if hide { "SW_HIDE" } else { "SW_SHOW" },
+        if hide {
+            "SW_HIDE"
+        } else {
+            "restore(SW_RESTORE/SW_SHOW)"
+        },
         ctx.matched,
         ctx.target_pid,
     );
+}
+
+/// `ShowWindow` command for [`set_main_window_hidden`], chosen per frame.
+///
+/// Restore is *not* a single command — it depends on whether the frame is
+/// iconic (minimized):
+///
+/// - **Minimized frame** (`is_iconic`): `SW_RESTORE`. `SW_SHOW` displays a
+///   window in its *current* state, so a minimized `Chrome_WidgetWin_1` frame
+///   stays minimized — clicking the desktop shortcut / taskbar entry while the
+///   app was minimized did nothing, because the second-instance callback ran a
+///   no-op `SW_SHOW` and then `WebviewWindow::unminimize()`, which the vendored
+///   CEF runtime routes to the internal `cef::Window` proxy handle rather than
+///   the visible top-level frame (#1607), so neither un-minimized the OS window
+///   (#4809). `SW_RESTORE` un-minimizes AND un-hides.
+/// - **Hidden-but-not-minimized frame** (the plain hide-to-tray case, which may
+///   be **maximized**): `SW_SHOW`. `SW_RESTORE` would force a maximized frame
+///   back to its normal size, so a window closed to the tray while maximized
+///   would come back un-maximized. `SW_SHOW` displays it in its current state,
+///   preserving the maximized geometry (chatgpt-codex review on #4809/#4818).
+///
+/// Split out as a pure `i32`-returning helper so the command selection is unit
+/// testable without driving real windows.
+#[cfg(target_os = "windows")]
+const fn window_show_command(hide: bool, is_iconic: bool) -> i32 {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_RESTORE, SW_SHOW};
+    if hide {
+        SW_HIDE
+    } else if is_iconic {
+        SW_RESTORE
+    } else {
+        SW_SHOW
+    }
 }
 
 /// Look up the main `WebviewWindow`, optionally waiting briefly on Windows
@@ -2013,6 +2071,23 @@ fn cef_disable_gpu_enabled(env_override: Option<&str>) -> bool {
     }
 }
 
+/// Pin CEF to ANGLE's pure-software SwiftShader GL backend.
+///
+/// SwiftShader is a software rasteriser that needs no hardware EGL/driver, so it
+/// gives both WebGL surfaces and GPU-process init a working (software) context
+/// on stacks where the hardware GPU path aborts. `--enable-unsafe-swiftshader`
+/// is required because Chromium gates SwiftShader-backed WebGL behind it (the
+/// "unsafe" label is about software perf, not security). `--disable-gpu-compositing`
+/// keeps page compositing on the CPU. Crucially this does **not** pass
+/// `--disable-gpu`, which would shut the GPU process down entirely — and with it
+/// the SwiftShader context that lets CEF start.
+fn push_swiftshader_software_gl(args: &mut Vec<CefCommandLineArg>) {
+    args.push(("--use-gl", Some("angle")));
+    args.push(("--use-angle", Some("swiftshader")));
+    args.push(("--enable-unsafe-swiftshader", None));
+    args.push(("--disable-gpu-compositing", None));
+}
+
 fn append_platform_cef_gpu_workarounds(
     args: &mut Vec<CefCommandLineArg>,
     os: &str,
@@ -2027,11 +2102,27 @@ fn append_platform_cef_gpu_workarounds(
     // do not reach the vendored CEF runtime. Provide a narrow, release-safe
     // env escape hatch instead of forwarding arbitrary Chromium flags.
     if disable_gpu {
-        args.push(("--disable-gpu", None));
-        args.push(("--disable-gpu-compositing", None));
-        log::info!(
-            "[cef-startup] OPENHUMAN_DISABLE_GPU set: adding --disable-gpu and --disable-gpu-compositing for CEF startup compatibility (issue #4294)"
-        );
+        if os == "windows" {
+            // Issue #4385: on NVIDIA Blackwell / RTX 50-series Windows stacks the
+            // bundled CEF's GPU process fails to initialise and bare
+            // `--disable-gpu` is not enough — `cef::initialize` still returns 0
+            // before any UI renders (#4294, #4385). `--disable-gpu` removes the
+            // GPU process without giving CEF a working software GL path, so init
+            // still aborts. Pin CEF to the pure-software ANGLE/SwiftShader backend
+            // instead — the same fallback the Linux #1697/#4193 path relies on —
+            // which needs no hardware driver and lets CEF start on GPUs the
+            // bundled Chromium doesn't yet support.
+            push_swiftshader_software_gl(args);
+            log::info!(
+                "[cef-startup] OPENHUMAN_DISABLE_GPU set on Windows: forcing ANGLE/SwiftShader software GL for CEF startup compatibility (issues #4294/#4385)"
+            );
+        } else {
+            args.push(("--disable-gpu", None));
+            args.push(("--disable-gpu-compositing", None));
+            log::info!(
+                "[cef-startup] OPENHUMAN_DISABLE_GPU set: adding --disable-gpu and --disable-gpu-compositing for CEF startup compatibility (issue #4294)"
+            );
+        }
     }
 
     // Issue #1697: on Arch/Manjaro-family Linux systems, the AppImage can
@@ -2061,10 +2152,7 @@ fn append_platform_cef_gpu_workarounds(
                 "[cef-startup] OPENHUMAN_FORCE_GPU set — skipping SwiftShader software-GL fallback (issue #1697). If the app fails to launch with a GPU process abort, unset the env var."
             );
         } else {
-            args.push(("--use-gl", Some("angle")));
-            args.push(("--use-angle", Some("swiftshader")));
-            args.push(("--enable-unsafe-swiftshader", None));
-            args.push(("--disable-gpu-compositing", None));
+            push_swiftshader_software_gl(args);
             log::info!(
                 "[cef-startup] Linux detected: forcing ANGLE/SwiftShader software GL so WebGL surfaces (Tiny Place world renderer, Rive mascot) render without the crash-prone hardware GPU process (issues #1697/#4193); set OPENHUMAN_FORCE_GPU=1 for hardware acceleration"
             );
@@ -2173,8 +2261,13 @@ fn strip_time_ticks_at_unix_epoch(args: &mut Vec<CefCommandLineArg>) {
 /// in PR #2032 but blocks any actual use of the app on a Wayland host).
 ///
 /// XSetErrorHandler is a process-global registration; safe to install before
-/// any X display is opened. libX11 is already a runtime dep (verified via
-/// ldd of the compiled OpenHuman binary).
+/// any X display is opened. libX11 is only pulled in transitively at *runtime*
+/// (via GTK/WebKit), so the `extern` block must carry an explicit
+/// `#[link(name = "X11")]` — otherwise `rust-lld` can't resolve the symbol at
+/// link time and the full desktop build fails with `undefined symbol:
+/// XSetErrorHandler` (only surfaces in the CI-Full / release bundle link step,
+/// not CI-Lite). libX11 is present on every Linux desktop host, so linking it
+/// directly is safe.
 #[cfg(target_os = "linux")]
 fn install_silent_x_error_handler() {
     use std::ffi::c_void;
@@ -2193,6 +2286,7 @@ fn install_silent_x_error_handler() {
     }
 
     type ErrorHandler = unsafe extern "C" fn(*mut c_void, *mut XErrorEvent) -> c_int;
+    #[link(name = "X11")]
     unsafe extern "C" {
         fn XSetErrorHandler(handler: Option<ErrorHandler>) -> Option<ErrorHandler>;
     }
@@ -2647,14 +2741,23 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     process_recovery::reap_stale_openhuman_processes();
 
-    // ── Windows pre-CEF proactive stale-process reap (issue #3605) ────────
+    // ── Windows pre-CEF proactive stale-process reap (issues #3605, #3900) ─
     // The Win32 mutex above already guaranteed we are the only *top-level*
-    // instance past that point — a concurrent secondary saw
-    // `ERROR_ALREADY_EXISTS` and exited before reaching here. So any
-    // surviving `openhuman.exe` / `openhuman-core.exe` is a *wedged prior
-    // instance* left behind by an update or hard exit, not a legitimate
-    // peer. Reap it proactively (TERM then KILL) — the cross-platform
-    // analogue of the macOS reap above.
+    // GUI instance past that point — a concurrent secondary saw
+    // `ERROR_ALREADY_EXISTS` and exited before reaching here. So a surviving
+    // GUI `OpenHuman.exe` browser process is a *wedged prior instance* left
+    // behind by an update or hard exit, not a legitimate peer. Reap it
+    // proactively (TERM then KILL) — the cross-platform analogue of the macOS
+    // reap above.
+    //
+    // The reap is deliberately narrow (issue #3900): it targets ONLY the
+    // wedged GUI browser process. It never touches `OpenHuman.exe core` /
+    // `mcp` CLI/MCP sessions or the standalone `openhuman-core.exe` (which
+    // never take the CEF mutex and may be an active user session), never
+    // touches CEF `--type=` helper subprocesses (the OS job object reaps
+    // those with their parent), never touches this process's ancestors (the
+    // old app that spawned us during an update relaunch), and force-kills
+    // without `/T` so a tree walk can never reach the freshly launched app.
     //
     // This must run BEFORE `cef_singleton_wait::wait_for_cache_release()`:
     // a wedged prior process that never exits on its own keeps the CEF
@@ -2711,6 +2814,19 @@ pub fn run() {
     // after the budget we exit cleanly (code 0). Stale locks (PID dead) are
     // removed so crashed processes don't block launches. macOS: issue #864.
     // Linux: OPENHUMAN-TAURI-K1. Sentry: TAURI-RUST-F.
+    //
+    // ── macOS/Linux pre-CEF stale-lock reap (issue #4395) ─────────────────
+    // Before the bounded wait above can only *time out* on a wedged prior
+    // instance (the #3605 symptom: the updated app silently refuses to start),
+    // proactively reap that instance — but ONLY when a recent post-update
+    // relaunch marker proves the CEF-lock holder is the pre-update process,
+    // never a healthy running one. This is the macOS/Linux analogue of the
+    // Windows pre-CEF reap, gated on a staleness signal because these targets
+    // have no early single-instance mutex. See `cef_stale_reap` for the safety
+    // rationale (and why the reverted #3793 SIGKILL is not reintroduced).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    cef_stale_reap::reap_stale_cef_lock_holder();
+
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     cef_preflight::wait_for_cache_release();
 
@@ -3648,6 +3764,10 @@ pub fn run() {
                             // wake gate will fail-closed (no wakes fire) which
                             // is the safe posture for an automated harness.
                             owner_display_name: String::new(),
+                            // No mascot config on the dev-auto path → single
+                            // default voice (issue #4277).
+                            primary_voice_id: None,
+                            secondary_voice_id: None,
                         };
                         match meet_call::meet_call_open_window(app_handle.clone(), state, args)
                             .await
@@ -3832,6 +3952,19 @@ pub fn run() {
                     "[window] close requested on main window — hiding to tray"
                 );
                 api.prevent_close();
+                // Persist geometry now, while the window handle is still
+                // reachable. On Windows the hide below is a raw SW_HIDE on the
+                // OS frame, after which `get_webview_window("main")` returns
+                // `None` until the window is shown again (#1607). If the user
+                // then picks tray "Quit" while hidden, the ExitRequested save
+                // finds no window and nothing is persisted, so the next launch
+                // falls back to the default geometry (#4810). Saving here
+                // captures the last on-screen size/position before it becomes
+                // unreachable; ExitRequested still saves for the shown-window
+                // quit paths (`save_main` is best-effort and idempotent).
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    window_state::save_main(&window);
+                }
                 // Hide the OS top-level Chrome_WidgetWin_1 frame via
                 // EnumWindows + SW_HIDE — full hide-to-tray as PR #1548
                 // intended. `window.hide()` and `window.minimize()` through
@@ -3852,6 +3985,18 @@ pub fn run() {
                 }
             }
             RunEvent::ExitRequested { .. } => {
+                // Persist the main window's geometry on every clean quit
+                // (Cmd+Q, tray "Quit", dock quit, or the frontend
+                // `app_quit` command) so the next launch restores the
+                // user's size + position. Previously `save_main` ran only
+                // on the identity-flip `restart_app` path (#900): a normal
+                // quit never saved, so the window always reopened at the
+                // default small centered size (#4810). `save_main` is
+                // best-effort and idempotent — safe to also run here even
+                // though `restart_app` saves before it triggers exit.
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    window_state::save_main(&window);
+                }
                 // Run our cleanup BEFORE CEF's own Exit handler does
                 // `close_all_windows() → cef::shutdown()`. Doing this in
                 // RunEvent::Exit instead races CEF's teardown and the

@@ -75,8 +75,8 @@ pub use client::ComposioClient;
 pub(crate) use connected_integrations::composio_cache_test_lock;
 pub use identity::connection_identity;
 pub use ops::{
-    cached_active_integrations, connected_set_hash, fetch_connected_integrations,
-    fetch_connected_integrations_status, fetch_toolkit_actions,
+    cached_active_integrations, cached_active_integrations_including_expired, connected_set_hash,
+    fetch_connected_integrations, fetch_connected_integrations_status, fetch_toolkit_actions,
     invalidate_connected_integrations_cache, FetchConnectedIntegrationsStatus,
 };
 pub use schemas::{

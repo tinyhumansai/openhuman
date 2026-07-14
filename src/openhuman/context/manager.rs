@@ -10,9 +10,9 @@
 //!    capabilities sections — pass their own via
 //!    [`ContextManager::build_system_prompt_with`].
 //!
-//! 2. **Context bookkeeping** — a [`ContextPipeline`] with its guard
-//!    (utilisation stats), tool-result budget, and session-memory
-//!    tracker. Live history reduction/summarization moved to the
+//! 2. **Context bookkeeping** — a [`ContextStatsState`] with utilisation
+//!    stats, tool-result budget config, and session-memory trigger state.
+//!    Live history reduction/summarization moved to the
 //!    tinyagents graph (`ContextCompressionMiddleware` +
 //!    `MessageTrimMiddleware`, issue #4249); this manager no longer runs
 //!    an in-turn summarizer.
@@ -26,9 +26,9 @@
 //! [`ContextManager::should_extract_session_memory`] so `turn.rs` can
 //! gate its existing `spawn_subagent` call.
 
-use super::pipeline::{ContextPipeline, ContextPipelineConfig, SessionMemoryHandle};
 use super::prompt::{PromptContext, SystemPromptBuilder};
 use super::session_memory::SessionMemoryConfig;
+use super::stats::{ContextStatsState, SessionMemoryHandle};
 use crate::openhuman::config::ContextConfig;
 use crate::openhuman::inference::provider::UsageInfo;
 use anyhow::Result;
@@ -42,8 +42,6 @@ pub struct ContextStats {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub context_window: u64,
-    pub compaction_disabled: bool,
-    pub consecutive_compaction_failures: u8,
     pub session_memory_total_tokens: u64,
     pub session_memory_current_turn: u64,
     pub session_memory_total_tool_calls: u64,
@@ -52,7 +50,7 @@ pub struct ContextStats {
 /// Per-session context manager. Constructed once by the agent harness
 /// at session start; lives for the whole lifetime of the `Agent`.
 pub struct ContextManager {
-    pipeline: ContextPipeline,
+    stats_state: ContextStatsState,
     /// The default system-prompt builder used by
     /// [`ContextManager::build_system_prompt`]. Held by value so the
     /// agent's construction-time builder configuration survives the
@@ -107,21 +105,12 @@ impl ContextManager {
     /// prompt, the stats/utilisation surface, tool-result budgeting, and
     /// session-memory bookkeeping.
     pub fn new(config: &ContextConfig, default_prompt_builder: SystemPromptBuilder) -> Self {
-        // Map ContextConfig into the mechanical pipeline's own config
-        // struct. Session-memory thresholds flow through unchanged.
-        let pipeline_config = ContextPipelineConfig {
-            microcompact_keep_recent: config.microcompact_keep_recent,
-            microcompact_enabled: config.microcompact_enabled,
-            autocompact_enabled: config.autocompact_enabled,
-            session_memory: SessionMemoryConfig {
+        Self {
+            stats_state: ContextStatsState::new(SessionMemoryConfig {
                 min_token_growth: config.session_memory.min_token_growth,
                 min_tool_calls: config.session_memory.min_tool_calls,
                 min_turns_between: config.session_memory.min_turns_between,
-            },
-        };
-
-        Self {
-            pipeline: ContextPipeline::new(pipeline_config),
+            }),
             default_prompt_builder,
             enabled: config.enabled,
             tool_result_budget_bytes: config.tool_result_budget_bytes,
@@ -152,10 +141,8 @@ impl ContextManager {
         self.microcompact_keep_recent
     }
 
-    /// Byte budget for an individual tool result before the context
-    /// pipeline's inline truncation stage fires. Agents read this when
-    /// a tool returns to apply the cap before the result enters
-    /// history.
+    /// Byte budget for an individual tool result before the TinyAgents
+    /// tool-output middleware cap fires.
     pub fn tool_result_budget_bytes(&self) -> usize {
         self.tool_result_budget_bytes
     }
@@ -177,7 +164,7 @@ impl ContextManager {
 
     /// Whether the tinyagents turn should install the LLM summarization step.
     /// `false` when `[context].enabled = false` or `autocompact_enabled = false`
-    /// — the diagnostic/test opt-outs the legacy pipeline honored before
+    /// — the diagnostic/test opt-outs the legacy reducer honored before
     /// requesting autocompaction. Read by the chat turn when building
     /// `TurnContextMiddleware`.
     pub fn autocompact_enabled(&self) -> bool {
@@ -194,51 +181,45 @@ impl ContextManager {
 
     // ─── Budget tracking ──────────────────────────────────────────
 
-    /// Feed the latest provider [`UsageInfo`] into the guard + the
+    /// Feed the latest provider [`UsageInfo`] into utilisation stats and the
     /// session-memory state.
     pub fn record_usage(&mut self, usage: &UsageInfo) {
-        self.pipeline.record_usage(usage);
+        self.stats_state.record_usage(usage);
     }
 
     /// Bump the session-memory turn counter (called once per user turn).
     pub fn tick_turn(&mut self) {
-        self.pipeline.tick_turn();
+        self.stats_state.tick_turn();
     }
 
     /// Accumulate a turn's tool-call count into the session-memory state.
     pub fn record_tool_calls(&mut self, n: usize) {
-        self.pipeline.record_tool_calls(n);
+        self.stats_state.record_tool_calls(n);
     }
 
     /// Whether the caller should spawn a background session-memory
-    /// extraction this turn. Delegates to the underlying pipeline
-    /// state; the manager does not spawn the extraction itself.
+    /// extraction this turn. Delegates to the underlying stats state; the
+    /// manager does not spawn the extraction itself.
     pub fn should_extract_session_memory(&self) -> bool {
-        self.pipeline.should_extract_session_memory()
+        self.stats_state.should_extract_session_memory()
     }
 
     /// Mark a session-memory extraction as started (so repeated
     /// calls to [`should_extract_session_memory`] return `false` until
     /// the extraction completes).
     pub fn mark_session_memory_started(&mut self) {
-        if let Ok(mut sm) = self.pipeline.session_memory.lock() {
-            sm.mark_extraction_started();
-        }
+        self.stats_state.mark_session_memory_started();
     }
 
     /// Mark a session-memory extraction as complete — resets deltas.
     pub fn mark_session_memory_complete(&mut self) {
-        if let Ok(mut sm) = self.pipeline.session_memory.lock() {
-            sm.mark_extraction_complete();
-        }
+        self.stats_state.mark_session_memory_complete();
     }
 
     /// Mark a session-memory extraction as failed — keeps deltas
     /// intact so the next turn retries.
     pub fn mark_session_memory_failed(&mut self) {
-        if let Ok(mut sm) = self.pipeline.session_memory.lock() {
-            sm.mark_extraction_failed();
-        }
+        self.stats_state.mark_session_memory_failed();
     }
 
     /// Clone the shared session-memory handle so a detached background
@@ -248,8 +229,8 @@ impl ContextManager {
     /// [`Self::mark_session_memory_started`] *before* spawning so
     /// overlapping turns don't fire duplicate extractions while this
     /// one is in flight.
-    pub fn session_memory_handle(&self) -> SessionMemoryHandle {
-        self.pipeline.session_memory_handle()
+    pub(crate) fn session_memory_handle(&self) -> SessionMemoryHandle {
+        self.stats_state.session_memory_handle()
     }
 
     // ─── Prompt building ───────────────────────────────────────────
@@ -286,19 +267,13 @@ impl ContextManager {
 
     /// Read-only snapshot of the current budget state.
     pub fn stats(&self) -> ContextStats {
-        let utilisation_pct = self
-            .pipeline
-            .guard
-            .utilization()
-            .map(|u| (u * 100.0).round() as u8);
-        let sm = self.pipeline.session_memory_snapshot();
+        let utilisation_pct = self.stats_state.utilization_pct();
+        let sm = self.stats_state.session_memory_snapshot();
         ContextStats {
             utilisation_pct,
-            input_tokens: self.pipeline.guard.last_input_tokens(),
-            output_tokens: self.pipeline.guard.last_output_tokens(),
-            context_window: self.pipeline.guard.context_window(),
-            compaction_disabled: self.pipeline.guard.is_compaction_disabled(),
-            consecutive_compaction_failures: self.pipeline.guard.consecutive_failures(),
+            input_tokens: self.stats_state.last_input_tokens(),
+            output_tokens: self.stats_state.last_output_tokens(),
+            context_window: self.stats_state.context_window(),
             session_memory_total_tokens: sm.total_tokens,
             session_memory_current_turn: sm.current_turn,
             session_memory_total_tool_calls: sm.total_tool_calls,

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import Conversations from '../../pages/Conversations';
 import { useAppSelector } from '../../store/hooks';
 import {
   selectCustomMascotGifUrl,
@@ -9,6 +8,7 @@ import {
   selectCustomSecondaryColor,
   selectMascotColor,
 } from '../../store/mascotSlice';
+import Conversations from '../conversations/Conversations';
 import {
   CustomGifMascot,
   getMascotPalette,

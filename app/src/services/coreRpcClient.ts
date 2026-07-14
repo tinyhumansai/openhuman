@@ -591,8 +591,8 @@ export async function getCoreHttpBaseUrl(): Promise<string> {
  * unauthenticated request that the server will reject with 401 and have the
  * browser auto-reconnect against forever.
  *
- * The same helper is consumed by the WebhooksDebugPanel settings screen and
- * is the seam #1339 will reuse when the approvals SSE stream lands.
+ * This is the seam #1339 will reuse when the approvals SSE stream lands (the
+ * former WebhooksDebugPanel consumer was retired with the webhooks UI).
  *
  * SECURITY (audit U3): forwarding the long-lived bearer in the query string can
  * leak into proxy/server logs. It is bounded today — `QUERY_TOKEN_PATHS`

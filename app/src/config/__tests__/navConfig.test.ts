@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { AVATAR_MENU_ITEMS, NAV_TABS } from '../navConfig';
 
 describe('NAV_TABS', () => {
-  it('has exactly 5 entries', () => {
-    expect(NAV_TABS).toHaveLength(5);
+  it('has exactly 7 entries', () => {
+    expect(NAV_TABS).toHaveLength(7);
   });
 
   it('has the correct ids in order', () => {
@@ -12,6 +12,8 @@ describe('NAV_TABS', () => {
       'chat',
       'human',
       'brain',
+      'flows',
+      'orchestration',
       'agent-world',
       'connections',
     ]);
@@ -22,6 +24,8 @@ describe('NAV_TABS', () => {
       '/chat',
       '/human',
       '/brain',
+      '/flows',
+      '/orchestration',
       '/agent-world',
       '/connections',
     ]);
@@ -32,6 +36,8 @@ describe('NAV_TABS', () => {
       'nav.chat',
       'nav.human',
       'nav.brain',
+      'nav.flows',
+      'nav.orchestration',
       'nav.agentWorld',
       'nav.connections',
     ]);
@@ -42,6 +48,8 @@ describe('NAV_TABS', () => {
       'tab-chat',
       'tab-human',
       'tab-brain',
+      'tab-flows',
+      'tab-orchestration',
       'tab-agent-world',
       'tab-connections',
     ]);

@@ -517,7 +517,7 @@ pub async fn run(goal: &str, backend: &dyn AutomateBackend) -> AutomateOutcome {
         }
         // Song row pressed, but the backend can't confirm the track (non-macOS).
         (_, None) => {
-            let unverified = matches!(verified, None);
+            let unverified = verified.is_none();
             steps.push(if unverified {
                 "verify: playback unverified".to_string()
             } else {

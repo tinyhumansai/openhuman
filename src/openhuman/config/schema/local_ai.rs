@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// method below returns `false` regardless of these values.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
+#[derive(Default)]
 pub struct LocalAiUsage {
     /// When true (and `runtime_enabled`), use the local model for embedding
     /// generation instead of the cloud backend.
@@ -26,17 +27,6 @@ pub struct LocalAiUsage {
     /// subconscious evaluation and execution.
     #[serde(default)]
     pub subconscious: bool,
-}
-
-impl Default for LocalAiUsage {
-    fn default() -> Self {
-        Self {
-            embeddings: false,
-            heartbeat: false,
-            learning_reflection: false,
-            subconscious: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

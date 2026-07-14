@@ -191,6 +191,12 @@ impl ComposioClient {
         if tool.is_empty() {
             anyhow::bail!("composio.execute_tool: tool slug must not be empty");
         }
+        // Egress spine (privacy epic S2, #4436): a Composio tool call ships the
+        // (already-normalized) arguments to the third-party provider — disclose
+        // the transfer before the round-trip. S4 will add an approval arm here.
+        crate::openhuman::security::egress::emit_external_transfer(
+            crate::openhuman::security::egress::EgressDescriptor::composio(tool),
+        );
         // PR #1827 routes all execute-side argument normalization
         // (including the bare-date → RFC 3339 fix #1802 brought to
         // `normalize_calendar_query_args` on `main`) through the
@@ -228,6 +234,12 @@ impl ComposioClient {
         if tool.is_empty() {
             anyhow::bail!("composio.execute_tool_once: tool slug must not be empty");
         }
+        // Egress spine (privacy epic S2, #4436): see `execute_tool`. This is the
+        // caller-owns-retry entry point (e.g. `auth_retry`), disjoint from
+        // `execute_tool`, so each logical tool call emits exactly once.
+        crate::openhuman::security::egress::emit_external_transfer(
+            crate::openhuman::security::egress::EgressDescriptor::composio(tool),
+        );
         let arguments = super::execute_prepare::prepare_execute_arguments(tool, arguments)
             .map_err(anyhow::Error::msg)?;
         tracing::debug!(tool = %tool, "[composio] execute_tool_once (no built-in retry)");
@@ -1066,7 +1078,15 @@ pub async fn direct_list_connections(
 /// the same model-callable shape backend-mode does. Downstream curated-
 /// whitelist filtering (`evaluate_tool_visibility` / `find_curated`)
 /// still applies at the `ops::composio_list_tools` layer.
-pub(super) async fn direct_list_tools(
+///
+/// `pub(crate)` (widened from `pub(super)`) so
+/// `tinyflows::caps::fetch_raw_toolkit_tools` can call this directly for
+/// the LIVE (uncurated) tool-contract catalog the Workflow builder grounds
+/// against — that caller deliberately bypasses `composio_list_tools`'s
+/// curated-whitelist filter (`filter_list_tools_response_for_direct`),
+/// which this function never applies itself; the filter is layered on by
+/// its `composio_list_tools` caller, not baked in here.
+pub(crate) async fn direct_list_tools(
     direct: &Arc<crate::openhuman::tools::ComposioTool>,
     toolkits: &[String],
     tags: Option<&[String]>,
@@ -1090,6 +1110,7 @@ pub(super) async fn direct_list_tools(
                 name: item.slug,
                 description: item.description,
                 parameters: item.input_parameters,
+                output_parameters: item.output_parameters,
             },
         })
         .collect();

@@ -4,235 +4,102 @@
 //! ([`futures_util::future::join_all`]) and a bespoke detached-sub-agent registry
 //! (raw `tokio` `AbortHandle`s, `watch` status channels, tombstone sets). This
 //! module is the shared seam that re-expresses that work on `tinyagents`
-//! primitives so every orchestration surface (workflow phases, parallel agents,
-//! teams, detached sub-agents) routes through one place:
+//! primitives so the detached-sub-agent control plane routes through one place:
 //!
-//! - [`run_parallel_fanout`] builds a real [`CompiledGraph`] map step — a
-//!   command-routing `dispatch` entry that fans out to N worker nodes running in
-//!   the same super-step (`with_parallel` + `with_max_concurrency`), each writing
-//!   its result into typed graph state through the reducer, joined at a `collect`
-//!   barrier. Results come back in input order regardless of completion order.
 //! - The `graph::orchestration` task primitives ([`TaskStore`],
 //!   [`OrchestrationTaskKind`], …) are re-exported here so the detached-sub-agent
 //!   control plane gets typed task lifecycle bookkeeping (Pending → Running →
 //!   Completed/Failed/Cancelled/…) instead of bespoke status enums + watch
 //!   channels + tombstones. The store tracks lifecycle; the caller still owns the
 //!   executor (the `tokio` task + cooperative cancel + hard abort).
+//! - [`SteeringRegistry`] is re-exported as the next bridge for task-id-addressed
+//!   steering. Today the live control path still goes through OpenHuman's
+//!   `RunQueue`; the registry gives the follow-up patch one local import seam for
+//!   registering the TinyAgents [`SteeringHandle`] per detached task.
 //!
 //! Graph lifecycle events are mirrored onto tracing via the shared
 //! [`GraphTracingSink`](crate::openhuman::tinyagents::observability::GraphTracingSink).
 
-use std::future::Future;
-use std::sync::{Arc, Mutex as StdMutex};
-
-use tinyagents::graph::{ClosureStateReducer, Command, GraphBuilder, NodeContext, NodeResult};
-
-use crate::openhuman::tinyagents::observability::GraphTracingSink;
+use std::sync::OnceLock;
 
 // Re-export the tinyagents task-orchestration primitives so the detached
 // sub-agent control plane imports lifecycle types from one openhuman path.
-pub use tinyagents::graph::orchestration::{
-    InMemoryTaskStore, OrchestrationControlOutcome, OrchestrationTaskFilter, OrchestrationTaskKind,
-    OrchestrationTaskRecord, OrchestrationTaskResult, OrchestrationTaskSpec,
-    OrchestrationTaskStatus, TaskStore,
+pub(crate) use tinyagents::graph::orchestration::OrchestrationTaskStatus;
+#[allow(unused_imports)]
+pub(crate) use tinyagents::graph::orchestration::SteeringRegistry;
+pub(crate) use tinyagents::graph::orchestration::{
+    InMemoryTaskStore, JsonlTaskStore, OrchestrationControlOutcome, OrchestrationTaskFilter,
+    OrchestrationTaskKind, OrchestrationTaskRecord, OrchestrationTaskResult, OrchestrationTaskSpec,
+    TaskStore,
+};
+#[allow(unused_imports)]
+pub(crate) use tinyagents::harness::ids::TaskId;
+#[allow(unused_imports)]
+pub(crate) use tinyagents::harness::steering::{
+    SteeringCommand, SteeringCommandKind, SteeringHandle, SteeringPolicy,
 };
 
-/// Typed working state for a parallel fan-out: one result slot per worker,
-/// filled by the reducer as each worker node completes in any order.
-#[derive(Clone)]
-struct FanoutState<T: Clone> {
-    slots: Vec<Option<T>>,
+static STEERING_REGISTRY: OnceLock<SteeringRegistry> = OnceLock::new();
+
+/// Process-local registry for TinyAgents steering handles keyed by detached
+/// task id. The current product control path still uses OpenHuman's `RunQueue`;
+/// this registry is the crate-native lookup seam for the next control-plane
+/// migration slice.
+pub(crate) fn shared_steering_registry() -> &'static SteeringRegistry {
+    STEERING_REGISTRY.get_or_init(SteeringRegistry::new)
 }
 
-// Manual `Default` (derive would demand `T: Default`, which workers don't have).
-impl<T: Clone> Default for FanoutState<T> {
-    fn default() -> Self {
-        Self { slots: Vec::new() }
-    }
-}
-
-/// Reducer update emitted by a fan-out worker node.
-enum FanoutUpdate<T> {
-    /// Worker `index` finished; store its result.
-    Slot { index: usize, value: Box<T> },
-    /// The `collect` fan-in barrier fired; carries no state change.
-    Noop,
-}
-
-/// Run `run_one(index, item)` for every entry in `items` concurrently on a
-/// `tinyagents` fan-out graph, returning the results in **input order**
-/// (regardless of completion order). `max_concurrency` bounds how many workers
-/// run in the shared super-step.
+/// Run class of a TinyAgents turn, used to tighten the steering allowlist.
 ///
-/// This is the generic engine behind the council member fan-out and the
-/// `spawn_parallel_agents` tool: pure graph mechanics with no domain knowledge,
-/// so it is unit-testable with a trivial closure.
+/// The distinction matters for steering safety: an *interactive* turn is the
+/// user's own live chat turn, where the only trusted controls are transcript
+/// injection (user/orchestrator steering) and cooperative `Pause`. A
+/// *background* turn is a detached sub-agent run with no live user transcript of
+/// its own, so it can additionally accept crate-native control-flow steering
+/// (`Resume`, `Cancel`) and `Redirect` — a graceful, safe-boundary alternative
+/// to the hard `AbortHandle` cancel — without ever widening what the interactive
+/// path accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SteeringRunClass {
+    /// The user's live interactive chat turn.
+    Interactive,
+    /// A detached / background sub-agent run.
+    Background,
+}
+
+/// Steering handle policy for OpenHuman's shared TinyAgents turn path, tightened
+/// per [`SteeringRunClass`].
 ///
-/// `label` names the fan-out for tracing. Each `item` is moved into its own
-/// worker node (no `Clone` bound on the payload). The worker output `T` must be
-/// `Clone` (it rides in the graph's typed state).
-pub async fn run_parallel_fanout<I, T, F, Fut>(
-    label: &str,
-    items: Vec<I>,
-    max_concurrency: usize,
-    run_one: F,
-) -> Result<Vec<T>, String>
-where
-    I: Send + 'static,
-    T: Clone + Send + Sync + 'static,
-    F: Fn(usize, I) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = T> + Send + 'static,
-{
-    let n = items.len();
-    if n == 0 {
-        return Ok(Vec::new());
+/// Interactive turns send `InjectMessage` for user/orchestrator steering and
+/// `Pause` for cooperative early-exit, cap, stop-hook, and repeated-failure
+/// halts — nothing else, matching the prior behavior exactly. Background
+/// (detached sub-agent) runs additionally accept `Resume`, `Cancel`, and
+/// `Redirect`: control-flow steering that never injects untrusted transcript and
+/// still lands only at a safe loop boundary (the crate drains before each model
+/// call). A command whose kind is not in the allowlist is *rejected* by the
+/// crate and aborts the run with `TinyAgentsError::Steering`, so callers must
+/// only enqueue kinds this policy permits (see `running_subagents::steer_directive`).
+pub(crate) fn openhuman_steering_handle(run_class: SteeringRunClass) -> SteeringHandle {
+    let mut policy = SteeringPolicy::new()
+        .allow(SteeringCommandKind::InjectMessage)
+        .allow(SteeringCommandKind::Pause);
+    if run_class == SteeringRunClass::Background {
+        // Background-only widening: accept graceful control-flow steering without
+        // also accepting transcript injection beyond the shared `InjectMessage`
+        // lane. `Cancel` is the crate-native, safe-boundary equivalent of the
+        // hard abort; `Resume` lifts a `Pause`; `Redirect` lowers to a system
+        // instruction the normal approval-gated loop still governs.
+        policy = policy
+            .allow(SteeringCommandKind::Resume)
+            .allow(SteeringCommandKind::Cancel)
+            .allow(SteeringCommandKind::Redirect);
     }
-    let worker_ids: Vec<String> = (0..n).map(|i| format!("worker_{i}")).collect();
-
-    let mut builder = GraphBuilder::<FanoutState<T>, FanoutUpdate<T>>::new()
-        .with_parallel(true)
-        .with_max_concurrency(max_concurrency.max(1))
-        .set_reducer(ClosureStateReducer::new(
-            |mut s: FanoutState<T>, u: FanoutUpdate<T>| {
-                if let FanoutUpdate::Slot { index, value } = u {
-                    if let Some(slot) = s.slots.get_mut(index) {
-                        *slot = Some(*value);
-                    }
-                }
-                Ok(s)
-            },
-        ));
-
-    // `dispatch`: command-routing entry that fans out to every worker node.
-    let goto_ids = worker_ids.clone();
-    builder = builder.add_node("dispatch", move |_s: FanoutState<T>, _c: NodeContext| {
-        let goto_ids = goto_ids.clone();
-        async move { Ok(NodeResult::Command(Command::default().with_goto(goto_ids))) }
-    });
-
-    // One node per worker: runs `run_one(i, item)` and writes the result into
-    // its slot. The graph's `NodeHandler` is `Fn` (re-entrant), but each node
-    // runs exactly once — hold the moved-in payload in a take-once cell so it is
-    // consumed without a `Clone` bound on `I`.
-    for (i, item) in items.into_iter().enumerate() {
-        let run_one = run_one.clone();
-        let node_id = worker_ids[i].clone();
-        let cell = Arc::new(StdMutex::new(Some(item)));
-        builder = builder.add_node(
-            node_id.clone(),
-            move |_s: FanoutState<T>, _c: NodeContext| {
-                let run_one = run_one.clone();
-                let cell = cell.clone();
-                async move {
-                    let item = cell
-                        .lock()
-                        .expect("fan-out worker cell poisoned")
-                        .take()
-                        .expect("fan-out worker node ran more than once");
-                    let value = run_one(i, item).await;
-                    Ok(NodeResult::Update(FanoutUpdate::Slot {
-                        index: i,
-                        value: Box::new(value),
-                    }))
-                }
-            },
-        );
-        builder = builder.add_edge(node_id, "collect");
-    }
-
-    // `collect`: fan-in barrier the executor schedules only once every worker
-    // edge fired. Leaves accumulated state untouched and finishes the graph.
-    builder = builder
-        .add_node(
-            "collect",
-            |_s: FanoutState<T>, _c: NodeContext| async move {
-                Ok(NodeResult::Update(FanoutUpdate::Noop))
-            },
-        )
-        .set_entry("dispatch")
-        .mark_command_routing("dispatch")
-        .set_finish("collect");
-
-    let graph = builder
-        .compile()
-        .map_err(|e| format!("{label} fan-out graph compile failed: {e}"))?
-        .with_event_sink(Arc::new(GraphTracingSink::new(label)));
-
-    tracing::debug!(
-        target: "orchestration",
-        workers = n,
-        max_concurrency = max_concurrency.max(1),
-        "[orchestration] running parallel fan-out on tinyagents graph ({label})"
-    );
-
-    let execution = graph
-        .run(FanoutState {
-            slots: vec![None; n],
-        })
-        .await
-        .map_err(|e| format!("{label} fan-out graph run failed: {e}"))?;
-
-    // Every worker node has an edge the executor must traverse, so every slot is
-    // populated; a missing slot is a hard invariant break.
-    let mut out = Vec::with_capacity(n);
-    for (i, slot) in execution.state.slots.into_iter().enumerate() {
-        match slot {
-            Some(v) => out.push(v),
-            None => {
-                return Err(format!(
-                    "{label} fan-out: worker {i} produced no result (graph invariant broken)"
-                ))
-            }
-        }
-    }
-    Ok(out)
+    SteeringHandle::new(policy)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    #[tokio::test]
-    async fn fanout_runs_every_worker_and_preserves_input_order() {
-        let labels = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-        let ran = Arc::new(AtomicUsize::new(0));
-        let ran2 = ran.clone();
-        let results = run_parallel_fanout("test", labels, 4, move |i, label| {
-            let ran = ran2.clone();
-            async move {
-                ran.fetch_add(1, Ordering::SeqCst);
-                format!("{i}:{label}")
-            }
-        })
-        .await
-        .expect("fan-out runs");
-
-        assert_eq!(ran.load(Ordering::SeqCst), 3, "every worker ran once");
-        assert_eq!(results, vec!["0:a", "1:b", "2:c"], "results in input order");
-    }
-
-    #[tokio::test]
-    async fn fanout_empty_is_a_noop() {
-        let results =
-            run_parallel_fanout::<String, String, _, _>("empty", vec![], 4, |_, _| async move {
-                String::new()
-            })
-            .await
-            .expect("empty fan-out runs");
-        assert!(results.is_empty());
-    }
-
-    #[tokio::test]
-    async fn fanout_handles_single_worker() {
-        let results =
-            run_parallel_fanout("solo", vec!["x".to_string()], 1, |_, label| async move {
-                format!("only:{label}")
-            })
-            .await
-            .expect("single-worker fan-out runs");
-        assert_eq!(results, vec!["only:x"]);
-    }
 
     #[tokio::test]
     async fn task_store_tracks_lifecycle() {
@@ -257,5 +124,44 @@ mod tests {
             store.get(rec.task_id()).map(|r| r.status),
             Some(OrchestrationTaskStatus::Completed)
         );
+    }
+
+    #[test]
+    fn steering_registry_reexport_registers_task_handles() {
+        let registry = shared_steering_registry();
+        let handle = openhuman_steering_handle(SteeringRunClass::Background);
+        let task_id = TaskId::new("task-steer");
+
+        registry.register(task_id.clone(), handle);
+        assert!(registry.get(&task_id).is_some());
+        assert!(registry.deregister(&task_id).is_some());
+        assert!(registry.get(&task_id).is_none());
+    }
+
+    #[test]
+    fn steering_policy_tightens_by_run_class() {
+        // Interactive: only the two long-standing kinds; control-flow steering
+        // stays closed so the user's live turn can't be cancelled/redirected
+        // out from under it via a rogue steer.
+        let interactive = openhuman_steering_handle(SteeringRunClass::Interactive);
+        let policy = interactive.policy();
+        assert!(policy.is_allowed(SteeringCommandKind::InjectMessage));
+        assert!(policy.is_allowed(SteeringCommandKind::Pause));
+        assert!(!policy.is_allowed(SteeringCommandKind::Cancel));
+        assert!(!policy.is_allowed(SteeringCommandKind::Resume));
+        assert!(!policy.is_allowed(SteeringCommandKind::Redirect));
+        assert!(!policy.is_allowed(SteeringCommandKind::SetMetadata));
+
+        // Background: additionally accepts graceful control-flow steering.
+        let background = openhuman_steering_handle(SteeringRunClass::Background);
+        let policy = background.policy();
+        assert!(policy.is_allowed(SteeringCommandKind::InjectMessage));
+        assert!(policy.is_allowed(SteeringCommandKind::Pause));
+        assert!(policy.is_allowed(SteeringCommandKind::Cancel));
+        assert!(policy.is_allowed(SteeringCommandKind::Resume));
+        assert!(policy.is_allowed(SteeringCommandKind::Redirect));
+        // Metadata replacement stays closed on every class until a control
+        // surface owns it.
+        assert!(!policy.is_allowed(SteeringCommandKind::SetMetadata));
     }
 }

@@ -31,7 +31,7 @@
 //! rows by stability. Excess Active rows are demoted to Provisional. A cross-class
 //! overflow pool holds up to `BUDGET_OVERFLOW` extra Provisional rows.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::core::event_bus;
 use crate::core::event_bus::DomainEvent;
@@ -262,13 +262,10 @@ impl StabilityDetector {
             let new_refs: Vec<crate::openhuman::learning::candidate::EvidenceRef> =
                 cands.iter().map(|c| c.evidence.clone()).collect();
 
-            let mut all_refs = existing
-                .map(|f| f.evidence_refs.clone())
-                .unwrap_or_default();
-            all_refs.extend(new_refs);
-            // Deduplicate refs by serialised form (cheap for small vecs).
-            all_refs
-                .dedup_by(|a, b| serde_json::to_string(a).ok() == serde_json::to_string(b).ok());
+            let all_refs = merge_evidence_refs(
+                existing.map(|f| f.evidence_refs.as_slice()).unwrap_or(&[]),
+                new_refs,
+            );
 
             // Build cue-families counts from this cycle's candidates.
             let mut cue_counts: HashMap<String, u32> = HashMap::new();
@@ -491,6 +488,27 @@ fn dominant_cue(cands: &[LearningCandidate], _existing: Option<&ProfileFacet>) -
         })
         .map(|c| c.cue_family)
         .unwrap_or(CueFamily::Behavioral)
+}
+
+/// Merge the existing row's evidence refs with this cycle's new refs,
+/// deduplicating while preserving first-seen order.
+///
+/// `Vec::dedup_by` only collapses *consecutive* equal elements, so a ref that
+/// recurs non-adjacently — present in the existing row and re-emitted by a new
+/// candidate, or repeated within one cycle — would slip through and accumulate
+/// without bound across rebuilds. `EvidenceRef: Eq + Hash`, so tracking seen
+/// refs in a set removes every duplicate exactly and cheaply.
+fn merge_evidence_refs(
+    existing_refs: &[candidate::EvidenceRef],
+    new_refs: Vec<candidate::EvidenceRef>,
+) -> Vec<candidate::EvidenceRef> {
+    let mut seen: HashSet<candidate::EvidenceRef> = HashSet::new();
+    existing_refs
+        .iter()
+        .cloned()
+        .chain(new_refs)
+        .filter(|r| seen.insert(r.clone()))
+        .collect()
 }
 
 /// Total evidence count from candidates + existing row.
@@ -880,5 +898,75 @@ mod tests {
             most_recent_reinforcement(&[], None, now, FacetClass::Goal),
             most_recent_reinforcement(&[], None, now, FacetClass::Style),
         );
+    }
+
+    // ── merge_evidence_refs deduplication ─────────────────────────────────────
+
+    #[test]
+    fn merge_evidence_refs_removes_non_consecutive_duplicates() {
+        // The bug this guards: a ref already in the existing row (Episodic 1)
+        // that is re-emitted by a new candidate lands non-adjacent to its twin
+        // once the two lists are concatenated ([1, 2, 1]). `Vec::dedup_by` only
+        // collapses *consecutive* equals, so it would leave the duplicate in and
+        // the refs list would grow every rebuild cycle. The set-based merge must
+        // drop it, keeping the first occurrence and preserving order.
+        let existing = vec![EvidenceRef::Episodic { episodic_id: 1 }];
+        let new = vec![
+            EvidenceRef::Episodic { episodic_id: 2 },
+            EvidenceRef::Episodic { episodic_id: 1 },
+        ];
+        let merged = merge_evidence_refs(&existing, new);
+        assert_eq!(
+            merged,
+            vec![
+                EvidenceRef::Episodic { episodic_id: 1 },
+                EvidenceRef::Episodic { episodic_id: 2 },
+            ],
+            "non-consecutive duplicate must be removed, first-seen order preserved"
+        );
+    }
+
+    #[test]
+    fn merge_evidence_refs_dedups_within_a_single_cycle() {
+        // Two candidates in the same cycle can reference the same evidence with
+        // an unrelated ref between them; that also defeats consecutive-only dedup.
+        let new = vec![
+            EvidenceRef::TreeTopic {
+                topic_id: "a".into(),
+            },
+            EvidenceRef::Episodic { episodic_id: 7 },
+            EvidenceRef::TreeTopic {
+                topic_id: "a".into(),
+            },
+        ];
+        let merged = merge_evidence_refs(&[], new);
+        assert_eq!(
+            merged,
+            vec![
+                EvidenceRef::TreeTopic {
+                    topic_id: "a".into(),
+                },
+                EvidenceRef::Episodic { episodic_id: 7 },
+            ],
+        );
+    }
+
+    #[test]
+    fn merge_evidence_refs_is_idempotent_across_rebuilds() {
+        // Re-running with the merged result as the new existing row and the same
+        // candidates must not grow the list — the core invariant that the old
+        // consecutive-only dedup violated.
+        let existing = vec![
+            EvidenceRef::Episodic { episodic_id: 1 },
+            EvidenceRef::Episodic { episodic_id: 2 },
+        ];
+        let cands = vec![
+            EvidenceRef::Episodic { episodic_id: 2 },
+            EvidenceRef::Episodic { episodic_id: 1 },
+        ];
+        let first = merge_evidence_refs(&existing, cands.clone());
+        let second = merge_evidence_refs(&first, cands);
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 2);
     }
 }

@@ -47,6 +47,17 @@ fn jwt_with_payload(payload: serde_json::Value) -> String {
     format!("eyJhbGciOiJIUzI1NiJ9.{payload}.sig")
 }
 
+fn count_reembed_backfill_jobs(config: &Config) -> i64 {
+    crate::openhuman::memory_store::chunks::store::with_connection(config, |conn| {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_jobs WHERE kind = 'reembed_backfill'",
+            [],
+            |row| row.get(0),
+        )?)
+    })
+    .unwrap()
+}
+
 async fn spawn_auth_me_status(status: StatusCode) -> String {
     let app = Router::new().route("/auth/me", get(move || async move { status }));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -272,6 +283,84 @@ async fn store_session_defers_minimal_live_jwt_when_auth_me_transient_and_allowe
         state.user,
         Some(json!({ "pendingBackendValidation": true })),
         "deferred fallback must not copy identity claims from an unverified JWT or callback payload"
+    );
+}
+
+#[tokio::test]
+async fn store_session_requeues_reembed_backfill_after_login() {
+    use crate::openhuman::memory_store::chunks::store::{upsert_chunks, upsert_staged_chunks_tx};
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+    };
+    use crate::openhuman::memory_store::content as content_store;
+    use chrono::TimeZone;
+
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_status(StatusCode::SERVICE_UNAVAILABLE).await);
+
+    let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+    let chunk = Chunk {
+        id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "login-reembed-seed"),
+        content: "memory content that needs embedding after the user logs in".into(),
+        metadata: Metadata {
+            source_kind: SourceKind::Chat,
+            source_id: "slack:#eng".into(),
+            owner: "alice".into(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: vec![],
+            source_ref: Some(SourceRef::new("slack://x")),
+            path_scope: None,
+        },
+        token_count: 12,
+        seq_in_source: 0,
+        created_at: ts,
+        partial_message: false,
+    };
+    upsert_chunks(&config, &[chunk.clone()]).unwrap();
+    let content_root = config.memory_tree_content_root();
+    std::fs::create_dir_all(&content_root).unwrap();
+    let staged = content_store::stage_chunks(&content_root, &[chunk]).unwrap();
+    crate::openhuman::memory_store::chunks::store::with_connection(&config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        upsert_staged_chunks_tx(&tx, &staged)?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(
+        count_reembed_backfill_jobs(&config),
+        0,
+        "precondition: no active reembed backfill job exists before login"
+    );
+
+    let token = jwt_with_payload(json!({
+        "sub": "unverified-jwt-user",
+        "email": "jwt@example.test",
+        "name": "Unverified JWT User",
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let result = store_session_with_deferred_validation(&config, &token, None, Some(json!({})))
+        .await
+        .unwrap();
+
+    let log_text = result.logs.join(" ");
+    assert!(
+        log_text.contains("memory re-embed backfill checked after login"),
+        "store_session should report the post-login backfill probe, got: {log_text}"
+    );
+    assert_eq!(
+        count_reembed_backfill_jobs(&config),
+        1,
+        "login must enqueue exactly one reembed_backfill chain for uncovered rows"
     );
 }
 

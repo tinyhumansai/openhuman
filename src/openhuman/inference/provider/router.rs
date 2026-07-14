@@ -164,6 +164,13 @@ impl RouterProvider {
 
 #[async_trait]
 impl Provider for RouterProvider {
+    fn telemetry_provider_id(&self) -> String {
+        self.providers
+            .get(self.default_index)
+            .map(|(_, p)| p.telemetry_provider_id())
+            .unwrap_or_else(|| "custom".to_string())
+    }
+
     async fn chat_with_system(
         &self,
         system_prompt: Option<&str>,

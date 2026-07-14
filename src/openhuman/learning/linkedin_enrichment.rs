@@ -309,31 +309,13 @@ async fn write_profile_md(
 /// Ask the backend LLM to distil the raw LinkedIn Markdown into a
 /// concise, high-signal profile document suitable for agent context.
 pub async fn summarise_profile_with_llm(config: &Config, raw_md: &str) -> anyhow::Result<String> {
-    use crate::openhuman::inference::provider::ops::{
-        create_backend_inference_provider, ProviderRuntimeOptions,
-    };
-
-    // Point `AuthService` at the same state dir the rest of the app uses
-    // (the openhuman_dir derived from `config.config_path`), otherwise
-    // `OpenHumanBackendProvider::resolve_bearer` looks in `~/.openhuman`
-    // and fails with "No backend session" even when the JWT is present
-    // under a custom `OPENHUMAN_WORKSPACE`.
-    let options = ProviderRuntimeOptions {
-        auth_profile_override: None,
-        openhuman_dir: config
-            .config_path
-            .parent()
-            .map(std::path::PathBuf::from)
-            .or_else(|| Some(config.workspace_dir.clone())),
-        secrets_encrypt: config.secrets.encrypt,
-        reasoning_enabled: config.runtime.reasoning_enabled,
-    };
-    let provider = create_backend_inference_provider(
-        config.inference_url.as_deref(),
-        config.api_url.as_deref(),
-        config.api_key.as_deref(),
-        &options,
-    )?;
+    let (model_chat, _) =
+        crate::openhuman::inference::provider::create_chat_model_from_string_with_model_id(
+            "summarization",
+            "openhuman",
+            config,
+            0.3,
+        )?;
 
     let system = "\
 You are a profile analyst. You will receive a user's LinkedIn profile in Markdown format. \
@@ -359,9 +341,18 @@ Rules:\n\
         "[linkedin_enrichment] sending profile to LLM for summarisation"
     );
 
-    let summary = provider
-        .chat_with_system(Some(system), raw_md, model, 0.3)
-        .await?;
+    use tinyagents::harness::message::Message;
+    use tinyagents::harness::model::ModelRequest;
+    let summary = model_chat
+        .invoke(
+            &(),
+            ModelRequest::new(vec![
+                Message::system(system),
+                Message::user(raw_md.to_string()),
+            ]),
+        )
+        .await?
+        .text();
 
     tracing::debug!(
         output_len = summary.len(),

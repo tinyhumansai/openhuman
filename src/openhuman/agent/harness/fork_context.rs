@@ -12,13 +12,14 @@
 
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::config::AgentConfig;
-use crate::openhuman::inference::provider::Provider;
 use crate::openhuman::memory::Memory;
+use crate::openhuman::skills::Workflow;
+use crate::openhuman::tinyagents::TurnModelSource;
 use crate::openhuman::tools::{Tool, ToolSpec};
-use crate::openhuman::workflows::Workflow;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tinyagents::harness::workspace::WorkspaceDescriptor;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parent execution context
@@ -39,9 +40,10 @@ pub struct ParentExecutionContext {
     /// generic `spawn_subagent` tool. Empty means no generic subagent spawns.
     pub allowed_subagent_ids: HashSet<String>,
 
-    /// Parent's provider — sub-agents call into the same instance so
-    /// connection pools, retry budgets, and credentials are shared.
-    pub provider: Arc<dyn Provider>,
+    /// Parent's model source — sub-agents build off the same source so
+    /// connection pools, retry budgets, and credentials are shared (issue #4249,
+    /// Phase 3 / Motion A; replaces the raw `Arc<dyn Provider>`).
+    pub turn_model_source: TurnModelSource,
 
     /// Parent's full tool registry. The sub-agent runner re-filters this
     /// per-archetype before handing it to the sub-agent's tool loop.
@@ -70,6 +72,13 @@ pub struct ParentExecutionContext {
 
     /// Working directory of the parent agent.
     pub workspace_dir: PathBuf,
+
+    /// TinyAgents workspace descriptor currently active for this parent turn.
+    /// Tool-boundary spawns pass descriptors explicitly through
+    /// `SubagentRunOptions`; this ambient field is only a fallback for
+    /// internal/background fanout paths that already inherit the parent runtime
+    /// through this task-local.
+    pub workspace_descriptor: Option<WorkspaceDescriptor>,
 
     /// Parent's memory backing store. Sub-agents share it for read access
     /// but skip the per-turn context injection to save tokens — the

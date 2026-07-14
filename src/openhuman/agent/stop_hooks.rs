@@ -68,7 +68,7 @@ pub struct TurnState<'a> {
 tokio::task_local! {
     /// Active stop hooks. `None` (the task-local-not-set state) is
     /// treated as "no hooks" — see [`current_stop_hooks`].
-    pub static CURRENT_STOP_HOOKS: Vec<Arc<dyn StopHook>>;
+    static CURRENT_STOP_HOOKS: Vec<Arc<dyn StopHook>>;
 }
 
 /// Returns a clone of the currently-installed hook list, or an empty

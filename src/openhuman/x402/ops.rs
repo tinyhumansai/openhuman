@@ -228,7 +228,7 @@ pub async fn handle_402_and_pay(
     })?;
 
     let budget_check =
-        super::store::with_ledger(|l| l.check_budget(amount)).map_err(|e| X402Error::Wallet(e))?;
+        super::store::with_ledger(|l| l.check_budget(amount)).map_err(X402Error::Wallet)?;
 
     match budget_check {
         super::store::BudgetCheck::Allowed => {}
@@ -504,7 +504,7 @@ async fn build_solana_payment(
     let memo_data = req
         .memo_value()
         .map(|m| m.as_bytes().to_vec())
-        .unwrap_or_else(|| random_memo_nonce());
+        .unwrap_or_else(random_memo_nonce);
 
     // -- account keys (order matters) --
     let account_keys: Vec<[u8; 32]> = vec![
@@ -594,7 +594,7 @@ pub(crate) fn build_evm_payment_with_signer(
     req: &PaymentRequirements,
 ) -> Result<PaymentPayload, X402Error> {
     use ethers_core::types::{Address, U256};
-    use ethers_signers::Signer;
+
     use std::str::FromStr;
 
     let chain_id = req
@@ -845,7 +845,7 @@ fn derive_ata(
         hasher.update(token_program);
         hasher.update(mint);
         hasher.update([bump]);
-        hasher.update(&ata_program);
+        hasher.update(ata_program);
         hasher.update(b"ProgramDerivedAddress");
         let candidate: [u8; 32] = hasher.finalize().into();
         if curve25519_dalek::edwards::CompressedEdwardsY(candidate)

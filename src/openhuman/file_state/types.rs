@@ -42,6 +42,12 @@ pub struct FileStateCoordinator {
     pub(crate) path_locks: RwLock<HashMap<PathBuf, Arc<Mutex<()>>>>,
 }
 
+impl Default for FileStateCoordinator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FileStateCoordinator {
     pub fn new() -> Self {
         Self {

@@ -48,6 +48,50 @@ pub enum ToolTimelineStatus {
     Error,
 }
 
+/// Persisted, plain-language explanation of a FAILED tool row (#4459).
+///
+/// Mirrors the live socket `failure` object and the frontend
+/// `PersistedToolFailure` (`app/src/types/turnState.ts`) 1:1 — camelCase on the
+/// wire, `class`/`category` as the taxonomy's stable variant names — so a
+/// settled/reloaded turn keeps its "why + what to do next" copy across a thread
+/// switch or a cold boot. Absent on successful rows and on snapshots written
+/// before this field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedToolFailure {
+    /// Stable failure-class variant name, e.g. `"Timeout"`, `"Denied"`.
+    pub class: String,
+    /// Stable category variant name, e.g. `"Recoverable"`, `"UserDeclined"`.
+    pub category: String,
+    /// Whether the core considers the failure automatically recoverable.
+    pub recoverable: bool,
+    /// Plain-language cause (`causePlain` on the wire).
+    pub cause_plain: String,
+    /// Plain-language next action (`nextAction` on the wire).
+    pub next_action: String,
+}
+
+impl From<&crate::openhuman::tool_status::ClassifiedFailure> for PersistedToolFailure {
+    fn from(f: &crate::openhuman::tool_status::ClassifiedFailure) -> Self {
+        // Serialize the enums to their wire variant name so the persisted
+        // `class`/`category` strings match exactly what the live socket emits
+        // (`ClassifiedFailure` serializes each as its bare variant name).
+        fn variant_name<T: Serialize>(v: &T) -> String {
+            serde_json::to_value(v)
+                .ok()
+                .and_then(|j| j.as_str().map(str::to_string))
+                .unwrap_or_default()
+        }
+        Self {
+            class: variant_name(&f.class),
+            category: variant_name(&f.category),
+            recoverable: f.recoverable,
+            cause_plain: f.cause_plain.clone(),
+            next_action: f.next_action.clone(),
+        }
+    }
+}
+
 /// One row in the per-turn tool timeline.
 ///
 /// Field names use camelCase on the wire so a snapshot can be applied
@@ -70,6 +114,17 @@ pub struct ToolTimelineEntry {
     pub source_tool_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<SubagentActivity>,
+    /// Plain-language failure explanation for a FAILED row, carried in the
+    /// snapshot so it survives a thread switch / cold boot (#4459). `None` on
+    /// success and on legacy snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<PersistedToolFailure>,
+    /// Size-capped tool result text, persisted so the "View processing"
+    /// panel can show what a tool returned after a thread switch / cold
+    /// boot — the live socket forwards the same capped payload on
+    /// `tool_result`. `None` while running and on legacy snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
 }
 
 /// Live sub-agent activity nested under a `subagent:*` timeline row.
@@ -133,6 +188,17 @@ pub struct SubagentToolCall {
     /// Server-computed contextual detail (e.g. the path / recipient).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Plain-language failure explanation for a FAILED child call, so a
+    /// sub-agent's failed row carries the same "why + next" copy as a
+    /// main-agent row and it survives a snapshot round-trip (#4459). `None` on
+    /// success and on legacy snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<PersistedToolFailure>,
+    /// Size-capped child tool result text, persisted for the same reason as
+    /// [`ToolTimelineEntry::output`]. `None` while running and on legacy
+    /// snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
 }
 
 /// One ordered item in a sub-agent's processing transcript — its streamed
@@ -269,12 +335,22 @@ pub struct GetTurnStateResponse {
     pub turn_state: Option<TurnState>,
 }
 
-/// Response payload for `openhuman.threads_turn_state_list`.
+/// Response payload for `openhuman.threads_turn_state_list` and
+/// `openhuman.threads_turn_state_history`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTurnStatesResponse {
     pub turn_states: Vec<TurnState>,
     pub count: usize,
+}
+
+/// Request payload for `openhuman.threads_turn_state_get_turn` — a specific
+/// turn of a thread, identified by its producing request id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GetTurnStateForRequestRequest {
+    pub thread_id: String,
+    pub request_id: String,
 }
 
 /// Request payload for `openhuman.threads_turn_state_clear`.

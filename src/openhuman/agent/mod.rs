@@ -19,7 +19,7 @@
 //!   within a parent agent's tool loop, enabling hierarchical delegation.
 
 pub mod bus;
-pub mod cost;
+pub(crate) mod cost;
 pub mod debug;
 pub mod dispatcher;
 pub mod error;
@@ -27,7 +27,6 @@ pub mod harness;
 pub mod hooks;
 pub mod host_runtime;
 pub mod library;
-pub mod memory_loader;
 pub mod multimodal;
 pub mod pformat;
 pub mod progress;
@@ -35,7 +34,7 @@ pub mod progress;
 /// real-time [`progress::AgentProgress`] stream into OpenTelemetry/
 /// Langfuse-style spans (turn → iteration → tool / subagent) correlated by
 /// session id with user attribution (issue #3886).
-pub mod progress_tracing;
+pub(crate) mod progress_tracing;
 /// Prompt plumbing — types, section builders, and
 /// [`SystemPromptBuilder`](prompts::SystemPromptBuilder). Moved from
 /// `openhuman::context::prompt` so prompt rendering lives next to the
@@ -49,7 +48,6 @@ pub mod task_dispatcher;
 pub(crate) mod task_session;
 pub mod tool_policy;
 pub mod tools;
-pub mod tree_loader;
 pub mod triage;
 /// Turn-origin task-local — explicit trust/routing label scoped by every
 /// entry point that invokes the agent (web chat, channel runtime,

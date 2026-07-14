@@ -1,120 +1,19 @@
-//! Domain types for snapshot-based memory source change tracking.
+//! Domain types for snapshot-based memory-source change tracking — thin host
+//! re-export of `tinycortex::memory::diff` types (W7).
+//!
+//! These are the published RPC/tool wire contract (serde `snake_case` enums +
+//! stable field names). The crate port preserves them byte-for-byte, so the
+//! host simply re-exports the crate types; the external consumers
+//! (`memory_diff::rpc`/`tools`, `subconscious::profiles::memory`, and the RPC
+//! controller schemas in `schemas.rs` which reference them by name) keep their
+//! `memory_diff::types::*` import paths unchanged.
+//!
+//! Note: the host types formerly derived `schemars::JsonSchema`, but the RPC
+//! surface is described by hand-written [`super::schemas`] (`TypeSchema::Ref`
+//! strings), not derived schemas — so the derive was vestigial and its loss is
+//! immaterial.
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SnapshotTrigger {
-    Auto,
-    Manual,
-}
-
-impl SnapshotTrigger {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Manual => "manual",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct Snapshot {
-    pub id: String,
-    pub source_id: String,
-    pub source_kind: String,
-    pub label: String,
-    pub trigger: SnapshotTrigger,
-    pub item_count: u32,
-    pub taken_at_ms: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ChangeKind {
-    Added,
-    Removed,
-    Modified,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ItemChange {
-    pub item_id: String,
-    pub title: String,
-    pub kind: ChangeKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub old_content_hash: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub new_content_hash: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text_diff: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct DiffSummary {
-    pub added: u32,
-    pub removed: u32,
-    pub modified: u32,
-    pub unchanged: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DiffResult {
-    pub source_id: String,
-    pub source_kind: String,
-    pub source_label: String,
-    pub from_snapshot_id: Option<String>,
-    pub to_snapshot_id: String,
-    pub summary: DiffSummary,
-    pub changes: Vec<ItemChange>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct Checkpoint {
-    pub id: String,
-    pub label: String,
-    pub created_at_ms: i64,
-    pub snapshot_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CrossSourceDiff {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub checkpoint_id: Option<String>,
-    pub computed_at_ms: i64,
-    pub summary: DiffSummary,
-    pub per_source: Vec<DiffResult>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn snapshot_trigger_round_trips() {
-        for trigger in [SnapshotTrigger::Auto, SnapshotTrigger::Manual] {
-            let json = serde_json::to_string(&trigger).unwrap();
-            let decoded: SnapshotTrigger = serde_json::from_str(&json).unwrap();
-            assert_eq!(decoded, trigger);
-        }
-    }
-
-    #[test]
-    fn change_kind_round_trips() {
-        for kind in [ChangeKind::Added, ChangeKind::Removed, ChangeKind::Modified] {
-            let json = serde_json::to_string(&kind).unwrap();
-            let decoded: ChangeKind = serde_json::from_str(&json).unwrap();
-            assert_eq!(decoded, kind);
-        }
-    }
-
-    #[test]
-    fn diff_summary_defaults_to_zero() {
-        let s = DiffSummary::default();
-        assert_eq!(s.added, 0);
-        assert_eq!(s.removed, 0);
-        assert_eq!(s.modified, 0);
-        assert_eq!(s.unchanged, 0);
-    }
-}
+pub use tinycortex::memory::diff::{
+    ChangeKind, Checkpoint, CrossSourceDiff, DiffResult, DiffSummary, ItemChange, Snapshot,
+    SnapshotTrigger,
+};

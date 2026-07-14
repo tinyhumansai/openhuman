@@ -28,6 +28,8 @@ describe('CollapsedNavRail', () => {
       'nav.chat',
       'nav.human',
       'nav.brain',
+      'nav.flows',
+      'nav.orchestration',
       'nav.agentWorld',
       'nav.connections',
     ]) {
@@ -78,6 +80,22 @@ describe('CollapsedNavRail', () => {
   it('treats /chat as the active Home state', () => {
     renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/chat/abc'] });
     expect(screen.getByRole('button', { name: 'nav.home' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+  });
+
+  it('marks Workflows active on the /flows list route', () => {
+    renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/flows'] });
+    expect(screen.getByRole('button', { name: 'nav.flows' })).toHaveAttribute(
+      'aria-current',
+      'page'
+    );
+  });
+
+  it('marks Workflows active on a nested /flows/* sub-route', () => {
+    renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/flows/some-flow-id'] });
+    expect(screen.getByRole('button', { name: 'nav.flows' })).toHaveAttribute(
       'aria-current',
       'page'
     );

@@ -26,7 +26,11 @@ pub(super) async fn stt(samples: &[i16]) -> Result<String, String> {
 
 // ─── Real TTS adapter ───────────────────────────────────────────────
 
-pub(super) async fn tts(text: &str) -> Result<Vec<i16>, String> {
+/// Synthesize `text` to PCM16LE @ 16 kHz. `voice_id` selects the
+/// ElevenLabs voice for this utterance (the speaker-alternation slot's
+/// voice); `None` lets the reply-speech backend pick its own default —
+/// the exact prior behavior for single-mascot calls.
+pub(super) async fn tts(text: &str, voice_id: Option<&str>) -> Result<Vec<i16>, String> {
     use crate::openhuman::voice::reply_speech::{synthesize_reply, ReplySpeechOptions};
 
     let config = crate::openhuman::config::ops::load_config_with_timeout().await?;
@@ -51,6 +55,9 @@ pub(super) async fn tts(text: &str) -> Result<Vec<i16>, String> {
         output_format: Some("pcm_16000".to_string()),
         model_id: Some(TTS_MODEL_ID.to_string()),
         voice_settings: Some(voice_settings),
+        // Per-mascot voice for speaker alternation. `None` preserves the
+        // backend's default-voice pick (single-mascot behavior).
+        voice_id: voice_id.map(str::to_owned),
         ..Default::default()
     };
     let outcome = synthesize_reply(&config, text, &opts).await?;

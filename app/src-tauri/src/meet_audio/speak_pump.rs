@@ -98,10 +98,10 @@ pub fn start<R: Runtime>(
                     break;
                 }
                 _ = tick.tick() => {
-                    let had_pcm = match poll_and_feed(&request_id_for_task, &mut cdp, &session_id).await {
-                        Ok(had) => {
+                    let (had_pcm, active_slot) = match poll_and_feed(&request_id_for_task, &mut cdp, &session_id).await {
+                        Ok((had, slot)) => {
                             feed_errors = 0;
-                            had
+                            (had, Some(slot))
                         }
                         Err(err) => {
                             feed_errors += 1;
@@ -118,11 +118,12 @@ pub fn start<R: Runtime>(
                             // A failed tick is *not* evidence the bot
                             // stopped speaking — leave the hangover to
                             // expire naturally so transient CDP errors
-                            // don't flicker the mascot's mouth shut.
-                            false
+                            // don't flicker the mascot's mouth shut. No
+                            // fresh slot data → keep the last-known slot.
+                            (false, None)
                         }
                     };
-                    speaking_state.tick(had_pcm, &app, &request_id_for_task);
+                    speaking_state.tick(had_pcm, active_slot, &app, &request_id_for_task);
                 }
             }
         }
@@ -148,6 +149,14 @@ struct SpeakingTracker {
     /// every tick that carries PCM; the state flips back to `false`
     /// only once `now > hangover_until` AND a tick with no PCM lands.
     hangover_until: Option<Instant>,
+    /// Which mascot (0 = primary, 1 = secondary) is speaking the current
+    /// outbound audio, as reported by `meet_agent_poll_speech`. For
+    /// two-mascot calls the brain alternates this per reply; the frontend
+    /// lip-syncs this slot and reacts the other. Emitted on the
+    /// speaking-state edge AND whenever the slot changes mid-speech (so a
+    /// back-to-back reply from the other mascot still switches lip-sync
+    /// even if the hangover bridged the gap). 0 for single-mascot calls.
+    active_slot: u8,
 }
 
 impl SpeakingTracker {
@@ -155,6 +164,7 @@ impl SpeakingTracker {
         Self {
             reported: false,
             hangover_until: None,
+            active_slot: 0,
         }
     }
 
@@ -162,12 +172,21 @@ impl SpeakingTracker {
     /// is whether `poll_and_feed` saw a non-empty `pcm_base64` for
     /// this tick. Emits the Tauri event only when the reported
     /// state actually flips.
-    fn tick<R: Runtime>(&mut self, had_pcm: bool, app: &AppHandle<R>, request_id: &str) {
+    /// `active_slot` is the speaking mascot slot for this tick, or `None`
+    /// when the tick had no fresh poll data (e.g. a CDP error) — in that
+    /// case the last-known slot is retained.
+    fn tick<R: Runtime>(
+        &mut self,
+        had_pcm: bool,
+        active_slot: Option<u8>,
+        app: &AppHandle<R>,
+        request_id: &str,
+    ) {
         if had_pcm {
             // Extend the hangover. If we were idle, flip up to
             // speaking — the user hears audio starting now.
             self.hangover_until = Some(Instant::now() + SPEAKING_HANGOVER);
-            self.set_reported(true, app, request_id);
+            self.update(true, active_slot, app, request_id);
             return;
         }
         // No PCM this tick. If the hangover hasn't expired, stay in
@@ -182,7 +201,7 @@ impl SpeakingTracker {
             self.hangover_until = None;
         }
         // Hangover expired or never armed → bot is genuinely idle.
-        self.set_reported(false, app, request_id);
+        self.update(false, active_slot, app, request_id);
     }
 
     /// Force the reported state to `false` and emit an event if that's
@@ -190,28 +209,69 @@ impl SpeakingTracker {
     /// can't get stuck mid-talk.
     fn force_off<R: Runtime>(&mut self, app: &AppHandle<R>, request_id: &str) {
         self.hangover_until = None;
-        self.set_reported(false, app, request_id);
+        self.update(false, None, app, request_id);
     }
 
-    fn set_reported<R: Runtime>(&mut self, next: bool, app: &AppHandle<R>, request_id: &str) {
-        if self.reported == next {
+    /// Update reported speaking state + active slot, emitting the Tauri
+    /// event when either the speaking flag flips OR (while speaking) the
+    /// active mascot slot changes. `slot = None` keeps the last-known
+    /// slot (used when a tick carried no fresh poll data).
+    fn update<R: Runtime>(
+        &mut self,
+        next: bool,
+        slot: Option<u8>,
+        app: &AppHandle<R>,
+        request_id: &str,
+    ) {
+        let (should_emit, resolved_slot) =
+            next_speaking_state(self.reported, self.active_slot, next, slot);
+        self.reported = next;
+        self.active_slot = resolved_slot;
+        if !should_emit {
             return;
         }
-        self.reported = next;
         let payload = serde_json::json!({
             "requestId": request_id,
             "speaking": next,
+            // Which mascot is speaking this audio (0 = primary, 1 =
+            // secondary). Frontend lip-syncs this slot, reacts the other.
+            "activeMascotSlot": self.active_slot,
         });
         if let Err(err) = app.emit(SPEAKING_STATE_EVENT, payload) {
             // Best-effort: a missing renderer (closed window mid-tick)
             // is the common case and not worth raising the log level.
             log::debug!(
-                "[meet-audio] speaking-state emit failed request_id={request_id} speaking={next} err={err}"
+                "[meet-audio] speaking-state emit failed request_id={request_id} speaking={next} slot={} err={err}",
+                self.active_slot
             );
         } else {
-            log::debug!("[meet-audio] speaking-state -> {next} request_id={request_id}");
+            log::debug!(
+                "[meet-audio] speaking-state -> {next} slot={} request_id={request_id}",
+                self.active_slot
+            );
         }
     }
+}
+
+/// Pure decision for [`SpeakingTracker::update`]: given the previously
+/// reported speaking flag + slot and the incoming `next`/`slot`, compute
+/// whether the Tauri event should be emitted and which slot to resolve to.
+///
+/// Extracted so the emit logic can be unit-tested without a live
+/// `AppHandle`. `slot = None` retains the previous slot (a tick with no
+/// fresh poll data). We emit when the speaking flag flips OR (while
+/// speaking) the active slot changes — the latter switches lip-sync on a
+/// back-to-back reply from the other mascot even if the hangover bridged
+/// the gap.
+fn next_speaking_state(
+    prev_reported: bool,
+    prev_slot: u8,
+    next: bool,
+    slot: Option<u8>,
+) -> (bool, u8) {
+    let resolved = slot.unwrap_or(prev_slot);
+    let should_emit = prev_reported != next || (next && prev_slot != resolved);
+    (should_emit, resolved)
 }
 
 /// No-op pump used when bridge install failed at session start. Keeps
@@ -231,7 +291,7 @@ async fn poll_and_feed(
     request_id: &str,
     cdp: &mut CdpConn,
     session_id: &str,
-) -> Result<bool, String> {
+) -> Result<(bool, u8), String> {
     let v = super::rpc_call(
         "openhuman.meet_agent_poll_speech",
         serde_json::json!({ "request_id": request_id }),
@@ -249,6 +309,12 @@ async fn poll_and_feed(
         .get("flush_pending")
         .and_then(|x| x.as_bool())
         .unwrap_or(false);
+    // Which mascot slot is speaking this audio (0 = primary, 1 =
+    // secondary). Absent on older cores / single-mascot → 0.
+    let active_slot = v
+        .get("active_mascot_slot")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0) as u8;
 
     // Barge-in: brain set flush_pending when it cancelled the previous
     // outbound. Stop in-flight playback inside the JS bridge BEFORE we
@@ -278,10 +344,45 @@ async fn poll_and_feed(
             bytes.len()
         );
         inject::feed_pcm_chunk(cdp, session_id, pcm_b64).await?;
-        return Ok(true);
+        return Ok((true, active_slot));
     }
     if utterance_done {
         log::info!("[meet-audio] speak pump utterance complete request_id={request_id}");
     }
-    Ok(false)
+    Ok((false, active_slot))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn speaking_edge_and_slot_change_emit_logic() {
+        // idle -> speaking: a real edge, emits.
+        let (emit, slot) = next_speaking_state(false, 0, true, Some(0));
+        assert!(emit, "idle -> speaking must emit");
+        assert_eq!(slot, 0);
+
+        // speaking -> speaking, same slot: no edge, no slot change, no emit.
+        let (emit, slot) = next_speaking_state(true, 0, true, Some(0));
+        assert!(!emit, "speaking -> speaking same slot must not emit");
+        assert_eq!(slot, 0);
+
+        // speaking(slot 0) -> speaking(slot 1): mid-speech mascot switch emits
+        // and resolves to the new slot so lip-sync moves to the other mascot.
+        let (emit, slot) = next_speaking_state(true, 0, true, Some(1));
+        assert!(emit, "speaking slot change must emit");
+        assert_eq!(slot, 1, "resolved slot must be the new slot 1");
+
+        // slot = None retains the previous slot; with the same reported flag
+        // that is neither an edge nor a slot change, so no emit.
+        let (emit, slot) = next_speaking_state(true, 1, true, None);
+        assert!(!emit, "no fresh slot + same reported must not emit");
+        assert_eq!(slot, 1, "None retains the previous slot");
+
+        // speaking -> idle: a real edge, emits.
+        let (emit, slot) = next_speaking_state(true, 1, false, None);
+        assert!(emit, "speaking -> idle must emit");
+        assert_eq!(slot, 1, "None retains the previous slot on the way down");
+    }
 }

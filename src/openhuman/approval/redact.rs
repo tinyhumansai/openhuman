@@ -136,7 +136,7 @@ fn scrub_paths(input: &str) -> String {
             // Skip past the username segment up to the next path
             // separator (or end of input).
             let rest = &input[i..];
-            match rest.find(|c: char| c == '/' || c == '\\') {
+            match rest.find(['/', '\\']) {
                 Some(end) => i += end,
                 None => i = input.len(),
             }

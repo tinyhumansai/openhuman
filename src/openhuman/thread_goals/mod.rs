@@ -21,6 +21,7 @@
 //! [`store::set_if_absent`]).
 
 pub mod continuation;
+pub mod crate_adapter;
 pub mod ops;
 pub mod runtime;
 mod schemas;

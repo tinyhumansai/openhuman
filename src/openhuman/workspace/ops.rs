@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::heartbeat::engine::HeartbeatEngine;
-use crate::openhuman::workflows::init_workflows_dir;
+use crate::openhuman::skills::init_workflows_dir;
 use std::path::Path;
 
 const BOOTSTRAP_FILES: [(&str, &str); 2] = [

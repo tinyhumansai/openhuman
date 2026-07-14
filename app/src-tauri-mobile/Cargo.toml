@@ -1,6 +1,6 @@
 [package]
 name = "openhuman-mobile"
-version = "0.57.18"
+version = "0.58.16"
 description = "OpenHuman mobile (iOS) — Tauri host without CEF"
 authors = ["OpenHuman"]
 edition = "2021"

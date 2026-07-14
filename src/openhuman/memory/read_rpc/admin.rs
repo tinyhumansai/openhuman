@@ -85,7 +85,7 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
                 let is_not_found = e
                     .chain()
                     .find_map(|e| e.downcast_ref::<std::io::Error>())
-                    .map_or(false, |ioe| ioe.kind() == std::io::ErrorKind::NotFound);
+                    .is_some_and(|ioe| ioe.kind() == std::io::ErrorKind::NotFound);
                 if !is_not_found {
                     log::warn!(
                         "[memory_tree::read::wipe] failed to remove dir={} err={:#}",
@@ -111,13 +111,13 @@ pub async fn wipe_all_rpc(config: &Config) -> Result<RpcOutcome<WipeAllResponse>
 }
 
 pub(crate) fn clear_composio_sync_state(db_path: &std::path::Path) -> Result<u64> {
-    use crate::openhuman::composio::providers::sync_state::KV_NAMESPACE;
+    use crate::openhuman::tinycortex::HOST_SYNC_STATE_NAMESPACE;
     let conn = rusqlite::Connection::open(db_path)
         .with_context(|| format!("open unified memory db {}", db_path.display()))?;
     let n = conn
         .execute(
             "DELETE FROM kv_namespace WHERE namespace = ?1",
-            params![KV_NAMESPACE],
+            params![HOST_SYNC_STATE_NAMESPACE],
         )
         .context("delete composio-sync-state rows")?;
     Ok(n as u64)
@@ -213,7 +213,7 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
             let is_not_found = e
                 .chain()
                 .find_map(|e| e.downcast_ref::<std::io::Error>())
-                .map_or(false, |ioe| ioe.kind() == std::io::ErrorKind::NotFound);
+                .is_some_and(|ioe| ioe.kind() == std::io::ErrorKind::NotFound);
             if !is_not_found {
                 log::warn!(
                     "[memory_tree::read::reset_tree] failed to remove wiki/summaries: {:#}",
@@ -245,7 +245,7 @@ pub async fn flush_source_tree_rpc(
     source_scope: &str,
 ) -> Result<RpcOutcome<FlushSourceTreeResponse>, String> {
     use crate::openhuman::memory::tree_source::get_or_create_source_tree;
-    use crate::openhuman::memory_tree::tree::bucket_seal::LabelStrategy;
+
     use crate::openhuman::memory_tree::tree::flush::force_flush_tree;
     use crate::openhuman::memory_tree::tree::TreeFactory;
     use std::collections::HashSet;

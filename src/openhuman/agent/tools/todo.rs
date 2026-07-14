@@ -208,6 +208,15 @@ fn current_location() -> BoardLocation {
     let Some(parent) = crate::openhuman::agent::harness::fork_context::current_parent() else {
         return BoardLocation::Scratch;
     };
+    // The orchestrator owns ONE global task board rather than a per-thread one:
+    // its `todo` tool always targets the app-wide `orchestrator-tasks` board so a
+    // single Kanban spans every delegation (matches the UI's OrchestratorTaskBoard).
+    if parent.agent_definition_id == "orchestrator" {
+        return BoardLocation::Thread {
+            workspace_dir: parent.workspace_dir.clone(),
+            thread_id: ops::ORCHESTRATOR_TASKS_THREAD_ID.to_string(),
+        };
+    }
     let Some(thread_id) = thread_context::current_thread_id() else {
         return BoardLocation::Scratch;
     };

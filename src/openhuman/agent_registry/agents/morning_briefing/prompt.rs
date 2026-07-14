@@ -122,6 +122,34 @@ mod tests {
     }
 
     #[test]
+    fn prompt_pins_personalisation_and_structure_rules() {
+        // Issue #3806: the briefing must (a) greet the user by name, (b) frame
+        // the time window it covers, and (c) organise the body into the four
+        // priority buckets. These live in the static archetype (prompt.md), so
+        // pin them here — a future prompt edit that drops any of them fails CI
+        // rather than silently regressing the personalised-briefing behaviour.
+        assert!(
+            ARCHETYPE.contains("by name"),
+            "prompt must instruct the agent to address the user by name (#3806)"
+        );
+        assert!(
+            ARCHETYPE.contains("Frame the scope"),
+            "prompt must instruct the agent to frame the period the briefing covers (#3806)"
+        );
+        for bucket in [
+            "**Highlights**",
+            "**Action items**",
+            "**Mentions**",
+            "**FYI**",
+        ] {
+            assert!(
+                ARCHETYPE.contains(bucket),
+                "prompt must carry the `{bucket}` output bucket (#3806)"
+            );
+        }
+    }
+
+    #[test]
     fn build_includes_user_identity_when_present() {
         // When the auth cache has populated `user_identity`, the
         // briefing prompt must surface those fields so the agent can

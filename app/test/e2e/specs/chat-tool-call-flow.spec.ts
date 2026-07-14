@@ -136,6 +136,7 @@ describe('Chat tool-call lifecycle', () => {
 
     // Poll for a tool timeline entry while the LLM processes the tool_calls turn.
     let sawToolTimeline = false;
+    let sawFinalAnswer = false;
     const deadline = Date.now() + 45_000;
     while (Date.now() < deadline) {
       const snap = await snapshotRuntime(threadId);
@@ -149,6 +150,7 @@ describe('Chat tool-call lifecycle', () => {
       // Also check if the final answer arrived (tool timeline may have already cleared
       // if the whole turn was faster than our polling interval).
       if (await textExists(CANARY_FINAL)) {
+        sawFinalAnswer = true;
         console.log(`${LOG_PREFIX} T1.1: final answer arrived before first timeline poll`);
         break;
       }
@@ -157,7 +159,7 @@ describe('Chat tool-call lifecycle', () => {
 
     // The timeline entry is the primary signal, but if the full turn completed
     // before our first poll we still accept the final-answer path.
-    const finalArrived = await textExists(CANARY_FINAL);
+    const finalArrived = sawFinalAnswer || (await textExists(CANARY_FINAL));
     expect(sawToolTimeline || finalArrived).toBe(true);
     console.log(
       `${LOG_PREFIX} T1.1: passed (sawTimeline=${sawToolTimeline}, finalArrived=${finalArrived})`

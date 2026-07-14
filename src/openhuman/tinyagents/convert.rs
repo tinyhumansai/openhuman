@@ -23,30 +23,29 @@ use tinyagents::harness::tool::{ToolCall as TaToolCall, ToolSchema};
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, ToolResultMessage};
 use crate::openhuman::tools::ToolSpec;
 
-/// Key under which a thinking model's `reasoning_content` is stashed on an
-/// assistant [`Message`]'s content blocks (as a [`ContentBlock::ProviderExtension`])
-/// and echoed back through openhuman [`ChatMessage::extra_metadata`]. tinyagents'
-/// `AssistantMessage` has no reasoning channel of its own, so we carry it here so
-/// it survives the round-trip and can be replayed verbatim on the next turn
-/// (thinking-mode providers reject a multi-turn request that drops it).
+/// Key under which a thinking model's `reasoning_content` is echoed through
+/// openhuman [`ChatMessage::extra_metadata`]. New harness transcripts carry
+/// reasoning as [`ContentBlock::Thinking`]; legacy persisted transcripts may
+/// still have the same key inside [`ContentBlock::ProviderExtension`].
 pub(super) const REASONING_EXT_KEY: &str = "reasoning_content";
 
-/// Build the [`ContentBlock`] that stashes a response's `reasoning_content` on an
-/// assistant message, if any.
+/// Build the [`ContentBlock`] that carries a response's `reasoning_content` on
+/// an assistant message, if any.
 pub(super) fn reasoning_content_block(reasoning: Option<&str>) -> Option<ContentBlock> {
     let reasoning = reasoning?;
     // Store verbatim (only gate on non-empty after a trim): thinking-mode
     // providers validate the prior reasoning block byte-for-byte on a resumed
     // multi-turn request, so trimming boundary whitespace could break replay.
-    (!reasoning.trim().is_empty()).then(|| {
-        ContentBlock::ProviderExtension(serde_json::json!({ REASONING_EXT_KEY: reasoning }))
+    (!reasoning.trim().is_empty()).then(|| ContentBlock::Thinking {
+        text: reasoning.to_string(),
+        signature: None,
     })
 }
 
-/// Recover the stashed `reasoning_content` from an assistant message's content
-/// blocks (see [`reasoning_content_block`]).
-fn reasoning_from_content(content: &[ContentBlock]) -> Option<String> {
+/// Recover `reasoning_content` from an assistant message's content blocks.
+pub(crate) fn reasoning_from_content(content: &[ContentBlock]) -> Option<String> {
     content.iter().find_map(|block| match block {
+        ContentBlock::Thinking { text, .. } => Some(text.clone()),
         ContentBlock::ProviderExtension(value) => value
             .get(REASONING_EXT_KEY)
             .and_then(serde_json::Value::as_str)
@@ -55,7 +54,7 @@ fn reasoning_from_content(content: &[ContentBlock]) -> Option<String> {
     })
 }
 
-/// The `extra_metadata` an assistant [`ChatMessage`] should carry so a stashed
+/// The `extra_metadata` an assistant [`ChatMessage`] should carry so
 /// `reasoning_content` replays on the next provider request.
 fn reasoning_extra_metadata(content: &[ContentBlock]) -> Option<serde_json::Value> {
     reasoning_from_content(content)
@@ -74,7 +73,7 @@ fn reasoning_extra_metadata(content: &[ContentBlock]) -> Option<serde_json::Valu
 /// messages and native providers reject the request (`assistant message with
 /// 'tool_calls' must be followed by tool messages`). A plain assistant/tool
 /// message that isn't an envelope maps straight through as text.
-pub(super) fn chat_message_to_message(msg: &ChatMessage) -> Message {
+pub(crate) fn chat_message_to_message(msg: &ChatMessage) -> Message {
     let text = msg.content.clone();
     match msg.role.as_str() {
         "system" => Message::System(SystemMessage {
@@ -137,7 +136,7 @@ fn parse_native_assistant_envelope(text: &str) -> Option<(String, Vec<TaToolCall
     let calls_val = obj.get("tool_calls")?;
     // Require a non-empty, parseable tool-call array so ordinary JSON-looking
     // assistant prose isn't misread as a tool round.
-    if !calls_val.as_array().is_some_and(|a| !a.is_empty()) {
+    if calls_val.as_array().is_none_or(|a| a.is_empty()) {
         return None;
     }
     let oh_calls: Vec<crate::openhuman::inference::provider::ToolCall> =
@@ -174,6 +173,7 @@ fn oh_call_to_ta_call(oh: &crate::openhuman::inference::provider::ToolCall) -> T
         id: oh.id.clone(),
         name: oh.name.clone(),
         arguments: serde_json::from_str(&oh.arguments).unwrap_or(serde_json::Value::Null),
+        invalid: None,
     }
 }
 
@@ -308,12 +308,53 @@ pub(super) fn messages_to_conversation(messages: &[Message]) -> Vec<Conversation
 /// The suffix of `messages` produced *after* the most recent user turn — i.e.
 /// the assistant/tool messages a single turn appended. Robust to front-trimming
 /// middleware (which drops old messages but keeps the current user turn).
+///
+/// Retired from the persistence path in favour of [`messages_since_request`]
+/// (issue #4455) because an injected mid-turn steer moves the last-user boundary
+/// and truncates persisted history; kept only as a documented, test-covered
+/// reference to the legacy convention. `allow(dead_code)` off the test build
+/// since it now has no non-test caller.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn messages_since_last_user(messages: &[Message]) -> &[Message] {
     let start = messages
         .iter()
         .rposition(|m| matches!(m, Message::User(_)))
         .map(|i| i + 1)
         .unwrap_or(0);
+    &messages[start..]
+}
+
+/// The transcript suffix appended during a single turn, sliced at an **explicit
+/// boundary** captured *before* the run — `base_len` is the length of the
+/// request's `input` transcript (`history_to_messages(&history).len()`).
+///
+/// This replaces the fragile "suffix after the last `Message::User`" convention
+/// ([`messages_since_last_user`]) on the persistence path. Mid-turn steer/collect
+/// messages are injected as `Message::user(...)` (`forward_steers` /
+/// `forward_collects`), which *moves* the last-user boundary — so slicing on it
+/// silently dropped every pre-steer assistant/tool round **and** the steer text
+/// itself from persisted history, the next-turn KV-cache prefix, and subagent
+/// checkpoints (issue #4455). Anchoring on the pre-run request length instead
+/// captures the full post-request transcript, injected steers included, in
+/// execution order.
+///
+/// The crate returns the full transcript in `run.messages`: the agent loop seeds
+/// its working transcript from `input` (`messages = input`) and only ever
+/// *appends* (assistant/tool rounds + applied steers); the compression/trim
+/// middleware rewrites the per-call `request.messages.clone()`, never the loop's
+/// working transcript. So `messages` always starts with the `base_len` request
+/// messages as a prefix. `base_len` is clamped defensively in case a future
+/// crate change ever front-trims the persisted transcript.
+pub(super) fn messages_since_request(messages: &[Message], base_len: usize) -> &[Message] {
+    let start = base_len.min(messages.len());
+    if start != base_len {
+        tracing::warn!(
+            base_len,
+            transcript_len = messages.len(),
+            "[tinyagents] messages_since_request boundary exceeds transcript length; \
+             clamping (transcript may have been front-trimmed) — persisting full transcript"
+        );
+    }
     &messages[start..]
 }
 
@@ -352,7 +393,7 @@ pub(super) fn messages_to_text_mode_chat(messages: &[Message]) -> Vec<ChatMessag
 }
 
 /// Convert an openhuman [`ToolSpec`] into a harness [`ToolSchema`].
-pub(super) fn spec_to_schema(spec: &ToolSpec) -> ToolSchema {
+pub(crate) fn spec_to_schema(spec: &ToolSpec) -> ToolSchema {
     // `ToolSchema::new` sets the model-visible tool-call format to the JSON
     // default (tinyagents 1.0), which is what openhuman advertises.
     ToolSchema::new(
@@ -366,7 +407,7 @@ pub(super) fn spec_to_schema(spec: &ToolSpec) -> ToolSchema {
 ///
 /// The harness models arguments as parsed JSON; openhuman carries them as the
 /// raw JSON string the provider emitted, so we re-serialize.
-pub(super) fn ta_call_to_oh_call(
+pub(crate) fn ta_call_to_oh_call(
     call: &TaToolCall,
 ) -> crate::openhuman::inference::provider::ToolCall {
     crate::openhuman::inference::provider::ToolCall {
@@ -446,6 +487,63 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_content_uses_typed_thinking_block_and_round_trips_metadata() {
+        let mut chat = ChatMessage::assistant("visible answer");
+        chat.extra_metadata = Some(serde_json::json!({ REASONING_EXT_KEY: "private thoughts" }));
+
+        let msg = chat_message_to_message(&chat);
+        let Message::Assistant(assistant) = &msg else {
+            panic!("expected Assistant, got {msg:?}");
+        };
+        assert_eq!(msg.text(), "visible answer");
+        assert!(assistant.content.iter().any(|block| {
+            matches!(
+                block,
+                ContentBlock::Thinking { text, signature: None } if text == "private thoughts"
+            )
+        }));
+        assert!(!assistant
+            .content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::ProviderExtension(_))));
+
+        let back = message_to_chat_message(&msg);
+        assert_eq!(back.content, "visible answer");
+        assert_eq!(
+            back.extra_metadata
+                .as_ref()
+                .and_then(|meta| meta.get(REASONING_EXT_KEY))
+                .and_then(serde_json::Value::as_str),
+            Some("private thoughts")
+        );
+    }
+
+    #[test]
+    fn legacy_provider_extension_reasoning_still_round_trips() {
+        let msg = Message::Assistant(AssistantMessage {
+            id: None,
+            content: vec![
+                ContentBlock::Text("visible answer".into()),
+                ContentBlock::ProviderExtension(
+                    serde_json::json!({ REASONING_EXT_KEY: "legacy thoughts" }),
+                ),
+            ],
+            tool_calls: vec![],
+            usage: None,
+        });
+
+        let back = message_to_chat_message(&msg);
+        assert_eq!(back.content, "visible answer");
+        assert_eq!(
+            back.extra_metadata
+                .as_ref()
+                .and_then(|meta| meta.get(REASONING_EXT_KEY))
+                .and_then(serde_json::Value::as_str),
+            Some("legacy thoughts")
+        );
+    }
+
+    #[test]
     fn roles_round_trip_through_the_bridge() {
         let history = vec![
             ChatMessage::system("you are helpful"),
@@ -489,6 +587,7 @@ mod tests {
                     id: "c1".into(),
                     name: "echo".into(),
                     arguments: serde_json::json!({"msg": "hi"}),
+                    invalid: None,
                 }],
                 usage: None,
             }),
@@ -546,6 +645,7 @@ mod tests {
             id: "c1".into(),
             name: "echo".into(),
             arguments: serde_json::json!({"msg": "hi"}),
+            invalid: None,
         };
         let oh = ta_call_to_oh_call(&ta);
         assert_eq!(oh.id, "c1");

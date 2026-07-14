@@ -151,6 +151,23 @@ pub enum ExpectedErrorKind {
     /// SQLite lock text, so unrelated DB lock errors in other domains still
     /// reach Sentry.
     WhatsAppDataSqliteBusy,
+    /// WhatsApp structured-ingest write hit a `SQLITE_CORRUPT` malformed on-disk
+    /// image ("database disk image is malformed" / "file is not a database").
+    ///
+    /// This is **defense-in-depth after** the store's own quarantine + rebuild
+    /// recovery (`whatsapp_data::store::WhatsAppDataStore::recover_corrupt_db`),
+    /// never instead of it: the store detects the corrupt image, reports it to
+    /// Sentry exactly once (process-wide latch), quarantines the damaged file,
+    /// and rebuilds an empty schema so ingest resumes. This classifier only
+    /// demotes the residual noise that can leak in the narrow window between
+    /// detection and a successful rebuild, or when a rebuild keeps failing on a
+    /// wedged host filesystem the app can't fix. Without both, one corrupt file
+    /// re-pages on every 2–30s scan tick (Sentry TAURI-RUST-KNH: 1,813
+    /// escalating events from a single host).
+    ///
+    /// Anchored to the whatsapp ingest failure envelope plus the malformed-image
+    /// text, so unrelated corruption in other domains still reaches Sentry.
+    WhatsAppDataSqliteCorrupt,
     /// Host disk is full — the filesystem returned `ENOSPC` to a write,
     /// `mkdir`, or `open` syscall. The user cannot recover from this without
     /// freeing space on their machine, and Sentry has no remediation path
@@ -258,7 +275,7 @@ pub enum ExpectedErrorKind {
     /// contention (handled by the store's busy-retry loop) and unrelated DB
     /// failures in other domains still reach Sentry.
     SubconsciousSchemaUnavailable,
-    /// The user invoked "Import Codex CLI login" (Settings → AI → Codex auth)
+    /// The user invoked "Import Codex CLI login" (Connections → API keys → LLM → Codex auth)
     /// but the Codex CLI auth at `~/.codex/auth.json` is absent or unusable:
     /// the file doesn't exist (the user never ran `codex login`), can't be
     /// parsed, or carries no tokens / no access token. The import RPC already
@@ -588,6 +605,12 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_memory_store_breaker_open(&lower) {
         return Some(ExpectedErrorKind::MemoryStoreBreakerOpen);
     }
+    // Corruption is checked before the busy matcher: the two envelopes are
+    // mutually exclusive by their SQLite text (malformed-image vs locked), but
+    // ordering keeps the more-specific on-disk-damage signal unambiguous.
+    if is_whatsapp_data_sqlite_corrupt_message(&lower) {
+        return Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt);
+    }
     if is_whatsapp_data_sqlite_busy_message(&lower) {
         return Some(ExpectedErrorKind::WhatsAppDataSqliteBusy);
     }
@@ -791,6 +814,39 @@ fn is_whatsapp_data_sqlite_busy_message(lower: &str) -> bool {
         || lower.contains("error code 5")
 }
 
+/// Match whatsapp structured-ingest failures caused by a `SQLITE_CORRUPT`
+/// malformed on-disk image. Scoped to the whatsapp ingest envelope plus an
+/// upsert write frame, so unrelated malformed-image errors in other domains
+/// still reach Sentry.
+///
+/// This is defense-in-depth **after** the store's quarantine + rebuild recovery
+/// (see [`ExpectedErrorKind::WhatsAppDataSqliteCorrupt`]) — the store already
+/// reports the first hit once and rebuilds the DB; this only demotes residual
+/// noise. The `upsert wa_chat` / `upsert wa_message` frames are matched because
+/// the observed Sentry symptom (TAURI-RUST-KNH) fired on the
+/// `upsert wa_chat <jid>@lid` path; the `prune` frame is matched because the
+/// same ingest RPC also runs the 90-day auto-prune under the same corrupt-DB
+/// recovery wrapper, and a malformed image surfaced from the prune step (its
+/// error context carries the word `prune`, e.g. `prune old wa_messages`) would
+/// otherwise reach Sentry unfiltered. All three still require the
+/// `[whatsapp_data] ingest failed:` envelope so unrelated malformed-image
+/// errors in other domains keep paging.
+fn is_whatsapp_data_sqlite_corrupt_message(lower: &str) -> bool {
+    if !lower.contains("[whatsapp_data] ingest failed:") {
+        return false;
+    }
+    let has_write_frame = lower.contains("upsert wa_message")
+        || lower.contains("upsert wa_chat")
+        || lower.contains("prune");
+    if !has_write_frame {
+        return false;
+    }
+    lower.contains("disk image is malformed")
+        || lower.contains("file is not a database")
+        || lower.contains("error code 11")
+        || lower.contains("error code 26")
+}
+
 /// Match subconscious-engine SQLite schema-init failures caused by the host
 /// filesystem being unable to open the DB file (`SQLITE_CANTOPEN` /
 /// `SQLITE_IOERR_SHMMAP`). Anchored to the subconscious open/DDL envelope so it
@@ -840,7 +896,9 @@ fn is_embedding_backend_auth_failure(lower: &str) -> bool {
 /// `embeddings::rpc::update_settings` as the save-time hard-block signal so the
 /// two never drift.
 pub(crate) fn is_embedding_endpoint_absent(lower: &str) -> bool {
-    lower.contains("embedding api error") && (lower.contains("(404") || lower.contains("(405"))
+    (lower.contains("embedding api error") && (lower.contains("(404") || lower.contains("(405")))
+        || (lower.contains("embeddings returned http")
+            && (lower.contains("http 404") || lower.contains("http 405")))
 }
 
 /// Detect a custom/cloud embeddings endpoint that IS an embeddings API but
@@ -1044,6 +1102,19 @@ pub fn is_api_key_unset_message(text: &str) -> bool {
         || lower.contains("no api key supplied")
 }
 
+/// Does this error text describe a **local** LLM provider (loopback host, e.g.
+/// LM Studio / Ollama / llama.cpp on `127.0.0.1:<port>` or `localhost:<port>`)
+/// refusing the connection because its server isn't running?
+///
+/// Single-source wrapper over [`is_loopback_unavailable`] so callers outside
+/// this module (the cron scheduler's retry-halt guard) key off the exact same
+/// matcher the [`expected_error_kind`] classifier uses — the phrasing cannot
+/// drift between the source demotion and the cron suppression. Lowercases the
+/// input to match the classifier's internal contract (TAURI-RUST-12K).
+pub fn is_local_provider_unreachable_message(text: &str) -> bool {
+    is_loopback_unavailable(&text.to_ascii_lowercase())
+}
+
 /// Detect the in-process-core boot-window shape: a sibling component
 /// (frontend RPC relay, agent-integrations / composio HTTP clients) tried to
 /// reach the embedded core's `127.0.0.1:<port>` listener before it finished
@@ -1065,6 +1136,19 @@ pub fn is_api_key_unset_message(text: &str) -> bool {
 ///    swallowing higher-level wrappers that merely mention "connection
 ///    refused" in prose.
 ///
+/// 3. **Locale-independent fallback**: on non-English OS locales the kernel
+///    renders the `ECONNREFUSED` / `WSAECONNREFUSED` text translated (e.g. a
+///    zh-CN Windows host emits `由于目标计算机积极拒绝，无法连接。 (os error
+///    10061)`), so the English `connection refused` prefix in (2) is absent
+///    and a genuine loopback-refused body would leak past this matcher into
+///    the broad [`is_network_unreachable_message`] bucket (TAURI-RUST-12K).
+///    Recover it by pairing the reqwest/hyper-stable `tcp connect error`
+///    marker with the connect-refused errno alone. Scoped to the three
+///    connect-refused errnos only — the distinct timeout errnos (`60` / `110`
+///    / `10060`, `WSAETIMEDOUT`) are NOT matched, so a loopback *timeout*
+///    still classifies as its own shape rather than being mislabelled
+///    "refused".
+///
 /// Drops OPENHUMAN-TAURI-R5 (~2.5k events, `integrations.get` emit site)
 /// and OPENHUMAN-TAURI-R6 (~2.5k events, the `rpc.invoke_method` re-wrap of
 /// the same trace). Both share `trace_id=6ebf5b62748d5144e541e2cddeabbbd0`
@@ -1085,9 +1169,21 @@ fn is_loopback_unavailable(lower: &str) -> bool {
     if !has_loopback_host {
         return false;
     }
-    lower.contains("connection refused (os error 61)")
+    // (2) English errno-prefixed form.
+    if lower.contains("connection refused (os error 61)")
         || lower.contains("connection refused (os error 111)")
         || lower.contains("connection refused (os error 10061)")
+    {
+        return true;
+    }
+    // (3) Locale-independent fallback: the OS-refused text may be translated,
+    // leaving only the errno. Require the transport-layer `tcp connect error`
+    // marker so a non-connect loopback failure cannot match, and pin to the
+    // connect-refused errnos (not the timeout errnos 60 / 110 / 10060).
+    lower.contains("tcp connect error")
+        && (lower.contains("(os error 61)")
+            || lower.contains("(os error 111)")
+            || lower.contains("(os error 10061)"))
 }
 
 /// Detect Ollama embed call sites that surface a user-config rejection from
@@ -1476,6 +1572,21 @@ fn is_backend_user_error_message(lower: &str) -> bool {
 /// classifier survives caller wrapping (rpc.invoke_method, agent.run_single,
 /// `[composio:gmail]` prefixes, anyhow chains, …).
 fn is_provider_user_state_message(lower: &str) -> bool {
+    // TAURI-RUST-HXF: a direct BYO provider (groq `on_demand` free tier)
+    // rejected a *single* request whose token count exceeds the account's
+    // tokens-per-minute cap — `413 Payload Too Large … Request too large …
+    // tokens per minute (TPM): Limit 8000, Requested 42084`. It is permanently
+    // non-viable on the current tier (not a burst that retry/backoff clears)
+    // and OpenHuman cannot raise a third-party account's TPM tier, so it is
+    // user-config state, not a product bug. NOTE: a *managed-backend*
+    // `PAYLOAD_TOO_LARGE` guard-leak is force-captured (returns `None`) earlier
+    // in `expected_error_kind`, before this matcher runs, so this arm only ever
+    // sees direct-provider TPM rejections. Shared matcher (single source of
+    // truth with the subconscious circuit breaker) so the wording can't drift.
+    if crate::openhuman::inference::provider::is_provider_rate_cap_exceeded_message(lower) {
+        return true;
+    }
+
     // OPENHUMAN-TAURI-3R / -3S: composio enable_trigger when the slug isn't
     // in the trigger registry (e.g. user clicked a stale UI option).
     // Backend returns 500 with `"Trigger type GITHUB_PUSH_EVENT not found"`.
@@ -2042,6 +2153,14 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 kind = "whatsapp_data_sqlite_busy",
                 "[observability] {domain}.{operation} skipped expected whatsapp_data sqlite busy/locked error"
+            );
+        }
+        ExpectedErrorKind::WhatsAppDataSqliteCorrupt => {
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "whatsapp_data_sqlite_corrupt",
+                "[observability] {domain}.{operation} skipped expected whatsapp_data sqlite corrupt error (store quarantines + rebuilds the DB and reports once)"
             );
         }
         ExpectedErrorKind::FilesystemUserPathInvalid => {
@@ -2795,6 +2914,25 @@ pub fn is_transient_message_failure(msg: &str) -> bool {
         || contains_transient_transport_phrase(&lower)
 }
 
+/// Sentinel prefix stamped on a `/teams/me/usage` probe error that the
+/// failure-backoff in `crate::openhuman::team::ops` short-circuited — i.e. an
+/// already-reported repeat within the backoff window. The FIRST failure of a
+/// streak propagates its real error string and reports normally; only the
+/// suppressed repeats carry this prefix so the JSON-RPC boundary can demote
+/// them (no re-report) instead of re-flooding Sentry. See GH #4153.
+///
+/// Single source of truth: the producer (`team::ops::get_usage_with_cache`)
+/// builds its sentinel from this constant, and [`is_suppressed_usage_probe_backoff`]
+/// matches it — coupled by a unit test so the two cannot drift.
+pub const USAGE_PROBE_BACKOFF_PREFIX: &str = "USAGE_PROBE_BACKOFF:";
+
+/// Returns true when a message is the usage-probe failure-backoff sentinel
+/// (see [`USAGE_PROBE_BACKOFF_PREFIX`]). Anchored on the exact prefix so a real
+/// backend error string can never match.
+pub fn is_suppressed_usage_probe_backoff(msg: &str) -> bool {
+    msg.starts_with(USAGE_PROBE_BACKOFF_PREFIX)
+}
+
 /// Returns true when a Sentry event is a budget-exhausted 400 that should be
 /// dropped from `before_send`.
 ///
@@ -3036,6 +3174,22 @@ fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_probe_backoff_sentinel_classifies_only_its_own_prefix() {
+        // The producer in `team::ops` builds its sentinel from this prefix.
+        let sentinel = format!("{USAGE_PROBE_BACKOFF_PREFIX} recent /teams/me/usage failure");
+        assert!(is_suppressed_usage_probe_backoff(&sentinel));
+        // Real backend error strings must NEVER match — they keep reporting.
+        assert!(!is_suppressed_usage_probe_backoff(
+            "GET /teams/me/usage failed (500 Internal Server Error): "
+        ));
+        assert!(!is_suppressed_usage_probe_backoff(
+            "GET /teams/me/usage failed (404 Not Found); response_body_len=91"
+        ));
+        assert!(!is_suppressed_usage_probe_backoff("SESSION_EXPIRED: ..."));
+        assert!(!is_suppressed_usage_probe_backoff(""));
+    }
 
     /// Helper must accept `&anyhow::Error`, `&dyn std::error::Error`, and
     /// plain `&str` — the three shapes that show up at error sites today.
@@ -3760,6 +3914,62 @@ mod tests {
         }
     }
 
+    // ── ProviderUserState: permanent TPM rate cap (TAURI-RUST-HXF) ─────────
+
+    #[test]
+    fn classifies_provider_rate_cap_413_tpm_rereport_as_provider_user_state() {
+        // TAURI-RUST-HXF: verbatim groq `on_demand` free-tier body — a single
+        // subconscious request (42084 tokens) exceeds the 8000 tokens-per-minute
+        // cap, so groq returns 413 and no retry can ever fit it. When re-raised
+        // by `agent.run_single` under `domain=agent`, `report_error_or_expected`
+        // must demote it to expected user-config state (the user's account tier
+        // is not a lever OpenHuman controls) instead of paging Sentry.
+        assert_eq!(
+            expected_error_kind(
+                "groq API error (413 Payload Too Large): {\"error\":{\"message\":\"Request too large \
+                 for model `openai/gpt-oss-120b` in organization `org_01k48ewn75ez7tsgw5hmd72px2` \
+                 service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 42084. \
+                 Please try again later.\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    #[test]
+    fn managed_backend_payload_too_large_still_pages_despite_rate_cap_arm() {
+        // Regression pin: a *managed-backend* `PAYLOAD_TOO_LARGE` is a
+        // client-guard leak (the client was supposed to bound the request) and
+        // MUST keep paging. The guard-leak arm returns `None` before the
+        // ProviderUserState matcher runs, so the new TPM arm cannot demote it.
+        assert_eq!(
+            expected_error_kind(
+                "OpenHuman API error (413 Payload Too Large): \
+                 {\"error\":{\"errorCode\":\"PAYLOAD_TOO_LARGE\",\"message\":\"request too big\"}}"
+            ),
+            None,
+            "managed PAYLOAD_TOO_LARGE guard-leak must still page"
+        );
+    }
+
+    #[test]
+    fn transient_tpm_burst_and_bare_413_do_not_demote_as_rate_cap() {
+        // The arm requires BOTH "request too large" (single-request permanence)
+        // AND a per-minute-tokens marker. A transient burst ("try again in Ns")
+        // and a bare 413 lacking those anchors must NOT be demoted to
+        // ProviderUserState — they stay retryable / Sentry-visible.
+        for raw in [
+            "groq API error (429 Too Many Requests): Rate limit reached for model \
+             `openai/gpt-oss-120b`. Please try again in 2.5s.",
+            "openai API error (413 Payload Too Large): request entity too large",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ProviderUserState),
+                "must NOT demote as permanent rate-cap: {raw}"
+            );
+        }
+    }
+
     // ── FilesystemUserPathInvalid (TAURI-RUST-4QH) ─────────────────────────
 
     #[test]
@@ -4182,6 +4392,81 @@ mod tests {
                 expected_error_kind(raw),
                 Some(ExpectedErrorKind::WhatsAppDataSqliteBusy),
                 "should classify whatsapp_data sqlite busy/locked: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_whatsapp_data_sqlite_corrupt_errors() {
+        for raw in [
+            // The observed TAURI-RUST-KNH symptom: corruption on the wa_chat path.
+            r#"[whatsapp_data] ingest failed: upsert wa_chat 207897942335683@lid: database disk image is malformed: Error code 11: The database disk image is malformed"#,
+            // The wa_message path — same on-disk damage class.
+            r#"[whatsapp_data] ingest failed: upsert wa_message chat=120363402402350155@g.us msg=abc: file is not a database: Error code 26: File opened that is not a database file"#,
+            // Wrapped in outer RPC context — classifier runs on the full chain.
+            r#"rpc.invoke_method failed: [whatsapp_data] ingest failed: upsert wa_chat 207897942335683@lid: database disk image is malformed"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "should classify whatsapp_data sqlite corrupt: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_whatsapp_data_prune_path_sqlite_corrupt_errors() {
+        // The same ingest RPC runs the 90-day auto-prune under the store's
+        // corrupt-DB recovery wrapper. A malformed image surfaced from the prune
+        // step carries a `prune` frame (e.g. `prune old wa_messages`) instead of
+        // an `upsert` frame, and must still be demoted — otherwise a boot-time
+        // prune corruption re-floods Sentry on every scan tick (Finding 3).
+        for raw in [
+            r#"[whatsapp_data] ingest failed: prune old wa_messages: database disk image is malformed: Error code 11: The database disk image is malformed"#,
+            r#"[whatsapp_data] ingest failed: prune old wa_messages: scan affected chats: database disk image is malformed"#,
+            r#"[whatsapp_data] ingest failed: refresh chat stats after prune: chat@c.us: file is not a database: Error code 26"#,
+            r#"rpc.invoke_method failed: [whatsapp_data] ingest failed: prune old wa_messages: database disk image is malformed"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "should classify whatsapp_data prune-path sqlite corrupt: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_prune_errors_as_whatsapp_corrupt() {
+        for raw in [
+            // A `prune` word outside the whatsapp ingest envelope must still page.
+            "memory queue prune failed: database disk image is malformed",
+            // whatsapp prune-path lock contention is the *busy* bucket, not corrupt.
+            "[whatsapp_data] ingest failed: prune old wa_messages: database is locked",
+            // whatsapp prune-path constraint/logic error is a real bug, not on-disk damage.
+            "[whatsapp_data] ingest failed: prune old wa_messages: no such table: wa_messages",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "must not classify as whatsapp_data sqlite corrupt: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_corrupt_messages_as_whatsapp_corrupt() {
+        for raw in [
+            // Malformed image outside the whatsapp ingest envelope must still page.
+            "memory queue write failed: database disk image is malformed",
+            // Read-path whatsapp failure (no upsert frame) is not the ingest write.
+            "[whatsapp_data] list_messages failed: database disk image is malformed",
+            // whatsapp ingest lock contention is the *busy* bucket, not corrupt.
+            "[whatsapp_data] ingest failed: upsert wa_message chat=x msg=y: database is locked",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "must not classify as whatsapp_data sqlite corrupt: {raw}"
             );
         }
     }
@@ -7047,6 +7332,56 @@ mod tests {
             expected_error_kind(raw),
             Some(ExpectedErrorKind::NetworkUnreachable)
         );
+    }
+
+    /// Verbatim body from TAURI-RUST-12K (2802 events / 29 users): a cron
+    /// agent job hits a local LM Studio server (`localhost:1234`) that isn't
+    /// running, on a zh-CN Windows host — so the `WSAECONNREFUSED` text is
+    /// localized and the English "connection refused" prefix is absent, leaving
+    /// only `(os error 10061)` behind the transport-stable `tcp connect error`
+    /// marker. The locale-independent arm must still route it to the loopback
+    /// bucket rather than leaking to the broad `NetworkUnreachable`.
+    #[test]
+    fn classifies_localized_loopback_connect_refused_as_loopback_unavailable() {
+        let raw = "error sending request for url \
+                   (http://localhost:1234/v1/chat/completions): client error (Connect): \
+                   tcp connect error: 由于目标计算机积极拒绝，无法连接。 (os error 10061)";
+        assert_eq!(
+            expected_error_kind(raw),
+            Some(ExpectedErrorKind::LoopbackUnavailable),
+            "localized WSAECONNREFUSED loopback body must classify as LoopbackUnavailable"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_loopback_timeout_as_loopback() {
+        // A loopback *timeout* (WSAETIMEDOUT os error 10060, not the
+        // connect-refused 10061) shares the `tcp connect error` marker but is
+        // a distinct failure class — it must NOT be swallowed by the
+        // connect-refused loopback arm.
+        let raw = "error sending request for url \
+                   (http://localhost:1234/v1/chat/completions): \
+                   tcp connect error: connection timed out (os error 10060)";
+        assert!(
+            !matches!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::LoopbackUnavailable)
+            ),
+            "loopback timeout must not classify as LoopbackUnavailable"
+        );
+    }
+
+    #[test]
+    fn is_local_provider_unreachable_message_wraps_loopback_matcher() {
+        let localized = "error sending request for url \
+                         (http://localhost:1234/v1/chat/completions): client error (Connect): \
+                         tcp connect error: 由于目标计算机积极拒绝，无法连接。 (os error 10061)";
+        assert!(is_local_provider_unreachable_message(localized));
+        // Remote refused must not match (loopback-only, keeps real outages visible).
+        assert!(!is_local_provider_unreachable_message(
+            "error sending request for url (https://api.tinyhumans.ai/x) \
+             → tcp connect error → Connection refused (os error 61)"
+        ));
     }
 
     #[test]

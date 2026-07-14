@@ -8,7 +8,7 @@ use anyhow::anyhow;
 use crate::rpc::RpcOutcome;
 
 use super::gate::{try_boot_state, ApprovalGate, ApprovalGateBootState, DecideMiss};
-use super::types::{ApprovalAuditEntry, ApprovalDecision, PendingApproval};
+use super::types::{ApprovalAuditEntry, ApprovalDecision, ApprovalSourceContext, PendingApproval};
 
 /// Read the host-aware approval-gate boot decision so the UI banner can
 /// render the right state on first paint (rather than waiting for a
@@ -183,6 +183,60 @@ pub async fn approval_decide(
                 );
                 logs.push(format!(
                     "[approval] WARNING: could not save 'Always allow' for '{}': {err}",
+                    row.tool_name
+                ));
+            }
+        }
+    }
+
+    // "Approve always for this flow" (flow-approval-surface, PR2): unlike
+    // `ApproveAlwaysForTool` above, this grant is scoped to one workflow —
+    // persisted into `flow_tool_trust`, NOT the global `autonomy.auto_approve`
+    // allowlist, so it cannot leak into a different flow that happens to call
+    // the same tool. Only meaningful on a row whose `source_context` names a
+    // flow; a row without one (decision picked on a non-flow park, which the
+    // UI should never offer but the RPC must not trust blindly) logs a
+    // warning and no-ops the persistence — the decision itself still
+    // resolved the parked call above, so the RPC does not fail.
+    if decision == ApprovalDecision::ApproveAlwaysForFlow {
+        match &row.source_context {
+            Some(ApprovalSourceContext::Flow { flow_id, .. }) => {
+                match gate.insert_flow_trust(flow_id, &row.tool_name) {
+                    Ok(()) => {
+                        tracing::info!(
+                            flow_id = flow_id.as_str(),
+                            tool = row.tool_name.as_str(),
+                            "[rpc:approval_decide] tool persisted to flow_tool_trust"
+                        );
+                        logs.push(format!(
+                            "[approval] '{}' added to '{}'s Always-allow list",
+                            row.tool_name, flow_id
+                        ));
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            flow_id = flow_id.as_str(),
+                            tool = row.tool_name.as_str(),
+                            error = %err,
+                            "[rpc:approval_decide] failed to persist flow_tool_trust; tool will prompt again next run"
+                        );
+                        logs.push(format!(
+                            "[approval] WARNING: could not save 'Always allow' for '{}' on flow '{flow_id}': {err}",
+                            row.tool_name
+                        ));
+                    }
+                }
+            }
+            None => {
+                tracing::warn!(
+                    request_id = row.request_id.as_str(),
+                    tool = row.tool_name.as_str(),
+                    "[rpc:approval_decide] ApproveAlwaysForFlow decided a row with no flow \
+                     source_context — nothing to persist, decision still resolved"
+                );
+                logs.push(format!(
+                    "[approval] WARNING: '{}' has no flow context — 'Always allow for this workflow' \
+                     was not persisted",
                     row.tool_name
                 ));
             }

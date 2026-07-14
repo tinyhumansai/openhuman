@@ -110,7 +110,7 @@ impl Tool for MemoryHybridSearchTool {
             ));
         }
 
-        let profile = WeightProfile::from_name(&parsed.mode).unwrap_or(WeightProfile::BALANCED);
+        let profile = WeightProfile::by_name(&parsed.mode);
         let limit = parsed.limit.clamp(1, 50);
 
         log::debug!(
@@ -152,7 +152,8 @@ impl Tool for MemoryHybridSearchTool {
             .enumerate()
             .map(|(i, hit)| {
                 let bd = &hit.score_breakdown;
-                let score = profile.compose_score(
+                let score = crate::openhuman::memory_search::scoring::compose_score(
+                    &profile,
                     bd.graph_relevance,
                     bd.vector_similarity,
                     bd.keyword_relevance,

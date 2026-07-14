@@ -91,7 +91,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "approval",
             function: "decide",
             description:
-                "Apply a decision to a pending approval (approve_once / approve_always_for_tool / deny).",
+                "Apply a decision to a pending approval (approve_once / approve_always_for_tool / approve_always_for_flow / deny).",
             inputs: vec![
                 FieldSchema {
                     name: "request_id",
@@ -103,7 +103,9 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "decision",
                     ty: TypeSchema::String,
                     comment:
-                        "One of \"approve_once\", \"approve_always_for_tool\", or \"deny\".",
+                        "One of \"approve_once\", \"approve_always_for_tool\", \
+                         \"approve_always_for_flow\" (only meaningful when the row's \
+                         source_context names a flow), or \"deny\".",
                     required: true,
                 },
             ],
@@ -163,7 +165,8 @@ fn handle_decide(params: Map<String, Value>) -> ControllerFuture {
         let decision_str = read_required_string(&params, "decision")?;
         let decision = ApprovalDecision::from_str(decision_str.trim()).ok_or_else(|| {
             format!(
-                "invalid 'decision': expected approve_once|approve_always_for_tool|deny, got '{decision_str}'"
+                "invalid 'decision': expected \
+                 approve_once|approve_always_for_tool|approve_always_for_flow|deny, got '{decision_str}'"
             )
         })?;
         let outcome = approval_rpc::approval_decide(request_id.trim(), decision)

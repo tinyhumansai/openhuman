@@ -13,7 +13,12 @@ use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::voice::hotkey::{self, ActivationMode, HotkeyEvent};
+// The rdev-based listener (non-macOS) resolves the hotkey combo + activation mode
+// against the cross-platform `hotkey` module. macOS uses a separate path and
+// never compiles `start_rdev_listener`, so gate the import to avoid an unused
+// import warning there.
+#[cfg(not(target_os = "macos"))]
+use super::hotkey::{self, ActivationMode, HotkeyEvent};
 
 const LOG_PREFIX: &str = "[dictation_listener]";
 
@@ -122,7 +127,6 @@ pub async fn start_if_enabled(config: &Config) {
             "{LOG_PREFIX} macOS: skipping rdev hotkey listener — \
              handled by Tauri host via tauri-plugin-global-shortcut (issue #2677)"
         );
-        return;
     }
 
     // Non-macOS: start the rdev-based listener.

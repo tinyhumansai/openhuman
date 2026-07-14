@@ -276,7 +276,7 @@ pub async fn mcp_clients_install(
         server.qualified_name
     );
 
-    let _ = publish_global(DomainEvent::McpServerInstalled {
+    publish_global(DomainEvent::McpServerInstalled {
         server_id: server_id.clone(),
         qualified_name: server.qualified_name.clone(),
     });
@@ -418,7 +418,7 @@ pub async fn mcp_clients_connect(
 
     let tool_count = tools.len() as u32;
 
-    let _ = publish_global(DomainEvent::McpServerConnected {
+    publish_global(DomainEvent::McpServerConnected {
         server_id: server_id.trim().to_string(),
         tool_count,
     });
@@ -471,7 +471,7 @@ pub async fn mcp_clients_set_enabled(
     if !enabled {
         connections::disconnect(&server_id).await;
         connections::clear_last_error(&server_id).await;
-        let _ = publish_global(DomainEvent::McpServerDisconnected {
+        publish_global(DomainEvent::McpServerDisconnected {
             server_id: server_id.clone(),
             reason: Some("disabled".to_string()),
         });
@@ -496,7 +496,7 @@ pub async fn mcp_clients_disconnect(server_id: String) -> Result<RpcOutcome<Valu
 
     connections::disconnect(server_id.trim()).await;
 
-    let _ = publish_global(DomainEvent::McpServerDisconnected {
+    publish_global(DomainEvent::McpServerDisconnected {
         server_id: server_id.trim().to_string(),
         reason: None,
     });
@@ -551,7 +551,7 @@ pub async fn mcp_clients_update_env(
 
     // Drop any live session so the reconnect picks up the new env.
     connections::disconnect(server_id).await;
-    let _ = publish_global(DomainEvent::McpServerDisconnected {
+    publish_global(DomainEvent::McpServerDisconnected {
         server_id: server_id.to_string(),
         reason: Some("env reconfigured".to_string()),
     });
@@ -591,7 +591,7 @@ pub async fn mcp_clients_update_env(
     match connections::connect(config, &server).await {
         Ok(tools) => {
             let tool_count = tools.len() as u32;
-            let _ = publish_global(DomainEvent::McpServerConnected {
+            publish_global(DomainEvent::McpServerConnected {
                 server_id: server_id.to_string(),
                 tool_count,
             });
@@ -786,7 +786,7 @@ pub async fn mcp_clients_tool_call(
     let elapsed_ms = start.elapsed().as_millis() as u64;
     let success = result.is_ok();
 
-    let _ = publish_global(DomainEvent::McpClientToolExecuted {
+    publish_global(DomainEvent::McpClientToolExecuted {
         server_id: server_id.trim().to_string(),
         tool_name: tool_name.trim().to_string(),
         success,
@@ -937,7 +937,7 @@ async fn invoke_config_assist_agent(
         Err(e) => {
             return Ok(json!({
                 "reply": format!(
-                    "Couldn't start the assistant: {e}. Make sure AI/inference is configured (Settings → AI)."
+                    "Couldn't start the assistant: {e}. Make sure AI/inference is configured (Connections → API keys → LLM)."
                 ),
                 "suggested_env": null
             }));
@@ -966,7 +966,7 @@ async fn invoke_config_assist_agent(
         Ok(reply) => Ok(json!({ "reply": reply, "suggested_env": null })),
         Err(e) => Ok(json!({
             "reply": format!(
-                "I couldn't research that right now: {e}. Make sure AI/inference is configured (Settings → AI)."
+                "I couldn't research that right now: {e}. Make sure AI/inference is configured (Connections → API keys → LLM)."
             ),
             "suggested_env": null
         })),

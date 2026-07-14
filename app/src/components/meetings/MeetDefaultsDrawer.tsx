@@ -22,6 +22,7 @@ import {
   SettingsSelect,
   SettingsStatusLine,
   SettingsSwitch,
+  SettingsTextField,
 } from '../settings/controls';
 
 const log = debug('meetings:defaults-drawer');
@@ -80,6 +81,9 @@ export function MeetDefaultsDrawer({ open, onClose }: MeetDefaultsDrawerProps) {
   const [autoSummarize, setAutoSummarize] = useState<MeetAutoSummarizePolicy>('ask');
   const [listenOnly, setListenOnly] = useState(true);
   const [ingestTranscripts, setIngestTranscripts] = useState(false);
+  // The user's meeting display name — reused as the bot's reply anchor on every
+  // join. Persisted on blur (a text field must not save per keystroke).
+  const [replyDisplayName, setReplyDisplayName] = useState('');
 
   // Per-platform overrides: key → MeetAutoJoinPolicy | undefined (undefined = use default)
   const [platformPolicies, setPlatformPolicies] = useState<Record<string, PlatformPolicy>>({});
@@ -111,6 +115,7 @@ export function MeetDefaultsDrawer({ open, onClose }: MeetDefaultsDrawerProps) {
         setAutoSummarize(s.auto_summarize_policy);
         setListenOnly(s.listen_only_default);
         setIngestTranscripts(s.ingest_backend_transcripts);
+        setReplyDisplayName(s.reply_display_name ?? '');
         // Build per-platform state: stored as "ask_each_time"|"always"|"never", display as that or "default"
         const pp: Record<string, PlatformPolicy> = {};
         const stored = s.platform_auto_join_policies ?? {};
@@ -187,6 +192,14 @@ export function MeetDefaultsDrawer({ open, onClose }: MeetDefaultsDrawerProps) {
     const prev = listenOnly;
     setListenOnly(next);
     void persist('listen_only_default', { listen_only_default: next }, () => setListenOnly(prev));
+  };
+
+  // Persist the display name on blur (not per keystroke). Trim before saving so
+  // the anchor match is clean; skip the write when nothing changed.
+  const handleReplyDisplayNameBlur = () => {
+    const trimmed = replyDisplayName.trim();
+    if (trimmed !== replyDisplayName) setReplyDisplayName(trimmed);
+    void persist('reply_display_name', { reply_display_name: trimmed });
   };
 
   const handleIngestChange = (next: boolean) => {
@@ -286,6 +299,27 @@ export function MeetDefaultsDrawer({ open, onClose }: MeetDefaultsDrawerProps) {
                       checked={watchCalendar}
                       onCheckedChange={handleWatchCalendarChange}
                       aria-label={t('skills.meetingBots.defaults.watchCalendar')}
+                    />
+                  }
+                />
+              </SettingsSection>
+
+              {/* Reply anchor: the user's display name, reused on every join so
+                  the bot knows who to reply to (otherwise it stays listen-only). */}
+              <SettingsSection>
+                <SettingsRow
+                  stacked
+                  htmlFor="drawer-input-reply-display-name"
+                  label={t('skills.meetingBots.replyName.label')}
+                  description={t('skills.meetingBots.replyName.description')}
+                  control={
+                    <SettingsTextField
+                      id="drawer-input-reply-display-name"
+                      value={replyDisplayName}
+                      onChange={e => setReplyDisplayName(e.target.value)}
+                      onBlur={handleReplyDisplayNameBlur}
+                      placeholder={t('skills.meetingBots.replyName.placeholder')}
+                      aria-label={t('skills.meetingBots.replyName.label')}
                     />
                   }
                 />

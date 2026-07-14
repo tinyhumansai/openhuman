@@ -4,20 +4,34 @@
 //! agent workers from one parent session. The lower-level
 //! [`crate::openhuman::agent::harness`] module remains responsible for prompt
 //! construction, tool filtering, and the actual sub-agent run loop.
+//!
+//! Execution fans out on TinyAgents **graphs**: [`workflow_runs`] schedules
+//! phase DAGs on a graph engine, [`agent_teams`] runs members through a
+//! conditional-routing graph, [`delegation`] wires the durable
+//! plan→execute⇄review→finalize graph, and parallel fanout goes through
+//! `tinyagents::graph::parallel::map_reduce`. What stays here is the product
+//! layer: durable SQL/JSON run ledgers, validation, cancellation semantics,
+//! compatibility events, and JSON-RPC/tool response formatting.
+//! [`running_subagents`] mirrors detached-sub-agent lifecycle into a
+//! TinyAgents task store; porting more of that lifecycle upstream is tracked
+//! in `docs/tinyagents-full-migration-plan/07-subagents/02-detached-taskstore.md`.
 
 pub mod agent_teams;
-pub mod background_completions;
-pub mod background_delivery;
+pub(crate) mod background_completions;
+pub(crate) mod background_delivery;
 pub mod command_center;
-pub mod delegation;
+pub(crate) mod delegation;
+pub mod harness_audit;
 mod ops;
 pub mod pairing;
 mod pairing_schemas;
 pub(crate) mod parent_context;
-pub mod run_ledger_finalize;
-pub mod running_subagents;
+pub(crate) mod run_ledger_finalize;
+pub(crate) mod running_subagents;
+pub(crate) mod spawn_parallel_graph;
 pub mod subagent_control;
-pub mod subagent_sessions;
+pub(crate) mod subagent_events;
+pub(crate) mod subagent_sessions;
 pub mod tools;
 pub mod types;
 pub mod workflow_runs;
@@ -48,7 +62,7 @@ pub use types::{
 pub use workflow_runs::{
     all_workflow_run_controller_schemas, all_workflow_run_registered_controllers,
 };
-pub use worktree::{BaseRef, WorktreeError, WorktreeStatus};
+pub use worktree::{BaseRef, GitWorktreeIsolation, WorktreeError, WorktreeStatus};
 pub use worktree_schemas::{
     all_controller_schemas as all_worktree_controller_schemas,
     all_registered_controllers as all_worktree_registered_controllers,

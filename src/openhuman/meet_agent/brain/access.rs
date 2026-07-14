@@ -221,7 +221,7 @@ pub async fn run_grant_turn(request_id: &str, grantee: &str) -> Result<bool, Str
         s.allow_speaker(grantee);
         s.cancel_outbound();
     });
-    let samples = match tts(&message).await {
+    let samples = match tts(&message, None).await {
         Ok(samples) => samples,
         Err(err) => {
             log::warn!("[meet-agent] grant TTS failed request_id={request_id} err={err}");
@@ -301,7 +301,7 @@ pub async fn run_soft_deny_turn(
     // Cancel any prior outbound so the refusal doesn't queue behind a
     // half-drained reply from a previous turn.
     let _ = registry().with_session(request_id, |s| s.cancel_outbound());
-    let samples = match tts(&message).await {
+    let samples = match tts(&message, None).await {
         Ok(samples) => samples,
         Err(err) => {
             log::warn!("[meet-agent] soft-deny TTS failed request_id={request_id} err={err}");

@@ -21,7 +21,13 @@ const ICON_COMPONENTS: Record<string, (props: { className?: string }) => ReactEl
  * Emoji icons for channels without a dedicated brand mark, rendered as plain
  * text. Keyed by `ChannelDefinition.icon`.
  */
-const ICON_EMOJI: Record<string, string> = { telegram: '✈️', discord: '🎮', web: '🌐', mcp: '🔌' };
+const ICON_EMOJI: Record<string, string> = {
+  telegram: '✈️',
+  discord: '🎮',
+  web: '🌐',
+  mcp: '🔌',
+  email: '✉️',
+};
 
 /**
  * Render the brand icon for a channel, keyed by `ChannelDefinition.icon`.

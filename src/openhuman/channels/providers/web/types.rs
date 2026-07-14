@@ -67,7 +67,7 @@ pub(super) struct ParallelEntry {
 #[derive(Debug, Clone)]
 pub(super) struct WebChatTaskResult {
     pub(super) full_response: String,
-    pub(super) citations: Vec<crate::openhuman::agent::memory_loader::MemoryCitation>,
+    pub(super) citations: Vec<crate::openhuman::agent_memory::memory_loader::MemoryCitation>,
     /// Holistic token/cost/context totals for the turn (parent + sub-agents),
     /// forwarded to the frontend on `chat_done`. `None` for synthetic results
     /// (e.g. budget-exhausted placeholders) that never ran a real turn.
@@ -82,6 +82,11 @@ pub struct ChatRequestMetadata {
     pub speak_reply: Option<bool>,
     pub source: Option<String>,
     pub session_id: Option<u64>,
+    /// Resolved agent definition id driving this turn (e.g. `"orchestrator"`,
+    /// a task executor's agent). Stamped by the run entrypoint once the agent
+    /// is resolved — used purely for trace attribution (Langfuse `agent.id` /
+    /// `agent.turn:<id>` trace name), never for routing.
+    pub agent_id: Option<String>,
 }
 
 impl ChatRequestMetadata {
@@ -97,6 +102,7 @@ impl ChatRequestMetadata {
             speak_reply: None,
             source: Some("agentbox".to_string()),
             session_id: None,
+            agent_id: None,
         }
     }
 }
@@ -142,4 +148,9 @@ pub(super) struct WebQueueParams {
 pub(super) struct WebCancelParams {
     pub(super) client_id: String,
     pub(super) thread_id: String,
+    /// The `request_id` this cancel targets. When present, the cancel is scoped
+    /// to that exact turn, so a stale cancel for a superseded request can't kill
+    /// the newer turn on the thread (#4760). Absent = stop whatever is running.
+    #[serde(default)]
+    pub(super) request_id: Option<String>,
 }

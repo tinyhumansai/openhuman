@@ -2,7 +2,7 @@
 
 use crate::openhuman::channels::providers::web as web_channel;
 use crate::openhuman::config::Config;
-use crate::openhuman::inference::provider::{self, ProviderRuntimeOptions};
+use crate::openhuman::inference::provider;
 use crate::openhuman::memory::{
     ApiEnvelope, ApiMeta, AppendConversationMessageRequest, ConversationMessageRecord,
     ConversationMessagesRequest, ConversationMessagesResponse, ConversationThreadSummary,
@@ -22,14 +22,16 @@ use crate::openhuman::threads::title::{
     THREAD_TITLE_MODEL_HINT, THREAD_TITLE_SYSTEM_PROMPT,
 };
 use crate::openhuman::threads::turn_state::{
-    self, ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateRequest, GetTurnStateResponse,
-    ListTurnStatesResponse,
+    self, ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateForRequestRequest,
+    GetTurnStateRequest, GetTurnStateResponse, ListTurnStatesResponse,
 };
 use crate::openhuman::threads::ThreadsError;
 use crate::rpc::RpcOutcome;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::ModelRequest;
 
 fn request_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -346,21 +348,8 @@ pub async fn thread_generate_title(
         ));
     };
 
-    let provider_runtime_options = ProviderRuntimeOptions {
-        auth_profile_override: None,
-        openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
-        secrets_encrypt: config.secrets.encrypt,
-        reasoning_enabled: config.runtime.reasoning_enabled,
-    };
-
-    let provider = match provider::create_intelligent_routing_provider(
-        config.inference_url.as_deref(),
-        config.api_url.as_deref(),
-        config.api_key.as_deref(),
-        &config,
-        &provider_runtime_options,
-    ) {
-        Ok(provider) => provider,
+    let chat_model = match provider::create_chat_model("summarization", &config, 0.2) {
+        Ok(model) => model,
         Err(error) => {
             tracing::warn!(
                 thread_id = %request.thread_id,
@@ -384,16 +373,19 @@ pub async fn thread_generate_title(
         "{THREAD_TITLE_LOG_PREFIX} generating thread title"
     );
 
-    let raw_title = match provider
-        .chat_with_system(
-            Some(THREAD_TITLE_SYSTEM_PROMPT),
-            &build_title_prompt(&first_user_message, &assistant_message),
-            THREAD_TITLE_MODEL_HINT,
-            0.2,
+    let raw_title = match chat_model
+        .invoke(
+            &(),
+            ModelRequest::new(vec![
+                Message::system(THREAD_TITLE_SYSTEM_PROMPT),
+                Message::user(build_title_prompt(&first_user_message, &assistant_message)),
+            ])
+            .with_model(THREAD_TITLE_MODEL_HINT)
+            .with_temperature(0.2),
         )
         .await
     {
-        Ok(title) => title,
+        Ok(response) => response.text(),
         Err(error) => {
             tracing::warn!(
                 thread_id = %request.thread_id,
@@ -650,6 +642,37 @@ pub async fn turn_state_list(
     Ok(envelope(
         ListTurnStatesResponse { turn_states, count },
         Some(counts([("num_turn_states", count)])),
+        None,
+    ))
+}
+
+/// Lists every persisted turn snapshot for one thread, newest first — the
+/// per-turn history that lets the UI render each answer's own process trail.
+pub async fn turn_state_history(
+    request: GetTurnStateRequest,
+) -> Result<RpcOutcome<ApiEnvelope<ListTurnStatesResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let turn_states = turn_state::store::list_thread(dir, &request.thread_id)?;
+    let count = turn_states.len();
+    Ok(envelope(
+        ListTurnStatesResponse { turn_states, count },
+        Some(counts([("num_turn_states", count)])),
+        None,
+    ))
+}
+
+/// Returns one specific turn of a thread by its producing request id — used by
+/// the UI to lazily load a past turn's full timeline when its insights block is
+/// first expanded.
+pub async fn turn_state_get_turn(
+    request: GetTurnStateForRequestRequest,
+) -> Result<RpcOutcome<ApiEnvelope<GetTurnStateResponse>>, String> {
+    let dir = workspace_dir().await?;
+    let turn_state = turn_state::store::get_turn(dir, &request.thread_id, &request.request_id)?;
+    let present = turn_state.is_some();
+    Ok(envelope(
+        GetTurnStateResponse { turn_state },
+        Some(counts([("present", usize::from(present))])),
         None,
     ))
 }

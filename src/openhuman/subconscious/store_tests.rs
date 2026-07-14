@@ -9,33 +9,111 @@ fn test_conn() -> Connection {
 #[test]
 fn last_tick_at_round_trip() {
     let conn = test_conn();
-    assert_eq!(get_last_tick_at(&conn).unwrap(), 0.0);
-    set_last_tick_at(&conn, 12345.678).unwrap();
-    assert_eq!(get_last_tick_at(&conn).unwrap(), 12345.678);
+    assert_eq!(get_last_tick_at(&conn, "memory").unwrap(), 0.0);
+    set_last_tick_at(&conn, "memory", 12345.678).unwrap();
+    assert_eq!(get_last_tick_at(&conn, "memory").unwrap(), 12345.678);
 }
 
 #[test]
 fn last_tick_at_upsert() {
     let conn = test_conn();
-    set_last_tick_at(&conn, 1.0).unwrap();
-    set_last_tick_at(&conn, 2.0).unwrap();
-    assert_eq!(get_last_tick_at(&conn).unwrap(), 2.0);
+    set_last_tick_at(&conn, "memory", 1.0).unwrap();
+    set_last_tick_at(&conn, "memory", 2.0).unwrap();
+    assert_eq!(get_last_tick_at(&conn, "memory").unwrap(), 2.0);
+}
+
+#[test]
+fn state_keys_are_namespaced_per_instance() {
+    // Two worlds share one subconscious.db; their `last_tick_at`/baseline rows
+    // must not collide (subconscious-factory invariant: independent state keys).
+    let conn = test_conn();
+    set_last_tick_at(&conn, "memory", 10.0).unwrap();
+    set_last_tick_at(&conn, "tinyplace", 20.0).unwrap();
+    assert_eq!(get_last_tick_at(&conn, "memory").unwrap(), 10.0);
+    assert_eq!(get_last_tick_at(&conn, "tinyplace").unwrap(), 20.0);
+
+    set_baseline_checkpoint_id(&conn, "memory", "ckpt_mem").unwrap();
+    set_baseline_checkpoint_id(&conn, "tinyplace", "ckpt_tp").unwrap();
+    assert_eq!(
+        get_baseline_checkpoint_id(&conn, "memory").unwrap(),
+        Some("ckpt_mem".to_string())
+    );
+    assert_eq!(
+        get_baseline_checkpoint_id(&conn, "tinyplace").unwrap(),
+        Some("ckpt_tp".to_string())
+    );
+}
+
+#[test]
+fn legacy_keys_migrate_to_memory_namespace() {
+    // Seed the pre-factory single-engine keys, then re-run the DDL (as every
+    // `open_and_initialize` does) and assert the values now live under the
+    // `memory:`-namespaced keys the memory instance reads.
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(SCHEMA_DDL).unwrap();
+    conn.execute(
+        "INSERT INTO subconscious_state (key, value) VALUES ('last_tick_at', 555.5)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO subconscious_state_text (key, value) VALUES ('baseline_checkpoint_id', 'ckpt_legacy')",
+        [],
+    )
+    .unwrap();
+
+    // The migration is part of the idempotent DDL batch — re-running it renames.
+    conn.execute_batch(SCHEMA_DDL).unwrap();
+
+    assert_eq!(get_last_tick_at(&conn, "memory").unwrap(), 555.5);
+    assert_eq!(
+        get_baseline_checkpoint_id(&conn, "memory").unwrap(),
+        Some("ckpt_legacy".to_string())
+    );
+    // The bare legacy keys are gone (renamed, not duplicated).
+    let legacy_count: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM subconscious_state WHERE key = 'last_tick_at'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(legacy_count, 0);
+}
+
+#[test]
+fn migration_never_clobbers_existing_namespaced_value() {
+    // Old→new→old tolerance: if a `memory:`-namespaced value already exists, a
+    // stale bare legacy key must NOT overwrite it (NOT EXISTS guard).
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(SCHEMA_DDL).unwrap();
+    set_last_tick_at(&conn, "memory", 999.0).unwrap();
+    conn.execute(
+        "INSERT INTO subconscious_state (key, value) VALUES ('last_tick_at', 1.0)",
+        [],
+    )
+    .unwrap();
+
+    conn.execute_batch(SCHEMA_DDL).unwrap();
+
+    // The namespaced value wins; the legacy row is left in place, not merged.
+    assert_eq!(get_last_tick_at(&conn, "memory").unwrap(), 999.0);
 }
 
 #[test]
 fn baseline_checkpoint_id_round_trip() {
     let conn = test_conn();
     // Unset until the first tick establishes a baseline.
-    assert_eq!(get_baseline_checkpoint_id(&conn).unwrap(), None);
-    set_baseline_checkpoint_id(&conn, "ckpt_abc").unwrap();
+    assert_eq!(get_baseline_checkpoint_id(&conn, "memory").unwrap(), None);
+    set_baseline_checkpoint_id(&conn, "memory", "ckpt_abc").unwrap();
     assert_eq!(
-        get_baseline_checkpoint_id(&conn).unwrap(),
+        get_baseline_checkpoint_id(&conn, "memory").unwrap(),
         Some("ckpt_abc".to_string())
     );
     // Advancing the baseline replaces the previous id.
-    set_baseline_checkpoint_id(&conn, "ckpt_def").unwrap();
+    set_baseline_checkpoint_id(&conn, "memory", "ckpt_def").unwrap();
     assert_eq!(
-        get_baseline_checkpoint_id(&conn).unwrap(),
+        get_baseline_checkpoint_id(&conn, "memory").unwrap(),
         Some("ckpt_def".to_string())
     );
 }
@@ -72,8 +150,8 @@ fn open_and_initialize_creates_usable_db_on_real_fs() {
     let db_path = dir.path().join("subconscious.db");
 
     let conn = open_and_initialize(&db_path).unwrap();
-    set_last_tick_at(&conn, 99.5).unwrap();
-    assert_eq!(get_last_tick_at(&conn).unwrap(), 99.5);
+    set_last_tick_at(&conn, "memory", 99.5).unwrap();
+    assert_eq!(get_last_tick_at(&conn, "memory").unwrap(), 99.5);
 
     // On a normal local filesystem WAL succeeds; assert we landed on a valid
     // persistent journal mode (wal when supported, otherwise the truncate
@@ -93,8 +171,8 @@ fn with_connection_creates_parent_dir_and_db() {
     // workspace and initialize a working DB end-to-end.
     let workspace = tempfile::tempdir().unwrap();
     let tick = with_connection(workspace.path(), |conn| {
-        set_last_tick_at(conn, 7.0)?;
-        get_last_tick_at(conn)
+        set_last_tick_at(conn, "memory", 7.0)?;
+        get_last_tick_at(conn, "memory")
     })
     .unwrap();
     assert_eq!(tick, 7.0);
@@ -113,5 +191,5 @@ fn apply_journal_mode_falls_back_without_panicking() {
     let conn = Connection::open_in_memory().unwrap();
     apply_journal_mode(&conn);
     conn.execute_batch(SCHEMA_DDL).unwrap();
-    assert_eq!(get_last_tick_at(&conn).unwrap(), 0.0);
+    assert_eq!(get_last_tick_at(&conn, "memory").unwrap(), 0.0);
 }

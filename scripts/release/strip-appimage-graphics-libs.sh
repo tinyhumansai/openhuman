@@ -480,7 +480,7 @@ sanitize_elf_rpaths() {
 # binary hard-links (NEEDED) but which MUST travel inside the AppImage is absent
 # from the bundle.
 #
-# Problem (issue #3224): the app links libxdo.so.3 via enigo
+# Problem (issues #3224 and #4020): the app links libxdo.so.3 via enigo
 # (`#[link(name = "xdo")]`, used by src/openhuman/tools/impl/computer for Linux
 # mouse/keyboard control). lib4bin's ldd-walk normally bundles it into
 # shared/lib, but if a future runner image drops libxdo-dev or bumps its soname,
@@ -488,23 +488,36 @@ sanitize_elf_rpaths() {
 # on any host lacking the legacy soname (e.g. Arch, which ships libxdo.so.4). The
 # .deb path already guards this via its `depends` (libxdo3) +
 # linux_cef_deb_runtime_e2e; the AppImage path had no equivalent. This turns a
-# silent runtime segfault into a loud build failure.
+# silent runtime segfault into a loud build failure. CEF is staged separately
+# from the ldd walk, so verify its runtime library survived bundling as well.
 validate_appimage_required_libs() {
   local appdir="$1"
   if ! uses_sharun_launcher "$appdir"; then
     return 0
   fi
 
-  local root
-  for root in "$appdir/shared/lib" "$appdir/usr/lib" "$appdir/lib"; do
-    [ -d "$root" ] || continue
-    if [ -n "$(find "$root" -name 'libxdo.so*' -print -quit 2>/dev/null)" ]; then
-      return 0
-    fi
-  done
+  local root pattern found
+  for pattern in 'libxdo.so*' 'libcef.so*'; do
+    found=0
+    for root in "$appdir/shared/lib" "$appdir/usr/lib" "$appdir/lib"; do
+      [ -d "$root" ] || continue
+      if [ -n "$(find "$root" -name "$pattern" -print -quit 2>/dev/null)" ]; then
+        found=1
+        break
+      fi
+    done
+    [ "$found" -eq 1 ] && continue
 
-  echo "[strip-libs] ERROR: AppImage is missing libxdo.so.* — the enigo NEEDED dependency was not bundled (issue #3224). The app would segfault on launch on hosts without the legacy libxdo soname (e.g. Arch). Ensure libxdo-dev is installed on the build runner so lib4bin's ldd-walk bundles it." >&2
-  exit 1
+    case "$pattern" in
+      libxdo.so\*)
+        echo "[strip-libs] ERROR: AppImage is missing libxdo.so.* — the enigo NEEDED dependency was not bundled (issue #3224). The app would segfault on launch on hosts without the legacy libxdo soname (e.g. Arch). Ensure libxdo-dev is installed on the build runner so lib4bin's ldd-walk bundles it." >&2
+        ;;
+      libcef.so\*)
+        echo "[strip-libs] ERROR: AppImage is missing libcef.so — the CEF runtime was not copied into the final bundle (issue #4020). Ensure the CEF cache/prewarm step exposes the directory containing libcef.so before the Tauri AppImage build." >&2
+        ;;
+    esac
+    return 1
+  done
 }
 
 # patch_apprun_sharun_cwd — inject `cd "$APPDIR"` into AppRun before the final
@@ -647,7 +660,10 @@ strip_one_appimage() {
     rewrote_rpaths=1
   fi
   validate_sharun_lib_path "$appdir"
-  validate_appimage_required_libs "$appdir"
+  if ! validate_appimage_required_libs "$appdir"; then
+    rm -rf "$workdir"
+    return 1
+  fi
 
   if [ "$removed" -eq 0 ] && [ "$added_loader" -eq 0 ] && [ "$rewrote_libpath" -eq 0 ] && [ "$patched_apprun" -eq 0 ] && [ "$rewrote_rpaths" -eq 0 ]; then
     echo "[strip-libs] No graphics libs, missing sharun interpreter, or build-machine RPATHs found in $original; leaving unchanged."

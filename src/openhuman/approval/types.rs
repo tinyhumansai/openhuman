@@ -29,6 +29,12 @@ pub struct PendingApproval {
     pub args_redacted: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
+    /// Correlation context for a park raised from a non-chat source (e.g. a
+    /// `tinyflows` workflow run). `None` for the plain chat-routed path (and
+    /// for every other caller that never scopes a matching context) — kept
+    /// optional and additive so the chat path's wire shape never changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_context: Option<ApprovalSourceContext>,
 }
 
 impl PendingApproval {
@@ -48,8 +54,46 @@ impl PendingApproval {
             args_redacted,
             created_at: Utc::now(),
             expires_at,
+            source_context: None,
         }
     }
+
+    /// Attach an [`ApprovalSourceContext`] — used by
+    /// [`super::gate::ApprovalGate`] when parking a `Workflow`-origin tool
+    /// call so the row (and the `approval_list_pending` JSON the frontend
+    /// reads) carries the flow/run correlation.
+    pub fn with_source_context(mut self, ctx: ApprovalSourceContext) -> Self {
+        self.source_context = Some(ctx);
+        self
+    }
+}
+
+/// Correlation context for a [`PendingApproval`] raised from a source other
+/// than a live chat turn. Serialized internally-tagged on `kind` so the
+/// frontend can discriminate on a single field:
+/// `{ "kind": "flow", "flow_id": ..., "run_id": ..., "node_id": ... }`.
+///
+/// Currently only the `Flow` source exists (a `tinyflows` workflow run,
+/// issue B2/flow-approval-surface) — widen this enum if another correlated,
+/// non-chat approval surface needs the same treatment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ApprovalSourceContext {
+    Flow {
+        /// The `flows::Flow` id whose run parked this tool call.
+        flow_id: String,
+        /// The run's stable identifier — the tinyflows checkpointer thread
+        /// id (`flows::store::FlowRun.id` / `flows::ops::flows_run`'s
+        /// `thread_id`) — so a decision (or a per-flow "approve always"
+        /// trust grant) can be tied back to the exact run.
+        run_id: String,
+        /// The graph node that dispatched the call, when known. Not yet
+        /// populated by the gate (the tool-call dispatch path doesn't thread
+        /// a node id down to `ApprovalGate::intercept_audited` today) —
+        /// reserved for a follow-up that does.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node_id: Option<String>,
+    },
 }
 
 /// Durable audit row for an approval request after a decision.
@@ -80,6 +124,18 @@ pub enum ApprovalDecision {
     /// so subsequent calls of the same tool skip the gate until the
     /// session ends or the core restarts.
     ApproveAlwaysForTool,
+    /// Run the call AND trust this exact `(flow_id, tool_name)` pair for the
+    /// flow the pending row's `source_context` names — see
+    /// [`ApprovalSourceContext::Flow`]. Unlike [`Self::ApproveAlwaysForTool`]
+    /// (a global, cross-flow allowlist), this grant is scoped to one
+    /// workflow: subsequent runs of *that* flow (including scheduled/
+    /// triggered ones) auto-allow *that* tool without prompting, but a new
+    /// tool the flow starts calling still parks. Persisted via
+    /// `approval::store::insert_flow_trust`, not `autonomy.auto_approve`.
+    /// Only meaningful when `source_context` is `Some(Flow { .. })` — the
+    /// `approval_decide` RPC handler logs and no-ops the persistence step
+    /// otherwise (the decision itself still resolves the parked call).
+    ApproveAlwaysForFlow,
     /// Reject the call. The agent receives a structured error string.
     Deny,
 }
@@ -89,6 +145,7 @@ impl ApprovalDecision {
         match self {
             Self::ApproveOnce => "approve_once",
             Self::ApproveAlwaysForTool => "approve_always_for_tool",
+            Self::ApproveAlwaysForFlow => "approve_always_for_flow",
             Self::Deny => "deny",
         }
     }
@@ -98,13 +155,17 @@ impl ApprovalDecision {
         match s {
             "approve_once" => Some(Self::ApproveOnce),
             "approve_always_for_tool" => Some(Self::ApproveAlwaysForTool),
+            "approve_always_for_flow" => Some(Self::ApproveAlwaysForFlow),
             "deny" => Some(Self::Deny),
             _ => None,
         }
     }
 
     pub fn is_approve(self) -> bool {
-        matches!(self, Self::ApproveOnce | Self::ApproveAlwaysForTool)
+        matches!(
+            self,
+            Self::ApproveOnce | Self::ApproveAlwaysForTool | Self::ApproveAlwaysForFlow
+        )
     }
 }
 
@@ -166,6 +227,7 @@ mod tests {
         for d in [
             ApprovalDecision::ApproveOnce,
             ApprovalDecision::ApproveAlwaysForTool,
+            ApprovalDecision::ApproveAlwaysForFlow,
             ApprovalDecision::Deny,
         ] {
             assert_eq!(ApprovalDecision::from_str(d.as_str()), Some(d));
@@ -181,7 +243,79 @@ mod tests {
     fn is_approve_true_for_approval_variants_only() {
         assert!(ApprovalDecision::ApproveOnce.is_approve());
         assert!(ApprovalDecision::ApproveAlwaysForTool.is_approve());
+        assert!(ApprovalDecision::ApproveAlwaysForFlow.is_approve());
         assert!(!ApprovalDecision::Deny.is_approve());
+    }
+
+    #[test]
+    fn approve_always_for_flow_serializes_as_snake_case() {
+        let s = serde_json::to_string(&ApprovalDecision::ApproveAlwaysForFlow).unwrap();
+        assert_eq!(s, "\"approve_always_for_flow\"");
+    }
+
+    #[test]
+    fn source_context_flow_round_trips_as_internally_tagged_json() {
+        let ctx = ApprovalSourceContext::Flow {
+            flow_id: "flow-1".to_string(),
+            run_id: "run-1".to_string(),
+            node_id: None,
+        };
+        let json = serde_json::to_value(&ctx).unwrap();
+        assert_eq!(json["kind"], "flow");
+        assert_eq!(json["flow_id"], "flow-1");
+        assert_eq!(json["run_id"], "run-1");
+        assert!(
+            json.get("node_id").is_none(),
+            "None node_id must be omitted, not null"
+        );
+
+        let back: ApprovalSourceContext = serde_json::from_value(json).unwrap();
+        assert_eq!(back, ctx);
+    }
+
+    #[test]
+    fn pending_approval_source_context_defaults_to_none_and_is_omitted_when_absent() {
+        let p = PendingApproval::new(
+            "req-1",
+            "composio",
+            "send email",
+            serde_json::json!({}),
+            None,
+        );
+        assert!(p.source_context.is_none());
+        let json = serde_json::to_value(&p).unwrap();
+        assert!(
+            json.get("source_context").is_none(),
+            "absent source_context must not be serialized as null: {json}"
+        );
+    }
+
+    #[test]
+    fn with_source_context_attaches_flow_context() {
+        let p = PendingApproval::new(
+            "req-1",
+            "composio",
+            "send email",
+            serde_json::json!({}),
+            None,
+        )
+        .with_source_context(ApprovalSourceContext::Flow {
+            flow_id: "flow-1".to_string(),
+            run_id: "run-1".to_string(),
+            node_id: Some("node-1".to_string()),
+        });
+        match p.source_context {
+            Some(ApprovalSourceContext::Flow {
+                flow_id,
+                run_id,
+                node_id,
+            }) => {
+                assert_eq!(flow_id, "flow-1");
+                assert_eq!(run_id, "run-1");
+                assert_eq!(node_id.as_deref(), Some("node-1"));
+            }
+            other => panic!("expected Flow source_context, got {other:?}"),
+        }
     }
 
     #[test]
@@ -228,6 +362,7 @@ mod tests {
             args_redacted: serde_json::json!({ "tool_slug": "SLACK_SEND" }),
             created_at: Utc::now(),
             expires_at: None,
+            source_context: None,
         };
         let dbg = format!("{p:?}");
         assert!(

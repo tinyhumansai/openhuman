@@ -436,6 +436,12 @@ export interface GraphNode {
   id: string;
   /** Display-friendly label (scope, preview snippet, or surface form). */
   label: string;
+  /**
+   * Optional UI-only fill override (hex). The backend never sets this; reuses
+   * of the graph (e.g. the orchestration overview dimming offline agents) use
+   * it to colour a node independent of its `kind`.
+   */
+  color?: string;
 
   // Summary-only ──
   tree_id?: string;

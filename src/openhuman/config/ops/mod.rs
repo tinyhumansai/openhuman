@@ -3,6 +3,7 @@
 mod agent;
 mod loader;
 mod model;
+mod privacy;
 mod sandbox;
 mod ui;
 
@@ -45,6 +46,10 @@ pub use model::{
     load_and_apply_memory_settings, load_and_apply_model_settings, load_and_apply_runtime_settings,
     load_and_resolve_api_url, ComposioTriggerSettingsPatch, LocalAiSettingsPatch,
     MemorySettingsPatch, ModelSettingsPatch, RuntimeSettingsPatch,
+};
+
+pub use privacy::{
+    apply_privacy_settings, get_privacy_mode, load_and_apply_privacy_settings, PrivacySettingsPatch,
 };
 
 pub use sandbox::{

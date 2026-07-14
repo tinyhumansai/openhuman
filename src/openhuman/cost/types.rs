@@ -12,10 +12,45 @@ pub struct TokenUsage {
     pub output_tokens: u64,
     /// Total tokens
     pub total_tokens: u64,
+    /// Input tokens served from provider-side cache, when reported.
+    #[serde(default)]
+    pub cached_input_tokens: u64,
+    /// Tokens written into a provider-side cache, when reported.
+    #[serde(default)]
+    pub cache_creation_tokens: u64,
+    /// Reasoning/thinking tokens, when reported.
+    #[serde(default)]
+    pub reasoning_tokens: u64,
     /// Calculated cost in USD
     pub cost_usd: f64,
+    /// Whether `cost_usd` came from provider billing data or local estimation.
+    #[serde(default)]
+    pub cost_source: CostSource,
+    /// Run identifier of the run/turn this usage belongs to, when the
+    /// observation stream can supply it (06-cost step 3 lineage groundwork).
+    ///
+    /// Additive + optional: existing persisted records and constructors that
+    /// use `..Default::default()` leave this `None`. This is stamped for the
+    /// future run-tree rollup (06.3, gated) and does **not** change any current
+    /// rollup behaviour. `skip_serializing_if` keeps old JSONL/RPC consumers
+    /// byte-compatible when the field is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    /// Root run identifier (top of the run tree) for the same lineage rollup.
+    /// See [`Self::run_id`]. Additive, optional, defaults to `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_run_id: Option<String>,
     /// Timestamp of the request
     pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+/// Source of a cost value persisted in [`TokenUsage`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CostSource {
+    #[default]
+    Estimated,
+    ProviderCharged,
 }
 
 impl TokenUsage {
@@ -50,7 +85,13 @@ impl TokenUsage {
             input_tokens,
             output_tokens,
             total_tokens,
+            cached_input_tokens: 0,
+            cache_creation_tokens: 0,
+            reasoning_tokens: 0,
             cost_usd,
+            cost_source: CostSource::Estimated,
+            run_id: None,
+            root_run_id: None,
             timestamp: chrono::Utc::now(),
         }
     }

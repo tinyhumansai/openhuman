@@ -59,29 +59,45 @@ fn schema_exposes_four_controllers() {
     assert_eq!(names.len(), 4);
 }
 
-/// Regression for Sentry TAURI-RUST-8NM: the process-global people store was
-/// never seeded at boot, so `store::get()` (and every `people_*` tool /
-/// controller) always failed with "people store not initialised". Boot now
-/// calls `init_from_workspace`; verify it seeds the global, creates the on-disk
-/// db, and is idempotent.
-#[tokio::test]
-async fn init_from_workspace_seeds_global_store() {
+/// Regression for Sentry TAURI-RUST-8NM (store never seeded → `get()` always
+/// errored) and its #4378 follow-up (store stayed bound to the pre-login
+/// workspace after an active-user switch). Verify `init_from_workspace` seeds
+/// the global + creates the on-disk db, is an idempotent no-op for the same
+/// workspace, and **rebinds** to a different workspace like `memory::global`.
+///
+/// Serialised (not `#[tokio::test]` parallel) because it mutates the
+/// process-global store slot other people tests may observe via `get()`.
+#[test]
+fn init_from_workspace_seeds_and_rebinds_global_store() {
     use crate::openhuman::people::store;
 
-    let tmp = tempfile::tempdir().unwrap();
-    let store = store::init_from_workspace(tmp.path()).await.unwrap();
+    let ws_a = tempfile::tempdir().unwrap();
+    let store_a = store::init_from_workspace(ws_a.path()).unwrap();
     assert!(
-        tmp.path().join("people").join("people.db").exists(),
-        "boot seed must create <workspace>/people/people.db"
+        ws_a.path().join("people").join("people.db").exists(),
+        "seed must create <workspace>/people/people.db"
     );
 
-    // The previously-dead global is now reachable — this is the fix.
-    let via_global = store::get().expect("people store reachable after boot seed");
-    assert!(Arc::ptr_eq(&store, &via_global));
+    // Previously-dead global is now reachable — the 8NM fix.
+    let via_global = store::get().expect("people store reachable after seed");
+    assert!(Arc::ptr_eq(&store_a, &via_global));
 
-    // Idempotent: a second seed returns the same instance, never errors.
-    let again = store::init_from_workspace(tmp.path()).await.unwrap();
-    assert!(Arc::ptr_eq(&store, &again));
+    // Same workspace → idempotent no-op, returns the same instance.
+    let again = store::init_from_workspace(ws_a.path()).unwrap();
+    assert!(Arc::ptr_eq(&store_a, &again));
+
+    // Different workspace (active-user switch) → rebind to a new store. #4378.
+    let ws_b = tempfile::tempdir().unwrap();
+    let store_b = store::init_from_workspace(ws_b.path()).unwrap();
+    assert!(
+        !Arc::ptr_eq(&store_a, &store_b),
+        "a new workspace must rebind to a fresh store, not reuse the old one"
+    );
+    let after_switch = store::get().expect("people store reachable after rebind");
+    assert!(
+        Arc::ptr_eq(&store_b, &after_switch),
+        "get() must return the rebound (workspace B) store after a switch"
+    );
 }
 
 #[test]

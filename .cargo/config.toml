@@ -1,0 +1,35 @@
+# Repo-level Cargo configuration.
+#
+# ────────────────────────────────────────────────────────────────────────────
+# Faster linking (OPT-IN)
+# ────────────────────────────────────────────────────────────────────────────
+# The `openhuman` core crate is very large and links a single ~big rlib, so the
+# edit → `cargo check`/`cargo test` inner loop is frequently *link-bound*. A
+# faster linker (mold on Linux, lld on macOS) can cut a large slice off every
+# incremental relink.
+#
+# These are intentionally left COMMENTED OUT: an unconditional `linker=` /
+# `-fuse-ld=` here would hard-fail every build on a machine that does not have
+# the linker installed — including the `pnpm rust:check` pre-push hook. Opt in
+# locally by installing the linker and uncommenting the matching block (or, to
+# avoid touching this tracked file, copy the block into `$CARGO_HOME/config.toml`
+# or a parent-directory `.cargo/config.toml`, which Cargo merges automatically).
+#
+# ── Linux: mold (recommended) ───────────────────────────────────────────────
+#   apt install mold      # or: brew install mold / dnf install mold
+#
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+#
+# ── macOS: lld ──────────────────────────────────────────────────────────────
+#   brew install llvm     # provides ld64.lld
+# Note: recent Xcode ships Apple's new `ld-prime`, which is already fast, so lld
+# is often only a marginal win on Apple Silicon — measure before committing to
+# it. `sold`/`zld` (older third-party mach-o linkers) are unmaintained/paid.
+#
+# [target.aarch64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld"]
+#
+# [target.x86_64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/opt/llvm/bin/ld64.lld"]

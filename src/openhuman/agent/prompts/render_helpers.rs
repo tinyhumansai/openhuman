@@ -176,7 +176,7 @@ pub fn render_ambient_environment(ctx: &PromptContext<'_>) -> Result<String> {
 /// An absolute date only changes when the underlying memory does. The
 /// model judges staleness by comparing this against the injected current
 /// date. Shared by [`UserMemorySection`] and the working-memory block in
-/// `agent::memory_loader`. (#2944)
+/// `agent_memory::memory_loader`. (#2944)
 pub fn memory_date_label(updated_at: DateTime<Utc>) -> String {
     updated_at.format("%Y-%m-%d").to_string()
 }
@@ -301,7 +301,19 @@ pub fn render_subagent_system_prompt_with_format(
         inject_workspace_file_capped(&mut out, workspace_dir, "PROFILE.md", USER_FILE_MAX_CHARS);
     }
     if options.include_memory_md {
-        inject_workspace_file_capped(&mut out, workspace_dir, "MEMORY.md", USER_FILE_MAX_CHARS);
+        // Frame MEMORY.md as durable, cross-session background memory —
+        // byte-identical to `UserFilesSection::build` (GH-4745). Without the
+        // frame an Inline/File sub-agent on a brand-new thread reads the bare
+        // `### MEMORY.md` block as prior in-thread conversation and asserts
+        // continuity that isn't there. Buffer first so the note is emitted
+        // only when the file actually carries content — a dangling frame
+        // pointing at nothing would itself imply phantom history.
+        let mut mem = String::new();
+        inject_workspace_file_capped(&mut mem, workspace_dir, "MEMORY.md", USER_FILE_MAX_CHARS);
+        if !mem.trim().is_empty() {
+            out.push_str(MEMORY_MD_FRAMING);
+            out.push_str(&mem);
+        }
     }
 
     // 2. Filtered tool catalogue. Indices are taken in ascending order
@@ -700,7 +712,7 @@ pub fn default_workspace_file_content(filename: &str) -> &'static str {
 /// manufacture a full context when they only need the static text.
 fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
     static EMPTY_TOOLS: &[PromptTool<'static>] = &[];
-    static EMPTY_WORKFLOWS: &[crate::openhuman::workflows::Workflow] = &[];
+    static EMPTY_WORKFLOWS: &[crate::openhuman::skills::Workflow] = &[];
     static EMPTY_INTEGRATIONS: &[ConnectedIntegration] = &[];
     // SAFETY: the &HashSet reference must outlive the returned context;
     // a leaked OnceLock-style allocation gives us a permanent 'static

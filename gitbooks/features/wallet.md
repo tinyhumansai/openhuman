@@ -1,7 +1,7 @@
 ---
 description: >-
   Local, non-custodial multi-chain crypto wallet the agent can read balances
-  from and send transfers with — keys stay in-core and never cross the wire.
+  from and send transfers with. Keys stay in-core and never cross the wire.
 icon: wallet
 ---
 
@@ -11,18 +11,18 @@ A deliberately **basic**, **non-custodial** multi-chain crypto wallet owned by t
 
 It is intentionally minimal: key/account management plus the primitive on-chain operations. Higher-level DeFi (swaps, bridges, generic contract/dapp calls) lives in a separate `web3` module and is **not** part of the wallet's agent or RPC surface.
 
-The most important property to understand: **signing and broadcast happen entirely in-core from the decrypted recovery phrase. No private keys ever leave the device or cross the network.** This is your money — the wallet is conservative by design.
+The most important property to understand: **signing and broadcast happen entirely in-core from the decrypted recovery phrase. No private keys ever leave the device or cross the network.** This is your money, so the wallet is conservative by design.
 
 ***
 
 ## Supported chains and token standards
 
-Setup derives **exactly one account per chain**. EVM is a single account reused across six networks. Only the standards listed below are supported for transfers — anything else (swaps, arbitrary contract calls) is out of scope for the wallet.
+Setup derives **exactly one account per chain**. EVM is a single account reused across six networks. Only the standards listed below are supported for transfers. Anything else (swaps, arbitrary contract calls) is out of scope for the wallet.
 
 | Chain | Networks | Native | Token standard | Notes |
 | --- | --- | --- | --- | --- |
 | EVM | Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Chain | ETH / BNB / etc. | ERC-20 (BEP-20 on BNB Chain) | One `Evm` account across all six; network selected per request, defaults to Ethereum mainnet. EIP-1559 / typed-tx signing. |
-| Bitcoin | Mainnet | BTC | — | P2WPKH (native SegWit). **Rejects token transfers.** Esplora REST for balance/broadcast. |
+| Bitcoin | Mainnet | BTC | None | P2WPKH (native SegWit). **Rejects token transfers.** Esplora REST for balance/broadcast. |
 | Solana | Mainnet / devnet (per RPC) | SOL | SPL | ed25519 signing; native + SPL token transfers. |
 | Tron | Mainnet | TRX | TRC-20 | TronGrid REST for native + TRC-20 transfers. |
 
@@ -40,7 +40,7 @@ The recovery phrase is the only secret. The wallet stores the per-chain account 
 
 ## Key custody and security
 
-The wallet is **non-custodial and local** — there is no server-side key escrow.
+The wallet is **non-custodial and local**. There is no server-side key escrow.
 
 - **The recovery phrase is always encrypted at rest.** It is encrypted via the core `encryption` domain before being persisted anywhere.
 - **Preferred home: the OS keychain.** The encrypted phrase lives in the operating system keychain under the key `wallet.mnemonic`, scoped by a workspace-derived user id. Access is gated by the keyring consent policy.
@@ -56,10 +56,10 @@ See [OS keyring & secret storage](os-keyring-and-secret-storage.md) for how secr
 
 Read-only surfaces require no confirmation:
 
-- **Status** — onboarding state plus the safe per-chain account addresses.
-- **Balances** — native-asset balances per account. Note: only **EVM balances read live** today (Ethereum mainnet); BTC, Solana, and Tron call their providers but fall back to a zero balance with a "provider missing" status on error.
-- **Network defaults / supported assets** — per-chain RPC and explorer URLs, capability flags, and the built-in asset catalog.
-- **Chain status** — per-chain readiness and the active RPC URL.
+- **Status**: onboarding state plus the safe per-chain account addresses.
+- **Balances**: native-asset balances per account. Note: only **EVM balances read live** today (Ethereum mainnet); BTC, Solana, and Tron call their providers but fall back to a zero balance with a "provider missing" status on error.
+- **Network defaults / supported assets**: per-chain RPC and explorer URLs, capability flags, and the built-in asset catalog.
+- **Chain status**: per-chain readiness and the active RPC URL.
 
 RPC endpoints are overridable per chain/network via `OPENHUMAN_WALLET_RPC_*` environment variables. URLs are redacted to scheme + host in logs.
 
@@ -67,10 +67,10 @@ RPC endpoints are overridable per chain/network via `OPENHUMAN_WALLET_RPC_*` env
 
 ## Sending transfers: prepare → confirm → execute
 
-Every write is a two-step, intentional flow — the wallet never sends in one shot.
+Every write is a two-step, intentional flow. The wallet never sends in one shot.
 
-1. **Prepare** (`prepare_transfer`) — validates the amount, destination address, and (for tokens) calldata, estimates fees, and returns a **prepared quote** with a `quoteId`. Quotes are held in an in-memory store with a **5-minute TTL**, capped at 64, and are **not** persisted across restarts.
-2. **Confirm + execute** (`execute_prepared`) — requires `confirmed: true` and a valid `quoteId`. The quote is consumed atomically before broadcast so concurrent confirmations can't double-submit; on failure it's restored with a refreshed TTL so it stays retryable.
+1. **Prepare** (`prepare_transfer`): validates the amount, destination address, and (for tokens) calldata, estimates fees, and returns a **prepared quote** with a `quoteId`. Quotes are held in an in-memory store with a **5-minute TTL**, capped at 64, and are **not** persisted across restarts.
+2. **Confirm + execute** (`execute_prepared`): requires `confirmed: true` and a valid `quoteId`. The quote is consumed atomically before broadcast so concurrent confirmations can't double-submit; on failure it's restored with a refreshed TTL so it stays retryable.
 
 **Quote-owner binding.** Each quote is bound to the chat thread that prepared it. A quote can only be executed by the same owner that prepared it; a `quoteId` leaked into a shared channel returns an indistinguishable "not found" error rather than letting another session hijack it.
 
@@ -82,9 +82,9 @@ Transfers are limited to **native sends and the token standards in the table abo
 
 After broadcast, three read-only inspectors let the agent follow a transaction by hash:
 
-- **`tx_status`** — lifecycle state: pending / confirmed / failed / not found.
-- **`tx_receipt`** — receipt details: success, fee, block.
-- **`lookup_tx`** — the raw transaction payload.
+- **`tx_status`**: lifecycle state (pending / confirmed / failed / not found).
+- **`tx_receipt`**: receipt details (success, fee, block).
+- **`lookup_tx`**: the raw transaction payload.
 
 ***
 

@@ -1,4 +1,3 @@
-use super::common::DummyProvider;
 use super::super::context::{
     compact_sender_history, conversation_history_key, effective_channel_message_timeout_secs,
     is_context_window_overflow_error, should_skip_memory_context_entry, ChannelRuntimeContext,
@@ -6,6 +5,7 @@ use super::super::context::{
     CHANNEL_MESSAGE_TIMEOUT_SECS, MIN_CHANNEL_MESSAGE_TIMEOUT_SECS,
 };
 use super::super::traits;
+use super::common::DummyProvider;
 use crate::openhuman::inference::provider::ChatMessage;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -30,8 +30,7 @@ fn context_window_overflow_error_detector_matches_known_messages() {
     );
     assert!(is_context_window_overflow_error(&overflow_err));
 
-    let other_err =
-        anyhow::anyhow!("OpenAI Codex API error (502 Bad Gateway): error code: 502");
+    let other_err = anyhow::anyhow!("OpenAI Codex API error (502 Bad Gateway): error code: 502");
     assert!(!is_context_window_overflow_error(&other_err));
 }
 
@@ -64,7 +63,7 @@ fn compact_sender_history_keeps_recent_truncated_messages() {
 
     let ctx = ChannelRuntimeContext {
         channels_by_name: Arc::new(HashMap::new()),
-        provider: Arc::new(DummyProvider),
+        provider: Some(Arc::new(DummyProvider)),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(super::common::NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -82,7 +81,9 @@ fn compact_sender_history_keeps_recent_truncated_messages() {
         reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
-        provider_runtime_options: crate::openhuman::inference::provider::ProviderRuntimeOptions::default(),
+        config: None,
+        provider_runtime_options:
+            crate::openhuman::inference::provider::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
     };
@@ -129,8 +130,14 @@ fn telegram_history_key_is_thread_ts_agnostic() {
     let key_a = conversation_history_key(&with_thread);
     let key_b = conversation_history_key(&other_thread);
 
-    assert_eq!(key_base, key_a, "telegram: thread_ts must not change history key");
-    assert_eq!(key_a, key_b, "telegram: different thread_ts must share history key");
+    assert_eq!(
+        key_base, key_a,
+        "telegram: thread_ts must not change history key"
+    );
+    assert_eq!(
+        key_a, key_b,
+        "telegram: different thread_ts must share history key"
+    );
 }
 
 /// For every other channel (e.g. Slack, Discord), thread_ts splits conversation

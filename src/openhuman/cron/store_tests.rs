@@ -474,6 +474,53 @@ fn dedup_named_jobs_keeps_earliest_when_history_tied() {
     assert!(get_job(&config, &job_b.id).is_err());
 }
 
+// ── add_flow_schedule_job race-safety (CodeRabbit finding A) ────────
+
+#[test]
+fn add_flow_schedule_job_twice_yields_a_single_row() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let schedule = Schedule::Cron {
+        expr: "0 9 * * *".into(),
+        tz: None,
+        active_hours: None,
+    };
+
+    let first = add_flow_schedule_job(&config, "flow-1", schedule.clone()).unwrap();
+    let second = add_flow_schedule_job(&config, "flow-1", schedule).unwrap();
+
+    // Calling it twice for the same flow must not create a duplicate — the
+    // second call returns the same row the first one created.
+    assert_eq!(first.id, second.id);
+
+    let flow_jobs: Vec<_> = list_jobs(&config)
+        .unwrap()
+        .into_iter()
+        .filter(|j| j.job_type == JobType::Flow && j.command == "flow-1")
+        .collect();
+    assert_eq!(
+        flow_jobs.len(),
+        1,
+        "exactly one job_type='flow' row should exist for flow-1"
+    );
+}
+
+#[test]
+fn add_flow_schedule_job_unique_index_does_not_affect_shell_jobs() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Two shell jobs sharing the same command must both persist — the new
+    // partial unique index is scoped to job_type = 'flow' and must not
+    // constrain shell/agent jobs, which may legitimately share a command.
+    let shell_a = add_job(&config, "*/5 * * * *", "echo shared").unwrap();
+    let shell_b = add_job(&config, "*/10 * * * *", "echo shared").unwrap();
+
+    assert!(get_job(&config, &shell_a.id).is_ok());
+    assert!(get_job(&config, &shell_b.id).is_ok());
+    assert_eq!(list_jobs(&config).unwrap().len(), 2);
+}
+
 #[test]
 fn dedup_named_jobs_ignores_unnamed_jobs() {
     let tmp = TempDir::new().unwrap();

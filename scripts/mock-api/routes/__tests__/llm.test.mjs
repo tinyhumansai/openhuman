@@ -4,6 +4,10 @@ import assert from "node:assert/strict";
 import { handleLlmCompletions } from "../llm.mjs";
 import { handleIntegrations } from "../integrations.mjs";
 import {
+  applyDynamicPlaceholdersToResponse,
+  renderDynamicPlaceholders,
+} from "../llm/shared.mjs";
+import {
   listMockLlmThreads,
   resetMockBehavior,
   resetMockLlmThreads,
@@ -338,4 +342,196 @@ test("records thread state for multi-turn mock LLM sessions", () => {
   assert.ok(thread);
   assert.equal(thread.lastFamily, "summarization");
   assert.equal(thread.turnCount, 1);
+});
+
+// ── {{DYNAMIC_*}} placeholder substitution (#4517) ──────────────────
+//
+// Envelope shape matches awaiting_user_envelope() in
+// src/openhuman/agent_orchestration/tools/awaiting_user.rs — the parser
+// must handle the exact production format (JSON-encoded question,
+// `worker_thread_id: (none)`, trailing instruction block).
+function subagentAwaitingUserEnvelope({
+  taskId = "sub-abc123-fake-uuid",
+  agentId = "researcher",
+  workerThreadId = "(none)",
+  question = "Which repo should I search?",
+} = {}) {
+  return `[SUBAGENT_AWAITING_USER]
+task_id: ${taskId}
+agent_id: ${agentId}
+worker_thread_id: ${workerThreadId}
+question: ${JSON.stringify(question)}
+[/SUBAGENT_AWAITING_USER]
+
+The sub-agent needs clarification before it can continue. Surface the above question to the user. When the user responds, call continue_subagent with the task_id, agent_id, and the user's answer as the message parameter.`;
+}
+
+test("renderDynamicPlaceholders substitutes task_id and agent_id from history", () => {
+  const parsedBody = {
+    messages: [
+      { role: "user", content: "please research the codex marker" },
+      {
+        role: "tool",
+        content: subagentAwaitingUserEnvelope({
+          taskId: "sub-runtime-42",
+          agentId: "researcher",
+        }),
+      },
+      { role: "user", content: "the main repo" },
+    ],
+  };
+  const rendered = renderDynamicPlaceholders(
+    '{"task_id":"{{DYNAMIC_TASK_ID}}","agent_id":"{{DYNAMIC_AGENT_ID}}","message":"the main repo"}',
+    parsedBody,
+  );
+  assert.equal(
+    rendered,
+    '{"task_id":"sub-runtime-42","agent_id":"researcher","message":"the main repo"}',
+  );
+});
+
+test("renderDynamicPlaceholders returns input unchanged when no envelope present", () => {
+  const parsedBody = {
+    messages: [{ role: "user", content: "no envelope here" }],
+  };
+  assert.equal(
+    renderDynamicPlaceholders("{{DYNAMIC_TASK_ID}}", parsedBody),
+    "{{DYNAMIC_TASK_ID}}",
+  );
+});
+
+test("renderDynamicPlaceholders short-circuits when text has no placeholders", () => {
+  // Guardrail: no envelope scan for content without placeholders.
+  assert.equal(renderDynamicPlaceholders("plain text", null), "plain text");
+});
+
+test("applyDynamicPlaceholdersToResponse renders content and toolCalls arguments without mutating input", () => {
+  const parsedBody = {
+    messages: [
+      {
+        role: "tool",
+        content: subagentAwaitingUserEnvelope({ taskId: "sub-xyz" }),
+      },
+    ],
+  };
+  const original = {
+    content: "prefix {{DYNAMIC_TASK_ID}}",
+    toolCalls: [
+      {
+        id: "call_1",
+        name: "continue_subagent",
+        arguments: '{"task_id":"{{DYNAMIC_TASK_ID}}"}',
+      },
+    ],
+  };
+  const rendered = applyDynamicPlaceholdersToResponse(original, parsedBody);
+  assert.equal(rendered.content, "prefix sub-xyz");
+  assert.equal(rendered.toolCalls[0].arguments, '{"task_id":"sub-xyz"}');
+  // Purity: input must not be mutated (call sites re-read the rule on the
+  // next request; mutation would let a first substitution leak into later
+  // turns that don't have an envelope).
+  assert.equal(original.content, "prefix {{DYNAMIC_TASK_ID}}");
+  assert.equal(
+    original.toolCalls[0].arguments,
+    '{"task_id":"{{DYNAMIC_TASK_ID}}"}',
+  );
+});
+
+test("llmKeywordRules substitute {{DYNAMIC_TASK_ID}} in continue_subagent tool_call args", () => {
+  setMockBehaviors(
+    {
+      llmKeywordRules: JSON.stringify([
+        {
+          keyword: "user answer",
+          content: "",
+          toolCalls: [
+            {
+              id: "call_continue_1",
+              name: "continue_subagent",
+              arguments: JSON.stringify({
+                task_id: "{{DYNAMIC_TASK_ID}}",
+                agent_id: "{{DYNAMIC_AGENT_ID}}",
+                message: "the main repo",
+              }),
+            },
+          ],
+        },
+      ]),
+    },
+    "replace",
+  );
+
+  const ctx = makeCtx({
+    parsedBody: {
+      model: "e2e-mock-model",
+      // No tools → not a "primary turn" for the forced-response FIFO, but
+      // keyword rules still fire and this validates the substitution site.
+      messages: [
+        {
+          role: "tool",
+          content: subagentAwaitingUserEnvelope({
+            taskId: "sub-realtime-777",
+            agentId: "researcher",
+          }),
+        },
+        { role: "user", content: "here is my user answer" },
+      ],
+    },
+  });
+
+  assert.equal(handleLlmCompletions(ctx), true);
+  const body = JSON.parse(ctx.res.body);
+  const args = body.choices[0].message.tool_calls[0].function.arguments;
+  const parsed = JSON.parse(args);
+  assert.equal(parsed.task_id, "sub-realtime-777");
+  assert.equal(parsed.agent_id, "researcher");
+  assert.equal(parsed.message, "the main repo");
+  // Placeholder text must be fully consumed.
+  assert.ok(!args.includes("{{DYNAMIC_"), `args should not contain unresolved placeholders: ${args}`);
+});
+
+test("llmKeywordRules leave the rule unmutated across successive requests", () => {
+  // Regression guard for applyDynamicPlaceholdersToResponse purity: two
+  // requests, only the first has an envelope in history. Second must still
+  // see the raw `{{DYNAMIC_TASK_ID}}` (which then falls through unchanged
+  // since there is no envelope to substitute from).
+  setMockBehaviors(
+    {
+      llmKeywordRules: JSON.stringify([
+        {
+          keyword: "answer",
+          content: "raw {{DYNAMIC_TASK_ID}}",
+        },
+      ]),
+    },
+    "replace",
+  );
+
+  const first = makeCtx({
+    parsedBody: {
+      model: "e2e-mock-model",
+      messages: [
+        {
+          role: "tool",
+          content: subagentAwaitingUserEnvelope({ taskId: "sub-first" }),
+        },
+        { role: "user", content: "my answer" },
+      ],
+    },
+  });
+  assert.equal(handleLlmCompletions(first), true);
+  const firstBody = JSON.parse(first.res.body);
+  assert.equal(firstBody.choices[0].message.content, "raw sub-first");
+
+  const second = makeCtx({
+    parsedBody: {
+      model: "e2e-mock-model",
+      messages: [{ role: "user", content: "another answer" }],
+    },
+  });
+  assert.equal(handleLlmCompletions(second), true);
+  const secondBody = JSON.parse(second.res.body);
+  // No envelope → helper leaves `{{DYNAMIC_TASK_ID}}` verbatim (identity
+  // fast-path). Prior substitution must not have poisoned the stored rule.
+  assert.equal(secondBody.choices[0].message.content, "raw {{DYNAMIC_TASK_ID}}");
 });

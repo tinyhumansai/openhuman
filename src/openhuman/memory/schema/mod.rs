@@ -27,7 +27,6 @@ pub use registry::{all_controller_schemas, all_registered_controllers};
 
 // Re-export the NAMESPACE constant so schema_tests.rs can reference it via
 // `super::NAMESPACE` the same way the original flat module did.
-pub(crate) use definitions::NAMESPACE;
 
 #[cfg(test)]
 #[path = "../schema_tests.rs"]

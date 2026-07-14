@@ -9,7 +9,7 @@
 import { useEffect, useRef } from 'react';
 
 import { type GraphEdge, type GraphMode, type GraphNode } from '../../utils/tauriCommands';
-import { buildGraph } from './memoryGraphLayout';
+import { buildGraph, type SimTuning } from './memoryGraphLayout';
 import { mountPixiGraph, type PixiGraphHandle } from './pixiGraphRenderer';
 
 interface PixiGraphProps {
@@ -17,6 +17,18 @@ interface PixiGraphProps {
   edges: GraphEdge[];
   mode: GraphMode;
   dark: boolean;
+  /** Optional label for the synthetic hub node (defaults to "Memory"). */
+  rootLabel?: string;
+  /** Fill the parent's height instead of the fixed 640px cap. */
+  fill?: boolean;
+  /** Initial auto-fit zoom (world scale). Defaults to 0.17. */
+  fitScale?: number;
+  /** Fit the whole node cloud tightly to the viewport instead of a fixed zoom. */
+  fitToBounds?: boolean;
+  /** Draw an always-on text label under each node. */
+  showLabels?: boolean;
+  /** Optional force-simulation tuning (defaults preserve the standard layout). */
+  tuning?: SimTuning;
   /** Bump to recentre the view (Reset view button). */
   resetSignal: number;
   onHover: (node: GraphNode | null) => void;
@@ -33,6 +45,12 @@ export function PixiGraph({
   edges,
   mode,
   dark,
+  rootLabel,
+  fill,
+  fitScale,
+  fitToBounds,
+  showLabels,
+  tuning,
   resetSignal,
   onHover,
   onOpen,
@@ -61,7 +79,7 @@ export function PixiGraph({
 
     // Mode change requires full remount (different edge semantics).
     if (handleRef.current && mountedModeRef.current === mode) {
-      const { simNodes, links } = buildGraph(nodes, edges, mode);
+      const { simNodes, links } = buildGraph(nodes, edges, mode, rootLabel);
       handleRef.current.updateGraph(simNodes, links);
       return;
     }
@@ -70,11 +88,15 @@ export function PixiGraph({
     let cancelled = false;
     handleRef.current?.destroy();
     handleRef.current = null;
-    const { simNodes, links } = buildGraph(nodes, edges, mode);
+    const { simNodes, links } = buildGraph(nodes, edges, mode, rootLabel);
     const pending = mountPixiGraph(host, {
       simNodes,
       links,
       dark: darkRef.current,
+      fitScale,
+      fitToBounds,
+      showLabels,
+      tuning,
       onHover: n => onHoverRef.current(n),
       onOpen: n => onOpenRef.current(n),
       onReady: () => onReadyRef.current?.(),
@@ -99,7 +121,7 @@ export function PixiGraph({
       mountedModeRef.current = null;
       void pending.then(handle => handle?.destroy());
     };
-  }, [nodes, edges, mode]);
+  }, [nodes, edges, mode, rootLabel, fitScale, fitToBounds, showLabels, tuning]);
 
   useEffect(() => {
     handleRef.current?.setTheme(dark);
@@ -113,8 +135,8 @@ export function PixiGraph({
     <div
       ref={hostRef}
       data-testid="memory-graph-canvas"
-      className="block w-full"
-      style={{ height: 'min(640px, calc(100vh - 22rem))' }}
+      className={`block w-full ${fill ? 'min-h-0 flex-1' : ''}`}
+      style={{ height: fill ? '100%' : 'min(640px, calc(100vh - 22rem))' }}
     />
   );
 }

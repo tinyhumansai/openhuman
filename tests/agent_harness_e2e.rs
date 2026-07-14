@@ -152,25 +152,23 @@ async fn scripted_chat_completions(
     uri: Uri,
     _headers: HeaderMap,
     Json(body): Json<Value>,
-) -> (StatusCode, Json<Value>) {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     with_captured(|reqs| {
         reqs.push(json!({
             "path": uri.path(),
             "model": body.get("model").and_then(Value::as_str),
-            "stream": body.get("stream").and_then(Value::as_bool),
+            "stream": streaming,
             "body": body.clone(),
         }))
     });
 
     let next = with_scripted(|q| q.pop_front());
     let Some(entry) = next else {
-        return (
-            StatusCode::OK,
-            Json(json!({ "choices": [{ "message": {
-                "role": "assistant",
-                "content": "default scripted completion"
-            }}]})),
-        );
+        let message = json!({ "role": "assistant", "content": "default scripted completion" });
+        return completion_response(streaming, message);
     };
 
     if let Some(status) = entry.get("status").and_then(Value::as_u64) {
@@ -178,10 +176,13 @@ async fn scripted_chat_completions(
             .get("error")
             .and_then(Value::as_str)
             .unwrap_or("scripted upstream error");
+        // Non-2xx short-circuits before any SSE parsing on both the old and crate
+        // clients, so an error entry is a plain JSON body regardless of `stream`.
         return (
             StatusCode::from_u16(status as u16).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             Json(json!({ "error": { "message": message, "type": "server_error" } })),
-        );
+        )
+            .into_response();
     }
 
     let content = entry.get("content").and_then(Value::as_str).unwrap_or("");
@@ -206,10 +207,57 @@ async fn scripted_chat_completions(
             .collect();
         message["tool_calls"] = json!(calls);
     }
+    completion_response(streaming, message)
+}
+
+/// Serve a scripted completion as either a non-streaming Chat Completions JSON body
+/// or a Server-Sent-Events stream (`stream: true`). The SSE shape matches what the
+/// crate `OpenAiModel::stream` parser expects — `data:` lines carrying
+/// `choices[].delta.{content,tool_calls}`, a terminal `finish_reason` chunk, and
+/// `data: [DONE]` — so both the legacy host client and the crate-native path parse it.
+fn completion_response(streaming: bool, message: Value) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    if !streaming {
+        return Json(json!({ "choices": [{ "message": message }] })).into_response();
+    }
+
+    let mut delta = json!({ "role": "assistant" });
+    if let Some(content) = message.get("content").and_then(Value::as_str) {
+        if !content.is_empty() {
+            delta["content"] = json!(content);
+        }
+    }
+    if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+        // Streaming tool-call fragments carry a positional `index`.
+        let indexed: Vec<Value> = tool_calls
+            .iter()
+            .enumerate()
+            .map(|(i, tc)| {
+                let mut c = tc.clone();
+                c["index"] = json!(i);
+                c
+            })
+            .collect();
+        delta["tool_calls"] = json!(indexed);
+    }
+
+    let mut body = String::new();
+    body.push_str(&format!(
+        "data: {}\n\n",
+        json!({ "choices": [{ "index": 0, "delta": delta }] })
+    ));
+    body.push_str(&format!(
+        "data: {}\n\n",
+        json!({ "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }] })
+    ));
+    body.push_str("data: [DONE]\n\n");
+
     (
-        StatusCode::OK,
-        Json(json!({ "choices": [{ "message": message }] })),
+        [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+        body,
     )
+        .into_response()
 }
 
 async fn current_user(_headers: HeaderMap) -> Json<Value> {
@@ -1040,15 +1088,13 @@ async fn super_context_happy_path_inner() {
 //   schedule_task tool result.  The orchestrator surfaces this to the user.
 //   On turn 2 the user's reply and the full turn-1 context are present.
 //
-// Actual LLM request ordering (5 upstream calls total):
+// Actual LLM request ordering (4 upstream calls total):
 //   request[0] = orchestrator turn 1 → schedule_task delegation tool call returned
 //   request[1] = scheduler_agent first iter → tries ask_user_clarification (blocked,
 //                success=false; early-exit does NOT fire; loop continues)
 //   request[2] = scheduler_agent second iter → returns text with clarification question
-//                (this becomes the schedule_task tool result forwarded to orchestrator)
-//   request[3] = orchestrator with schedule_task tool result containing WHICH_VERSION_CANARY
-//                → surfaces question to user; turn 1 ends (chat_done with WHICH_VERSION_CANARY)
-//   request[4] = orchestrator turn 2 with "version 2" user reply in full context →
+//                (this becomes the schedule_task tool result and turn-1 response)
+//   request[3] = orchestrator turn 2 with "version 2" user reply in full context →
 //                synthesis; turn 2 ends (chat_done with ANSWER_CANARY_V2)
 
 /// Orchestrator delegates to scheduler_agent via `schedule_task` (delegate_name);
@@ -1092,11 +1138,8 @@ async fn subagent_clarification_flow_inner() {
         //   question.  This becomes the schedule_task tool result forwarded to the
         //   orchestrator by dispatch_subagent.
         text_completion("I need clarification: WHICH_VERSION_CANARY?"),
-        // request[3]: Orchestrator receives the schedule_task tool result containing
-        //   WHICH_VERSION_CANARY and surfaces the question to the user.  Turn 1 ends.
-        text_completion("I need to know: WHICH_VERSION_CANARY?"),
         // ── turn 2 (user replied "version 2") ──
-        // request[4]: Orchestrator processes user reply with full turn-1 context →
+        // request[3]: Orchestrator processes user reply with full turn-1 context →
         //   synthesizes final answer; turn 2 ends here.
         text_completion("Final: ANSWER_CANARY_V2"),
     ]);
@@ -1172,11 +1215,10 @@ async fn subagent_clarification_flow_inner() {
     // request[0] = orchestrator (schedule_task call),
     // request[1] = scheduler_agent first iter (ask_user_clarification blocked),
     // request[2] = scheduler_agent second iter (text output with question),
-    // request[3] = orchestrator synthesis (turn-1 end),
-    // request[4] = orchestrator turn-2 synthesis (turn-2 end).
+    // request[3] = orchestrator turn-2 synthesis (turn-2 end).
     assert!(
         requests.len() >= 4,
-        "expected ≥4 upstream requests (orchestrator + scheduler_agent x2 + orchestrator synthesis x2), \
+        "expected ≥4 upstream requests (orchestrator + scheduler_agent x2 + orchestrator turn-2 synthesis), \
          got {};\nall requests: {}",
         requests.len(),
         serde_json::to_string_pretty(&requests).unwrap_or_default()
@@ -2313,8 +2355,8 @@ async fn multi_hop_delegation_chain_inner() {
 mod streaming_support {
     use async_trait::async_trait;
     use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
-    use openhuman_core::openhuman::agent::memory_loader::MemoryLoader;
     use openhuman_core::openhuman::agent::Agent;
+    use openhuman_core::openhuman::agent_memory::memory_loader::MemoryLoader;
     use openhuman_core::openhuman::config::{AgentConfig, ContextConfig, MemoryConfig};
     use openhuman_core::openhuman::inference::provider::{
         ChatRequest, ChatResponse, Provider, ProviderDelta, ToolCall, UsageInfo,
@@ -2394,6 +2436,8 @@ mod streaming_support {
                 output_tokens: 5,
                 context_window: 16_000,
                 cached_input_tokens: 2,
+                cache_creation_tokens: 0,
+                reasoning_tokens: 0,
                 charged_amount_usd: 0.0002,
             }),
             reasoning_content: None,
@@ -2414,6 +2458,8 @@ mod streaming_support {
                 output_tokens: 4,
                 context_window: 16_000,
                 cached_input_tokens: 3,
+                cache_creation_tokens: 0,
+                reasoning_tokens: 0,
                 charged_amount_usd: 0.0003,
             }),
             reasoning_content: None,

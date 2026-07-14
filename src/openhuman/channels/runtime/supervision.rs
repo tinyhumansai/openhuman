@@ -1,13 +1,12 @@
 //! Supervisor helpers for channel listeners.
 
-use super::super::context::{
-    CHANNEL_MAX_IN_FLIGHT_MESSAGES, CHANNEL_MIN_IN_FLIGHT_MESSAGES, CHANNEL_PARALLELISM_PER_CHANNEL,
-};
 use super::super::traits;
 use super::super::Channel;
 use crate::core::event_bus::{publish_global, DomainEvent};
 use std::sync::Arc;
 use std::time::Duration;
+
+pub(crate) use tinychannels::runtime::compute_max_in_flight_messages;
 
 pub(crate) fn spawn_supervised_listener(
     ch: Arc<dyn Channel>,
@@ -81,50 +80,8 @@ pub(crate) fn spawn_supervised_listener(
     })
 }
 
-pub(crate) fn compute_max_in_flight_messages(channel_count: usize) -> usize {
-    channel_count
-        .saturating_mul(CHANNEL_PARALLELISM_PER_CHANNEL)
-        .clamp(
-            CHANNEL_MIN_IN_FLIGHT_MESSAGES,
-            CHANNEL_MAX_IN_FLIGHT_MESSAGES,
-        )
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn compute_max_in_flight_messages_zero_channels() {
-        let result = compute_max_in_flight_messages(0);
-        assert_eq!(result, CHANNEL_MIN_IN_FLIGHT_MESSAGES);
-    }
-
-    #[test]
-    fn compute_max_in_flight_messages_one_channel() {
-        let result = compute_max_in_flight_messages(1);
-        assert!(result >= CHANNEL_MIN_IN_FLIGHT_MESSAGES);
-        assert!(result <= CHANNEL_MAX_IN_FLIGHT_MESSAGES);
-    }
-
-    #[test]
-    fn compute_max_in_flight_messages_many_channels() {
-        let result = compute_max_in_flight_messages(100);
-        assert_eq!(result, CHANNEL_MAX_IN_FLIGHT_MESSAGES);
-    }
-
-    #[test]
-    fn compute_max_in_flight_messages_clamps_to_min() {
-        let result = compute_max_in_flight_messages(0);
-        assert!(result >= CHANNEL_MIN_IN_FLIGHT_MESSAGES);
-    }
-
-    #[test]
-    fn compute_max_in_flight_messages_clamps_to_max() {
-        let result = compute_max_in_flight_messages(usize::MAX);
-        assert!(result <= CHANNEL_MAX_IN_FLIGHT_MESSAGES);
-    }
-
     #[test]
     fn supervision_discord_gateway_reqwest_failure_classifies_as_expected() {
         let raw = "error sending request for url (https://discord.com/api/v10/gateway/bot)";

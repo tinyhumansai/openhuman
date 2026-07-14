@@ -1,9 +1,7 @@
 //! Per-source sync dispatcher.
 //!
-//! Thin routing layer: dispatches sync requests to the right backend:
-//! - GitHub repos → `memory_sync::sources::github`
-//! - Composio sources → `memory_sync::composio`
-//! - Folder/RSS/WebPage → per-item ingest via reader + ingest pipeline
+//! Thin routing layer: dispatches supported sources through tinycortex and
+//! retains the product-owned background lock, events, and reconcile shell.
 //! - Twitter → placeholder
 //!
 //! Sync runs in a `tokio::spawn`-ed task so the RPC returns immediately.
@@ -13,20 +11,12 @@
 //! presses the sync button multiple times.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-
-use futures::stream::{self, StreamExt};
+use std::sync::Mutex;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::ingest_pipeline::ingest_document_with_scope;
 use crate::openhuman::memory::sync::{emit_sync_stage, MemorySyncStage, MemorySyncTrigger};
-use crate::openhuman::memory_sources::readers;
 use crate::openhuman::memory_sources::types::{MemorySourceEntry, SourceKind};
-use crate::openhuman::memory_sync::canonicalize::document::DocumentInput;
-use crate::openhuman::memory_sync::composio::{self, ComposioUsage, SyncReason};
-
-const SYNC_CONCURRENCY: usize = 10;
+use crate::openhuman::memory_sync::composio::ComposioUsage;
 
 static ACTIVE_SYNCS: std::sync::LazyLock<Mutex<HashSet<String>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -95,22 +85,37 @@ pub async fn sync_source(source: MemorySourceEntry, config: Config) -> Result<()
             let mut composio_usage = ComposioUsage::default();
             let outcome = match source.kind {
                 SourceKind::Composio => {
-                    sync_composio(&source, config.clone(), &mut composio_usage).await
+                    match crate::openhuman::tinycortex::run_source_pipeline(&source, &config).await
+                    {
+                        Ok(outcome) => {
+                            composio_usage.actions_called = outcome.actions_called;
+                            composio_usage.cost_usd = outcome.provider_cost_usd;
+                            Ok(outcome.records_ingested as usize)
+                        }
+                        Err(error) => {
+                            composio_usage.actions_called = error.actions_called;
+                            composio_usage.cost_usd = error.provider_cost_usd;
+                            Err(format!("composio sync failed: {error}"))
+                        }
+                    }
                 }
-                SourceKind::Conversation => sync_items_individually(&source, &config).await,
+                SourceKind::Conversation | SourceKind::Folder => {
+                    crate::openhuman::tinycortex::run_source_pipeline(&source, &config)
+                        .await
+                        .map(|outcome| outcome.records_ingested as usize)
+                        .map_err(|error| error.to_string())
+                }
                 SourceKind::GithubRepo => {
-                    // GitHub path writes its own detailed audit entry
-                    // with token breakdowns; skip the dispatcher-level
-                    // audit for this kind.
-                    crate::openhuman::memory_sync::sources::github::run_github_sync(
-                        &source, &config,
-                    )
-                    .await
-                    .map(|o| o.records_ingested as usize)
-                    .map_err(|e| format!("{e:#}"))
+                    crate::openhuman::tinycortex::run_source_pipeline(&source, &config)
+                        .await
+                        .map(|outcome| outcome.records_ingested as usize)
+                        .map_err(|error| error.to_string())
                 }
-                SourceKind::Folder | SourceKind::RssFeed | SourceKind::WebPage => {
-                    sync_items_individually(&source, &config).await
+                SourceKind::RssFeed | SourceKind::WebPage => {
+                    crate::openhuman::tinycortex::run_source_pipeline(&source, &config)
+                        .await
+                        .map(|outcome| outcome.records_ingested as usize)
+                        .map_err(|error| error.to_string())
                 }
                 SourceKind::TwitterQuery => Err(
                     "Twitter sync not yet configured. Provide bearer token in settings."
@@ -136,37 +141,33 @@ pub async fn sync_source(source: MemorySourceEntry, config: Config) -> Result<()
                         Some(&source.id),
                     );
 
-                    // Write audit entry (GitHub writes its own with
-                    // token detail; other kinds get a simpler entry).
-                    if source.kind != SourceKind::GithubRepo {
-                        use crate::openhuman::memory_sync::sources::audit::{
-                            append_audit_entry, SyncAuditEntry,
-                        };
-                        append_audit_entry(
-                            &config,
-                            &SyncAuditEntry {
-                                timestamp: chrono::Utc::now(),
-                                source_id: source.id.clone(),
-                                source_kind: source.kind.as_str().to_string(),
-                                scope: source
-                                    .url
-                                    .clone()
-                                    .or(source.toolkit.clone())
-                                    .unwrap_or_else(|| source.id.clone()),
-                                items_fetched: items as u32,
-                                batches: 0,
-                                input_tokens: 0,
-                                output_tokens: 0,
-                                estimated_cost_usd: 0.0,
-                                composio_actions_called: composio_usage.actions_called,
-                                composio_cost_usd: composio_usage.cost_usd,
-                                actual_charged_usd: None,
-                                duration_ms,
-                                success: true,
-                                error: None,
-                            },
-                        );
-                    }
+                    use crate::openhuman::memory_sync::sources::audit::{
+                        append_audit_entry, SyncAuditEntry,
+                    };
+                    append_audit_entry(
+                        &config,
+                        &SyncAuditEntry {
+                            timestamp: chrono::Utc::now(),
+                            source_id: source.id.clone(),
+                            source_kind: source.kind.as_str().to_string(),
+                            scope: source
+                                .url
+                                .clone()
+                                .or(source.toolkit.clone())
+                                .unwrap_or_else(|| source.id.clone()),
+                            items_fetched: items as u32,
+                            batches: 0,
+                            input_tokens: 0,
+                            output_tokens: 0,
+                            estimated_cost_usd: 0.0,
+                            composio_actions_called: composio_usage.actions_called,
+                            composio_cost_usd: composio_usage.cost_usd,
+                            actual_charged_usd: None,
+                            duration_ms,
+                            success: true,
+                            error: None,
+                        },
+                    );
 
                     // Auto-rebuild: if raw files exist but the tree has
                     // no summaries, build the tree now.
@@ -268,162 +269,11 @@ pub async fn sync_source(source: MemorySourceEntry, config: Config) -> Result<()
     Ok(())
 }
 
-async fn sync_composio(
-    source: &MemorySourceEntry,
-    config: Config,
-    usage_out: &mut ComposioUsage,
-) -> Result<usize, String> {
-    let connection_id = source
-        .connection_id
-        .as_deref()
-        .ok_or("composio source missing connection_id")?;
-
-    emit_sync_stage(
-        MemorySyncTrigger::Manual,
-        MemorySyncStage::Fetching,
-        Some("composio"),
-        Some(&source.id),
-        Some(format!("delegating to composio sync for {connection_id}")),
-        Some(&source.id),
-    );
-
-    match composio::run_connection_sync(config, connection_id, SyncReason::Manual).await {
-        Ok((outcome, usage)) => {
-            *usage_out = usage;
-            Ok(outcome.items_ingested)
-        }
-        Err((e, usage)) => {
-            *usage_out = usage;
-            Err(format!("composio sync failed: {e}"))
-        }
-    }
-}
-
-/// Per-item sync path for Folder/RSS/WebPage sources.
-async fn sync_items_individually(
-    source: &MemorySourceEntry,
-    config: &Config,
-) -> Result<usize, String> {
-    let reader = readers::reader_for(&source.kind);
-
-    emit_sync_stage(
-        MemorySyncTrigger::Manual,
-        MemorySyncStage::Fetching,
-        Some(source.kind.as_str()),
-        Some(&source.id),
-        Some("listing items".to_string()),
-        Some(&source.id),
-    );
-
-    let items = reader.list_items(source, config).await?;
-    let total = items.len();
-
-    if total == 0 {
-        return Ok(0);
-    }
-
-    emit_sync_stage(
-        MemorySyncTrigger::Manual,
-        MemorySyncStage::Stored,
-        Some(source.kind.as_str()),
-        Some(&source.id),
-        Some(format!("{total} item(s) discovered")),
-        Some(&source.id),
-    );
-
-    let ingested = Arc::new(AtomicUsize::new(0));
-    let processed = Arc::new(AtomicUsize::new(0));
-    let source_id = source.id.clone();
-    let source_kind = source.kind.clone();
-    let kind_str = source.kind.as_str().to_string();
-
-    stream::iter(items.iter().enumerate())
-        .for_each_concurrent(SYNC_CONCURRENCY, |(_, item)| {
-            let config = config.clone();
-            let source_kind = source_kind.clone();
-            let reader = readers::reader_for(&source_kind);
-            let source_clone = source.clone();
-            let ingested = Arc::clone(&ingested);
-            let processed = Arc::clone(&processed);
-            let source_id = source_id.clone();
-            let kind_str = kind_str.clone();
-
-            async move {
-                let content = match reader.read_item(&source_clone, &item.id, &config).await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        tracing::warn!(
-                            item_id = %item.id,
-                            error = %e,
-                            "[memory_sources:sync] skipping item — read failed"
-                        );
-                        processed.fetch_add(1, Ordering::Relaxed);
-                        return;
-                    }
-                };
-
-                let doc = DocumentInput {
-                    provider: format!("memory_sources:{kind_str}"),
-                    title: content.title.clone(),
-                    body: content.body.clone(),
-                    modified_at: chrono::Utc::now(),
-                    source_ref: Some(format!("{source_id}:{}", item.id)),
-                };
-
-                let composite_source_id = format!("mem_src:{source_id}:{}", item.id);
-                let tags = vec!["memory_sources".to_string(), kind_str.clone()];
-
-                match ingest_document_with_scope(
-                    &config,
-                    &composite_source_id,
-                    "user",
-                    tags,
-                    doc,
-                    None,
-                )
-                .await
-                {
-                    Ok(result) => {
-                        if !result.already_ingested {
-                            ingested.fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            item_id = %item.id,
-                            error = %e,
-                            "[memory_sources:sync] ingest failed for item"
-                        );
-                    }
-                }
-
-                let done = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                let new = ingested.load(Ordering::Relaxed);
-                if done % 10 == 0 || done == total {
-                    emit_sync_stage(
-                        MemorySyncTrigger::Manual,
-                        MemorySyncStage::Ingesting,
-                        Some(&kind_str),
-                        Some(&source_id),
-                        Some(format!("{done}/{total} processed ({new} new)")),
-                        Some(&source_id),
-                    );
-                }
-            }
-        })
-        .await;
-
-    Ok(ingested.load(Ordering::Relaxed))
-}
-
-/// Derive the tree scope(s) for a source and reconcile any raw files that
-/// are not yet covered by tree summaries (incremental — see
-/// `memory_sync::sources::rebuild`).
+/// Reconcile raw files that are not yet covered by tree summaries.
 pub(crate) async fn check_and_rebuild_tree(source: &MemorySourceEntry, config: &Config) {
     use crate::openhuman::memory_sync::sources::rebuild::{needs_rebuild, rebuild_tree_from_raw};
 
-    let scopes = derive_scopes(source, config);
-    for scope in scopes {
+    for scope in derive_scopes(source, config) {
         if !needs_rebuild(config, &scope.tree_scope, &scope.archive_source_id) {
             continue;
         }
@@ -434,26 +284,19 @@ pub(crate) async fn check_and_rebuild_tree(source: &MemorySourceEntry, config: &
             "[memory_sources:sync] reconciling uncovered raw files into tree"
         );
         match rebuild_tree_from_raw(config, &scope.tree_scope, &scope.archive_source_id).await {
-            Ok(outcome) => {
-                tracing::info!(
-                    scope = %scope.tree_scope,
-                    files = outcome.files_read,
-                    batches = outcome.batches,
-                    cost = %format!(
-                        "${:.4}",
-                        outcome.actual_charged_usd.unwrap_or(outcome.estimated_cost_usd)
-                    ),
-                    cost_is_actual = outcome.actual_charged_usd.is_some(),
-                    "[memory_sources:sync] reconcile complete"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    scope = %scope.tree_scope,
-                    error = %format!("{e:#}"),
-                    "[memory_sources:sync] reconcile failed"
-                );
-            }
+            Ok(outcome) => tracing::info!(
+                scope = %scope.tree_scope,
+                files = outcome.files_read,
+                batches = outcome.batches,
+                cost = %format!("${:.4}", outcome.actual_charged_usd.unwrap_or(outcome.estimated_cost_usd)),
+                cost_is_actual = outcome.actual_charged_usd.is_some(),
+                "[memory_sources:sync] reconcile complete"
+            ),
+            Err(error) => tracing::warn!(
+                scope = %scope.tree_scope,
+                error = %format!("{error:#}"),
+                "[memory_sources:sync] reconcile failed"
+            ),
         }
     }
 }

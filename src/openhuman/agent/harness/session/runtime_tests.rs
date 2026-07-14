@@ -2,7 +2,9 @@ use super::*;
 use crate::core::event_bus::{global, init_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::XmlToolDispatcher;
 use crate::openhuman::agent::error::AgentError;
-use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, UsageInfo};
+use crate::openhuman::inference::provider::{
+    ChatMessage, ChatRequest, ChatResponse, Provider, UsageInfo,
+};
 use crate::openhuman::memory::Memory;
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -41,6 +43,62 @@ impl Provider for StaticProvider {
                 reasoning_content: None,
             })
         })
+    }
+}
+
+/// Provider that fails on EVERY call with a freshly-built typed [`AgentError`].
+///
+/// The default turn model (`chat-v1`) now carries a same-family cross-route
+/// fallback chain (`chat-v1 → burst-v1`, issue #4249 Workstream 02.2). A mock
+/// that errors only once (via `StaticProvider`'s `take()`) would fail the primary
+/// route and then succeed on the fallback route, masking the terminal error. To
+/// exercise `run_single`'s error-surfacing path we need a provider that fails on
+/// every route so the harness exhausts the chain and surfaces the typed error
+/// (recovered from the primary route's error slot).
+struct PersistentErrProvider {
+    kind: PersistentErrKind,
+}
+
+#[derive(Clone, Copy)]
+enum PersistentErrKind {
+    MaxIterations { max: usize },
+    PermissionDenied,
+}
+
+impl PersistentErrProvider {
+    fn build_error(&self) -> anyhow::Error {
+        match self.kind {
+            PersistentErrKind::MaxIterations { max } => {
+                anyhow!(AgentError::MaxIterationsExceeded { max })
+            }
+            PersistentErrKind::PermissionDenied => anyhow!(AgentError::PermissionDenied {
+                tool_name: "shell".into(),
+                required_level: "Execute".into(),
+                channel_max_level: "ReadOnly".into(),
+            }),
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for PersistentErrProvider {
+    async fn chat_with_system(
+        &self,
+        _system_prompt: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+    ) -> Result<String> {
+        Err(self.build_error())
+    }
+
+    async fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+        _model: &str,
+        _temperature: f64,
+    ) -> Result<ChatResponse> {
+        Err(self.build_error())
     }
 }
 
@@ -161,10 +219,8 @@ async fn run_single_preserves_typed_max_iterations_error_for_sentry_skip() {
     // exact noise this fix removes.
     let _ = init_global(64);
 
-    let err_provider: Arc<dyn Provider> = Arc::new(StaticProvider {
-        response: Mutex::new(Some(Err(anyhow!(AgentError::MaxIterationsExceeded {
-            max: 8
-        })))),
+    let err_provider: Arc<dyn Provider> = Arc::new(PersistentErrProvider {
+        kind: PersistentErrKind::MaxIterations { max: 8 },
     });
     let mut agent = make_agent(err_provider);
     let err = agent
@@ -225,12 +281,8 @@ async fn run_single_publishes_completed_and_error_events() {
     let response = ok_agent.run_single("hello").await.expect("run_single ok");
     assert_eq!(response, "ok");
 
-    let err_provider: Arc<dyn Provider> = Arc::new(StaticProvider {
-        response: Mutex::new(Some(Err(anyhow!(AgentError::PermissionDenied {
-            tool_name: "shell".into(),
-            required_level: "Execute".into(),
-            channel_max_level: "ReadOnly".into(),
-        })))),
+    let err_provider: Arc<dyn Provider> = Arc::new(PersistentErrProvider {
+        kind: PersistentErrKind::PermissionDenied,
     });
     let mut err_agent = make_agent(err_provider);
     let err = err_agent
@@ -273,7 +325,7 @@ fn accessors_and_history_reset_expose_agent_runtime_state() {
     });
     let mut agent = make_agent(provider);
     agent.history = vec![ConversationMessage::Chat(ChatMessage::system("sys"))];
-    agent.workflows = vec![crate::openhuman::workflows::Workflow {
+    agent.workflows = vec![crate::openhuman::skills::Workflow {
         name: "demo".into(),
         ..Default::default()
     }];

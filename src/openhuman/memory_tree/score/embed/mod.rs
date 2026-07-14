@@ -110,7 +110,7 @@ const MAX_BATCH_TOKENS: usize = 1_000_000;
 const CHARS_PER_TOKEN_ESTIMATE: usize = 4;
 
 fn estimate_tokens(text: &str) -> usize {
-    (text.len() + CHARS_PER_TOKEN_ESTIMATE - 1) / CHARS_PER_TOKEN_ESTIMATE
+    text.len().div_ceil(CHARS_PER_TOKEN_ESTIMATE)
 }
 
 /// Split `texts` into sub-batches that respect the batch API limits:

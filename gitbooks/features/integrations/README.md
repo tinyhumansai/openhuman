@@ -63,8 +63,8 @@ Set your default under **Settings → Automation & Channels → Messaging Channe
 
 The 118+ OAuth connectors are the curated path. Beyond them, OpenHuman opens up the wider open-tooling ecosystem:
 
-* **MCP servers** — a built-in registry browses thousands of [Model Context Protocol](https://modelcontextprotocol.io) servers (Smithery + the official registry) that install locally as new agent tools.
-* **Skills** — a browsable, ~90,000-entry catalog of `SKILL.md` capability bundles aggregated from HermesHub, ClawHub, LobeHub and more. (Note: the old in-app skills runtime has been removed; Skills are now a metadata catalog you install from the Skills tab.)
+* **MCP servers**: a built-in registry browses thousands of [Model Context Protocol](https://modelcontextprotocol.io) servers (Smithery + the official registry) that install locally as new agent tools.
+* **Skills**: a browsable, ~90,000-entry catalog of `SKILL.md` capability bundles aggregated from HermesHub, ClawHub, LobeHub and more. (Note: the old in-app skills runtime has been removed; Skills are now a metadata catalog you install from the Skills tab.)
 
 See [MCP Servers & Skills](mcp-and-skills.md) for the full picture.
 

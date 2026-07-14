@@ -212,7 +212,7 @@ pub fn parse_signature(
             if loc_idx < sig_lines.len() {
                 let t = sig_lines[loc_idx].trim();
                 // Skip if already matched as role or employer.
-                let already_used = role_line_idx.map_or(false, |ri| ri == loc_idx);
+                let already_used = role_line_idx == Some(loc_idx);
                 if !already_used {
                     if let Some(loc) = extract_location(t) {
                         candidates.push(LearningCandidate {
@@ -361,7 +361,7 @@ fn extract_timezone(s: &str) -> Option<&str> {
             let after = &s[pos + tz.len()..];
             let after_ok = after.is_empty()
                 || after.starts_with(|c: char| !c.is_alphabetic())
-                || after.starts_with(|c: char| c == '+' || c == '-');
+                || after.starts_with(['+', '-']);
             if before_ok && after_ok {
                 // Grab "UTC+5:30" or "GMT-7" style suffix.
                 if tz.starts_with("UTC") || tz.starts_with("GMT") {
@@ -419,10 +419,10 @@ fn extract_employer_pattern(s: &str) -> Option<String> {
         ", inc", " inc.", " llc", " ltd", " limited", " corp", " co.",
     ];
     for suffix in corp_suffixes {
-        if lower.ends_with(suffix) || lower.contains(&format!("{suffix} ")) {
-            if is_plausible_employer(t) {
-                return Some(clean_employer(t));
-            }
+        if (lower.ends_with(suffix) || lower.contains(&format!("{suffix} ")))
+            && is_plausible_employer(t)
+        {
+            return Some(clean_employer(t));
         }
     }
     None
@@ -442,7 +442,7 @@ fn extract_location(s: &str) -> Option<String> {
         // City: 2-30 chars, no digits, starts with uppercase.
         let city_ok = city.len() >= 2
             && city.len() <= 30
-            && city.chars().next().map_or(false, |c| c.is_uppercase())
+            && city.chars().next().is_some_and(|c| c.is_uppercase())
             && !city.chars().any(|c| c.is_ascii_digit());
         // Region: 2-20 chars.
         let region_ok = region.len() >= 2 && region.len() <= 20;

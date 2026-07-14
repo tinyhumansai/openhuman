@@ -26,6 +26,8 @@ mod ops;
 mod schemas;
 pub mod types;
 
+pub(crate) use graph::scheduler_graph_topology;
+
 pub use engine::{resume_workflow_run, start_workflow_run, stop_workflow_run};
 pub use ops::{
     builtin_definitions, definition_by_id, get_run, list_definitions, list_runs,

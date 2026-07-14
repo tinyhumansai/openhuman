@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "name": "App event to conditional action",
+  "nodes": [
+    {
+      "id": "trigger",
+      "kind": "trigger",
+      "name": "App event",
+      "config": { "trigger_kind": "app_event", "toolkit": "gmail", "trigger_slug": "new_message" },
+      "ports": [],
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "gate",
+      "kind": "condition",
+      "name": "Needs a reply?",
+      "config": { "field": "important" },
+      "ports": [{ "name": "true" }, { "name": "false" }],
+      "position": { "x": 0, "y": 160 }
+    },
+    {
+      "id": "act",
+      "kind": "tool_call",
+      "name": "Take action",
+      "config": { "slug": "", "args": {} },
+      "ports": [],
+      "position": { "x": 0, "y": 320 }
+    }
+  ],
+  "edges": [
+    { "from_node": "trigger", "from_port": "main", "to_node": "gate", "to_port": "main" },
+    { "from_node": "gate", "from_port": "true", "to_node": "act", "to_port": "main" }
+  ]
+}

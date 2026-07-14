@@ -12,6 +12,9 @@ mod run_linter;
 mod run_tests;
 mod update_memory_md;
 
+use crate::openhuman::security::SecurityPolicy;
+use tinyagents::harness::tool::ToolExecutionContext;
+
 pub use apply_patch::ApplyPatchTool;
 pub use csv_export::CsvExportTool;
 pub use edit_file::EditFileTool;
@@ -25,3 +28,21 @@ pub use read_diff::ReadDiffTool;
 pub use run_linter::RunLinterTool;
 pub use run_tests::RunTestsTool;
 pub use update_memory_md::UpdateMemoryMdTool;
+
+pub(super) fn security_for_tool_context(
+    security: &SecurityPolicy,
+    context: Option<&ToolExecutionContext>,
+    tool: &str,
+) -> SecurityPolicy {
+    let mut scoped = security.clone();
+    if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+        tracing::debug!(
+            tool,
+            workspace_root = %workspace.root.display(),
+            policy_id = %workspace.policy_id,
+            "[tools:filesystem] using TinyAgents workspace descriptor as action dir"
+        );
+        scoped.action_dir = workspace.root.clone();
+    }
+    scoped
+}
