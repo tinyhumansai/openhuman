@@ -1379,3 +1379,47 @@ fn parse_nonce_value(value: &Value) -> Option<u64> {
 #[cfg(all(test, feature = "web3"))]
 #[path = "polymarket_tests.rs"]
 mod tests;
+
+// Feature-off counterpart: with `web3` compiled out the wallet stub's
+// `secret_material` returns the disabled error, so any wallet-signed Polymarket
+// write must surface that instead of silently succeeding. The signing-heavy
+// happy-path tests above cannot run (no wallet), so this narrow test locks in
+// the degraded contract for the slim build.
+#[cfg(all(test, not(feature = "web3")))]
+mod tests_web3_disabled {
+    use super::*;
+    use crate::openhuman::config::PolymarketConfig;
+    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
+    use std::sync::Arc;
+
+    fn write_tool_with_eoa(user: &str) -> PolymarketTool {
+        let config = PolymarketConfig {
+            enabled: true,
+            eoa_address: Some(user.to_string()),
+            ..PolymarketConfig::default()
+        };
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Supervised,
+            ..SecurityPolicy::default()
+        });
+        PolymarketTool::new(&config, security)
+    }
+
+    #[tokio::test]
+    async fn signer_resolution_reports_wallet_disabled() {
+        // A configured EOA lets user-address resolution short-circuit, so the
+        // failure comes from `secret_material` (the wallet stub), proving the
+        // write path degrades to the disabled error rather than panicking or
+        // succeeding without a signer.
+        let tool = write_tool_with_eoa("0x000000000000000000000000000000000000dEaD");
+        let err = tool
+            .resolve_signer_and_user(None)
+            .await
+            .expect_err("wallet-signed writes must fail when web3 is compiled out");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("wallet secret material") || msg.contains("feature disabled"),
+            "expected a wallet-disabled error, got: {msg}"
+        );
+    }
+}
