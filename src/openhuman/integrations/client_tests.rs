@@ -101,6 +101,46 @@ fn managed_budget_gate_applies_to_agent_integration_paths() {
     assert!(!managed_budget_applies_to_path("/teams/me/usage"));
 }
 
+// ── Unit: local-only egress enforcement (privacy epic S7, #4441) ──
+
+#[test]
+fn backend_egress_descriptor_strips_query_and_targets_backend() {
+    let desc = backend_egress_descriptor("/agent-integrations/composio/execute?foo=bar");
+    assert_eq!(
+        desc.reason,
+        crate::openhuman::security::EgressReason::Integration
+    );
+    assert_eq!(desc.provider_slug, "openhuman_backend");
+    // Query stripped — only the endpoint is disclosed, never carried data.
+    assert_eq!(desc.service, "/agent-integrations/composio/execute");
+    assert!(desc.is_external);
+}
+
+#[test]
+fn enforce_backend_egress_blocks_user_data_but_allows_control_plane() {
+    use crate::openhuman::config::PrivacyMode;
+    use crate::openhuman::security::live_policy::test_privacy_scope;
+    {
+        // Thread-scoped LocalOnly — no process-global mutation, no cross-test race.
+        let _mode = test_privacy_scope(PrivacyMode::LocalOnly);
+        // User-data tool path → refused.
+        let blocked = enforce_backend_egress("/agent-integrations/composio/execute");
+        assert!(blocked.is_err());
+        assert!(blocked
+            .unwrap_err()
+            .to_string()
+            .contains("Local-only privacy mode is active"));
+        // Control-plane (connection-management + pricing) → allowed even under LocalOnly.
+        enforce_backend_egress("/agent-integrations/composio/connections")
+            .expect("connections is control-plane");
+        enforce_backend_egress("/agent-integrations/pricing").expect("pricing is control-plane");
+    }
+
+    // Standard mode → everything allowed.
+    let _mode = test_privacy_scope(PrivacyMode::Standard);
+    enforce_backend_egress("/agent-integrations/composio/execute").expect("Standard allows");
+}
+
 // ── Integration: HTTP error propagation through `post`/`get` ──────
 
 async fn start_mock_backend(app: Router) -> String {
