@@ -1,4 +1,4 @@
-//! Summarization and rolling recap logic for `ArchivistHook`.
+//! Segment summarization logic for `ArchivistHook`.
 
 use super::types::ArchivistHook;
 use crate::openhuman::memory_store::fts5::{self, EpisodicEntry};
@@ -51,9 +51,7 @@ impl ArchivistHook {
         fts5::episodic_session_entries(conn, session_id).unwrap_or_default()
     }
 
-    /// Shared summarize helper — the **single LLM summarizer** used by both
-    /// the finalize path (`on_segment_closed`) and the rolling-recap path
-    /// (`rolling_segment_recap`).
+    /// Shared summarize helper used by the finalize path (`on_segment_closed`).
     ///
     /// Builds a prose corpus from `entries`, calls the `LlmSummariser` when a
     /// `chat_provider` is configured, and falls back to the heuristic
@@ -69,10 +67,7 @@ impl ArchivistHook {
     /// Returns `(text, produced_by_llm)`. `produced_by_llm == false` means the
     /// LLM was unavailable / failed / returned empty and `text` is the shallow
     /// heuristic `fallback_summary` bookend stub. That stub is an acceptable
-    /// durable last-resort on the *finalize* path, but callers driving the
-    /// **live prompt** (rolling recap → compaction) must treat
-    /// `produced_by_llm == false` as "no real recap" and fall back to their
-    /// own strategy — the stub must never become live compaction text.
+    /// durable last-resort on the finalize path.
     pub(super) async fn summarize_entries(
         &self,
         entries: &[&EpisodicEntry],
@@ -176,123 +171,5 @@ impl ArchivistHook {
             );
         }
         (segments::fallback_summary(first, last, turn_count), false)
-    }
-
-    /// Produce a rolling recap of the **currently-open** segment for
-    /// `session_id` WITHOUT closing it, writing `segment_set_summary`, or
-    /// embedding.
-    ///
-    /// This is the Phase 1.5 "one summarizer" entry point. Both
-    /// `on_segment_closed` (finalize) and this function delegate to the same
-    /// [`Self::summarize_entries`] helper so the same LLM path is used in both
-    /// cases. The distinction is purely in what happens *after* the summary
-    /// string is produced:
-    ///
-    /// - **Finalize** (`on_segment_closed`): persists the summary via
-    ///   `segment_set_summary`, embeds it, extracts events, pipes tree ingest.
-    /// - **Rolling** (this function): returns the summary string and does
-    ///   nothing else — segment stays open, DB is untouched.
-    ///
-    /// Returns `None` when:
-    /// - The archivist is disabled or has no connection.
-    /// - There is no open segment for `session_id`.
-    /// - The open segment has no episodic entries.
-    /// - No real LLM recap was produced (LLM unavailable / failed / empty, so
-    ///   only the heuristic bookend stub is available). The shallow stub is
-    ///   deliberately NOT used as live compaction text.
-    ///
-    /// Callers must treat `None` as "recap unavailable" and fall back to
-    /// their own compaction strategy (e.g. `ProviderSummarizer`).
-    pub async fn rolling_segment_recap(&self, session_id: &str) -> Option<String> {
-        if !self.enabled {
-            tracing::debug!(
-                "[archivist] rolling_segment_recap: archivist disabled \
-                 session={session_id} — returning None"
-            );
-            return None;
-        }
-        let conn = self.conn.as_ref()?;
-
-        // Find the currently-open segment for this session.
-        let open_segment = match crate::openhuman::memory_store::segments::open_segment_for_session(
-            conn, session_id,
-        ) {
-            Ok(Some(seg)) => seg,
-            Ok(None) => {
-                tracing::debug!(
-                    "[archivist] rolling_segment_recap: no open segment for \
-                     session={session_id} — returning None"
-                );
-                return None;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "[archivist] rolling_segment_recap: failed to query open segment \
-                     session={session_id}: {e} — returning None"
-                );
-                return None;
-            }
-        };
-
-        // Gather the episodic entries for this session so far.
-        let all_entries = self.read_session_entries(conn, session_id);
-
-        // Keep only entries within the open segment's time window (start →
-        // now, inclusive). An open segment has `end_timestamp = None`.
-        let segment_entries: Vec<&EpisodicEntry> = all_entries
-            .iter()
-            .filter(|e| e.timestamp >= open_segment.start_timestamp)
-            .collect();
-
-        if segment_entries.is_empty() {
-            tracing::debug!(
-                "[archivist] rolling_segment_recap: no entries in open segment={} \
-                 session={session_id} — returning None",
-                open_segment.segment_id
-            );
-            return None;
-        }
-
-        tracing::debug!(
-            "[archivist] rolling_segment_recap: summarizing open segment={} \
-             entries={} session={session_id}",
-            open_segment.segment_id,
-            segment_entries.len()
-        );
-
-        let (recap, from_llm) = self
-            .summarize_entries(
-                &segment_entries,
-                &open_segment.segment_id,
-                open_segment.turn_count,
-            )
-            .await;
-
-        if !from_llm {
-            tracing::debug!(
-                "[archivist] rolling_segment_recap: only heuristic bookend stub \
-                 available (no real LLM recap) session={session_id} segment={} — \
-                 returning None",
-                open_segment.segment_id
-            );
-            return None;
-        }
-
-        if recap.is_empty() {
-            tracing::debug!(
-                "[archivist] rolling_segment_recap: summarize_entries returned empty \
-                 session={session_id} segment={} — returning None",
-                open_segment.segment_id
-            );
-            return None;
-        }
-
-        tracing::debug!(
-            "[archivist] rolling_segment_recap: produced LLM recap chars={} \
-             session={session_id} segment={}",
-            recap.len(),
-            open_segment.segment_id
-        );
-        Some(recap)
     }
 }
