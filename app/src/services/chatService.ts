@@ -291,6 +291,71 @@ export interface ArtifactPendingEvent {
   path: string;
 }
 
+/**
+ * Reason an external transfer is happening — the "because" clause of the
+ * disclosure. Mirrors the Rust `EgressReason` serialized (snake_case) on the
+ * S2 egress spine's `external_transfer_pending` event descriptor. Unknown
+ * future variants are tolerated by the UI (mapped to a generic fallback label).
+ */
+export type EgressReason =
+  | 'inference'
+  | 'tool_call'
+  | 'integration'
+  | 'embedding'
+  | 'network_fetch';
+
+/**
+ * A category of user data leaving the device on an external transfer. Mirrors
+ * the Rust `EgressDataKind` (snake_case). Rendered as friendly labels — never
+ * the raw enum string.
+ */
+export type EgressDataKind =
+  | 'prompt'
+  | 'tool_arguments'
+  | 'embedding_input'
+  | 'file_content'
+  | 'url'
+  | 'metadata';
+
+/**
+ * Risk grade the core assigned to the transfer. Always `"unknown"` today
+ * (the S2 spine does not classify yet); typed for forward-compatibility so the
+ * S3 disclosure UI can surface a badge once the core starts grading.
+ */
+export type EgressRiskLevel = 'unknown' | 'none' | 'low' | 'medium' | 'high';
+
+/**
+ * Emitted by the S2 egress spine (`external_transfer_pending` socket event)
+ * immediately before an external transfer that is routed through a chat turn
+ * (the bridge only emits when BOTH `thread_id` and `client_id` are present —
+ * background egress never surfaces). The Rust side de-dupes per turn so a
+ * repeated destination fires once per turn.
+ *
+ * This slice is DISCLOSURE ONLY (epic #4256 AC1 / issue #4437 / S3) — the S4
+ * approve/deny arm (#4438) is a separate follow-up. The descriptor is packed
+ * into the generic `args` field of the web-channel wire envelope, exactly like
+ * the artifact-lifecycle events; the `subscribeChatEvents` handler flattens it
+ * back into this typed shape.
+ */
+export interface ExternalTransferPendingEvent {
+  thread_id: string;
+  client_id?: string;
+  /** Provider identifier (e.g. `openai`, `composio`). Public, not PII. */
+  provider_slug: string;
+  /** Human-facing destination service name (e.g. `OpenAI`, `Gmail`). */
+  service: string;
+  /** Whether this transfer actually leaves the device (always true in practice). */
+  is_external: boolean;
+  /** Why the transfer is happening — drives the "because …" clause. */
+  reason: EgressReason;
+  /** Categories of user data being sent. */
+  data_kinds: EgressDataKind[];
+  /** Core-assigned risk grade. `"unknown"` today. */
+  risk_level: EgressRiskLevel;
+  /** Named risk categories. Empty today. */
+  risk_categories: string[];
+}
+
 /** Emitted when the agent turn begins (before the first LLM call). */
 export interface ChatInferenceStartEvent {
   thread_id: string;
@@ -558,6 +623,7 @@ export interface ChatEventListeners {
   onArtifactPending?: (event: ArtifactPendingEvent) => void;
   onArtifactReady?: (event: ArtifactReadyEvent) => void;
   onArtifactFailed?: (event: ArtifactFailedEvent) => void;
+  onExternalTransferPending?: (event: ExternalTransferPendingEvent) => void;
   onDone?: (event: ChatDoneEvent) => void;
   onError?: (event: ChatErrorEvent) => void;
 }
@@ -605,6 +671,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     artifactPending: 'artifact_pending',
     artifactReady: 'artifact_ready',
     artifactFailed: 'artifact_failed',
+    externalTransferPending: 'external_transfer_pending',
     done: 'chat_done',
     error: 'chat_error',
   } as const;
@@ -1140,6 +1207,79 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     };
     socket.on(EVENTS.artifactFailed, cb);
     handlers.push([EVENTS.artifactFailed, cb]);
+  }
+
+  // External-transfer disclosure (#4437 / S3). Same envelope shape as the
+  // artifact events — the S2 egress spine packs the `EgressDescriptor` into
+  // the generic `args` field. Flatten it back into the typed
+  // `ExternalTransferPendingEvent` after narrowing every field, so a
+  // malformed / partial payload can never reach the disclosure card.
+  const isStringArray = (v: unknown): v is string[] =>
+    Array.isArray(v) && v.every(item => typeof item === 'string');
+  const validRiskLevels: ReadonlySet<EgressRiskLevel> = new Set([
+    'unknown',
+    'none',
+    'low',
+    'medium',
+    'high',
+  ]);
+  const readRiskLevel = (v: unknown): EgressRiskLevel =>
+    typeof v === 'string' && validRiskLevels.has(v as EgressRiskLevel)
+      ? (v as EgressRiskLevel)
+      : 'unknown';
+
+  if (listeners.onExternalTransferPending) {
+    const cb = (payload: unknown) => {
+      const env = readEnvelope(payload);
+      if (!env) {
+        chatLog('%s — skipping malformed payload (bad envelope)', EVENTS.externalTransferPending);
+        return;
+      }
+      const { args } = env;
+      // `provider_slug`, `service` and `reason` are the load-bearing display
+      // fields; without them the card can't say what/where/why, so drop the
+      // event rather than render blanks. `data_kinds` may legitimately be empty
+      // for a metadata-only transfer, so only require it to be an array.
+      if (
+        !isNonEmptyString(args.provider_slug) ||
+        !isNonEmptyString(args.service) ||
+        !isNonEmptyString(args.reason) ||
+        !isStringArray(args.data_kinds)
+      ) {
+        chatLog(
+          '%s thread_id=%s — skipping malformed payload (bad args)',
+          EVENTS.externalTransferPending,
+          env.thread_id
+        );
+        return;
+      }
+      const event: ExternalTransferPendingEvent = {
+        thread_id: env.thread_id,
+        client_id: env.client_id,
+        provider_slug: args.provider_slug,
+        service: args.service,
+        // Defaults to true — the spine only emits for genuinely-external
+        // transfers, but tolerate a missing/non-boolean flag.
+        is_external: typeof args.is_external === 'boolean' ? args.is_external : true,
+        reason: args.reason as EgressReason,
+        data_kinds: args.data_kinds as EgressDataKind[],
+        risk_level: readRiskLevel(args.risk_level),
+        risk_categories: isStringArray(args.risk_categories) ? args.risk_categories : [],
+      };
+      chatLog(
+        '%s thread_id=%s provider=%s service=%s reason=%s kinds=%d external=%s',
+        EVENTS.externalTransferPending,
+        event.thread_id,
+        event.provider_slug,
+        event.service,
+        event.reason,
+        event.data_kinds.length,
+        event.is_external
+      );
+      listeners.onExternalTransferPending?.(event);
+    };
+    socket.on(EVENTS.externalTransferPending, cb);
+    handlers.push([EVENTS.externalTransferPending, cb]);
   }
 
   if (listeners.onTaskBoardUpdated) {
