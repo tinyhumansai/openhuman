@@ -250,7 +250,7 @@ ethers-signers = { version = "2.0.14", default-features = false }
 # - ed25519-dalek: Solana transaction signing.
 # - bs58: Solana base58 addresses + Tron base58check addresses.
 # - ripemd: RIPEMD160 for BTC HASH160 (P2WPKH) and Tron address hash.
-bitcoin = { version = "0.32", default-features = false, features = ["std", "secp-recovery", "rand-std"] }
+bitcoin = { version = "0.32", default-features = false, features = ["std", "secp-recovery", "rand-std"], optional = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "rand_core"] }
 bs58 = { version = "0.5", default-features = false, features = ["std", "check"] }
 ripemd = "0.1"
@@ -260,7 +260,7 @@ ripemd = "0.1"
 # off the recovery phrase without going through the EVM signer wrapper.
 coins-bip39 = "0.8"
 # Solana off-curve check for ATA derivation (find_program_address).
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc"] }
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc"], optional = true }
 
 fantoccini = { version = "0.22.0", optional = true, default-features = false, features = ["rustls-tls"] }
 pdf-extract = "0.10"
@@ -334,7 +334,7 @@ tokio = { version = "1", features = ["test-util"] }
 proptest = "1"
 
 [features]
-default = ["tokenjuice-treesitter", "voice"]
+default = ["tokenjuice-treesitter", "voice", "web3"]
 # AST-aware code compression (tree-sitter Rust/TS/Python grammars; C build).
 # On by default; disable to fall back to the brace-depth heuristic.
 tokenjuice-treesitter = [
@@ -351,6 +351,20 @@ tokenjuice-treesitter = [
 # inference domain (shared with accessibility for cpal) and await a separate
 # `inference` gate.
 voice = ["dep:hound", "dep:lettre"]
+# Web3 domains: openhuman::wallet + openhuman::web3 + openhuman::x402 — the
+# crypto wallet (multi-chain sign/broadcast), the high-level swap/bridge/dapp
+# surface, and the x402 machine-payment protocol. Default-ON — the desktop app
+# always ships with the wallet. Slim / headless builds opt out via
+# `--no-default-features --features "<explicit list without web3>"`, which also
+# drops the exclusive `bitcoin` (P2WPKH PSBT) + `curve25519-dalek` (Solana
+# off-curve ATA) dependencies. Composes with the runtime `DomainSet::Web3` flag
+# (#4796): the feature narrows the compile-time surface, `DomainSet` gates it at
+# runtime. NOTE: this gate does NOT drop ethers-core / ethers-signers /
+# coins-bip39 / bs58 / ed25519-dalek / ripemd — those are shared with the
+# Polymarket tools + tinyplace on-chain payments + orchestration and stay
+# always-on. When off, tinyplace payments + Polymarket writes degrade to
+# graceful "wallet disabled" errors via the wallet/web3/x402 stub facades.
+web3 = ["dep:bitcoin", "dep:curve25519-dalek"]
 sandbox-landlock = ["dep:landlock"]
 sandbox-bubblewrap = []
 peripheral-rpi = ["dep:rppal"]
