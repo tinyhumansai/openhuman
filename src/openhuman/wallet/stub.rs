@@ -93,6 +93,9 @@ pub async fn status() -> Result<RpcOutcome<WalletStatus>, String> {
 /// Always errors: secret material cannot be produced with the wallet compiled
 /// out. Callers `?`-propagate (Polymarket writes surface the disabled error).
 pub(crate) async fn secret_material(_chain: WalletChain) -> Result<WalletSecretMaterial, String> {
+    log::debug!(
+        "[wallet-stub] secret_material requested (web3 disabled) — returning disabled error"
+    );
     Err(DISABLED_MSG.to_string())
 }
 
@@ -143,6 +146,9 @@ pub struct ExecutionResult {
 pub async fn prepare_transfer(
     _params: PrepareTransferParams,
 ) -> Result<RpcOutcome<PreparedTransaction>, String> {
+    log::debug!(
+        "[wallet-stub] prepare_transfer requested (web3 disabled) — returning disabled error"
+    );
     Err(DISABLED_MSG.to_string())
 }
 
@@ -150,6 +156,9 @@ pub async fn prepare_transfer(
 pub async fn execute_prepared(
     _params: ExecutePreparedParams,
 ) -> Result<RpcOutcome<ExecutionResult>, String> {
+    log::debug!(
+        "[wallet-stub] execute_prepared requested (web3 disabled) — returning disabled error"
+    );
     Err(DISABLED_MSG.to_string())
 }
 
@@ -161,6 +170,9 @@ pub fn prepared_quotes_for_test() -> Vec<PreparedTransaction> {
 /// Disabled: the tiny.place signer seed derives from the Solana wallet key,
 /// which does not exist. Callers `?`-propagate → "unlock wallet" prompt.
 pub(crate) async fn tinyplace_signer_seed() -> Result<[u8; 32], String> {
+    log::debug!(
+        "[wallet-stub] tinyplace_signer_seed requested (web3 disabled) — returning disabled error"
+    );
     Err(DISABLED_MSG.to_string())
 }
 
@@ -252,4 +264,87 @@ pub fn all_wallet_registered_controllers() -> Vec<RegisteredController> {
 /// No wallet controller schemas when the wallet is compiled out.
 pub fn all_wallet_controller_schemas() -> Vec<ControllerSchema> {
     Vec::new()
+}
+
+// This module is only compiled when the `web3` feature is OFF (see the
+// `#[cfg(not(feature = "web3"))] mod stub;` gate in `super`), so a plain
+// `#[cfg(test)]` here already runs only in the disabled build — it locks in the
+// degraded contract that always-on callers (tinyplace payments, Polymarket
+// writes) depend on.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn status_reports_no_accounts() {
+        let outcome = status().await.expect("stub status is always Ok");
+        assert!(
+            outcome.value.accounts.is_empty(),
+            "disabled wallet must expose no accounts"
+        );
+    }
+
+    #[tokio::test]
+    async fn secret_material_is_disabled_error() {
+        // `WalletSecretMaterial` intentionally omits `Debug` (mirrors the real
+        // type, which never logs a mnemonic), so match rather than `expect_err`.
+        match secret_material(WalletChain::Evm).await {
+            Ok(_) => panic!("secret material must be unavailable when the wallet is compiled out"),
+            Err(msg) => assert_eq!(msg, DISABLED_MSG),
+        }
+    }
+
+    #[tokio::test]
+    async fn prepare_transfer_is_disabled_error() {
+        let err = prepare_transfer(PrepareTransferParams {
+            chain: WalletChain::Solana,
+            to_address: "recipient".to_string(),
+            amount_raw: "1".to_string(),
+            asset_symbol: None,
+            evm_network: None,
+        })
+        .await
+        .expect_err("no transfer can be prepared when the wallet is compiled out");
+        assert_eq!(err, DISABLED_MSG);
+    }
+
+    #[tokio::test]
+    async fn execute_prepared_is_disabled_error() {
+        let err = execute_prepared(ExecutePreparedParams {
+            quote_id: "quote".to_string(),
+            confirmed: true,
+        })
+        .await
+        .expect_err("no prepared transfer can execute when the wallet is compiled out");
+        assert_eq!(err, DISABLED_MSG);
+    }
+
+    #[tokio::test]
+    async fn tinyplace_signer_seed_is_disabled_error() {
+        let err = tinyplace_signer_seed()
+            .await
+            .expect_err("no signer seed derives when the wallet is compiled out");
+        assert_eq!(err, DISABLED_MSG);
+    }
+
+    #[test]
+    fn prepared_quotes_and_rpc_endpoints_are_empty() {
+        assert!(prepared_quotes_for_test().is_empty());
+        assert!(tinyplace_solana_rpc_endpoints().is_empty());
+    }
+
+    #[test]
+    fn solana_cluster_defaults_to_mainnet_with_stable_usdc_mint() {
+        assert_eq!(solana_cluster(), SolanaCluster::Mainnet);
+        assert_eq!(
+            SolanaCluster::Mainnet.usdc_mint(),
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        );
+    }
+
+    #[test]
+    fn registration_entry_points_are_empty() {
+        assert!(all_wallet_registered_controllers().is_empty());
+        assert!(all_wallet_controller_schemas().is_empty());
+    }
 }
