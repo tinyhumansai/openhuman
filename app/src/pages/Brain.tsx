@@ -15,14 +15,13 @@ import { MemoryGraph } from '../components/intelligence/MemoryGraph';
 import { MemorySourcesRegistry } from '../components/intelligence/MemorySourcesRegistry';
 import { MemoryTreeStatusPanel } from '../components/intelligence/MemoryTreeStatusPanel';
 import SubconsciousTriggersPanel from '../components/intelligence/SubconsciousTriggersPanel';
+import { SyncAuditPanel } from '../components/intelligence/SyncAuditPanel';
 import { ToastContainer } from '../components/intelligence/Toast';
+import PageSectionHeader from '../components/layout/PageSectionHeader';
+import PageWelcome from '../components/layout/PageWelcome';
 import PanelPage from '../components/layout/PanelPage';
 import { SidebarContent } from '../components/layout/shell/SidebarSlot';
 import TwoPaneNav from '../components/layout/TwoPaneNav';
-import { SettingsLayoutProvider } from '../components/settings/layout/SettingsLayoutContext';
-import AnalysisViewsPanel from '../components/settings/panels/AnalysisViewsPanel';
-import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
-import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import BetaBanner from '../components/ui/BetaBanner';
 import { useSubconscious } from '../hooks/useSubconscious';
 import { useT } from '../lib/i18n/I18nContext';
@@ -33,26 +32,8 @@ import {
   type GraphMode,
   memoryTreeGraphExport,
 } from '../utils/tauriCommands';
-import Intelligence from './Intelligence';
 
-type BrainTab =
-  | 'graph'
-  | 'goals'
-  | 'sources'
-  | 'sync'
-  | 'intelligence'
-  | 'memory-data'
-  | 'memory-debug'
-  | 'analysis-views'
-  | 'subconscious';
-
-/** Tabs that render a relocated settings panel (Knowledge & Memory group). */
-const KNOWLEDGE_TABS: ReadonlySet<BrainTab> = new Set<BrainTab>([
-  'intelligence',
-  'memory-data',
-  'memory-debug',
-  'analysis-views',
-]);
+type BrainTab = 'welcome' | 'graph' | 'goals' | 'sources' | 'sync' | 'subconscious';
 
 /** Small inline icon helper for the Brain sidebar nav. */
 const navIcon = (d: string) => (
@@ -62,16 +43,22 @@ const navIcon = (d: string) => (
 );
 
 const BRAIN_TABS: readonly BrainTab[] = [
+  'welcome',
   'graph',
   'goals',
   'sources',
   'sync',
-  'intelligence',
-  'memory-data',
-  'memory-debug',
-  'analysis-views',
   'subconscious',
 ];
+
+/** Canonical text header (title + one-line description) per functional tab. */
+const BRAIN_HEADERS: Record<Exclude<BrainTab, 'welcome'>, { titleKey: string; descKey: string }> = {
+  graph: { titleKey: 'brain.tabs.graph', descKey: 'brain.header.graph' },
+  goals: { titleKey: 'brain.tabs.goals', descKey: 'brain.header.goals' },
+  sources: { titleKey: 'brain.tabs.sources', descKey: 'brain.header.sources' },
+  sync: { titleKey: 'brain.tabs.sync', descKey: 'brain.header.sync' },
+  subconscious: { titleKey: 'brain.tabs.subconscious', descKey: 'brain.header.subconscious' },
+};
 
 export default function Brain() {
   const { t } = useT();
@@ -81,7 +68,7 @@ export default function Brain() {
   // routes) land on the right sub-page.
   const activeTab = useMemo<BrainTab>(() => {
     const raw = new URLSearchParams(location.search).get('tab');
-    return (BRAIN_TABS as readonly string[]).includes(raw ?? '') ? (raw as BrainTab) : 'graph';
+    return (BRAIN_TABS as readonly string[]).includes(raw ?? '') ? (raw as BrainTab) : 'welcome';
   }, [location.search]);
   const setActiveTab = useCallback(
     (tab: BrainTab) => {
@@ -174,8 +161,12 @@ export default function Brain() {
             onSelect={value => setActiveTab(value as BrainTab)}
             groups={[
               {
-                label: t('brain.tabs.memory'),
                 items: [
+                  {
+                    value: 'welcome',
+                    label: t('brain.welcome.nav'),
+                    icon: navIcon('M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z'),
+                  },
                   {
                     value: 'graph',
                     label: t('brain.tabs.graph'),
@@ -202,41 +193,6 @@ export default function Brain() {
                       'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15'
                     ),
                   },
-                ],
-              },
-              {
-                label: t('settings.devGroups.knowledgeMemory'),
-                items: [
-                  {
-                    value: 'intelligence',
-                    label: t('settings.developerMenu.intelligence.title'),
-                    icon: navIcon(
-                      'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z'
-                    ),
-                  },
-                  {
-                    value: 'memory-data',
-                    label: t('devOptions.memoryInspection'),
-                    icon: navIcon(
-                      'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4'
-                    ),
-                  },
-                  {
-                    value: 'memory-debug',
-                    label: t('devOptions.debugPanels'),
-                    icon: navIcon('M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4'),
-                  },
-                  {
-                    value: 'analysis-views',
-                    label: t('settings.analysisViews.title'),
-                    icon: navIcon(
-                      'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z'
-                    ),
-                  },
-                ],
-              },
-              {
-                items: [
                   {
                     value: 'subconscious',
                     label: t('brain.tabs.subconscious'),
@@ -247,37 +203,65 @@ export default function Brain() {
                 ],
               },
             ]}
-            header={<p className="min-w-0 text-[11px] text-content-muted">{t('brain.subtitle')}</p>}
           />
         </div>
       </SidebarContent>
       <div className="mx-auto h-full w-full max-w-5xl">
-        {/* Knowledge & Memory panels relocated from Settings are themselves
-            PanelPage panels (description, no title; the back button hides
-            because the Brain sidebar owns navigation here), so they fill the
-            content pane and own their own scroll directly. */}
-        {KNOWLEDGE_TABS.has(activeTab) ? (
-          // Knowledge subpages were orphaned flush on the shell — give them a
-          // card surface (the bespoke graph/sources/etc. tabs keep their own
-          // scaffold below and stay flush).
-          <div className="h-full p-4">
-            <div className="h-full overflow-hidden rounded-2xl border border-line bg-surface shadow-soft">
-              <SettingsLayoutProvider value={{ inTwoPaneShell: true }}>
-                {/* Distinct tab query key so the embedded Intelligence panel's
-                    internal tab switches don't overwrite Brain's own
-                    `?tab=intelligence` and unmount it. */}
-                {activeTab === 'intelligence' && <Intelligence tabParamKey="itab" />}
-                {activeTab === 'memory-data' && <MemoryDataPanel />}
-                {activeTab === 'memory-debug' && <MemoryDebugPanel />}
-                {activeTab === 'analysis-views' && <AnalysisViewsPanel />}
-              </SettingsLayoutProvider>
-            </div>
-          </div>
+        {activeTab === 'welcome' ? (
+          <PageWelcome
+            testId="brain-welcome"
+            accent="sage"
+            icon="🧠"
+            eyebrow={t('brain.welcome.eyebrow')}
+            title={t('brain.welcome.title')}
+            description={t('brain.welcome.body')}
+            ctas={[
+              {
+                label: t('brain.welcome.ctaGraph'),
+                icon: '🕸️',
+                onClick: () => setActiveTab('graph'),
+                testId: 'brain-welcome-cta-graph',
+              },
+              {
+                label: t('brain.welcome.ctaGoals'),
+                icon: '🎯',
+                onClick: () => setActiveTab('goals'),
+              },
+              {
+                label: t('brain.welcome.ctaSources'),
+                icon: '🔗',
+                onClick: () => setActiveTab('sources'),
+              },
+            ]}
+            featuresHeading={t('brain.welcome.featsLabel')}
+            features={[
+              {
+                icon: '🕸️',
+                title: t('brain.welcome.feat1Title'),
+                description: t('brain.welcome.feat1Body'),
+              },
+              {
+                icon: '🎯',
+                title: t('brain.welcome.feat2Title'),
+                description: t('brain.welcome.feat2Body'),
+              },
+              {
+                icon: '🔄',
+                title: t('brain.welcome.feat3Title'),
+                description: t('brain.welcome.feat3Body'),
+              },
+            ]}
+          />
         ) : (
-          // Bespoke tabs share the standard scaffold: a single scrolling body,
-          // all custom controls live inside it.
+          /* All tabs share the standard scaffold: a single scrolling body,
+            all custom controls live inside it. Each tab opens with the canonical
+            header card (title + one-line description), aligned to the content. */
           <PanelPage contentClassName="p-4">
             <div className="mx-auto max-w-3xl space-y-5">
+              <PageSectionHeader
+                title={t(BRAIN_HEADERS[activeTab as Exclude<BrainTab, 'welcome'>].titleKey)}
+                description={t(BRAIN_HEADERS[activeTab as Exclude<BrainTab, 'welcome'>].descKey)}
+              />
               {activeTab === 'graph' && (
                 <div className="space-y-5 animate-fade-up">
                   <MemoryControls
@@ -317,6 +301,14 @@ export default function Brain() {
                 <div className="space-y-5 animate-fade-up">
                   <div className={cardClass}>
                     <MemoryTreeStatusPanel onToast={addToast} />
+                  </div>
+                  {/* Sync history relocated from the Memory Inspection panel so
+                      the Sync tab is the single sync surface. */}
+                  <div className={cardClass} data-testid="brain-sync-history">
+                    <h3 className="mb-2 text-sm font-medium text-content-secondary">
+                      {t('sync.auditTitle', 'Sync History')}
+                    </h3>
+                    <SyncAuditPanel />
                   </div>
                 </div>
               )}

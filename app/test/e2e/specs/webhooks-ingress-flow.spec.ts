@@ -1,11 +1,10 @@
 // @ts-nocheck
-import { browser, expect } from '@wdio/globals';
+import { expect } from '@wdio/globals';
 
 import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { dumpAccessibilityTree, textExists, waitForText } from '../helpers/element-helpers';
+import { textExists } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
-import { navigateViaHash } from '../helpers/shared-flows';
 import { clearRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 const USER_ID = 'e2e-webhooks-ingress';
@@ -17,10 +16,6 @@ function stepLog(message: string, context?: unknown): void {
     return;
   }
   console.log(`[WebhooksIngressE2E][${stamp}] ${message}`, JSON.stringify(context, null, 2));
-}
-
-async function openWebhooksDebugPanel(): Promise<void> {
-  await navigateViaHash('/settings/webhooks-debug');
 }
 
 describe('Webhooks ingress surface (stub-level)', () => {
@@ -98,30 +93,5 @@ describe('Webhooks ingress surface (stub-level)', () => {
     } else {
       stepLog('register_echo failed (router not initialized) — skipping write-path assertions');
     }
-  });
-
-  it('renders the webhooks debug panel empty states', async () => {
-    await openWebhooksDebugPanel();
-
-    const currentHash = await browser.execute(() => window.location.hash);
-    stepLog('Navigated to webhooks debug route', { currentHash });
-    expect(String(currentHash)).toContain('/settings/webhooks-debug');
-
-    // Panel heading is the route-registry title "Webhooks" now (the old
-    // "Webhooks Debug" webhooks.debugTitle is no longer rendered).
-    await waitForText('Webhooks', 12_000);
-    await waitForText('Registered Webhooks', 12_000);
-    await waitForText('Captured Requests', 12_000);
-
-    const hasEmptyStates =
-      (await textExists('No active registrations.')) &&
-      (await textExists('No webhook requests captured yet.'));
-
-    if (!hasEmptyStates) {
-      const tree = await dumpAccessibilityTree();
-      stepLog('Webhooks debug empty states missing', { tree: tree.slice(0, 4000) });
-    }
-
-    expect(hasEmptyStates).toBe(true);
   });
 });
