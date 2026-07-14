@@ -81,24 +81,37 @@ pub fn local_only_blocks(mode: PrivacyMode, desc: &EgressDescriptor) -> bool {
 ///    call onto this descriptor — exempt it defensively so a re-home can never
 ///    brick login (per the epic's "do not block control-plane" directive).
 ///
-/// 2. **Integration connection-management / catalog / pricing sub-routes** that
-///    set up or *describe* an integration without shipping user content: the
-///    whole composio management surface (`connections`, `authorize`, `tools`,
-///    `toolkits`, `triggers`) and `pricing`. The sole composio path that ships
-///    the user's data — and therefore stays blocked — is `composio/execute`,
-///    which carries the tool arguments.
+/// 2. **A narrow allow-list of read-only composio connection-management /
+///    catalog / OAuth sub-routes** that set up or *describe* an integration
+///    without shipping or mutating user content: `connections` (list +
+///    per-connection delete), `authorize` (OAuth handoff), `tools` and
+///    `toolkits` (catalog), plus `pricing` (billing metadata). These are the
+///    routes the Connections UI needs to stay usable under `LocalOnly`.
 ///
-/// The boundary is deliberately conservative: when a path is plausibly
-/// control-plane we exempt it (avoid breakage) and rely on the fact that the
-/// genuine data-egress paths (`execute` and the non-composio tool namespaces)
-/// are the ones that stay blocked. Widening the block to catalog reads is a
-/// follow-up that needs its own UX review.
+/// Everything else under `composio/` is **blocked**, including:
+///   - `execute` — ships the tool arguments (the original user-data path);
+///   - `triggers` / `triggers/available` — `create_trigger` / `enable_trigger`
+///     POST user-supplied `slug` / `connectionId` / `triggerConfig` (a
+///     user-data *write*); the descriptor carries only the path, not the HTTP
+///     method, so the read variants on the same path are blocked with them
+///     (fail-closed — trigger setup is an integration write surface, not
+///     sign-in, so blocking it under `LocalOnly` breaks nothing that matters);
+///   - `github/repos` and any future sub-route — reveals user-adjacent data,
+///     and an *unknown* composio sub-route is treated as user-data, never
+///     exempt.
+///
+/// The boundary is deliberately **fail-closed** for user data: only the named
+/// read-only routes are exempt; anything else under `/agent-integrations/`
+/// (composio or otherwise) ships user data and stays blocked. Genuine
+/// non-composio control-plane (session / auth / team / billing) is handled by
+/// rule (1) so sign-in never breaks.
 pub(crate) fn is_control_plane(desc: &EgressDescriptor) -> bool {
     if desc.reason != EgressReason::Integration {
         return false;
     }
     let path = desc.service.trim_start_matches('/');
-    // (1) Not under the user-data tool namespace → control-plane.
+    // (1) Not under the user-data tool namespace → control-plane (session /
+    //     auth / team / billing, or a defensively re-homed control-plane call).
     let Some(subroute) = path.strip_prefix("agent-integrations/") else {
         return true;
     };
@@ -106,10 +119,13 @@ pub(crate) fn is_control_plane(desc: &EgressDescriptor) -> bool {
     if subroute == "pricing" {
         return true;
     }
-    // (3) Composio management/catalog/OAuth is control-plane; `execute` (which
-    //     ships the tool arguments) is the one user-data path and stays blocked.
+    // (3) Composio: exempt ONLY the read-only connection-management / catalog /
+    //     OAuth allow-list. `execute` (tool arguments), `triggers[/available]`
+    //     (user-data writes), `github/repos`, and any unknown sub-route stay
+    //     blocked — fail-closed for user data.
     if let Some(rest) = subroute.strip_prefix("composio/") {
-        return rest != "execute" && !rest.starts_with("execute/");
+        let head = rest.split(['/', '?']).next().unwrap_or(rest);
+        return matches!(head, "connections" | "authorize" | "tools" | "toolkits");
     }
     // Everything else under /agent-integrations/ ships user data → not exempt.
     false

@@ -108,15 +108,16 @@ fn control_plane_exempts_non_tool_namespace() {
 
 #[test]
 fn control_plane_exempts_composio_management_and_pricing() {
-    // Connection-management / catalog / OAuth / pricing carry no user content.
+    // Connection-management / catalog / OAuth / pricing carry no user content —
+    // the read-only allow-list the Connections UI needs under LocalOnly.
     for path in [
         "/agent-integrations/pricing",
         "/agent-integrations/composio/connections",
+        // Per-connection delete rides the same `connections` head → exempt.
+        "/agent-integrations/composio/connections/conn_123",
         "/agent-integrations/composio/authorize",
         "/agent-integrations/composio/tools",
         "/agent-integrations/composio/toolkits",
-        "/agent-integrations/composio/triggers",
-        "/agent-integrations/composio/triggers/available",
     ] {
         assert!(
             is_control_plane(&EgressDescriptor::integration(path)),
@@ -127,10 +128,19 @@ fn control_plane_exempts_composio_management_and_pricing() {
 
 #[test]
 fn control_plane_does_not_exempt_user_data_paths() {
-    // composio/execute ships tool arguments; the non-composio tool namespaces
-    // ship queries / content — none are exempt.
+    // composio/execute ships tool arguments; composio/triggers[/available]
+    // POST user-supplied slug/connectionId/triggerConfig (user-data writes);
+    // github/repos reveals user-adjacent data; the non-composio tool namespaces
+    // ship queries / content — none are exempt (fail-closed).
     for path in [
         "/agent-integrations/composio/execute",
+        // Trigger writes: create_trigger / enable_trigger POST here. The
+        // descriptor carries no HTTP method, so the same-path reads block too.
+        "/agent-integrations/composio/triggers",
+        "/agent-integrations/composio/triggers/available",
+        "/agent-integrations/composio/github/repos",
+        // An unknown composio sub-route defaults to blocked (fail-closed).
+        "/agent-integrations/composio/some-future-write",
         "/agent-integrations/parallel/research",
         "/agent-integrations/tinyfish/fetch",
         "/agent-integrations/twilio/call",
