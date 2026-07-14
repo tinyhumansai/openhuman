@@ -387,6 +387,15 @@ impl Agent {
         self.last_turn_usage_totals.take()
     }
 
+    /// Whether the most recently completed [`Self::turn`] / [`Self::run_single`]
+    /// paused because it hit `max_tool_iterations`, rather than finishing
+    /// naturally (see the field doc on `last_turn_hit_cap`). `false` before
+    /// any turn has run. Not draining — unlike the usage totals above, a
+    /// caller may reasonably check this more than once per turn.
+    pub fn last_turn_hit_cap(&self) -> bool {
+        self.last_turn_hit_cap
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // Static helpers for turn parsing + telemetry
     // ─────────────────────────────────────────────────────────────────

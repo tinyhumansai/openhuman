@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import { CORE_RPC_METHODS } from '../../../services/rpcMethods';
+import { useAppDispatch } from '../../../store/hooks';
+import { setPrivacyMode } from '../../../store/privacySlice';
 import { SettingsSection, SettingsStatusLine } from '../controls';
 
 const log = debug('privacy-mode');
@@ -35,6 +37,7 @@ const MODES: { value: PrivacyMode; labelKey: string; descKey: string }[] = [
  */
 const PrivacyModeSection = () => {
   const { t } = useT();
+  const dispatch = useAppDispatch();
   const [mode, setMode] = useState<PrivacyMode | null>(null);
   const [status, setStatus] = useState<Status>('loading');
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +78,11 @@ const PrivacyModeSection = () => {
           params: { mode: next },
         });
         setMode(resp.result.mode);
+        // Keep the Redux privacy slice (and therefore the persistent status
+        // pill) in lock-step with the setting. Without this the pill shows the
+        // stale mode until the next app reload — the provider only hydrates the
+        // slice once on mount (#4437).
+        dispatch(setPrivacyMode(resp.result.mode));
         setStatus('saved');
         setTimeout(() => setStatus('idle'), 2000);
       } catch (err) {
@@ -83,7 +91,7 @@ const PrivacyModeSection = () => {
         setStatus('error');
       }
     },
-    [mode]
+    [mode, dispatch]
   );
 
   return (

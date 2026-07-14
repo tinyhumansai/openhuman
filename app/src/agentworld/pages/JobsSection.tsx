@@ -29,6 +29,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 import { fetchWalletStatus } from '../../services/walletApi';
 import { apiClient } from '../AgentWorldShell';
 import { explorerTxUrl } from '../hooks/useX402Buy';
+import { relativeTime } from './relativeTime';
 
 // ── State types ───────────────────────────────────────────────────────────────
 
@@ -38,18 +39,6 @@ type JobsState =
   | { status: 'ok'; jobs: GqlJobPosting[] };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-// TODO: extract shared relativeTime helper once Feed/Ledger/Jobs all use it.
-function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
 
 /**
  * Group the integer part of a numeric amount with thousands separators while

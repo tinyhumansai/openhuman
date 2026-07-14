@@ -477,12 +477,16 @@ export async function navigateToBilling() {
 
 /** @deprecated Phase 2: use navigateToConnections() instead. Still works via redirect. */
 export async function navigateToSkills() {
-  await navigateViaHash('/connections');
+  // `/connections` now lands on the Welcome landing; jump to the functional
+  // integrations view (the pre-Welcome default) so dependent flows still work.
+  await navigateViaHash('/connections?tab=composio');
 }
 
 /** Navigate to the Connections page (was /skills in Phase 1). */
 export async function navigateToConnections() {
-  await navigateViaHash('/connections');
+  // `/connections` now lands on the Welcome landing; jump to the functional
+  // integrations view (the pre-Welcome default).
+  await navigateViaHash('/connections?tab=composio');
 }
 
 /** @deprecated Phase 3: use navigateToActivity() instead. Still works via redirect. */

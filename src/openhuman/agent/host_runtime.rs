@@ -1,5 +1,6 @@
 //! Native and Docker shell runtime adapters (`RuntimeAdapter` implementations).
 
+use crate::openhuman::agent::platform_shell;
 use crate::openhuman::config::RuntimeConfig;
 use std::path::{Path, PathBuf};
 
@@ -77,30 +78,10 @@ impl RuntimeAdapter for NativeRuntime {
         command: &str,
         workspace_dir: &Path,
     ) -> anyhow::Result<tokio::process::Command> {
-        // On Windows hosts there is no POSIX `sh`; drive PowerShell instead.
-        // `-NoProfile` keeps startup fast and avoids user profile side effects.
-        let mut cmd = if cfg!(windows) {
-            let mut c = tokio::process::Command::new("powershell");
-            c.arg("-NoProfile").arg("-Command").arg(command);
-            c
-        } else if let Some(bash) = bash_path() {
-            // Prefer bash with `pipefail` so a failed stage in a pipeline (e.g.
-            // `pip install … | tail`) surfaces as a non-zero exit instead of
-            // being masked by the last stage's success. Without it the harness
-            // records the call as successful and the repeated-failure circuit
-            // breaker (`RepeatedToolFailureMiddleware`, tinyagents/middleware.rs)
-            // never trips, so the agent loops on a
-            // command that is silently failing. `/bin/sh` is dash on
-            // Debian/Ubuntu and rejects `set -o pipefail`, so this is gated on
-            // bash actually being present; otherwise we fall back to plain sh.
-            let mut c = tokio::process::Command::new(bash);
-            c.arg("-lc").arg(format!("set -o pipefail\n{command}"));
-            c
-        } else {
-            let mut c = tokio::process::Command::new("sh");
-            c.arg("-lc").arg(command);
-            c
-        };
+        // Shell selection is shared with the sandboxed execution paths in
+        // `sandbox::ops` so all three sites (native, unsandboxed, jailed)
+        // pick the same platform-appropriate shell (#4705).
+        let mut cmd = platform_shell::build_tokio_command(command);
         // Validate the CWD up front so a missing/bad action_dir produces an
         // actionable message naming the path, instead of an opaque OS error 267
         // (ERROR_DIRECTORY) from CreateProcessW on Windows / a raw ENOENT on
@@ -136,21 +117,6 @@ fn maybe_hide_window(cmd: &mut tokio::process::Command, hide: bool) {
         creation_flags = "0x08000000",
         "[agent][runtime] applied CREATE_NO_WINDOW to shell child process"
     );
-}
-
-/// Locate a `bash` binary once (cached — this is hit on every shell call) for
-/// the `pipefail` wrapper in [`NativeRuntime::build_shell_command`]. Returns
-/// `None` on hosts without bash (e.g. minimal containers), where we fall back
-/// to plain `sh` without pipefail.
-fn bash_path() -> Option<&'static str> {
-    static BASH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    BASH.get_or_init(|| {
-        ["/usr/bin/bash", "/bin/bash"]
-            .into_iter()
-            .find(|p| Path::new(p).exists())
-            .map(str::to_string)
-    })
-    .as_deref()
 }
 
 pub struct DockerRuntime {
@@ -257,8 +223,11 @@ mod tests {
         assert_eq!(runtime.memory_budget(), 0);
         assert!(runtime.storage_path().ends_with("openhuman/runtime"));
 
+        // Use a tempdir so `ensure_usable_cwd` accepts the path on every
+        // OS (`/tmp` does not exist on Windows).
+        let tempdir = tempfile::tempdir().unwrap();
         let command = runtime
-            .build_shell_command("echo hi", Path::new("/tmp"))
+            .build_shell_command("echo hi", tempdir.path())
             .unwrap();
         let prog = command
             .as_std()
@@ -270,19 +239,17 @@ mod tests {
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-        // NativeRuntime prefers bash with `set -o pipefail` when bash is present
-        // (so masked pipe failures surface), and falls back to plain `sh`.
-        if let Some(bash) = bash_path() {
-            assert_eq!(prog, bash);
-            assert_eq!(
-                args,
-                vec!["-lc".to_string(), "set -o pipefail\necho hi".to_string()]
-            );
+        // Shell selection is delegated to `platform_shell::build_tokio_command`
+        // — this test just asserts NativeRuntime is wired into it. The full
+        // per-platform matrix is covered by `platform_shell::tests`.
+        if cfg!(windows) {
+            assert_eq!(prog, "cmd");
+            assert_eq!(args, vec!["/C".to_string(), "echo hi".to_string()]);
         } else {
-            assert_eq!(prog, "sh");
-            assert_eq!(args, vec!["-lc".to_string(), "echo hi".to_string()]);
+            assert!(prog.ends_with("bash") || prog == "sh");
+            assert_eq!(args.first().map(String::as_str), Some("-lc"));
         }
-        assert_eq!(command.as_std().get_current_dir(), Some(Path::new("/tmp")));
+        assert_eq!(command.as_std().get_current_dir(), Some(tempdir.path()));
     }
 
     #[test]
@@ -359,16 +326,18 @@ mod tests {
         let native = create_runtime(&RuntimeConfig::default(), true).unwrap();
         assert_eq!(native.name(), "native");
 
+        // Tempdir so `ensure_usable_cwd` accepts it on Windows CI too.
+        let tempdir = tempfile::tempdir().unwrap();
         let runtime = NativeRuntime::with_hide_window(true);
         let command = runtime
-            .build_shell_command("echo hi", Path::new("/tmp"))
+            .build_shell_command("echo hi", tempdir.path())
             .expect("hide_window should not break command construction");
-        assert_eq!(command.as_std().get_current_dir(), Some(Path::new("/tmp")));
+        assert_eq!(command.as_std().get_current_dir(), Some(tempdir.path()));
 
         // The program/args are identical with and without the flag — hiding the
         // window must not alter what is executed.
         let plain = NativeRuntime::with_hide_window(false)
-            .build_shell_command("echo hi", Path::new("/tmp"))
+            .build_shell_command("echo hi", tempdir.path())
             .unwrap();
         assert_eq!(command.as_std().get_program(), plain.as_std().get_program());
     }
@@ -394,7 +363,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn native_shell_pipefail_surfaces_failed_pipe_stage() {
-        if bash_path().is_none() {
+        if platform_shell::bash_path().is_none() {
             return; // no bash → plain sh, pipefail unavailable
         }
         let rt = NativeRuntime::new();

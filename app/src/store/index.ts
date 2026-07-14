@@ -32,6 +32,7 @@ import localeReducer from './localeSlice';
 import mascotReducer from './mascotSlice';
 import notificationReducer from './notificationSlice';
 import personaReducer from './personaSlice';
+import privacyReducer from './privacySlice';
 import providerSurfacesReducer from './providerSurfaceSlice';
 import { pttReducer } from './pttSlice';
 import socketReducer from './socketSlice';
@@ -237,6 +238,10 @@ export const store = configureStore({
     locale: persistedLocaleReducer,
     mascot: persistedMascotReducer,
     persona: persistedPersonaReducer,
+    // Privacy disclosure surface (#4437 / S3). In-memory only: disclosures are
+    // ephemeral per-turn signals and the mode is re-hydrated from the core on
+    // boot, so nothing here should survive a restart.
+    privacy: privacyReducer,
     theme: persistedThemeReducer,
     ptt: persistedPttReducer,
     announcement: persistedAnnouncementReducer,

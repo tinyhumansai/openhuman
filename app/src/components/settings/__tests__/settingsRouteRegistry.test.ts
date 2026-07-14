@@ -56,9 +56,9 @@ describe('findEntryById', () => {
   });
 
   it('returns the correct section for a home hub entry', () => {
-    // The old 'agents-settings' / 'ai' hub pages were retired; 'integrations'
-    // is a representative surviving home-section hub.
-    const entry = findEntryById('integrations');
+    // The old 'agents-settings' / 'ai' / 'integrations' hub pages were retired;
+    // 'appearance' is a representative surviving home-section hub.
+    const entry = findEntryById('appearance');
     expect(entry).toBeDefined();
     expect(entry!.section).toBe('home');
   });
@@ -94,15 +94,14 @@ describe('findEntryByRoute', () => {
     expect(entry).toBeDefined();
   });
 
-  it('does not match partial/substring routes — no collision between "voice" and "voice-debug"', () => {
+  it('does not match partial/substring routes — lookup is exact', () => {
     const entry = findEntryByRoute('voice');
     expect(entry).toBeDefined();
     expect(entry!.id).toBe('voice');
-    // 'voice-debug' is a distinct developer entry; exact-match lookup must not
-    // collide with the 'voice' leaf despite the shared prefix.
-    const debugEntry = findEntryByRoute('voice-debug');
-    expect(debugEntry).toBeDefined();
-    expect(debugEntry!.id).toBe('voice-debug');
+    // A substring of a real route must not resolve — exact-match only.
+    expect(findEntryByRoute('voic')).toBeUndefined();
+    // A removed developer route ('voice-debug' was retired) resolves to nothing.
+    expect(findEntryByRoute('voice-debug')).toBeUndefined();
   });
 });
 
@@ -125,13 +124,11 @@ describe('entriesForSection', () => {
     expect(ids).not.toContain('permissions');
   });
 
-  it('surfaces the merged integrations entry on home (composio section retired)', () => {
-    const homeEntries = entriesForSection('home');
-    const ids = homeEntries.map(e => e.id);
-    expect(ids).toContain('integrations');
-    // The old composio leaf slugs redirect to /settings/integrations and are
-    // no longer registry entries.
+  it('retires the integrations entry (Connections page owns the surface now)', () => {
+    // The Integrations settings section was removed — the composio/OAuth grid
+    // lives on the Connections page and task-source/webhook triage is gone.
     const allIds = SETTINGS_ROUTE_REGISTRY.map(e => e.id);
+    expect(allIds).not.toContain('integrations');
     expect(allIds).not.toContain('task-sources');
     expect(allIds).not.toContain('composio-routing');
     expect(allIds).not.toContain('webhooks-triggers');
@@ -153,15 +150,18 @@ describe('entriesForSection', () => {
     expect(ids).toContain('account');
     expect(ids).toContain('appearance');
     expect(ids).toContain('personality');
-    expect(ids).toContain('automations');
-    expect(ids).toContain('integrations');
     expect(ids).toContain('about');
-    // The old ai / agents-settings / features / notifications-hub hub pages
-    // were retired — their slugs now redirect to leaf panels.
+    // The old ai / agents-settings / features / notifications-hub / integrations
+    // hub pages were retired — their slugs now redirect to leaf panels or the
+    // Connections page. Workflows (automations) and Data Sync (memory-sync)
+    // became first-level modules.
     expect(ids).not.toContain('ai');
     expect(ids).not.toContain('agents-settings');
     expect(ids).not.toContain('features');
+    expect(ids).not.toContain('integrations');
     expect(ids).not.toContain('notifications-hub');
+    expect(ids).not.toContain('automations');
+    expect(ids).not.toContain('memory-sync');
   });
 
   it('returns empty array for a section that has no non-hidden entries', () => {
@@ -191,10 +191,7 @@ describe('SETTINGS_ROUTE_REGISTRY integrity', () => {
 
   it('surfaces the restructured home hub entries', () => {
     const homeIds = entriesForSection('home').map(e => e.id);
-    expect(homeIds).toContain('integrations');
     expect(homeIds).toContain('personality');
-    expect(homeIds).toContain('automations');
-    expect(homeIds).toContain('memory-sync');
     // billing is surfaced in the General group now (no longer a hidden deep-link).
     expect(homeIds).toContain('billing');
   });

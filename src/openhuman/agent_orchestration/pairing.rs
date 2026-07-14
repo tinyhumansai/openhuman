@@ -13,12 +13,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
+use chrono::{DateTime, Duration, Utc};
+
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
 use crate::openhuman::orchestration::ingest::resolve_linked_id;
 use crate::openhuman::tinyplace::ops::{global_state as tinyplace_state, map_err};
 
 const LOG_TARGET: &str = "orchestration_pairing";
+
+/// How long a local co-location handshake entry stays auto-acceptable. The CLI
+/// writes its entry moments before it sends the contact request, so the window
+/// is deliberately short — a long-lived entry would keep a since-departed agent
+/// id auto-acceptable long after the CLI is gone.
+fn local_handshake_ttl() -> Duration {
+    Duration::hours(1)
+}
 
 static STORE_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -357,13 +367,148 @@ pub(crate) async fn linked_agent_ids(workspace_dir: &Path) -> std::collections::
     }
 }
 
+/// One entry in the local co-location handshake file (`~/.openhuman/local-agents.json`).
+/// A tiny.place CLI wrapper writes its own agent id + the OpenHuman owner it is
+/// connecting to, moments before it sends its contact request. Because a contact
+/// request carries NO owner declaration on the wire, this same-machine file is
+/// how a freshly-connecting local agent proves "I am a co-located CLI that wants
+/// THIS OpenHuman as my owner" — same-user filesystem access is the trust proof.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalAgentEntry {
+    agent_id: String,
+    /// The OpenHuman agent id this CLI declares as its owner. Auto-accept only
+    /// fires when this matches OUR own id — so a CLI configured for a *different*
+    /// local OpenHuman identity is never cross-accepted just for sharing a box.
+    owner: String,
+    /// RFC3339 write time. Required + TTL-bounded (fail-closed): a missing or
+    /// stale timestamp is not trusted, so a long-dead entry can't linger as
+    /// auto-acceptable.
+    #[serde(default)]
+    ts: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalAgentsFile {
+    #[serde(default)]
+    agents: Vec<LocalAgentEntry>,
+}
+
+/// Path of the local co-location handshake file, `~/.openhuman/local-agents.json`.
+/// `None` when the home dir is unresolvable (never trust anything in that case).
+fn local_agents_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(".openhuman").join("local-agents.json"))
+}
+
+/// Fail-closed ownership/permission gate for a handshake path (issue #4777
+/// review). Same-user filesystem access is the ONLY trust proof for
+/// auto-accepting a co-located CLI's contact request, so a path another local
+/// account could have written must never be trusted. On Unix, require the path
+/// to be owned by the current effective uid AND not group/world-writable —
+/// otherwise a permissive umask or shared home would let a different local user
+/// plant a fresh owner-matching entry and get auto-accepted with no human click.
+/// A missing/unreadable stat is untrusted (`false`). Non-Unix hosts trust the
+/// path (the handshake is a same-machine dev-CLI feature; Windows ACLs are out
+/// of scope) — every other trust source stays fail-closed regardless.
+#[cfg(unix)]
+fn path_is_privately_owned(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    // SAFETY: `geteuid` takes no arguments, mutates no state, and cannot fail.
+    let euid = unsafe { libc::geteuid() };
+    match std::fs::metadata(path) {
+        Ok(meta) => meta.uid() == euid && (meta.mode() & 0o022) == 0,
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn path_is_privately_owned(_path: &Path) -> bool {
+    true
+}
+
+/// Read + parse the local co-location handshake file. Missing file → empty (the
+/// common case: no local CLI connecting). A parse/read error is logged and also
+/// yields empty — fail-closed, trusts nothing. Cheap: local file read, no network.
+fn load_local_agents() -> LocalAgentsFile {
+    let Some(path) = local_agents_path() else {
+        return LocalAgentsFile::default();
+    };
+    load_local_agents_from(&path)
+}
+
+/// Perm-gated read + parse of a handshake file at `path`. Split from
+/// [`load_local_agents`] so the trust gate is unit-testable with a tempfile,
+/// without depending on the real home dir.
+fn load_local_agents_from(path: &Path) -> LocalAgentsFile {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return LocalAgentsFile::default()
+        }
+        Err(err) => {
+            log::warn!(target: LOG_TARGET, "[orchestration_pairing] local_agents.read_failed: {err}");
+            return LocalAgentsFile::default();
+        }
+    };
+    // Trust proof (fail-closed): require the handshake file AND its parent
+    // `.openhuman` dir to be privately owned by us and not writable by others.
+    // On a multi-user host with a group/world-writable home (permissive umask,
+    // shared box), another local account could otherwise inject a fresh
+    // owner-matching entry and open a DM/orchestration channel to this brain
+    // with no human approval. The parent-dir check also closes the symlink
+    // vector (an attacker cannot plant a symlink in a dir they cannot write).
+    let parent_ok = path.parent().map(path_is_privately_owned).unwrap_or(false);
+    if !parent_ok || !path_is_privately_owned(path) {
+        log::warn!(
+            target: LOG_TARGET,
+            "[orchestration_pairing] local_agents.untrusted_perms — file or parent dir not privately owned; refusing to trust handshake"
+        );
+        return LocalAgentsFile::default();
+    }
+    serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+        log::warn!(target: LOG_TARGET, "[orchestration_pairing] local_agents.parse_failed: {e}");
+        LocalAgentsFile::default()
+    })
+}
+
+/// True when `ts` is a parseable RFC3339 stamp within the handshake TTL of `now`
+/// (allowing minor clock skew into the future). A missing/malformed/expired stamp
+/// is NOT fresh — fail-closed. Pure.
+fn entry_is_fresh(ts: Option<&str>, now: DateTime<Utc>) -> bool {
+    let Some(ts) = ts else {
+        return false;
+    };
+    let Ok(written) = DateTime::parse_from_rfc3339(ts) else {
+        return false;
+    };
+    let written = written.with_timezone(&Utc);
+    let age = now.signed_duration_since(written);
+    age >= -Duration::minutes(5) && age < local_handshake_ttl()
+}
+
+/// Reduce the local handshake file to the set of agent ids OpenHuman may
+/// auto-accept: those declaring US (`own`) as owner AND still fresh. Pure — the
+/// trust gate is unit-testable without any filesystem or network IO.
+fn coload_trusted_ids(file: &LocalAgentsFile, own: &str, now: DateTime<Utc>) -> HashSet<String> {
+    let own_set: HashSet<String> = std::iter::once(own.to_string()).collect();
+    file.agents
+        .iter()
+        .filter(|entry| resolve_linked_id(&entry.owner, &own_set).is_some())
+        .filter(|entry| entry_is_fresh(entry.ts.as_deref(), now))
+        .map(|entry| entry.agent_id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .collect()
+}
+
 /// Poll the tiny.place incoming contact-request queue and auto-accept every
-/// request whose requester is already a linked (paired) agent — and ONLY those.
-/// A request from an agent that is not in the local linked set is deliberately
-/// left **pending** for the human to decide: generic auto-accept stays off,
-/// because accepting a contact is a trust decision (the relay's own rule is
-/// "never auto-accept"). The one exception is the user's *own* already-paired
-/// agents.
+/// request whose requester is either (a) already a linked (paired) agent, or
+/// (b) a co-located local CLI that named us as owner in the local handshake file
+/// — and ONLY those. A request from any other agent is deliberately left
+/// **pending** for the human to decide: generic auto-accept stays off, because
+/// accepting a contact is a trust decision (the relay's own rule is "never
+/// auto-accept"). The two exceptions are the user's *own* already-paired agents
+/// and their *own* freshly-launched local CLI on this same machine.
 ///
 /// Why this is the delivery gate: tiny.place's relay DROPS any DM to a peer that
 /// has not accepted a contact request, so a wrapped agent that re-establishes
@@ -380,18 +525,39 @@ pub(crate) async fn linked_agent_ids(workspace_dir: &Path) -> std::collections::
 /// accept under the **canonical** linked id (see [`requesters_to_auto_accept`]),
 /// so a base64-form request can't slip past a base58 stored id and re-fire.
 ///
-/// Fail-closed: [`linked_agent_ids`] returns an **empty** set on any pairing-store
-/// read error, so a read failure auto-accepts NOTHING (every request is left
-/// pending) rather than opening the gate. Returns the number of requests accepted
-/// this pass.
+/// Fail-closed on both sources: [`linked_agent_ids`] returns an **empty** set on
+/// any pairing-store read error, and [`load_local_agents`] / [`coload_trusted_ids`]
+/// yield **empty** on a missing/corrupt handshake file, an unresolvable owner id,
+/// or a stale/undated entry — so a read failure or an unlocked-wallet miss
+/// auto-accepts NOTHING (every request is left pending) rather than opening the
+/// gate. Returns the number of requests accepted this pass.
 pub async fn auto_accept_linked_contact_requests(config: &Config) -> Result<usize, String> {
     let linked = linked_agent_ids(&config.workspace_dir).await;
-    // An empty linked set can match nothing — this is also the fail-closed
-    // read-error case — so skip the network round-trip entirely.
-    if linked.is_empty() {
+    // Candidate co-location entries (same-machine handshake file). Cheap local
+    // read, no network, no wallet needed.
+    let local = load_local_agents();
+    // Nothing linked AND no local handshake candidates → nothing to match; skip
+    // the round-trip AND avoid needing an unlocked wallet (fail-closed no-op).
+    if linked.is_empty() && local.agents.is_empty() {
         return Ok(0);
     }
     let client = tinyplace_state().client().await?;
+    // Resolve OUR own id so co-location entries can be owner-matched. Best-effort:
+    // if the signer is unavailable we simply trust no local entries (linked-only).
+    let trusted = match client.http().signer() {
+        Some(signer) => coload_trusted_ids(&local, &signer.agent_id(), Utc::now()),
+        None => {
+            log::debug!(target: LOG_TARGET, "[orchestration_pairing] auto_accept.signer_unavailable");
+            HashSet::new()
+        }
+    };
+    // Union of the two trust sources. `requesters_to_auto_accept` canonicalizes a
+    // requester's wire id against this set, so base64/base58 forms unify.
+    let mut acceptable = linked.clone();
+    acceptable.extend(trusted.iter().cloned());
+    if acceptable.is_empty() {
+        return Ok(0);
+    }
     // `limit=100` caps one scan (consistent with `list()`); a linked requester
     // beyond the 100th *pending* request waits until earlier ones clear. Fine at
     // expected volumes — a paired fleet is small — revisit with pagination if not.
@@ -403,11 +569,12 @@ pub async fn auto_accept_linked_contact_requests(config: &Config) -> Result<usiz
         )
         .await
         .map_err(map_err)?;
-    let to_accept = requesters_to_auto_accept(&incoming_pending_requesters(&requests), &linked);
+    let to_accept = requesters_to_auto_accept(&incoming_pending_requesters(&requests), &acceptable);
     log::debug!(
         target: LOG_TARGET,
-        "[orchestration_pairing] auto_accept.scan linked={} accept={}",
+        "[orchestration_pairing] auto_accept.scan linked={} coload={} accept={}",
         linked.len(),
+        trusted.len(),
         to_accept.len()
     );
     let mut accepted = 0usize;
@@ -782,5 +949,177 @@ mod tests {
                 .iter()
                 .any(|record| record.agent_id == format!("@worker-{index}")));
         }
+    }
+
+    fn local_file(entries: &[(&str, &str, Option<&str>)]) -> LocalAgentsFile {
+        LocalAgentsFile {
+            agents: entries
+                .iter()
+                .map(|(agent_id, owner, ts)| LocalAgentEntry {
+                    agent_id: agent_id.to_string(),
+                    owner: owner.to_string(),
+                    ts: ts.map(str::to_string),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn coload_trusts_fresh_entry_that_names_us_as_owner() {
+        let now = DateTime::parse_from_rfc3339("2026-07-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        // A CLI (LINKED_BASE58) that named us (UNLINKED_BASE58) as owner, 1 min ago.
+        let file = local_file(&[(LINKED_BASE58, UNLINKED_BASE58, Some("2026-07-10T11:59:00Z"))]);
+        let trusted = coload_trusted_ids(&file, UNLINKED_BASE58, now);
+        assert_eq!(
+            trusted,
+            [LINKED_BASE58.to_string()].into_iter().collect(),
+            "a fresh entry naming us as owner is trusted"
+        );
+    }
+
+    #[test]
+    fn coload_owner_match_is_encoding_agnostic() {
+        // The entry declares the owner in base64 while our own id is base58 — the
+        // same identity. `resolve_linked_id` must unify them so the owner-match holds.
+        let now = DateTime::parse_from_rfc3339("2026-07-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let file = local_file(&[(UNLINKED_BASE58, LINKED_BASE64, Some("2026-07-10T11:59:30Z"))]);
+        let trusted = coload_trusted_ids(&file, LINKED_BASE58, now);
+        assert_eq!(
+            trusted,
+            [UNLINKED_BASE58.to_string()].into_iter().collect(),
+            "owner declared base64 must match our base58 own id"
+        );
+    }
+
+    #[test]
+    fn coload_rejects_entry_for_a_different_owner() {
+        let now = DateTime::parse_from_rfc3339("2026-07-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        // Entry names LINKED_BASE58 as owner, but WE are UNLINKED_BASE58 → not ours.
+        let file = local_file(&[(
+            "SomeLocalCliAgentIdXXXXXXXXXXXXXXXXXXXXXXXXX",
+            LINKED_BASE58,
+            Some("2026-07-10T11:59:00Z"),
+        )]);
+        assert!(
+            coload_trusted_ids(&file, UNLINKED_BASE58, now).is_empty(),
+            "a CLI declaring a DIFFERENT local OpenHuman as owner is never trusted"
+        );
+    }
+
+    #[test]
+    fn coload_rejects_stale_or_undated_entries() {
+        let now = DateTime::parse_from_rfc3339("2026-07-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        // Expired (2h old, TTL is 1h).
+        let stale = local_file(&[(LINKED_BASE58, UNLINKED_BASE58, Some("2026-07-10T10:00:00Z"))]);
+        assert!(
+            coload_trusted_ids(&stale, UNLINKED_BASE58, now).is_empty(),
+            "an entry past its TTL is not trusted"
+        );
+        // Missing timestamp → fail-closed.
+        let undated = local_file(&[(LINKED_BASE58, UNLINKED_BASE58, None)]);
+        assert!(
+            coload_trusted_ids(&undated, UNLINKED_BASE58, now).is_empty(),
+            "an entry with no timestamp is not trusted"
+        );
+    }
+
+    #[test]
+    fn entry_freshness_bounds() {
+        let now = DateTime::parse_from_rfc3339("2026-07-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert!(entry_is_fresh(Some("2026-07-10T11:59:59Z"), now)); // just now
+        assert!(entry_is_fresh(Some("2026-07-10T11:01:00Z"), now)); // 59 min → within TTL
+        assert!(!entry_is_fresh(Some("2026-07-10T10:59:00Z"), now)); // 61 min → expired
+        assert!(!entry_is_fresh(Some("2026-07-10T12:10:00Z"), now)); // 10 min future → skew reject
+        assert!(!entry_is_fresh(Some("not-a-timestamp"), now)); // malformed
+        assert!(!entry_is_fresh(None, now)); // absent
+    }
+
+    // ── Handshake-file trust gate (#4777 review — permission hardening) ───────
+
+    /// A well-formed one-entry handshake JSON body naming us as owner.
+    fn handshake_body() -> String {
+        serde_json::json!({
+            "agents": [{
+                "agentId": LINKED_BASE58,
+                "owner": UNLINKED_BASE58,
+                "ts": "2026-07-10T11:59:00Z",
+            }]
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn load_local_agents_from_missing_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("does-not-exist.json");
+        assert!(
+            load_local_agents_from(&path).agents.is_empty(),
+            "a missing handshake file yields an empty (fail-closed) set"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_local_agents_from_trusts_privately_owned_file() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = tmp.path().join("local-agents.json");
+        std::fs::write(&path, handshake_body()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let file = load_local_agents_from(&path);
+        assert_eq!(
+            file.agents.len(),
+            1,
+            "a privately-owned handshake file is read"
+        );
+        assert_eq!(file.agents[0].agent_id, LINKED_BASE58);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_local_agents_from_rejects_world_writable_file() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = tmp.path().join("local-agents.json");
+        std::fs::write(&path, handshake_body()).unwrap();
+        // A group/world-writable file could have been forged by another local
+        // user → fail closed and trust nothing.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(
+            load_local_agents_from(&path).agents.is_empty(),
+            "a world-writable handshake file is refused"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_local_agents_from_rejects_world_writable_dir() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("local-agents.json");
+        std::fs::write(&path, handshake_body()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        // A world-writable parent dir lets another user swap the file (or plant a
+        // symlink) → the file's own perms are not enough, so trust nothing.
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
+        let trusted_empty = load_local_agents_from(&path).agents.is_empty();
+        // Restore private perms before the tempdir is cleaned up.
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o700)).ok();
+        assert!(
+            trusted_empty,
+            "a world-writable parent dir makes the handshake untrusted"
+        );
     }
 }

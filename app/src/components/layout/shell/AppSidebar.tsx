@@ -4,6 +4,7 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { trackEvent } from '../../../services/analytics';
 import { APP_VERSION } from '../../../utils/config';
 import ConnectionIndicator from '../../ConnectionIndicator';
+import PrivacyStatusIndicator from '../../PrivacyStatusIndicator';
 import { NavIcon } from './navIcons';
 import SidebarAppRail from './SidebarAppRail';
 import SidebarHeader from './SidebarHeader';
@@ -84,9 +85,14 @@ export default function AppSidebar() {
         <span className="min-w-0 truncate">{t('nav.feedback')}</span>
       </button>
       {/* App-wide footer: connectivity status + build/version, pinned to the
-          bottom of the sidebar. */}
-      <div className="flex flex-shrink-0 items-center justify-center gap-2 border-t border-line px-2 py-0.5">
+          bottom of the sidebar. The privacy pill is un-hydrated (renders null)
+          on cold boot, so its leading separator travels WITH the pill (owned by
+          PrivacyStatusIndicator) rather than sitting here — otherwise a null
+          pill would leave a dangling `Connection · · version`. The version
+          keeps the separator that precedes IT, which is always present. */}
+      <div className="flex flex-shrink-0 flex-wrap items-center justify-center gap-x-2 gap-y-0.5 border-t border-line px-2 py-0.5">
         <ConnectionIndicator />
+        <PrivacyStatusIndicator />
         &middot;
         <span className="text-[10px] text-content-faint">
           {t('settings.betaBuild').replace('{version}', APP_VERSION)}

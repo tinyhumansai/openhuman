@@ -619,14 +619,22 @@ export interface BuilderTurnResult {
   assistantText: string;
   /** A run error, if the turn failed but a prior proposal was still captured. */
   error: string | null;
+  /**
+   * `true` when the turn paused because it hit the agent's tool-call budget
+   * (`max_tool_iterations`) with no proposal yet — as opposed to the agent
+   * voluntarily asking a clarifying question or finishing. `assistantText` is
+   * a "Done so far / Next steps" checkpoint in this case; the UI should offer
+   * a "Continue building" action rather than rendering it as a normal reply.
+   */
+  capped: boolean;
 }
 
 /**
- * The `workflow_builder` agent can take up to ~300s server-side
+ * The `workflow_builder` agent can take up to ~600s server-side
  * (`FLOW_BUILD_TIMEOUT_SECS` in `src/openhuman/flows/ops.rs`); match it so a slow
  * authoring turn doesn't time out client-side while the agent is still working.
  */
-const FLOW_BUILD_TIMEOUT_MS = 310_000;
+const FLOW_BUILD_TIMEOUT_MS = 610_000;
 
 /**
  * Map a raw `{ type: 'workflow_proposal', … }` payload (from the agent's
@@ -702,12 +710,18 @@ export async function buildWorkflow(
     proposal: unknown;
     assistant_text: string;
     error: string | null;
+    capped?: boolean;
   }>(response);
-  log('buildWorkflow: response hasProposal=%s', result.proposal != null);
+  log(
+    'buildWorkflow: response hasProposal=%s capped=%s',
+    result.proposal != null,
+    result.capped ?? false
+  );
   return {
     proposal: mapWorkflowProposal(result.proposal),
     assistantText: result.assistant_text ?? '',
     error: result.error ?? null,
+    capped: result.capped ?? false,
   };
 }
 

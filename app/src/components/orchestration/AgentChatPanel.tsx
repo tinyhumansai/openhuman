@@ -241,6 +241,37 @@ function SessionChatView({ session }: { session: SessionSummary }) {
     [body, sending, session.agentId, session.sessionId, refresh]
   );
 
+  // A runtime tool-approval decision → reply "allow"/"deny" to the peer. Rethrows
+  // on failure so SessionTranscript rolls the card back to buttons for a retry.
+  const decide = useCallback(
+    async (decision: 'allow' | 'deny'): Promise<void> => {
+      setSendError(null);
+      debug(
+        '[orchestration:agent-chat] approval decision: send session=%s decision=%s',
+        session.sessionId,
+        decision
+      );
+      try {
+        await orchestrationClient.sendMasterMessage({
+          body: decision,
+          recipient: session.agentId,
+          sessionId: session.sessionId,
+        });
+        if (mountedRef.current) void refresh();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debug(
+          '[orchestration:agent-chat] approval decision: failed session=%s %s',
+          session.sessionId,
+          message
+        );
+        if (mountedRef.current) setSendError(message);
+        throw error;
+      }
+    },
+    [session.agentId, session.sessionId, refresh]
+  );
+
   const runtime = session.harnessType || session.source || null;
   const directory = session.workspace?.trim() || null;
   const runningOn = session.agentId?.trim() || null;
@@ -323,7 +354,10 @@ function SessionChatView({ session }: { session: SessionSummary }) {
             {t('tinyplaceOrchestration.noMessages')}
           </p>
         ) : (
-          <SessionTranscript messages={messages} />
+          <SessionTranscript
+            messages={messages}
+            onDecide={(_message, decision) => decide(decision === 'deny' ? 'deny' : 'allow')}
+          />
         )}
       </div>
     </ChatPageScaffold>

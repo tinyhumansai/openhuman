@@ -393,7 +393,7 @@ describe('flowsApi', () => {
           error: null,
           failing_node_ids: [],
         },
-        timeoutMs: 310_000,
+        timeoutMs: 610_000,
       });
       expect(result.assistantText).toBe('here you go');
       expect(result.proposal?.name).toBe('Digest');
@@ -419,7 +419,7 @@ describe('flowsApi', () => {
           failing_node_ids: [],
           thread_id: 'builder-thread-9',
         },
-        timeoutMs: 310_000,
+        timeoutMs: 610_000,
       });
     });
   });

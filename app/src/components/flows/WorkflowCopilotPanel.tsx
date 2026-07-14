@@ -91,6 +91,27 @@ interface Props {
    */
   onBuildSeedConsumed?: () => void;
   /**
+   * Optional prefill seed (from the Suggested Workflows "Build this" action)
+   * — populates the composer's input with the suggestion's `build_prompt`
+   * once on mount WITHOUT sending it; the user reviews/edits the text and
+   * presses Send themselves. Distinct from `buildSeed`, which auto-sends.
+   *
+   * `mode` carries the builder mode the FIRST Send after this prefill must
+   * use — `'build'` for a Suggested Workflows seed, matching the
+   * already-created blank flow's `BuildMode::Build` contract — instead of
+   * `submit`'s normal `'revise'` turn. Consumed (and reset to `'revise'`) as
+   * soon as that first Send fires; later Sends on the same mount are plain
+   * revise turns.
+   */
+  prefillSeed?: { text: string; mode?: 'build' | 'create' } | null;
+  /**
+   * Fires once the prefill seed has populated the input, so the host can
+   * clear the ephemeral route seed (`location.state.copilotPrefill`) — same
+   * rationale as `onBuildSeedConsumed`: a remount (close/reopen) must not
+   * re-populate the input a second time against a still-present route seed.
+   */
+  onPrefillSeedConsumed?: () => void;
+  /**
    * The workflow's persisted copilot thread id (from the per-flow cache), so
    * reopening the panel resumes the same conversation instead of starting fresh.
    */
@@ -109,6 +130,8 @@ export default function WorkflowCopilotPanel({
   repairSeed = null,
   buildSeed = null,
   onBuildSeedConsumed,
+  prefillSeed = null,
+  onPrefillSeedConsumed,
   seedThreadId = null,
   onThreadIdChange,
 }: Props) {
@@ -117,6 +140,7 @@ export default function WorkflowCopilotPanel({
     threadId,
     sending,
     proposal,
+    capped,
     displayMessages,
     toolTimeline,
     liveResponse,
@@ -248,6 +272,29 @@ export default function WorkflowCopilotPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buildSeed, send, updatePendingAsk]);
 
+  // Populate the composer's input once when opened with a Suggested Workflows
+  // prefill seed — deliberately NEVER calls `send`: the user reviews/edits the
+  // pre-filled `build_prompt` and presses Send themselves. Guarded the same
+  // way as `buildSentRef`/`repairSentRef` (once per mount) so a re-render
+  // doesn't re-fill (and clobber) text the user has already started editing.
+  const prefillSentRef = useRef(false);
+  // The builder mode the FIRST manual Send after this prefill must use (see
+  // `prefillSeed`'s doc comment) — read and cleared by `submit` below once
+  // that first Send actually fires, so later Sends fall back to `revise`.
+  const pendingPrefillModeRef = useRef<'build' | 'create' | null>(null);
+  useEffect(() => {
+    if (!prefillSeed || prefillSentRef.current) return;
+    prefillSentRef.current = true;
+    pendingPrefillModeRef.current = prefillSeed.mode ?? 'build';
+    log('prefill seed: populating composer input (unsent), pending mode=%s', prefillSeed.mode);
+    setText(prefillSeed.text);
+    textInputRef.current?.focus();
+    // Consumed synchronously (no async dispatch to await, unlike build/repair)
+    // so the host can strip the ephemeral route seed right away — a later
+    // remount (close/reopen the copilot) then has no seed left to re-apply.
+    onPrefillSeedConsumed?.();
+  }, [prefillSeed, onPrefillSeedConsumed]);
+
   // Keep the transcript pinned to the newest message / streamed activity.
   // `scrollTo` is optional-chained: jsdom (tests) doesn't implement it.
   useEffect(() => {
@@ -263,14 +310,51 @@ export default function WorkflowCopilotPanel({
       const instruction = priorAsk
         ? `${priorAsk}\n\n(This is my answer to your question above: ${trimmed})`
         : trimmed;
-      const { proposed } = await send({
-        displayText: trimmed,
-        request: { mode: 'revise', instruction, graph, flowId },
-      });
+      // The FIRST Send after a Suggested Workflows prefill seed must run the
+      // seed's builder mode (default `build`), not the usual `revise` — the
+      // seed's flow was just created blank, so this turn needs the `build`
+      // brief (build → dry-run → propose) rather than being treated as a
+      // revise of an existing draft. Consumed once: later Sends on this same
+      // mount fall back to plain `revise`. Requires a real `flowId` (always
+      // true for a prefill seed, which only ever seeds an existing flow's
+      // canvas) — falls back to `revise` defensively if it's somehow absent,
+      // mirroring `buildSeed`'s own fallback above.
+      const prefillMode = pendingPrefillModeRef.current;
+      pendingPrefillModeRef.current = null;
+      const request =
+        prefillMode && flowId
+          ? { mode: prefillMode, instruction, graph, flowId }
+          : { mode: 'revise' as const, instruction, graph, flowId };
+      const { proposed } = await send({ displayText: trimmed, request });
       updatePendingAsk(proposed, instruction);
     },
     [text, sending, send, graph, flowId, updatePendingAsk]
   );
+
+  // (B34) One-click resume for a turn that hit the agent's tool-call budget
+  // (`capped`, see `useWorkflowBuilderChat`'s doc) with no proposal yet.
+  // Routes through the SAME `submit` path a typed follow-up would — the
+  // `pendingAskRef` mechanism (set above, since a capped turn also has
+  // `proposed === false`) automatically carries the original ask forward, so
+  // the agent picks the build back up with full context, not just "continue"
+  // in isolation.
+  //
+  // What this actually does (Codex review on #4865): `flows_build` spins up a
+  // FRESH `workflow_builder` agent per RPC — there is no server-side
+  // session/tool-history checkpoint to reattach to, so this is not a literal
+  // mid-thought resume. What DOES carry forward, because `submit` always
+  // sends `mode: 'revise'` over the CURRENT `graph` + `flowId` (never a blank
+  // `create`): (1) the live draft graph — unchanged by a capped turn, since
+  // `revise_workflow`/`propose_workflow` never persist without a proposal
+  // reaching this panel; and (2) the full accumulated instruction text via
+  // `pendingAskRef`. A fresh agent re-reading the same draft plus the same
+  // ask, now under the B31 50-iteration budget and B32's no-probing brief,
+  // reliably converges — that combination is what the capped card's copy
+  // promises ("keep building from the current draft"), not seamless
+  // tool-history continuity.
+  const continueBuilding = useCallback(() => {
+    void submit(t('flows.copilot.continueBuilding'));
+  }, [submit, t]);
 
   const handleInputKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -451,6 +535,33 @@ export default function WorkflowCopilotPanel({
                 data-testid="workflow-copilot-reject"
                 onClick={reject}>
                 {t('flows.copilot.reject')}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* (B34) The turn hit the agent's iteration limit with no proposal
+            yet — distinguish this from a voluntary clarifying question (which
+            renders as a plain agent bubble above, no card) with an explicit
+            "reached its iteration limit" signal and a one-click resume that
+            continues building from the current draft (see `continueBuilding`
+            above for why this is accurate rather than a seamless resume).
+            Never shown alongside `sending` (a fresh turn already cleared
+            `capped`) or a proposal (mutually exclusive server-side — see
+            `ops.rs`). */}
+        {capped && !sending && !proposal && (
+          <div
+            data-testid="workflow-copilot-capped"
+            className="rounded-xl border border-amber-300 bg-surface p-3 dark:border-amber-700">
+            <p className="text-xs text-content-secondary">{t('flows.copilot.cappedNotice')}</p>
+            <div className="mt-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                data-testid="workflow-copilot-continue"
+                onClick={continueBuilding}>
+                {t('flows.copilot.continueBuilding')}
               </Button>
             </div>
           </div>

@@ -56,7 +56,7 @@ async function navigateToRewards(): Promise<void> {
   });
   await browser.pause(1_000);
   await browser.execute(() => {
-    window.location.hash = '/rewards';
+    window.location.hash = '/rewards?view=main';
   });
   await browser.pause(2_000);
 }

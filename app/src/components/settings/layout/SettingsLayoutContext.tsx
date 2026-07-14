@@ -8,7 +8,15 @@ import { createContext, useContext } from 'react';
  * Defaults to false so panels rendered outside the shell (tests, embedded
  * uses) keep their standalone behavior.
  */
-const SettingsLayoutContext = createContext<{ inTwoPaneShell: boolean }>({ inTwoPaneShell: false });
+const SettingsLayoutContext = createContext<{
+  inTwoPaneShell: boolean;
+  /**
+   * Suppress the panel's own title/description/sub-nav chrome — used when a host
+   * (e.g. the Connections pane) already renders a page header above the panel,
+   * so the panel body renders headerless to avoid a doubled header.
+   */
+  headerless?: boolean;
+}>({ inTwoPaneShell: false });
 
 export const SettingsLayoutProvider = SettingsLayoutContext.Provider;
 

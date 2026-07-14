@@ -80,6 +80,16 @@ pub struct Agent {
     /// the first turn completes.
     pub(super) last_turn_usage_totals:
         Option<crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage>,
+    /// Whether the most recent turn's tinyagents loop paused because it hit
+    /// `max_tool_iterations` (`TinyagentsTurnOutcome::hit_cap`), rather than
+    /// finishing naturally. `false` until the first turn completes, and reset
+    /// on every subsequent turn — so it only ever reflects the LAST turn, not
+    /// "any turn ever". Consumed by callers that run a single headless turn
+    /// via [`run_single`](super::runtime) (e.g. `flows_build`) and need to
+    /// distinguish "the agent paused mid-work" from "the agent asked a
+    /// question" or "the agent finished" — `run_single` only returns the
+    /// checkpoint/final text, with no other signal for which case occurred.
+    pub(super) last_turn_hit_cap: bool,
     pub(super) history: Vec<ConversationMessage>,
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) learning_enabled: bool,

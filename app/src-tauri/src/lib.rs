@@ -2261,8 +2261,13 @@ fn strip_time_ticks_at_unix_epoch(args: &mut Vec<CefCommandLineArg>) {
 /// in PR #2032 but blocks any actual use of the app on a Wayland host).
 ///
 /// XSetErrorHandler is a process-global registration; safe to install before
-/// any X display is opened. libX11 is already a runtime dep (verified via
-/// ldd of the compiled OpenHuman binary).
+/// any X display is opened. libX11 is only pulled in transitively at *runtime*
+/// (via GTK/WebKit), so the `extern` block must carry an explicit
+/// `#[link(name = "X11")]` — otherwise `rust-lld` can't resolve the symbol at
+/// link time and the full desktop build fails with `undefined symbol:
+/// XSetErrorHandler` (only surfaces in the CI-Full / release bundle link step,
+/// not CI-Lite). libX11 is present on every Linux desktop host, so linking it
+/// directly is safe.
 #[cfg(target_os = "linux")]
 fn install_silent_x_error_handler() {
     use std::ffi::c_void;
@@ -2281,6 +2286,7 @@ fn install_silent_x_error_handler() {
     }
 
     type ErrorHandler = unsafe extern "C" fn(*mut c_void, *mut XErrorEvent) -> c_int;
+    #[link(name = "X11")]
     unsafe extern "C" {
         fn XSetErrorHandler(handler: Option<ErrorHandler>) -> Option<ErrorHandler>;
     }
