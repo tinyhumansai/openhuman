@@ -311,6 +311,7 @@ pub fn looks_like_local_ai_endpoint(url: &str) -> bool {
 const INFERENCE_PROVIDER_DOMAINS: &[&str] = &[
     "openrouter.ai",
     "openmodel.ai",
+    "atlascloud.ai",
     "openai.com",
     "anthropic.com",
     "groq.com",
@@ -1189,6 +1190,7 @@ mod tests {
 
         let falls_back: &[&str] = &[
             "https://openrouter.ai/api/v1",
+            "https://api.atlascloud.ai/v1",
             "https://api.openai.com/v1",
             "https://api.groq.com/openai/v1",
             "https://generativelanguage.googleapis.com/v1beta/openai",
@@ -1258,6 +1260,9 @@ mod tests {
         assert!(looks_like_inference_provider_endpoint(
             "https://api.openmodel.ai/v1"
         ));
+        assert!(looks_like_inference_provider_endpoint(
+            "https://api.atlascloud.ai/v1"
+        ));
         // Other managed providers, apex and subdomain.
         assert!(looks_like_inference_provider_endpoint(
             "https://api.openai.com/v1"
@@ -1315,6 +1320,10 @@ mod tests {
         );
         assert_eq!(
             effective_backend_api_url(&Some("https://api.openmodel.ai/v1".to_string())),
+            expected
+        );
+        assert_eq!(
+            effective_backend_api_url(&Some("https://api.atlascloud.ai/v1".to_string())),
             expected
         );
     }
