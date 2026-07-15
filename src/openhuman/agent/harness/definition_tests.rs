@@ -374,7 +374,10 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
         ("skill_creator", 50),
         ("task_manager_agent", 50),
         ("tools_agent", 50),
+        // Gated with `flows` (#4797) — absent from a slim build.
+        #[cfg(feature = "flows")]
         ("flow_discovery", 50),
+        #[cfg(feature = "flows")]
         ("workflow_builder", 50),
         ("skill_executor", 50),
         ("tinyplace_agent", 50),

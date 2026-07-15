@@ -2269,3 +2269,54 @@ fn no_gate_family_tool_silently_defaults_to_platform() {
         );
     }
 }
+
+// --- #4797: `flows` compile-time gate ---------------------------------------
+
+/// With the `flows` feature off, every flows-owned agent tool — and the
+/// `rhai_workflows` tool whose engine the gate sheds via `tinyagents/repl` — is
+/// compiled out of the default registry entirely.
+///
+/// `SecurityPolicy::default()` is `Supervised` (not `ReadOnly`), so the
+/// `rhai_workflows` assertion is a real one: that tool *would* be registered at
+/// this tier if the feature were on.
+#[test]
+#[cfg(not(feature = "flows"))]
+fn default_tools_omits_flows_tools_when_feature_off() {
+    let security = Arc::new(SecurityPolicy::default());
+    let tools = default_tools(security);
+    let names = tool_names(&tools);
+
+    for absent in [
+        "propose_workflow",
+        "revise_workflow",
+        "edit_workflow",
+        "validate_workflow",
+        "get_flow_history",
+        "list_flow_runs",
+        "resume_flow_run",
+        "cancel_flow_run",
+        "create_workflow",
+        "duplicate_flow",
+        "list_flows",
+        "get_flow",
+        "get_flow_run",
+        "list_flow_connections",
+        "search_tool_catalog",
+        "get_tool_contract",
+        "get_tool_output_sample",
+        "list_agent_profiles",
+        "list_connectable_toolkits",
+        "list_node_kinds",
+        "get_node_kind_contract",
+        "dry_run_workflow",
+        "run_flow",
+        "save_workflow",
+        "suggest_workflows",
+        "rhai_workflows",
+    ] {
+        assert!(
+            !names.iter().any(|n| n == absent),
+            "tool `{absent}` must be compiled out when the `flows` feature is off; got: {names:?}"
+        );
+    }
+}

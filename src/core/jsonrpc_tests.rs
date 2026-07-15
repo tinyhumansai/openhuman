@@ -243,6 +243,11 @@ async fn invoke_doctor_models_rejects_unknown_param() {
     assert!(err.contains("unknown param 'invalid'"));
 }
 
+// Uses a `flows.*` method as its gated-family vehicle: without the `flows`
+// feature there is no flows controller in the registry and the `.expect()`
+// below would panic. The transport-layer gating it proves is orthogonal to the
+// compile-time gate (#4797).
+#[cfg(feature = "flows")]
 #[tokio::test]
 async fn gated_method_is_unknown_at_transport_even_with_malformed_params() {
     // #4808 review (CodeRabbit): prove the schema-gate fix at the JSON-RPC
