@@ -233,10 +233,26 @@ GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml \
 | Feature | Default | Gates | Drops deps |
 | ------- | ------- | ----- | ---------- |
 | `voice` | ON | `openhuman::voice` + `openhuman::audio_toolkit` domains — STT/TTS providers, dictation server, always-on listening, podcast audio + email | `hound`, `lettre` |
+| `skills` | ON | `openhuman::skills` + `openhuman::skill_runtime` + `openhuman::skill_registry` domains — SKILL.md discovery/parse/install, workflow execution + run logs, remote catalogs, the `skill_setup` / `skill_executor` builtin agents, and the 16 skill agent tools | none (see below) |
 
 **Facade pattern (pathfinder for the other gates).** `pub mod voice;` is **always compiled** as a facade: the real submodules are `#[cfg(feature = "voice")]`, and a `#[cfg(not(feature = "voice"))] mod stub;` (`src/openhuman/voice/stub.rs`) re-exposes the same public surface that always-on / other-gated callers use (`server`, `dictation_listener`, `streaming`, `reply_speech`, `cloud_transcribe`, `cli`, `create_stt_provider`, `effective_stt_provider`, `publish_ptt_transcript_committed`) with no-op / `None` / disabled-error bodies. Callers therefore do **not** need per-call `#[cfg]`. When voice is off: the voice/audio controllers are unregistered (unknown-method over `/rpc`, absent from `/schema`), the `audio_generate_podcast` agent tools are absent, and `openhuman voice` returns a "voice disabled" error. Stub signatures must match the real ones exactly — the disabled build (`--no-default-features --features tokenjuice-treesitter`) is the **only** thing that catches drift, so run it before pushing any change to the voice surface.
 
 **Scope note:** the `voice` gate does **not** drop `whisper-rs` / `llama` / `cpal`. Those live in the inference domain (`src/openhuman/inference/local/service/whisper_engine.rs`; `cpal` is shared with accessibility) and await a separate future `inference` gate. The issue-level DoD line claiming whisper is dropped is superseded by this scope correction.
+
+**`skills` gate — the type carve-out (read before adding the next gate).** The three skill domains follow the same facade+stub shape as `voice`, with one important refinement: **`skills` is not a leaf — it is partly load-bearing infrastructure.** `src/openhuman/tools/traits.rs` re-exports the crate's unified `ToolResult` / `ToolContent` out of `skills::types`, and ~236 files consume them (`mcp_client`, `runtime_node`, every `Tool` impl). `Workflow` / `WorkflowFrontmatter` / `WorkflowScope` from `skills::ops_types` likewise appear in always-on agent-harness and prompt signatures. Gating `skills` wholesale would take down the entire tool trait system, MCP, and the Node runtime.
+
+So `skills::types` and `skills::ops_types` stay **compiled in both directions** — they are inert serde/std-only definitions with zero coupling to their gated siblings — and only *behaviour* is gated. `src/openhuman/skills/stub.rs` therefore mirrors **functions only** and re-exports the real types (`pub use super::ops_types::{Workflow, …}`), so there is **zero type duplication** — strictly less drift surface than the `voice` stub, which had to re-declare `SttResult` + the `SttProvider` trait because those live inside its gated tree.
+
+> **Generalizable rule for the remaining gates:** put a domain's inert types in a dep-free submodule and leave it **ungated**; stub only the behaviour. Reach for a stub type only when the type genuinely cannot be carved out.
+
+Two places the carve-out doesn't reach, and why they are `#[cfg]` at the call site instead of stubbed:
+
+- `agent_registry/agents/loader.rs` — the `skill_setup` / `skill_executor` `BuiltinAgent` entries. `include_str!` embeds the agent TOML from disk regardless of module gating, so the entry itself must disappear.
+- `agent/task_dispatcher/executor.rs` — the workflow-resolution branch. `registry::get_workflow` returns `Option<WorkflowDefinition>`, which flattens in `AgentDefinition` and is destructured at the call site; stubbing it would mean re-declaring that struct (exactly what the carve-out avoids). With the domain compiled out no handle can resolve to a skill, so falling through to the builtin-agent branch is correct, not degraded.
+
+**Dep note:** `skills = []` — the empty list is **intentional, do not "fix" it**. Unlike `voice` (`hound`/`lettre`), these domains have no exclusive dependencies: every crate they touch is shared with always-on domains, and `runtime_node` / `runtime_python` are used by Agent / Flows / Memory too. This gate's value is tool-surface + prompt-bloat + startup cost, **not** binary size.
+
+When skills are off: the `skills` / `skill_runtime` / `skill_registry` controllers are unregistered (unknown-method over `/rpc`, absent from `/schema`), the 16 skill agent tools (incl. `run_workflow` / `await_workflow`) are **absent** from the tool list rather than degraded to an error, the `skill_setup` / `skill_executor` builtin agents are gone, and the boot-time remote catalog refresh is skipped. Composes with the runtime `DomainSet::skills` flag (#4796) — that axis needed no change here; #4798 is compile-time only.
 
 ### Event bus (`src/core/event_bus/`)
 
