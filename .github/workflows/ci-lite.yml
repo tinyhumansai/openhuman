@@ -382,11 +382,7 @@ jobs:
           cache-on-failure: true
           shared-key: pr-rust-feature-gate-smoke
 
-      # Allow-list, not a deny-list: only `tokenjuice-treesitter` is enabled, so
-      # EVERY default-ON domain gate (voice, skills, …) is exercised in its
-      # disabled direction here. New gates are covered automatically — no new
-      # lane needed. This is the only thing that catches stub/facade drift.
-      - name: Check core builds with every domain gate disabled
+      - name: Check core builds with the voice gate disabled
         run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tokenjuice-treesitter
 
   rust-core-coverage:
