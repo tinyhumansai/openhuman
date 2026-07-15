@@ -233,10 +233,33 @@ GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml \
 | Feature | Default | Gates | Drops deps |
 | ------- | ------- | ----- | ---------- |
 | `voice` | ON | `openhuman::voice` + `openhuman::audio_toolkit` domains — STT/TTS providers, dictation server, always-on listening, podcast audio + email | `hound`, `lettre` |
+| `mcp` | ON | `openhuman::mcp_server` (the `openhuman mcp` stdio/HTTP server), `openhuman::mcp_registry` (dynamic Smithery installs — `mcp_clients` RPC namespace, SQLite, boot spawn, supervisor, OAuth), `openhuman::mcp_audit` (write-audit log), and the static config-declared server set in `openhuman::mcp_client`. ~19 agent tools, ~20k LOC | **none** (see scope note) |
 
 **Facade pattern (pathfinder for the other gates).** `pub mod voice;` is **always compiled** as a facade: the real submodules are `#[cfg(feature = "voice")]`, and a `#[cfg(not(feature = "voice"))] mod stub;` (`src/openhuman/voice/stub.rs`) re-exposes the same public surface that always-on / other-gated callers use (`server`, `dictation_listener`, `streaming`, `reply_speech`, `cloud_transcribe`, `cli`, `create_stt_provider`, `effective_stt_provider`, `publish_ptt_transcript_committed`) with no-op / `None` / disabled-error bodies. Callers therefore do **not** need per-call `#[cfg]`. When voice is off: the voice/audio controllers are unregistered (unknown-method over `/rpc`, absent from `/schema`), the `audio_generate_podcast` agent tools are absent, and `openhuman voice` returns a "voice disabled" error. Stub signatures must match the real ones exactly — the disabled build (`--no-default-features --features tokenjuice-treesitter`) is the **only** thing that catches drift, so run it before pushing any change to the voice surface.
 
 **Scope note:** the `voice` gate does **not** drop `whisper-rs` / `llama` / `cpal`. Those live in the inference domain (`src/openhuman/inference/local/service/whisper_engine.rs`; `cpal` is shared with accessibility) and await a separate future `inference` gate. The issue-level DoD line claiming whisper is dropped is superseded by this scope correction.
+
+#### The `mcp` gate
+
+Follows the voice facade+stub pattern for `mcp_server` / `mcp_registry` / `mcp_audit` (`stub.rs` in each), with two refinements worth copying:
+
+- **Type carve-out.** Inert, dependency-free type modules stay **ungated**: `mcp_registry::types`, `mcp_audit::types`, `mcp_server::tools::types` (`McpToolSpec`). They are `serde`/`serde_json`-only data consumed by always-compiled callers (the orchestrator prompt builder, `tool_registry`). Both builds therefore share the **one real type definition** — the stubs carry behaviour only, so struct fields can never drift between the enabled and disabled builds. `ConnectedServerOverview` was moved from `connections.rs` into `types.rs` for exactly this reason and is re-exported from `connections` so existing paths still resolve.
+- **Split facade (`mcp_client`).** `mcp_client` is **not** gated wholesale, because the directory does not match the real dependency graph. `mcp_client::sanitize` and `mcp_client::client` (`McpHttpClient`, `redact_endpoint`, `McpUnauthorizedError`) stay **always compiled**: they are mis-housed shared utilities. The `gitbooks` docs tool dials `McpHttpClient` directly (GitBook is modelled as a legacy MCP server), and the orchestrator prompt sanitises **skill** descriptions through `sanitize::sanitize_for_llm` — neither has anything to do with MCP, and stubbing them would silently break a docs tool and corrupt the orchestrator prompt in slim builds. Only `registry`, `stdio`, `spawn_env`, `setup_agent` are gated. **The gate follows the real dependency graph, not the directory name.** (Relocating `sanitize` + `client` out of `mcp_client` is worthwhile follow-up.) A bonus of keeping `client` compiled: the `McpServerNeedsAuth` classifier coupling test in `core::observability` stays always-compiled — no `#[cfg]`, no wording-drift leak.
+
+**Scope note — the `mcp` gate drops ZERO dependencies.** There is no MCP SDK in this crate: `grep -i mcp Cargo.toml` matches only the `test-mcp-stub` bin target. The entire protocol stack is hand-rolled over tokio process stdio + `reqwest` + `axum`, all of which are load-bearing for non-MCP domains. The gate is worth having for the ~20k LOC / ~19 agent tools / RPC surface it removes, but the issue-level DoD line claiming it "sheds the MCP SDK / transport stack" is superseded by this correction. The `mcp = []` feature list in `Cargo.toml` is intentionally empty — do not "fix" it by adding `dep:` entries.
+
+**Static vs dynamic — the naming is INVERTED from intuition.** Both halves must be gated or the gate is only half-applied:
+
+| Module | Despite the name, it is… | Backed by | Agent tools |
+| ------ | ------------------------ | --------- | ----------- |
+| `mcp_client` | the **STATIC**, config-declared server set (`[[mcp_client.servers]]` in TOML → `McpServerRegistry::from_config`) | TOML config | `mcp_list_servers`, `mcp_list_tools`, `mcp_call_tool` |
+| `mcp_registry` | the **DYNAMIC**, user-installed Smithery servers (live connection map, boot spawn, supervisor, OAuth) | SQLite `mcp_clients.db` | 11 × `mcp_registry_*` |
+
+**CLI when compiled out.** `src/core/cli.rs` is deliberately **untouched**: the `"mcp" | "mcp-server"` arm resolves to the stub's `run_stdio_from_cli`, which returns a "mcp feature disabled at compile time … rebuild with `--features mcp`" error. Deleting the arm would let `mcp` fall through to generic namespace resolution and fail with `unknown namespace: mcp` — which reads like a user typo rather than a build fact, and would leave an MCP host (Claude Desktop / Cursor) hanging on stdout that never speaks JSON-RPC. Pinned by `mcp_subcommand_reports_disabled_build_when_gate_off` in `src/core/cli_tests.rs`.
+
+**Dangling `mcp_agent` in the orchestrator TOML is expected and safe.** `agent.toml` is data and cannot be `#[cfg]`'d, so the orchestrator keeps listing `mcp_agent` in `subagents` even when the agent is compiled out. Both resolution sites already tolerate unknown ids — `collect_orchestrator_tools` warns and skips, `validate_tier_hierarchy` `continue`s — so the core still boots. `orchestrator_tolerates_unresolvable_subagent_id` / `orchestrator_tolerates_absent_mcp_agent` in `loader.rs` pin that contract; do not "tighten" unknown-subagent handling into a hard error without re-checking them. `src/core/legacy_aliases.rs`'s frontend-catalog drift tests ignore gated namespaces for the same data-vs-code reason.
+
+`src/core/all.rs` needs **no** `#[cfg]` for this gate: the stub aggregators return empty vecs, so the registration sites keep compiling unchanged.
 
 ### Event bus (`src/core/event_bus/`)
 
