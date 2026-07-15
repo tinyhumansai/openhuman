@@ -3,14 +3,17 @@
  *
  * Mirrors the row layout of `CoreJobList`
  * (`app/src/components/settings/panels/cron/CoreJobList.tsx`): name + status
- * badge header, a line of run metadata, then a row of `Button` actions. Swaps
- * the cron "pause/resume" text button for a `SettingsSwitch` toggle (the
- * canonical boolean control — see `components/settings/controls`) since
- * enable/disable here is a persistent setting, not a one-off action.
+ * badge header, a line of run metadata, then a row of `Button` actions. Uses
+ * the canonical `SettingsSwitch` boolean control (`components/settings/controls`)
+ * for enable/disable, since that's a persistent setting, not a one-off action —
+ * not an icon `Button`, so its state reads at a glance instead of needing a
+ * hover/title to disambiguate on vs. off.
  *
  * "View runs" (issue B5a.1) opens `FlowRunsDrawer` (mounted by `FlowsPage`)
  * for this flow's run history — re-added now that B3b's run inspector has
- * landed and the drawer has somewhere to send the user.
+ * landed and the drawer has somewhere to send the user. Delete lives in the
+ * same overflow menu (destructive actions shouldn't sit in the flat button
+ * row next to Run/toggle, where a mis-click is one tap away).
  *
  * The flow name (issue B5b.1) is itself the "View" affordance for the new
  * read-only Workflow Canvas: it's rendered as a button that calls `onView`,
@@ -22,6 +25,7 @@
  */
 import { useT } from '../../lib/i18n/I18nContext';
 import type { Flow } from '../../services/api/flowsApi';
+import SettingsSwitch from '../settings/controls/SettingsSwitch';
 import Button from '../ui/Button';
 import FlowRowMenu from './FlowRowMenu';
 
@@ -29,41 +33,6 @@ function PlayIcon() {
   return (
     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M7 5l12 7-12 7V5z" />
-    </svg>
-  );
-}
-
-function PowerIcon() {
-  // On/off — enabled vs. paused (distinct from Run's play triangle).
-  return (
-    <svg
-      className="h-4 w-4"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true">
-      <path d="M12 2v10" />
-      <path d="M18.36 6.64a9 9 0 11-12.73 0" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg
-      className="h-4 w-4"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true">
-      <path d="M3 6h18M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2m2 0v14a1 1 0 01-1 1H7a1 1 0 01-1-1V6" />
-      <path d="M10 11v6M14 11v6" />
     </svg>
   );
 }
@@ -153,27 +122,18 @@ const FlowListRow = ({
       </div>
 
       {/* All controls sit together on the right: the toggle (enabled/paused —
-          the switch alone communicates state), then Run, Delete, and an overflow
-          menu with the secondary actions (view runs / export / duplicate). */}
+          the switch alone communicates state), then Run, and an overflow menu
+          with the secondary/destructive actions (view runs / export /
+          duplicate / delete). */}
       <div className="flex flex-shrink-0 items-center gap-1.5">
-        <Button
-          type="button"
-          variant="tertiary"
-          size="sm"
-          iconOnly
-          data-testid={`flow-toggle-${flow.id}`}
-          aria-label={t('flows.list.toggleEnabled')}
-          aria-pressed={flow.enabled}
-          title={flow.enabled ? t('flows.list.enabled') : t('flows.list.paused')}
+        <SettingsSwitch
+          id={`flow-switch-${flow.id}`}
+          checked={flow.enabled}
+          onCheckedChange={() => onToggle(flow)}
           disabled={toggleBusy}
-          className={
-            flow.enabled
-              ? 'text-sage-600 dark:text-sage-300'
-              : 'text-content-faint hover:text-content-secondary'
-          }
-          onClick={() => onToggle(flow)}>
-          <PowerIcon />
-        </Button>
+          aria-label={t('flows.list.toggleEnabled')}
+          data-testid={`flow-toggle-${flow.id}`}
+        />
         <Button
           type="button"
           variant="primary"
@@ -186,18 +146,6 @@ const FlowListRow = ({
           disabled={runBusy}
           onClick={() => onRun(flow)}>
           <PlayIcon />
-        </Button>
-        <Button
-          type="button"
-          variant="tertiary"
-          tone="danger"
-          size="sm"
-          iconOnly
-          data-testid={`flow-delete-${flow.id}`}
-          aria-label={t('flows.list.delete')}
-          title={t('flows.list.delete')}
-          onClick={() => onDelete(flow)}>
-          <TrashIcon />
         </Button>
         <FlowRowMenu
           rowId={flow.id}
@@ -219,6 +167,13 @@ const FlowListRow = ({
               label: t('flows.list.duplicate'),
               onSelect: () => onDuplicate(flow),
               testId: `flow-duplicate-${flow.id}`,
+            },
+            {
+              key: 'delete',
+              label: t('flows.list.delete'),
+              onSelect: () => onDelete(flow),
+              danger: true,
+              testId: `flow-delete-${flow.id}`,
             },
           ]}
         />

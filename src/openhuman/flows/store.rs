@@ -374,12 +374,22 @@ impl std::fmt::Display for FlowUpdateError {
 /// flow's `updated_at` no longer matches — so an agent save and a concurrent
 /// canvas save can't silently clobber each other. `None` keeps the prior
 /// last-write-wins behaviour for callers that don't track a version.
+///
+/// `enabled_override`, when `Some`, forces the persisted `enabled` flag to
+/// that value in the *same* guarded `UPDATE` as the graph/name/
+/// `require_approval` write — used by `ops::flows_update`'s B29 Rule 1
+/// analogue (auto-disarming a flow whose trigger just changed from manual to
+/// automatic) so the disarm can never race a concurrent read/write of
+/// `enabled` (a separate `set_enabled` call after this one would leave a
+/// TOCTOU window). `None` leaves `enabled` untouched, matching the previous
+/// behaviour for every other caller.
 pub fn update_flow_graph(
     config: &Config,
     id: &str,
     name: String,
     graph: tinyflows::model::WorkflowGraph,
     require_approval: bool,
+    enabled_override: Option<bool>,
     expected_updated_at: Option<&str>,
 ) -> std::result::Result<Flow, FlowUpdateError> {
     let current = get_flow(config, id)
@@ -400,21 +410,25 @@ pub fn update_flow_graph(
     let prior_graph_json =
         serde_json::to_string(&current.graph).unwrap_or_else(|_| "null".to_string());
     let now = Utc::now().to_rfc3339();
+    let new_enabled = enabled_override.unwrap_or(current.enabled);
 
     with_connection(config, |conn| {
         // Guarded UPDATE keyed on the observed updated_at (race-safe even
         // without an explicit expected version) — a concurrent writer that
         // moved updated_at makes this match 0 rows. Targeted columns only, so a
-        // concurrent set_enabled/record_run isn't clobbered.
+        // concurrent set_enabled/record_run isn't clobbered (unless this call
+        // itself carries an `enabled_override`, in which case `enabled` is
+        // one of the targeted columns by design).
         let changed = conn
             .execute(
                 "UPDATE flow_definitions SET name = ?1, graph_json = ?2, updated_at = ?3, \
-                 require_approval = ?4 WHERE id = ?5 AND updated_at = ?6",
+                 require_approval = ?4, enabled = ?5 WHERE id = ?6 AND updated_at = ?7",
                 params![
                     name,
                     graph_json,
                     now,
                     if require_approval { 1 } else { 0 },
+                    if new_enabled { 1 } else { 0 },
                     id,
                     current.updated_at,
                 ],

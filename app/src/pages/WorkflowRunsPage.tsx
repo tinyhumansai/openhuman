@@ -1,13 +1,18 @@
 /**
  * WorkflowRunsPage — the aggregate "All runs" view: every workflow's runs across
  * the whole `flows` domain, newest first, backed by the `flows_list_all_runs`
- * core RPC. Each row links back to its workflow's canvas.
+ * core RPC. Each row links back to its workflow's canvas. Stays live via
+ * {@link useFlowRunsLiveRefresh} while any listed run is still active, via a
+ * lightweight `refetchRuns` (re-fetches just the runs, not `listFlows()` too)
+ * so a run doesn't sit on "Running" until the user reloads the page.
  */
+import debug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import PanelPage from '../components/layout/PanelPage';
 import { CenteredLoadingState, ErrorBanner } from '../components/ui/LoadingState';
+import { useFlowRunsLiveRefresh } from '../hooks/useFlowRunsLiveRefresh';
 import { useT } from '../lib/i18n/I18nContext';
 import {
   type Flow,
@@ -16,6 +21,8 @@ import {
   listAllFlowRuns,
   listFlows,
 } from '../services/api/flowsApi';
+
+const log = debug('app:flows:runs-page');
 
 const STATUS_CLASS: Record<FlowRunStatus, string> = {
   running: 'bg-primary-500/15 text-primary-600 dark:text-primary-300',
@@ -55,6 +62,21 @@ export default function WorkflowRunsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Lighter-weight than `load` — only re-fetches the runs (not `listFlows()`
+  // too), since flow names rarely change mid-run and re-fetching them on
+  // every live-refresh tick would be wasted work.
+  const refetchRuns = useCallback(() => {
+    listAllFlowRuns()
+      .then(setRuns)
+      .catch(err => {
+        // Best-effort background refresh — a transient failure here shouldn't
+        // clobber the page's existing error/loading state from `load`.
+        log('refetchRuns failed: %o', err);
+      });
+  }, []);
+
+  useFlowRunsLiveRefresh(runs, refetchRuns);
 
   const statusLabel = (status: FlowRunStatus) =>
     t(`flows.allRuns.status.${status}`, status.replace(/_/g, ' '));

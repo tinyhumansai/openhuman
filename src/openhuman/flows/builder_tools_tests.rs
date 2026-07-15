@@ -1759,6 +1759,76 @@ async fn save_workflow_rejects_invalid_graph_and_leaves_flow_intact() {
     );
 }
 
+/// A single-node graph with an automatic (schedule) trigger — enough to
+/// exercise the manual→automatic transition without tripping any of
+/// `run_builder_gates`' binding/connection/contract checks (no other nodes,
+/// nothing to bind).
+fn schedule_trigger_graph() -> Value {
+    json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger",
+              "config": { "trigger_kind": "schedule", "schedule": "0 8 * * *" } }
+        ],
+        "edges": []
+    })
+}
+
+#[tokio::test]
+async fn save_workflow_surfaces_auto_disarm_warning_on_manual_to_automatic_transition() {
+    // Regression for #4889 + the stale-docs issue that motivated this test:
+    // `flows_update` auto-disables a flow whenever its trigger transitions
+    // from manual to automatic on an already-enabled flow, but `save_workflow`
+    // used to drop `flows_update`'s explanatory `RpcOutcome.logs` entirely —
+    // the agent had no way to relay the disarm to the user. Assert both the
+    // disarm itself and that its log now surfaces in `save_workflow`'s
+    // `warnings`.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow_id = seed_flow(&config, "Manual flow").await;
+    let seeded = ops::flows_get(&config, &flow_id).await.unwrap().value;
+    assert!(
+        seeded.enabled,
+        "precondition: a manual-trigger flow persists enabled from create"
+    );
+
+    let tool = SaveWorkflowTool::new(config.clone());
+    let result = tool
+        .execute(json!({
+            "flow_id": flow_id,
+            "graph": schedule_trigger_graph(),
+        }))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.output());
+
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    assert_eq!(
+        parsed["enabled"], false,
+        "manual→automatic transition on an enabled flow must auto-disable it: {parsed}"
+    );
+    let warnings = parsed["warnings"]
+        .as_array()
+        .expect("warnings must be an array");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.as_str().unwrap_or("").contains("auto-disabled")),
+        "save_workflow must surface flows_update's disarm log as a warning, got: {parsed}"
+    );
+    let flow_updated_boilerplate = format!("flow updated: {flow_id}");
+    assert!(
+        warnings
+            .iter()
+            .all(|w| w.as_str().unwrap_or("") != flow_updated_boilerplate),
+        "save_workflow must exclude the redundant \"flow updated: <id>\" boilerplate \
+         from warnings, got: {parsed}"
+    );
+
+    // Persisted, not just returned in-memory.
+    let reloaded = ops::flows_get(&config, &flow_id).await.unwrap().value;
+    assert!(!reloaded.enabled);
+}
+
 // ── save_workflow: enforcing binding-resolvability gate ─────────────────────
 
 /// The proven live-failure shape (same as

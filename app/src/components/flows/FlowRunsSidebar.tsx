@@ -3,8 +3,9 @@
  * dynamic left sidebar while a flow is open on the canvas (`/flows/:id`). A
  * compact, scannable run history (status dot + status + relative time); clicking
  * a run opens the full {@link FlowRunInspectorDrawer} (which polls its live
- * status). One-shot fetch via `listFlowRuns` with a manual refresh — the engine
- * emits no list-level socket events, so this mirrors `FlowRunsDrawer`'s model.
+ * status). Fetches via `listFlowRuns`, with a manual refresh button plus
+ * {@link useFlowRunsLiveRefresh} keeping the list itself live while any run
+ * shown here is still active (no manual refresh/navigate-away required).
  *
  * Rendered by `FlowCanvasPage` inside a `SidebarContent` portal, so it only
  * appears for a persisted flow (a draft has no runs yet).
@@ -13,6 +14,7 @@ import createDebug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import { useFlowRunsLiveRefresh } from '../../hooks/useFlowRunsLiveRefresh';
 import { useT } from '../../lib/i18n/I18nContext';
 import { type FlowRun, listFlowRuns } from '../../services/api/flowsApi';
 import { CenteredLoadingState, ErrorBanner } from '../ui/LoadingState';
@@ -97,6 +99,8 @@ export default function FlowRunsSidebar({ flowId }: FlowRunsSidebarProps) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useFlowRunsLiveRefresh(runs, load);
 
   return (
     <div className="flex h-full flex-col" data-testid="flow-runs-sidebar">
