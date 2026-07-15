@@ -4182,6 +4182,8 @@ const messages: TranslationMap = {
   'flows.copilot.removed': '{count} rimossi',
   'flows.copilot.noChanges': 'Questa proposta non modifica alcun nodo.',
   'flows.copilot.accept': 'Applica alla bozza',
+  'flows.copilot.acceptAndSave': 'Accetta e salva',
+  'flows.copilot.saving': 'Salvataggio…',
   'flows.copilot.reject': 'Ignora',
   'flows.copilot.previewHint': 'Revisione di una bozza proposta: non è stato ancora salvato nulla.',
   'flows.copilot.repairDisplay': 'Un’esecuzione è fallita; esaminala e proponi una correzione.',

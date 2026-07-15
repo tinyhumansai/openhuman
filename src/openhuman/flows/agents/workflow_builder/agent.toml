@@ -1,13 +1,14 @@
 id = "workflow_builder"
 display_name = "Workflow Builder"
 delegate_name = "build_workflow"
-when_to_use = "Workflow authoring specialist — owns building tinyflows automation graphs from a natural-language description. Route any request to 'set up a workflow that…', 'automate…', 'when X happens do Y', 'build/create/edit an automation or flow', or to iterate on a proposed workflow here. It grounds nodes in real tool slugs + connections, dry-runs a draft in a sandbox to self-check, and returns a workflow PROPOSAL for review. Persistence stays with the user's Accept + Save; when the user explicitly asks the agent to save (or test-run) onto an existing flow id it may `save_workflow` / `run_flow` — but never on its own, and it can never create a new flow or enable/disable one. Not for running an already-saved flow (that is a direct flows_run) and not for the legacy skill 'workflows'."
+when_to_use = "Workflow authoring specialist — owns building tinyflows automation graphs from a natural-language description. Route any request to 'set up a workflow that…', 'automate…', 'when X happens do Y', 'build/create/edit an automation or flow', or to iterate on a proposed workflow here. It grounds nodes in real tool slugs + connections, dry-runs a draft in a sandbox to self-check, and returns a workflow PROPOSAL for review. Persistence stays with the user's Accept + Save; when the user explicitly asks the agent to save (or test-run) onto an existing flow id it may `save_workflow` / `run_flow` — but never on its own. It CAN create a new flow (`create_workflow`) or clone one (`duplicate_flow`) when the user explicitly asks, but every flow it creates is always born DISABLED — it can never enable a flow, or run one without the user's confirmation first. Not for running an already-saved flow (that is a direct flows_run) and not for the legacy skill 'workflows'."
 temperature = 0.2
 max_iterations = 12
 iteration_policy = "extended"
 max_result_chars = 12000
-# No sandbox filter needed: the belt is propose/read/dry-run plus two
+# No sandbox filter needed: the belt is propose/read/dry-run plus a handful of
 # explicitly-bounded writes (save_workflow onto an existing flow;
+# create_workflow/duplicate_flow, always force-disabled at creation;
 # run_flow of a saved flow behind a confirm-first prompt rule), and
 # dry_run_workflow runs against tinyflows MOCK capabilities (no real effects).
 sandbox_mode = "none"
@@ -28,10 +29,12 @@ hint = "reasoning"
 # DELIBERATELY NARROW: propose/revise (validate-only) + read (flows, runs,
 # connections, tool catalog) + sandbox dry-run + Composio discovery/connect +
 # a confirmed real test-run of a SAVED flow + save_workflow (persist a graph
-# onto an EXISTING flow only). NO shell, NO file writes, NO channel sends, NO
-# composio_execute, and NO flows_create/set_enabled — the agent can never
-# create or enable a flow, or perform an arbitrary real integration action
-# directly. Composio access is limited to LISTING toolkits/connections,
+# onto an EXISTING flow only) + create_workflow/duplicate_flow (persist a
+# BRAND NEW flow — always force-disabled at creation, see
+# `builder_tools::CreateWorkflowTool`). NO shell, NO file writes, NO channel
+# sends, NO composio_execute, and NO flows_set_enabled — the agent can create
+# a flow but can never enable one, or perform an arbitrary real integration
+# action directly. Composio access is limited to LISTING toolkits/connections,
 # raising the inline CONNECT card (an approval-gated OAuth hand-off), and one
 # narrow carve-out below.
 # `run_flow` executes a flow the user has ALREADY saved to test it — a real

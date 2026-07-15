@@ -3232,10 +3232,13 @@ impl Tool for SaveWorkflowTool {
          the usual case after editing with edit_workflow; draft_id wins if both are given) or \
          an inline `graph`; `flow_id` is always required as the persistence TARGET. It \
          validates and writes the graph (and optional new `name`) to that flow. It can NOT \
-         create a new flow, and it never changes the flow's enabled state or its approval \
-         gate. NOTE: if the flow is enabled and the graph has a schedule/app_event trigger, \
-         saving arms it — it will start firing on its own. Always tell the user what you \
-         saved. Params: { flow_id, draft_id? | graph?, name? }."
+         create a new flow, and it never touches the approval gate — but it CAN \
+         auto-disable the flow when the trigger transitions from manual to automatic \
+         (schedule/webhook/app_event), so a save never silently arms a trigger that wasn't \
+         already live; the returned `warnings` will explain it when that happens. NOTE: if \
+         the flow was ALREADY enabled with an automatic trigger and stays automatic, saving \
+         re-arms it live — it will start firing on its own. Always tell the user what you \
+         saved (including any auto-disable). Params: { flow_id, draft_id? | graph?, name? }."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -3385,12 +3388,29 @@ impl Tool for SaveWorkflowTool {
                     enabled = flow.enabled,
                     "[flows] save_workflow: persisted"
                 );
+                // Surface any explanatory logs `flows_update` produced — most
+                // notably the manual→automatic auto-disarm message (#4889) —
+                // to the agent. Skip the boilerplate "flow updated: <id>" line,
+                // which just duplicates the `persisted`/`flow_id` fields this
+                // response already carries.
+                let flow_updated_boilerplate = format!("flow updated: {flow_id}");
+                warnings.extend(
+                    outcome
+                        .logs
+                        .into_iter()
+                        .filter(|log| *log != flow_updated_boilerplate),
+                );
                 // Issue B29 (save/enable safety), Rule 3: `flows_create` only
                 // gates the FIRST creation of a flow — an agent `save_workflow`
-                // targets an EXISTING flow via `flows_update`, which preserves
-                // whatever `enabled` state the flow already had. If the user
-                // already armed this flow (enabled it) and it has an automatic
-                // trigger, saving a new graph onto it re-arms it live with no
+                // targets an EXISTING flow via `flows_update`, which (since
+                // #4889) force-disables the flow whenever the trigger
+                // transitions from manual to automatic (schedule/webhook/
+                // app_event) — so a save can never silently arm a trigger that
+                // wasn't already live (see the `warnings.extend` above for the
+                // explanatory log). Short of that transition, `flows_update`
+                // preserves whatever `enabled` state the flow already had: if
+                // it was ALREADY enabled with an automatic trigger and stays
+                // automatic, saving a new graph onto it re-arms it live with no
                 // further confirmation. Surface that loudly so the copilot
                 // relays it to the user instead of staying silent.
                 if flow.enabled && ops::trigger_is_automatic(&flow.graph) {
