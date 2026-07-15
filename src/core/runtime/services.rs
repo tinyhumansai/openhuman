@@ -127,6 +127,8 @@ pub fn spawn_cron_service() {
                 // flow (issue B2) — idempotent, so a flow whose binding
                 // predates this feature (or was otherwise lost) gets its
                 // schedule re-registered without the user re-toggling it.
+                // Gated with flows — absent entirely from a slim build.
+                #[cfg(feature = "flows")]
                 if let Err(e) =
                     crate::openhuman::flows::ops::reconcile_schedule_triggers_on_boot(&config).await
                 {

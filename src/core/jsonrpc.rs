@@ -2024,6 +2024,10 @@ fn register_domain_subscribers(
     // runs `flows::ops::flows_run`, so schedule/app-event workflows still
     // dispatch when no realtime channel is configured or
     // `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` short-circuits `start_channels`.
+    // The `plan.flows` runtime guard cannot stand in for the compile-time gate:
+    // the `flows::bus::FlowTriggerSubscriber` type path below must still resolve
+    // for this to compile, so the whole block is `#[cfg]`-gated too.
+    #[cfg(feature = "flows")]
     if plan.flows {
         if group_first_time(DomainGroup::Flows) {
             if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
@@ -2039,6 +2043,10 @@ fn register_domain_subscribers(
     } else {
         log::debug!("[event_bus] flows trigger subscriber SKIPPED — Flows domain disabled");
     }
+    #[cfg(not(feature = "flows"))]
+    log::debug!(
+        "[event_bus] flows trigger subscriber SKIPPED — flows feature disabled at compile time"
+    );
 
     // Memory: conversation-persistence + sync-stage bridge.
     if plan.memory {

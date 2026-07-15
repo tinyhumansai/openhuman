@@ -232,6 +232,8 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         crate::openhuman::cron::all_cron_registered_controllers(),
     );
     // Saved automation workflows (tinyflows graphs): create/get/list/update/delete/run
+    // (gated with flows).
+    #[cfg(feature = "flows")]
     push(
         &mut controllers,
         DomainGroup::Flows,
