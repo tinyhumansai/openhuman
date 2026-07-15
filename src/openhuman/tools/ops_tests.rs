@@ -298,6 +298,11 @@ fn all_tools_registers_gitbooks_when_enabled() {
 }
 
 #[test]
+// Wholly about the static MCP bridge surface, which the `mcp` feature compiles
+// out — no meaningful residue to assert in the disabled build (the
+// "no MCP tools registered" direction is covered by
+// `all_tools_omits_mcp_tools_when_gate_off` below).
+#[cfg(feature = "mcp")]
 fn all_tools_registers_generic_mcp_bridge_tools_when_servers_exist() {
     let tmp = TempDir::new().unwrap();
     let mut cfg = test_config(&tmp);
@@ -324,6 +329,50 @@ fn all_tools_registers_generic_mcp_bridge_tools_when_servers_exist() {
     assert_contains_all(
         &names,
         &["mcp_list_servers", "mcp_list_tools", "mcp_call_tool"],
+    );
+}
+
+/// The disabled direction of the `mcp` gate (#4799): even with MCP servers
+/// declared in config, a build without the `mcp` feature registers NO MCP tool
+/// of any family — neither the static bridge (`mcp_*`), the dynamic registry
+/// (`mcp_registry_*`), nor the setup-agent surface (`mcp_setup_*`).
+///
+/// Deliberately asserts by prefix rather than naming the ~19 tools: a new MCP
+/// tool added later must not be able to leak into slim builds just because
+/// nobody remembered to extend a hardcoded list here.
+#[test]
+#[cfg(not(feature = "mcp"))]
+fn all_tools_omits_mcp_tools_when_gate_off() {
+    let tmp = TempDir::new().unwrap();
+    let mut cfg = test_config(&tmp);
+    cfg.gitbooks.enabled = false;
+    cfg.mcp_client
+        .servers
+        .push(crate::openhuman::config::McpServerConfig {
+            name: "docs".into(),
+            endpoint: "https://example.com/mcp".into(),
+            command: String::new(),
+            args: Vec::new(),
+            env: std::collections::HashMap::new(),
+            cwd: None,
+            description: Some("Example docs MCP".into()),
+            enabled: true,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            timeout_secs: 30,
+            auth: crate::openhuman::config::McpAuthConfig::None,
+        });
+
+    let names = tool_names(&integration_tools_for_config(&tmp, &cfg));
+    let leaked: Vec<&String> = names
+        .iter()
+        .filter(|n| n.starts_with("mcp_") || n.starts_with("mcp_registry_"))
+        .collect();
+
+    assert!(
+        leaked.is_empty(),
+        "no MCP tool may be registered when the `mcp` feature is compiled out, \
+         even with `[[mcp_client.servers]]` declared in config; leaked: {leaked:?}"
     );
 }
 
@@ -2092,15 +2141,29 @@ const DESKTOP_TOOLS: &[&str] = &[
     "screen_intelligence_globe_listener_stop",
     "screen_intelligence_request_permissions",
     "screen_intelligence_request_permission",
+    // The `mcp_registry_*` desktop surface is compiled out with the `mcp`
+    // feature, so these expectations are gated per-element rather than gating
+    // the three tests below away wholesale — the non-MCP desktop tools must
+    // keep their coverage in both builds.
+    #[cfg(feature = "mcp")]
     "mcp_registry_search",
+    #[cfg(feature = "mcp")]
     "mcp_registry_get",
+    #[cfg(feature = "mcp")]
     "mcp_registry_installed_list",
+    #[cfg(feature = "mcp")]
     "mcp_registry_status",
+    #[cfg(feature = "mcp")]
     "mcp_registry_connect",
+    #[cfg(feature = "mcp")]
     "mcp_registry_disconnect",
+    #[cfg(feature = "mcp")]
     "mcp_registry_tool_call",
+    #[cfg(feature = "mcp")]
     "mcp_registry_config_assist",
+    #[cfg(feature = "mcp")]
     "mcp_registry_install",
+    #[cfg(feature = "mcp")]
     "mcp_registry_uninstall",
     "workspace_read_persona",
     "workspace_update_persona",
@@ -2111,7 +2174,9 @@ const DESKTOP_TOOLS: &[&str] = &[
 const DESKTOP_DEFAULT_OFF: &[&str] = &[
     "screen_intelligence_request_permissions",
     "screen_intelligence_request_permission",
+    #[cfg(feature = "mcp")]
     "mcp_registry_install",
+    #[cfg(feature = "mcp")]
     "mcp_registry_uninstall",
     "workspace_update_persona",
     "workspace_reset_persona",
@@ -2121,8 +2186,11 @@ const DESKTOP_DEFAULT_OFF: &[&str] = &[
 const DESKTOP_ALWAYS_ON: &[&str] = &[
     "screen_intelligence_status",
     "screen_intelligence_capture_now",
+    #[cfg(feature = "mcp")]
     "mcp_registry_search",
+    #[cfg(feature = "mcp")]
     "mcp_registry_tool_call",
+    #[cfg(feature = "mcp")]
     "mcp_registry_connect",
     "workspace_read_persona",
 ];
