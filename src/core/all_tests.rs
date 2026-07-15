@@ -907,6 +907,7 @@ fn group_mapping_smoke() {
     assert_eq!(group_for_namespace("flows"), Some(DomainGroup::Flows));
     assert_eq!(group_for_namespace("skills"), Some(DomainGroup::Skills));
     assert_eq!(group_for_namespace("voice"), Some(DomainGroup::Voice));
+    #[cfg(feature = "web3")]
     assert_eq!(group_for_namespace("wallet"), Some(DomainGroup::Web3));
     assert_eq!(group_for_namespace("meet"), Some(DomainGroup::Meet));
     // Internal-only registry is grouped too (mcp_audit → Mcp).
