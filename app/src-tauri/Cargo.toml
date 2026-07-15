@@ -132,7 +132,9 @@ cef = { version = "=146.4.1", default-features = false }
 # by tying the core's lifetime to the GUI process. The existing port-7788
 # probe in `core_process::ensure_running` still attaches to a running
 # `openhuman-core run` harness when one is already listening.
-openhuman_core = { path = "../..", package = "openhuman", default-features = false }
+openhuman_core = { path = "../..", package = "openhuman", default-features = false, features = [
+    "mcp",
+] }
 tinyjuice = { version = "0.2.1", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
