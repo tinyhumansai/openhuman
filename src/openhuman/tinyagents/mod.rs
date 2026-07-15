@@ -79,7 +79,7 @@ pub(crate) use embeddings::ProviderEmbeddingModel;
 pub(crate) use middleware::{
     HandoffConfig, SuperContextConfig, TranscriptSnapshotSink, TurnContextMiddleware,
 };
-use model::ProviderModel;
+use model::{BuiltTurnModels, ProviderModel, TierRoutes, TurnChatModel};
 pub(crate) use observability::SubagentScope;
 use observability::{
     CapPauser, IterationCursor, OpenhumanEventBridge, ProviderUsageCarry, ToolFailureMap,
@@ -1172,13 +1172,13 @@ fn tinyagents_depth_error(
 /// `Provider` → `ChatModel` adaptation is confined to `build_turn_models`.
 pub(crate) struct TurnModels {
     /// The turn's effective/primary model (registry default + dispatch target).
-    primary: Arc<dyn tinyagents::harness::model::ChatModel<()>>,
+    primary: TurnChatModel,
     /// Additive workload-tier routes (registry name → model), excluding the
     /// primary; the crate registry resolves fallback/selection across them.
-    routes: Vec<(String, Arc<dyn tinyagents::harness::model::ChatModel<()>>)>,
+    routes: TierRoutes,
     /// A model for the context-window summarizer (a distinct adapter instance so
     /// its provider errors don't touch the turn's `error_slot`).
-    summarizer: Arc<dyn tinyagents::harness::model::ChatModel<()>>,
+    summarizer: TurnChatModel,
     /// Recovers the primary's original (downcastable) provider error on failure.
     error_slot: crate::openhuman::tinyagents::model::ProviderErrorSlot,
     /// Provider telemetry id (`{provider_id}.{model}` in Langfuse), captured from
@@ -1307,26 +1307,25 @@ fn build_turn_models_crate(
 
     // The primary honours an explicit provider-string override when the producer's
     // effective provider differs from `provider_for_role(role)` (triage #1257).
-    let build_primary =
-        |m: &str| -> anyhow::Result<Arc<dyn tinyagents::harness::model::ChatModel<()>>> {
-            match primary_override {
-                Some(ps) => factory::create_turn_chat_model_from_string_with_native_tools(
-                    role,
-                    ps,
-                    config,
-                    m,
-                    temperature,
-                    !force_text_mode,
-                ),
-                None => factory::create_turn_chat_model_with_native_tools(
-                    role,
-                    config,
-                    m,
-                    temperature,
-                    !force_text_mode,
-                ),
-            }
-        };
+    let build_primary = |m: &str| -> anyhow::Result<TurnChatModel> {
+        match primary_override {
+            Some(ps) => factory::create_turn_chat_model_from_string_with_native_tools(
+                role,
+                ps,
+                config,
+                m,
+                temperature,
+                !force_text_mode,
+            ),
+            None => factory::create_turn_chat_model_with_native_tools(
+                role,
+                config,
+                m,
+                temperature,
+                !force_text_mode,
+            ),
+        }
+    };
 
     // Build the primary, every workload-tier route, and the summarizer under one
     // per-turn egress-dedup ledger: each managed construction resolves through the
@@ -1334,44 +1333,39 @@ fn build_turn_models_crate(
     // separate `ExternalTransferPending` for the same logical destination (codex
     // P2, PR #4812). `dedup_turn_scope` collapses same-destination repeats to one
     // disclosure per turn while still surfacing each distinct tier model.
-    #[allow(clippy::type_complexity)]
-    let (primary, routes, summarizer): (
-        Arc<dyn tinyagents::harness::model::ChatModel<()>>,
-        Vec<(String, Arc<dyn tinyagents::harness::model::ChatModel<()>>)>,
-        Arc<dyn tinyagents::harness::model::ChatModel<()>>,
-    ) = crate::openhuman::security::egress::dedup_turn_scope(|| {
-        let primary = build_primary(model)?;
+    let (primary, routes, summarizer): BuiltTurnModels =
+        crate::openhuman::security::egress::dedup_turn_scope(|| {
+            let primary = build_primary(model)?;
 
-        // Additive workload-tier routes: one crate-native model per tier (skipping the
-        // turn's own model, which is registered as the default primary), each pinned to
-        // the tier alias so the crate registry resolves cross-route fallback across them.
-        let mut routes: Vec<(String, Arc<dyn tinyagents::harness::model::ChatModel<()>>)> =
-            Vec::new();
-        for &tier in routes::WORKLOAD_ROUTE_TIERS {
-            if tier == model {
-                continue;
-            }
-            let tier_role = factory::role_for_model_tier(tier);
-            match factory::create_turn_chat_model(tier_role, config, tier, temperature) {
-                Ok(route_model) => routes.push((tier.to_string(), route_model)),
-                Err(e) => {
-                    // A route that can't be built (e.g. an unconfigured BYOK tier) is
-                    // skipped, not fatal — the primary still dispatches (parity with the
-                    // `Provider` path, where an unresolved tier simply isn't registered).
-                    tracing::debug!(
-                        route = tier,
-                        error = %e,
-                        "[models] skipping crate-native workload route that failed to build"
-                    );
+            // Additive workload-tier routes: one crate-native model per tier (skipping the
+            // turn's own model, which is registered as the default primary), each pinned to
+            // the tier alias so the crate registry resolves cross-route fallback across them.
+            let mut routes: TierRoutes = Vec::new();
+            for &tier in routes::WORKLOAD_ROUTE_TIERS {
+                if tier == model {
+                    continue;
+                }
+                let tier_role = factory::role_for_model_tier(tier);
+                match factory::create_turn_chat_model(tier_role, config, tier, temperature) {
+                    Ok(route_model) => routes.push((tier.to_string(), route_model)),
+                    Err(e) => {
+                        // A route that can't be built (e.g. an unconfigured BYOK tier) is
+                        // skipped, not fatal — the primary still dispatches (parity with the
+                        // `Provider` path, where an unresolved tier simply isn't registered).
+                        tracing::debug!(
+                            route = tier,
+                            error = %e,
+                            "[models] skipping crate-native workload route that failed to build"
+                        );
+                    }
                 }
             }
-        }
 
-        // The summarizer is a distinct adapter instance (own empty error slot).
-        let summarizer = build_primary(model)?;
+            // The summarizer is a distinct adapter instance (own empty error slot).
+            let summarizer = build_primary(model)?;
 
-        anyhow::Ok((primary, routes, summarizer))
-    })?;
+            anyhow::Ok((primary, routes, summarizer))
+        })?;
 
     Ok(TurnModels {
         primary,
@@ -1671,7 +1665,8 @@ struct AssembledTurnHarness {
     /// Shared `call_id → (success, failure, elapsed_ms, output_chars)`
     /// side-channel: the tool-outcome capture middleware classifies each outcome
     /// + records its duration/output size; the event bridge reads it to project
-    /// real success + a user-facing failure + timing onto `ToolCallCompleted`.
+    ///
+    /// Real success + a user-facing failure + timing onto `ToolCallCompleted`.
     failure_map: ToolFailureMap,
     /// Shared FIFO carry of per-call provider `UsageInfo` (charged USD + context
     /// window): the model adapter pushes, the event bridge pops when recording

@@ -1,10 +1,12 @@
 use openhuman_core::openhuman::config::schema::{Config, StreamMode, TelegramConfig};
 use openhuman_core::openhuman::keyring;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
 }
 
 struct EnvGuard {
@@ -45,7 +47,7 @@ impl Drop for EnvGuard {
 
 #[tokio::test]
 async fn config_secrets_roundtrip_via_keyring_backed_master_key_migration() {
-    let _guard = env_lock();
+    let _guard = env_lock().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     let openhuman_dir = tmp.path().join("user-123");
     let workspace_dir = openhuman_dir.join("workspace");

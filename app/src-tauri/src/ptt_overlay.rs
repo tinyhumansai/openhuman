@@ -23,7 +23,7 @@ pub(crate) fn ensure_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String
         return Ok(());
     }
     let url = WebviewUrl::App("index.html#/ptt-overlay".into());
-    let mut builder = WebviewWindowBuilder::new(app, OVERLAY_LABEL, url)
+    let builder = WebviewWindowBuilder::new(app, OVERLAY_LABEL, url)
         .title("OpenHuman Push-to-Talk")
         .inner_size(160.0, 56.0)
         .decorations(false)
@@ -39,11 +39,9 @@ pub(crate) fn ensure_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String
         .visible(false);
 
     #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .visible_on_all_workspaces(true)
-            .accept_first_mouse(false);
-    }
+    let builder = builder
+        .visible_on_all_workspaces(true)
+        .accept_first_mouse(false);
 
     let _window = builder
         .build()

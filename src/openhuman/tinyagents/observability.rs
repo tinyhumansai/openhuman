@@ -52,6 +52,7 @@ pub(crate) type ToolNameMap = Arc<Mutex<std::collections::HashMap<String, String
 /// Shared `call_id → (success, classified failure, elapsed_ms, output_chars)`
 /// side-channel. The crate's `AgentEvent::ToolCompleted` carries only `call_id`
 /// + `tool_name` (no success/error, duration, or output size), so
+///
 /// `ToolOutcomeCaptureMiddleware::after_tool` — which does see the `ToolResult`
 /// (including the executor-measured `elapsed_ms` and the rendered content) —
 /// classifies each outcome and writes it here; the bridge reads it when

@@ -80,8 +80,8 @@ impl<'a> TreeFactory<'a> {
         match self.kind() {
             TreeKind::Topic | TreeKind::Global => slugify_source_id(scope),
             TreeKind::Source => {
-                if scope.starts_with("gmail:") {
-                    slugify_source_id(&scope["gmail:".len()..])
+                if let Some(gmail_scope) = scope.strip_prefix("gmail:") {
+                    slugify_source_id(gmail_scope)
                 } else {
                     slugify_source_id(scope)
                 }

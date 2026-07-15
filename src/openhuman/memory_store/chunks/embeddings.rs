@@ -7,9 +7,6 @@ use rusqlite::{Connection, Transaction};
 
 use crate::openhuman::config::Config;
 
-#[cfg(test)]
-pub use tinycortex::memory::chunks::{embedding_to_blob, REEMBED_SKIP_KEY_MAX_LEN};
-
 fn engine_config(config: &Config) -> tinycortex::memory::MemoryConfig {
     crate::openhuman::tinycortex::memory_config_from(config, config.workspace_dir.clone())
 }

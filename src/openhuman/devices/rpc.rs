@@ -334,7 +334,7 @@ mod tests {
     fn test_config() -> Config {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut config = Config::default();
-        config.workspace_dir = dir.into_path();
+        config.workspace_dir = dir.keep();
         config
     }
 

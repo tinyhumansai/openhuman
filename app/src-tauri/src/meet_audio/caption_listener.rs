@@ -2,8 +2,8 @@
 //! `captions_bridge.js` we install at session start, and forwards each
 //! new line to core's `meet_agent_push_caption` RPC.
 //!
-//! Replaces the old [`super::listen_capture`] (CEF audio handler →
-//! Whisper STT) which proved unreliable: CEF's `cef_audio_handler_t`
+//! Replaces the old CEF audio-handler and Whisper STT path, which proved
+//! unreliable: CEF's `cef_audio_handler_t`
 //! is queried lazily on first audio output, so a solo agent in a
 //! lobby never engaged the pipeline. Captions handle that case for
 //! free — Meet's STT is already running, speaker-attributed, and
@@ -34,7 +34,6 @@ const MAX_CONSECUTIVE_ERRORS: u32 = 30;
 
 /// RAII handle. Drop to stop the listener task.
 pub struct CaptionListener {
-    pub request_id: String,
     pub(crate) _shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
@@ -88,7 +87,6 @@ pub fn start(request_id: String, cdp: CdpConn, session_id: String) -> CaptionLis
     });
 
     CaptionListener {
-        request_id,
         _shutdown_tx: Some(shutdown_tx),
     }
 }

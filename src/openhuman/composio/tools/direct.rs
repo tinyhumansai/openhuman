@@ -783,10 +783,10 @@ impl Tool for ComposioTool {
         // tool call itself has no outbound side effect to gate.
         // `action="execute"` (or anything unknown / missing) is the
         // write path and routes through the approval gate.
-        match args.get("action").and_then(|v| v.as_str()) {
-            Some("list") | Some("connect") => false,
-            _ => true,
-        }
+        !matches!(
+            args.get("action").and_then(|v| v.as_str()),
+            Some("list") | Some("connect")
+        )
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {

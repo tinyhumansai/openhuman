@@ -10,7 +10,8 @@ pub const MAX_LIST_LIMIT: u32 = 1_000;
 /// ways: serialised timestamps are ms-since-epoch (matches the rest of the
 /// JSON-RPC surface) and the body is replaced with a `≤500-char preview`
 /// + a flag indicating whether the row has an embedding. UIs needing the
-/// full body call back via `memory_tree_get_chunk`.
+///
+/// The full body calls back via `memory_tree_get_chunk`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChunkRow {
     pub id: String,

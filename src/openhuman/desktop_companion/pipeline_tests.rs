@@ -8,7 +8,6 @@
 use super::*;
 use crate::openhuman::desktop_companion::pointing::ScreenGeometry;
 use crate::openhuman::desktop_companion::session;
-use crate::openhuman::desktop_companion::types::*;
 
 /// Serialize tests that touch the process-global session state. Shared with
 /// `session_tests` via `session::lock_test_state()` so transitions in one test

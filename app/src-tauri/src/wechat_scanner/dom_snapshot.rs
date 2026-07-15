@@ -23,7 +23,6 @@ pub struct MessageRow {
 pub struct DomScan {
     pub chat_rows: Vec<ChatRow>,
     pub messages: Vec<MessageRow>,
-    pub active_chat_name: Option<String>,
     pub unread: u32,
     pub hash: u64,
 }
@@ -71,7 +70,6 @@ pub async fn scan(cdp: &mut CdpConn, session: &str) -> Result<DomScan, String> {
     Ok(DomScan {
         chat_rows,
         messages,
-        active_chat_name,
         unread,
         hash,
     })

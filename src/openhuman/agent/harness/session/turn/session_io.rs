@@ -5,7 +5,9 @@ use super::super::types::Agent;
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::ARCHIVIST_EXTRACTION_PROMPT;
-use crate::openhuman::inference::provider::{ChatMessage, UsageInfo, AGENT_TURN_MAX_OUTPUT_TOKENS};
+use crate::openhuman::inference::provider::{
+    ChatMessage, ChatResponse, UsageInfo, AGENT_TURN_MAX_OUTPUT_TOKENS,
+};
 use futures::StreamExt;
 use tinyagents::harness::model::{ModelRequest, ModelStreamItem};
 
@@ -69,8 +71,9 @@ impl Agent {
 
     /// Ask the provider for a short wrap-up message with native tools
     /// **disabled** so the model returns prose rather than another tool call.
-    /// Streams text deltas to the progress sink (when attached) so the summary
-    /// appears in the UI like any other reply.
+    /// Buffers text deltas and forwards them to the progress sink (when
+    /// attached) only after the completed response is validated as prose, so
+    /// prompt-formatted tool calls cannot flash in the UI before fallback.
     ///
     /// `instruction` is the synthetic user turn that steers the wrap-up — the
     /// tool-call-cap checkpoint (`MAX_ITER_CHECKPOINT_INSTRUCTION`) or the
@@ -128,19 +131,13 @@ impl Agent {
         };
 
         let mut streamed_text = String::new();
+        let mut streamed_deltas = Vec::new();
         let mut completed = None;
         while let Some(item) = stream.next().await {
             match item {
                 ModelStreamItem::MessageDelta(delta) if !delta.text.is_empty() => {
                     streamed_text.push_str(&delta.text);
-                    if let Some(sink) = &self.on_progress {
-                        let _ = sink
-                            .send(AgentProgress::TextDelta {
-                                delta: delta.text,
-                                iteration: iteration_for_stream,
-                            })
-                            .await;
-                    }
+                    streamed_deltas.push(delta.text);
                 }
                 ModelStreamItem::Completed(response) => completed = Some(response),
                 ModelStreamItem::Failed(error) => {
@@ -163,10 +160,49 @@ impl Agent {
         let checkpoint = if !text.trim().is_empty() {
             text
         } else if response.tool_calls().is_empty() {
-            streamed_text
+            streamed_text.clone()
         } else {
             String::new()
         };
+        if !checkpoint.trim().is_empty() {
+            let mut provider_response = ChatResponse {
+                text: Some(checkpoint.clone()),
+                tool_calls: Vec::new(),
+                usage: None,
+                reasoning_content: None,
+            };
+            let (_, mut prompt_tool_calls) =
+                self.tool_dispatcher.parse_response(&provider_response);
+            if streamed_text != checkpoint {
+                provider_response.text = Some(streamed_text);
+                let (_, streamed_tool_calls) =
+                    self.tool_dispatcher.parse_response(&provider_response);
+                prompt_tool_calls.extend(streamed_tool_calls);
+            }
+            if !prompt_tool_calls.is_empty() {
+                tracing::warn!(
+                    parsed_tool_calls = prompt_tool_calls.len(),
+                    "[agent::session] wrap-up model returned a prompt-formatted tool call; using deterministic fallback"
+                );
+                return (String::new(), usage);
+            }
+            tracing::debug!(
+                checkpoint_chars = checkpoint.chars().count(),
+                buffered_deltas = streamed_deltas.len(),
+                iteration = iteration_for_stream,
+                "[agent::session] wrap-up checkpoint validation passed"
+            );
+            if let Some(sink) = &self.on_progress {
+                for delta in streamed_deltas {
+                    let _ = sink
+                        .send(AgentProgress::TextDelta {
+                            delta,
+                            iteration: iteration_for_stream,
+                        })
+                        .await;
+                }
+            }
+        }
         (checkpoint, usage)
     }
 

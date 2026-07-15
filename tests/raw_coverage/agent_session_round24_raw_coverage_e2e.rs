@@ -411,13 +411,21 @@ async fn max_iteration_checkpoint_uses_deterministic_fallback_and_hooks() {
     let calls = Arc::new(AtomicUsize::new(0));
     let hook_calls = Arc::new(AtomicUsize::new(0));
     let hook_contexts = Arc::new(Mutex::new(Vec::new()));
-    // The wrap-up model call yields nothing (empty text + no streamed deltas), so
-    // `summarize_turn_wrapup` returns an empty summary and the cap path falls back
-    // to `build_deterministic_checkpoint` — the exact path this test covers. (A
-    // non-empty wrap-up would instead be surfaced verbatim as the answer.)
+    // The wrap-up ignores the no-tools instruction and emits another
+    // prompt-formatted tool call plus a streamed delta. Validation must reject
+    // both before progress consumers see them, then use the deterministic
+    // checkpoint fallback.
     let provider = ScriptedProvider::with_stream(
-        vec![xml_tool_response("alpha"), text_response("", None)],
-        vec![],
+        vec![
+            xml_tool_response("alpha"),
+            text_response(
+                "<tool_call>{\"name\":\"round24_echo\",\"arguments\":{\"value\":\"again\"}}</tool_call>",
+                None,
+            ),
+        ],
+        vec![ProviderDelta::TextDelta {
+            delta: "checkpoint delta".to_string(),
+        }],
     );
 
     let mut agent = Agent::builder()
@@ -476,12 +484,13 @@ async fn max_iteration_checkpoint_uses_deterministic_fallback_and_hooks() {
     while let Ok(event) = progress_rx.try_recv() {
         streamed.push(event);
     }
-    // The wrap-up produced no text, so no iteration-2 wrap-up delta is streamed;
-    // the deterministic fallback (asserted above) becomes the answer instead.
     assert!(!streamed.iter().any(|event| matches!(
         event,
-        openhuman_core::openhuman::agent::progress::AgentProgress::TextDelta { iteration: 2, .. }
-    )));
+        openhuman_core::openhuman::agent::progress::AgentProgress::TextDelta {
+            delta,
+            iteration: 2
+        } if delta == "checkpoint delta"
+    )), "rejected checkpoint deltas must not leak to progress consumers");
 }
 
 #[tokio::test]

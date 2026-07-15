@@ -3561,7 +3561,6 @@ pub async fn flows_cancel_run(config: &Config, run_id: &str) -> Result<RpcOutcom
 /// rejects any non-`pending_approval` status); dropping the checkpoint is
 /// belt-and-suspenders that also reclaims the storage.
 async fn drop_checkpoint(config: &Config, thread_id: &str) {
-    use tinyflows::engine::Checkpointer as _;
     match crate::openhuman::tinyflows::open_flow_checkpointer(config) {
         Ok(checkpointer) => match checkpointer.delete_thread(thread_id).await {
             Ok(()) => {
@@ -4371,7 +4370,7 @@ pub async fn flows_build(
 fn text_looks_like_question(text: &str) -> bool {
     let trimmed = text
         .trim()
-        .trim_end_matches(|c: char| matches!(c, '"' | '\'' | ')' | ']' | '*' | '_' | '`' | '.'))
+        .trim_end_matches(['"', '\'', ')', ']', '*', '_', '`', '.'])
         .trim_end();
     if trimmed.is_empty() {
         return false;
@@ -4388,8 +4387,7 @@ fn text_looks_like_question(text: &str) -> bool {
     // invariant this function exists to protect.
     trimmed
         .lines()
-        .filter(|line| !line.trim().is_empty())
-        .next_back()
+        .rfind(|line| !line.trim().is_empty())
         .is_some_and(|last_line| last_line.trim_end().ends_with('?'))
 }
 
