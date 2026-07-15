@@ -301,6 +301,46 @@ async fn flows_run_on_graph_with_actionable_nodes_has_no_empty_flow_note() {
     );
 }
 
+/// `graph_has_actionable_nodes` must walk from the trigger, not merely check
+/// "any non-trigger node plus any edge". A component with edges of its own,
+/// but no path back to the trigger, is unreachable and must still surface
+/// the "nothing to run" note — a naive count-based check would have missed
+/// this and wrongly suppressed the note.
+#[tokio::test]
+async fn flows_run_on_graph_with_disconnected_component_still_surfaces_empty_flow_note() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let graph = json!({
+        "name": "disconnected",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger" },
+            { "id": "a", "kind": "output_parser", "name": "Orphan A" },
+            { "id": "b", "kind": "output_parser", "name": "Orphan B" }
+        ],
+        "edges": [
+            // "a" -> "b" is wired up, but neither is reachable from "t" — the
+            // trigger has no outgoing edges at all.
+            { "from_node": "a", "to_node": "b" }
+        ]
+    });
+    let created = flows_create(&config, "disconnected".to_string(), graph, false)
+        .await
+        .unwrap();
+
+    let outcome = flows_run(&config, &created.value.id, json!({}), FlowRunTrigger::Rpc)
+        .await
+        .unwrap();
+
+    let note = outcome.value["note"]
+        .as_str()
+        .expect("a component disconnected from the trigger must still surface the empty-flow note");
+    assert!(
+        note.contains("no actionable nodes") || note.to_lowercase().contains("nothing"),
+        "note should explain that nothing ran, got: {note}"
+    );
+}
+
 #[tokio::test]
 async fn flows_run_reports_pending_approval_and_blocks_downstream() {
     let tmp = TempDir::new().unwrap();
@@ -695,6 +735,56 @@ async fn flows_update_disables_on_manual_to_automatic_trigger_transition_when_en
             .is_none(),
         "an auto-disabled flow must not have its schedule cron job bound"
     );
+}
+
+/// Regression: the manual→automatic disarm must apply unconditionally, not
+/// only when `flows_update`'s own `existing` read observes `enabled: true`.
+/// A live race (Codex, this PR) could leave that read stale — a concurrent
+/// `flows_set_enabled(id, true)` landing between the read and the guarded
+/// write would previously compute `should_disarm = false` from the stale
+/// snapshot and let the automatic graph persist enabled. This test pins the
+/// non-racy half of that contract directly at the `flows_update` level: even
+/// starting from an *observed* `enabled: false`, a manual→automatic
+/// transition still writes the override (a no-op here since the flow was
+/// already disabled) rather than skipping it — see
+/// `store::update_flow_graph_override_wins_over_concurrently_enabled_row`
+/// (store_tests.rs) for the deterministic proof that this override also wins
+/// a genuine concurrent-enable race.
+#[tokio::test]
+async fn flows_update_disarms_manual_to_automatic_transition_even_when_already_disabled() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let created = flows_create(
+        &config,
+        "manual-then-scheduled".to_string(),
+        manual_trigger_graph(),
+        false,
+    )
+    .await
+    .unwrap();
+    flows_set_enabled(&config, &created.value.id, false)
+        .await
+        .unwrap();
+
+    let updated = flows_update(
+        &config,
+        &created.value.id,
+        None,
+        Some(schedule_trigger_graph("0 8 * * *")),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !updated.value.enabled,
+        "a manual→automatic transition must never leave the flow enabled, regardless of \
+         whether it looked enabled going in"
+    );
+    let reloaded = flows_get(&config, &created.value.id).await.unwrap();
+    assert!(!reloaded.value.enabled);
 }
 
 #[tokio::test]
@@ -4470,6 +4560,101 @@ async fn compute_required_connections_skips_native_and_http_nodes() {
         required.is_empty(),
         "native oh: and http_request need no connection: {required:?}"
     );
+}
+
+// ── extract_workflow_proposal: survives large, tabulation-eligible graphs ─────
+//
+// Regression coverage for the "blank canvas on ≥4-node graphs" bug: tinyjuice's
+// JSON compressor tabulates any uniform object-array of >= 3 rows over ~512
+// bytes, which strips the `"type": "workflow_proposal"` marker this extractor
+// keys on. The fix lives in `tinyagents::middleware::ToolOutputMiddleware`
+// (COMPACTION_EXEMPT_TOOLS), which keeps proposal-tool results out of
+// tokenjuice entirely — so by the time a payload reaches `agent.history()`
+// here, it must still be the untabulated, structurally-intact JSON.
+
+#[test]
+fn extract_workflow_proposal_survives_large_graph() {
+    use crate::openhuman::inference::provider::{ConversationMessage, ToolResultMessage};
+
+    // 6 nodes, several columns each — comfortably over tinyjuice's MIN_ROWS (3)
+    // and ~512-byte tabulation thresholds, so an unprotected payload would get
+    // compacted into a `[json table: …]` marker and lose the `"type"` field.
+    let nodes: Vec<serde_json::Value> = (0..6)
+        .map(|i| {
+            json!({
+                "id": format!("node-{i}"),
+                "kind": if i == 0 { "trigger" } else { "tool_call" },
+                "name": format!("Step {i}"),
+                "config": {
+                    "slug": format!("oh:placeholder_action_{i}"),
+                    "args": { "input": format!("value-{i}"), "note": "generic placeholder payload for size padding" }
+                }
+            })
+        })
+        .collect();
+    let edges: Vec<serde_json::Value> = (0..5)
+        .map(|i| json!({ "from_node": format!("node-{i}"), "to_node": format!("node-{}", i + 1) }))
+        .collect();
+    let proposal_payload = json!({
+        "type": "workflow_proposal",
+        "flow_id": "flow-large-graph",
+        "graph": { "nodes": nodes, "edges": edges },
+    });
+    let payload_str = serde_json::to_string(&proposal_payload).unwrap();
+    assert!(
+        payload_str.len() > 512,
+        "test payload must exceed tinyjuice's tabulation byte threshold: {} bytes",
+        payload_str.len()
+    );
+
+    let history = vec![ConversationMessage::ToolResults(vec![ToolResultMessage {
+        tool_call_id: "call-1".to_string(),
+        content: payload_str,
+    }])];
+
+    let proposal = extract_workflow_proposal(&history).expect("proposal should be extractable");
+    assert_eq!(
+        proposal.get("type").and_then(serde_json::Value::as_str),
+        Some("workflow_proposal")
+    );
+    assert_eq!(
+        proposal["graph"]["nodes"].as_array().unwrap().len(),
+        6,
+        "all 6 nodes must survive intact: {proposal}"
+    );
+}
+
+#[test]
+fn extract_workflow_proposal_returns_the_latest_of_multiple_results() {
+    use crate::openhuman::inference::provider::{ConversationMessage, ToolResultMessage};
+
+    let first = json!({ "type": "workflow_proposal", "flow_id": "first" });
+    let second = json!({ "type": "workflow_proposal", "flow_id": "second" });
+    let history = vec![
+        ConversationMessage::ToolResults(vec![ToolResultMessage {
+            tool_call_id: "call-1".to_string(),
+            content: first.to_string(),
+        }]),
+        ConversationMessage::ToolResults(vec![ToolResultMessage {
+            tool_call_id: "call-2".to_string(),
+            content: second.to_string(),
+        }]),
+    ];
+
+    let proposal = extract_workflow_proposal(&history).expect("proposal should be extractable");
+    assert_eq!(proposal["flow_id"], "second");
+}
+
+#[test]
+fn extract_workflow_proposal_ignores_non_proposal_tool_results() {
+    use crate::openhuman::inference::provider::{ConversationMessage, ToolResultMessage};
+
+    let history = vec![ConversationMessage::ToolResults(vec![ToolResultMessage {
+        tool_call_id: "call-1".to_string(),
+        content: json!({ "type": "search_results", "items": [] }).to_string(),
+    }])];
+
+    assert!(extract_workflow_proposal(&history).is_none());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

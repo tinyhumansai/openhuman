@@ -335,6 +335,29 @@ mod tests {
             STANDING_PROMPT.contains("Read-only — you can't change their memory"),
             "standing prompt must state the memory read-only guarantee, not just mention memory_recall"
         );
+
+        // Negative (contract accuracy, issue #6): `create_workflow` and
+        // `duplicate_flow` are on this agent's belt (see agent.toml's `named`
+        // tool list), so the prompt must never claim the agent can't create a
+        // flow at all — only that it can't enable/run one unattended.
+        for banned in [
+            "create a new flow, or enable/disable one",
+            "It cannot create flows,",
+        ] {
+            assert!(
+                !STANDING_PROMPT.contains(banned),
+                "standing prompt must not carry the stale \"can never create a flow\" claim \
+                 `{banned}` — create_workflow/duplicate_flow are on the belt (issue #6)"
+            );
+        }
+
+        // Positive: the accurate contract — the agent CAN create a flow, but
+        // every flow it creates is always born disabled.
+        assert!(
+            STANDING_PROMPT.contains("create_workflow") && STANDING_PROMPT.contains("born"),
+            "standing prompt must accurately teach that create_workflow exists and that \
+             created flows are always born disabled (issue #6)"
+        );
     }
 
     #[test]

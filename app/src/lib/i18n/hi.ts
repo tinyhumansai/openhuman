@@ -4112,6 +4112,8 @@ const messages: TranslationMap = {
   'flows.copilot.removed': '{count} हटाए गए',
   'flows.copilot.noChanges': 'यह प्रस्ताव किसी नोड को नहीं बदलता।',
   'flows.copilot.accept': 'ड्राफ़्ट पर लागू करें',
+  'flows.copilot.acceptAndSave': 'स्वीकार करें और सहेजें',
+  'flows.copilot.saving': 'सहेजा जा रहा है…',
   'flows.copilot.reject': 'रद्द करें',
   'flows.copilot.previewHint':
     'एक प्रस्तावित ड्राफ़्ट की समीक्षा हो रही है: अभी कुछ सहेजा नहीं गया।',

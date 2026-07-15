@@ -1490,6 +1490,88 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         summary: { trigger: 'signup.created' },
       });
     });
+
+    // Regression (#4876 fallout): `edit_workflow` is the prompt-preferred way
+    // to iterate on an existing draft, and returns the identical
+    // `{ type: "workflow_proposal", ... }` payload as `propose_workflow` /
+    // `revise_workflow`. Proposal recognition is content-based (on the
+    // payload's `type`), not gated on a fixed tool-name allowlist, so this
+    // must surface a proposal exactly like the other two tools do — a
+    // name-based allowlist previously dropped it silently.
+    it('surfaces a workflow proposal from the main-agent edit_workflow tool', () => {
+      const listeners = renderProvider();
+      const threadId = 't-edit-workflow';
+
+      act(() => {
+        listeners.onToolCall?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'edit_workflow',
+          skill_id: 'flows',
+          args: {},
+          tool_call_id: 'call-edit-1',
+        });
+        listeners.onToolResult?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'edit_workflow',
+          skill_id: 'flows',
+          success: true,
+          output: JSON.stringify({
+            type: 'workflow_proposal',
+            name: 'Digest patch',
+            graph: { nodes: [], edges: [] },
+            require_approval: true,
+            draft_id: 'draft-42',
+            summary: { trigger: 'manual', steps: [] },
+          }),
+          tool_call_id: 'call-edit-1',
+        });
+      });
+
+      const proposal = store.getState().chatRuntime.pendingWorkflowProposalsByThread[threadId];
+      expect(proposal).toMatchObject({ name: 'Digest patch', requireApproval: true });
+    });
+
+    // Any future tool that returns `{ type: "workflow_proposal" }` must be
+    // recognised too — the gate is the payload shape, not a tool-name list.
+    it('surfaces a workflow proposal from an unrecognised future tool name', () => {
+      const listeners = renderProvider();
+      const threadId = 't-future-tool';
+
+      act(() => {
+        listeners.onToolCall?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'some_future_builder_tool',
+          skill_id: 'flows',
+          args: {},
+          tool_call_id: 'call-future-1',
+        });
+        listeners.onToolResult?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'some_future_builder_tool',
+          skill_id: 'flows',
+          success: true,
+          output: JSON.stringify({
+            type: 'workflow_proposal',
+            name: 'Future proposal',
+            graph: { nodes: [], edges: [] },
+            require_approval: true,
+            summary: { trigger: 'manual', steps: [] },
+          }),
+          tool_call_id: 'call-future-1',
+        });
+      });
+
+      const proposal = store.getState().chatRuntime.pendingWorkflowProposalsByThread[threadId];
+      expect(proposal).toMatchObject({ name: 'Future proposal' });
+    });
   });
 
   // Regression: on Windows users report being "locked out" of the composer

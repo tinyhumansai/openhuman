@@ -367,21 +367,46 @@ pub(crate) fn graph_has_outbound_side_effect(graph: &WorkflowGraph) -> bool {
 }
 
 /// Whether `graph` has anything for [`flows_run`] to actually *do* — i.e. at
-/// least one non-`trigger` node, wired up by at least one edge. A graph made
-/// of nothing but a bare `trigger` node (or a `trigger` plus unreachable/
-/// disconnected nodes with no edges at all) can compile and "run" cleanly
-/// while producing no work whatsoever — the exact live finding this guards:
-/// a trigger-only flow reported `status="completed" pending_approvals=0`
-/// having done nothing, which reads as a successful automation to anyone not
-/// staring at the node count. Used by `flows_run` to attach a
-/// human-readable note to an otherwise-silent "success".
+/// least one non-`trigger` node **reachable from the trigger** by following
+/// directed edges. A graph made of nothing but a bare `trigger` node (or a
+/// `trigger` plus unreachable/disconnected nodes — even ones wired to each
+/// other by their own edges, just not to the trigger) can compile and "run"
+/// cleanly while producing no work whatsoever — the exact live finding this
+/// guards: a trigger-only flow reported `status="completed"
+/// pending_approvals=0` having done nothing, which reads as a successful
+/// automation to anyone not staring at the node count. Used by `flows_run`
+/// to attach a human-readable note to an otherwise-silent "success".
+///
+/// Deliberately a reachability walk rather than "any edge at all exists":
+/// `nodes.len() > 1 && !edges.is_empty()` would count a disconnected
+/// component's internal edges as actionable even though nothing downstream
+/// of the trigger ever runs.
 pub(crate) fn graph_has_actionable_nodes(graph: &WorkflowGraph) -> bool {
-    let non_trigger_nodes = graph
-        .nodes
-        .iter()
-        .filter(|n| n.kind != NodeKind::Trigger)
-        .count();
-    non_trigger_nodes > 0 && !graph.edges.is_empty()
+    let Some(trigger) = graph.trigger() else {
+        // No single resolvable trigger to walk from — fall back to the
+        // coarse "any non-trigger node wired up by an edge" check so a
+        // malformed/ambiguous-trigger graph doesn't spuriously suppress the
+        // empty-flow note.
+        return graph.nodes.iter().any(|n| n.kind != NodeKind::Trigger) && !graph.edges.is_empty();
+    };
+
+    let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut stack = vec![trigger.id.as_str()];
+    while let Some(current) = stack.pop() {
+        if !visited.insert(current) {
+            continue;
+        }
+        for next in graph.successors(current) {
+            if !visited.contains(next) {
+                stack.push(next);
+            }
+        }
+    }
+
+    visited
+        .into_iter()
+        .filter_map(|id| graph.node(id))
+        .any(|n| n.kind != NodeKind::Trigger)
 }
 
 /// Produces host-side, **non-fatal** validation warnings for a graph — today
@@ -2491,15 +2516,29 @@ fn map_flow_update_error(e: store::FlowUpdateError) -> String {
 /// tool, the canvas Save button, a proposal apply, or any other
 /// `flows_update` caller — and go LIVE immediately with no user review
 /// (confirmed live: a flow started firing on an unreviewed 8am schedule).
-/// So: when the *new* graph's trigger is automatic, the flow is *currently*
-/// enabled, and the *previous* graph's trigger was NOT automatic (a
-/// manual/none → automatic transition), this forces the persisted `enabled`
-/// back to `false` in the same store write — the user must explicitly
-/// re-arm via `flows_set_enabled` after reviewing the new trigger.
-/// Deliberately narrower than Rule 1's at-create version: a flow that was
-/// already an enabled *automatic*-trigger flow being legitimately re-edited
-/// (e.g. tweaking a cron expression) is left alone — the user already opted
-/// in once, and re-disarming on every edit would just be friction.
+/// So: when the *new* graph's trigger is automatic and the *previous*
+/// graph's trigger was NOT automatic (a manual/none → automatic
+/// transition), this forces the persisted `enabled` back to `false` in the
+/// same store write — the user must explicitly re-arm via
+/// `flows_set_enabled` after reviewing the new trigger. An automatic →
+/// automatic re-edit (e.g. tweaking a cron expression) is left alone — the
+/// user already opted in once, and re-disarming on every edit would just be
+/// friction.
+///
+/// The override is applied **unconditionally** on a manual/none → automatic
+/// transition — it does *not* gate on whether the flow *looked* enabled in
+/// the `existing` read above. That read is a snapshot taken before
+/// `store::update_flow_graph`'s own guarded UPDATE re-reads the row; a
+/// concurrent `flows_set_enabled(id, true)` landing in the gap would leave
+/// this snapshot stale while the row is actually enabled by the time the
+/// guarded UPDATE runs — and since `set_enabled` bumps `updated_at` too,
+/// such a race wouldn't even trip the optimistic-concurrency conflict, it
+/// would just silently persist the automatic graph as enabled (the exact
+/// bug this rule exists to close). Gating on the stale `existing.enabled`
+/// re-opens that race; forcing the override on every transition, enabled-or-
+/// not, is exactly as safe as Rule 1's at-create version — a transition on
+/// an already-disabled flow is just a no-op write of `enabled=false` over
+/// `enabled=false`.
 pub async fn flows_update(
     config: &Config,
     id: &str,
@@ -2523,19 +2562,26 @@ pub async fn flows_update(
         }
     };
 
-    // B29 Rule 1 analogue: only disarm a manual/none → automatic transition
-    // on an already-enabled flow. An automatic → automatic re-edit, or a
-    // flow that isn't enabled to begin with, is untouched.
+    // B29 Rule 1 analogue: disarm every manual/none → automatic trigger
+    // transition, unconditionally — see the doc comment above for why this
+    // must NOT gate on the (possibly stale) `existing.enabled` read.
     let was_auto = trigger_is_automatic(&existing.graph);
     let now_auto = trigger_is_automatic(&graph);
-    let should_disarm = now_auto && existing.enabled && !was_auto;
-    let enabled_override = should_disarm.then_some(false);
+    let is_manual_to_auto_transition = now_auto && !was_auto;
+    let enabled_override = is_manual_to_auto_transition.then_some(false);
+    // Best-effort flag for the info log / result message below: whether the
+    // flow *appeared* live going into this update. Not used for the
+    // override decision itself (that's unconditional, see above) — only to
+    // avoid telling the user "flow was auto-disabled" when it was already
+    // disabled going in.
+    let should_disarm = is_manual_to_auto_transition && existing.enabled;
     tracing::debug!(
         target: "flows",
         flow_id = %id,
         was_auto,
         now_auto,
         currently_enabled = existing.enabled,
+        is_manual_to_auto_transition,
         should_disarm,
         "[flows] flows_update: auto-trigger disarm decision inputs"
     );

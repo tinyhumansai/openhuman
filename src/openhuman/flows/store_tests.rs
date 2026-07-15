@@ -107,6 +107,110 @@ fn update_flow_graph_bumps_updated_at_and_preserves_created_at() {
     assert_eq!(updated.graph.name, "renamed-graph");
 }
 
+/// `enabled_override: None` must leave the persisted `enabled` column
+/// exactly as it was — `update_flow_graph` re-reads the current row and
+/// falls back to `current.enabled`, not to whatever the caller might have
+/// observed earlier.
+#[test]
+fn update_flow_graph_with_none_override_preserves_current_enabled_column() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow = create_flow(&config, "demo".to_string(), trigger_graph(), false, true).unwrap();
+    assert!(flow.enabled, "flow created enabled");
+
+    let updated = update_flow_graph(
+        &config,
+        &flow.id,
+        flow.name.clone(),
+        trigger_graph(),
+        false,
+        None, // enabled_override
+        None,
+    )
+    .unwrap();
+
+    assert!(
+        updated.enabled,
+        "a None override must preserve the row's current enabled state"
+    );
+    let reloaded = get_flow(&config, &flow.id).unwrap().unwrap();
+    assert!(reloaded.enabled);
+}
+
+/// `enabled_override: Some(false)` must force-persist `enabled=false`
+/// regardless of what the row's `enabled` column currently holds — this is
+/// the mechanism `flows_update`'s B29 Rule 1 analogue relies on to disarm a
+/// manual→automatic trigger transition in the same guarded write.
+#[test]
+fn update_flow_graph_with_some_false_override_forces_disabled() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow = create_flow(&config, "demo".to_string(), trigger_graph(), false, true).unwrap();
+    assert!(flow.enabled, "flow created enabled");
+
+    let updated = update_flow_graph(
+        &config,
+        &flow.id,
+        flow.name.clone(),
+        trigger_graph(),
+        false,
+        Some(false), // enabled_override
+        None,
+    )
+    .unwrap();
+
+    assert!(
+        !updated.enabled,
+        "a Some(false) override must force enabled=false even though the row was enabled"
+    );
+    let reloaded = get_flow(&config, &flow.id).unwrap().unwrap();
+    assert!(!reloaded.enabled);
+}
+
+/// Regression for the silent live-arming race Codex flagged on this PR:
+/// `flows_update` (ops.rs) makes its manual→automatic disarm decision from
+/// an *outer* `existing` read taken before `update_flow_graph`'s own guarded
+/// UPDATE re-reads the row. If a concurrent `flows_set_enabled(id, true)`
+/// landed in that gap — which bumps `updated_at`, so it would NOT trip the
+/// optimistic-concurrency conflict — the outer read would be stale while the
+/// row is actually enabled by write time. This proves the mechanism the fix
+/// relies on to close that race: an `enabled_override` of `Some(false)`
+/// (what `flows_update` now passes unconditionally on a manual→automatic
+/// transition, never gated on the stale outer read) always wins over
+/// whatever the row's `enabled` column was concurrently flipped to,
+/// simulated here by flipping it with `set_enabled` between the two calls.
+#[test]
+fn update_flow_graph_override_wins_over_concurrently_enabled_row() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow = create_flow(&config, "demo".to_string(), trigger_graph(), false, false).unwrap();
+    assert!(!flow.enabled, "flow created disabled");
+
+    // Simulates a concurrent `flows_set_enabled(id, true)` racing in after
+    // `flows_update`'s outer `existing` read observed `enabled: false`, but
+    // before its guarded `update_flow_graph` write below.
+    let raced = set_enabled(&config, &flow.id, true).unwrap();
+    assert!(raced.enabled);
+
+    let updated = update_flow_graph(
+        &config,
+        &flow.id,
+        flow.name.clone(),
+        trigger_graph(),
+        false,
+        Some(false), // the unconditional disarm override
+        None,
+    )
+    .unwrap();
+
+    assert!(
+        !updated.enabled,
+        "the disarm override must win over a concurrently-enabled row, not the reverse"
+    );
+    let reloaded = get_flow(&config, &flow.id).unwrap().unwrap();
+    assert!(!reloaded.enabled);
+}
+
 #[test]
 fn record_run_sets_last_run_fields() {
     let tmp = TempDir::new().unwrap();

@@ -4229,6 +4229,8 @@ const messages: TranslationMap = {
   'flows.copilot.removed': '{count} entfernt',
   'flows.copilot.noChanges': 'Dieser Vorschlag ändert keine Knoten.',
   'flows.copilot.accept': 'Auf Entwurf anwenden',
+  'flows.copilot.acceptAndSave': 'Übernehmen & speichern',
+  'flows.copilot.saving': 'Wird gespeichert…',
   'flows.copilot.reject': 'Verwerfen',
   'flows.copilot.previewHint':
     'Ein vorgeschlagener Entwurf wird geprüft: es wurde noch nichts gespeichert.',
