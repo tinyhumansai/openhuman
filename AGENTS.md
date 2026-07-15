@@ -222,6 +222,10 @@ Two independent runtime axes on `CoreBuilder` (`src/core/runtime/builder.rs`):
 
 Per-domain Cargo features drop whole domains **at compile time** (smaller binary, fewer deps), composing with the runtime `DomainSet` axis above. Each gate is **default-ON**, so the desktop build is byte-identical; slim builds opt out explicitly.
 
+> **Adding a default-ON gate? You must forward it to the desktop shell.**
+> `app/src-tauri/Cargo.toml` declares `openhuman_core` with `default-features = false` (set in #1061, before gates existed), so the shipped app does **not** inherit the core's `default` list. A gate you add to `default` but not to the shell's `features` list is **compiled out of the shipped desktop app** — with no build error and no failing test. This is not hypothetical: `voice` shipped missing from v0.58.19 to v0.61.x (56 users, ~93k Sentry events, #4901), and `tokenjuice-treesitter` was never forwarded once since #4123 and failed *soft*, silently degrading AST compression (#4918).
+> `scripts/ci/check-feature-forwarding.mjs` (the **Feature Forwarding Gate** lane) now fails CI on drift and covers new gates automatically. If a gate genuinely must not ship, add it to `INTENTIONALLY_NOT_FORWARDED` in that script **with a reason** — an explicit exclusion is the only way "deliberate" stays distinguishable from "forgotten".
+
 **Slim-profile convention** (no `full` meta-feature): build slim variants with `cargo build --no-default-features --features "<explicit list of gates you want>"`. This mirrors the existing standalone-feature style (`sandbox-landlock`, `browser-native`, …). Example — everything except voice:
 
 ```bash
