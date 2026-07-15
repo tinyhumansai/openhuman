@@ -208,7 +208,7 @@ pub(crate) async fn list_artifacts(
     }
 
     // Sort descending by created_at (newest first)
-    all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    all.sort_by_key(|item| std::cmp::Reverse(item.created_at));
 
     // Apply thread filter BEFORE pagination so `total` reflects the
     // per-thread count the UI surfaces, and so a small page doesn't get

@@ -240,15 +240,30 @@ fn parse_content_disposition_filename(value: &str) -> Option<String> {
     None
 }
 
-/// Egress spine (privacy epic S2, #4436): disclose an OpenHuman managed-backend
-/// round-trip before it leaves the device. The query string is stripped so only
-/// the endpoint (the "to where") is disclosed, never any data carried in the
-/// query. Fire-and-forget — never fails the caller.
-fn emit_backend_egress(path: &str) {
+/// Build the egress descriptor for a managed-backend round-trip. The query
+/// string is stripped so only the endpoint (the "to where") is described, never
+/// any data carried in the query.
+fn backend_egress_descriptor(path: &str) -> crate::openhuman::security::egress::EgressDescriptor {
     let endpoint = path.split('?').next().unwrap_or(path);
-    crate::openhuman::security::egress::emit_external_transfer(
-        crate::openhuman::security::egress::EgressDescriptor::integration(endpoint),
-    );
+    crate::openhuman::security::egress::EgressDescriptor::integration(endpoint)
+}
+
+/// Egress spine (privacy epic S2, #4436): disclose an OpenHuman managed-backend
+/// round-trip before it leaves the device. Fire-and-forget — never fails the
+/// caller.
+fn emit_backend_egress(path: &str) {
+    crate::openhuman::security::egress::emit_external_transfer(backend_egress_descriptor(path));
+}
+
+/// Local-only enforcement (privacy epic S7, #4441): refuse a managed-backend
+/// round-trip that ships user data when the live policy is `LocalOnly`. Returns
+/// `Ok(())` for control-plane paths (session / team / billing / integration
+/// connection-management + catalog) even under `LocalOnly` — blocking those
+/// would break sign-in and the Connections UI for no privacy benefit. See
+/// [`is_control_plane`](crate::openhuman::security::egress). Call before
+/// [`emit_backend_egress`] so a blocked call is neither disclosed nor sent.
+fn enforce_backend_egress(path: &str) -> anyhow::Result<()> {
+    crate::openhuman::security::egress::enforce_egress(&backend_egress_descriptor(path))
 }
 
 /// Shared client for all integration tools. Holds backend URL, auth token,
@@ -331,6 +346,7 @@ impl IntegrationClient {
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<T> {
+        enforce_backend_egress(path)?;
         emit_backend_egress(path);
         self.ensure_budget_available(path).await?;
         let url = crate::api::config::api_url(&self.backend_url, path);
@@ -436,6 +452,7 @@ impl IntegrationClient {
 
     /// GET from a backend endpoint and parse the response `data` field.
     pub async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
+        enforce_backend_egress(path)?;
         emit_backend_egress(path);
         self.ensure_budget_available(path).await?;
         let url = crate::api::config::api_url(&self.backend_url, path);
@@ -611,6 +628,8 @@ impl IntegrationClient {
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<T> {
+        enforce_backend_egress(path)?;
+        emit_backend_egress(path);
         self.ensure_budget_available(path).await?;
         let url = crate::api::config::api_url(&self.backend_url, path);
         tracing::debug!("[integrations] PATCH {}", url);
@@ -632,6 +651,8 @@ impl IntegrationClient {
     /// Mirrors [`Self::post`] (auth header, 401 → session-expiry, error
     /// classification).
     pub async fn delete<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
+        enforce_backend_egress(path)?;
+        emit_backend_egress(path);
         self.ensure_budget_available(path).await?;
         let url = crate::api::config::api_url(&self.backend_url, path);
         tracing::debug!("[integrations] DELETE {}", url);
@@ -656,6 +677,8 @@ impl IntegrationClient {
         path: &str,
         form: reqwest::multipart::Form,
     ) -> anyhow::Result<T> {
+        enforce_backend_egress(path)?;
+        emit_backend_egress(path);
         self.ensure_budget_available(path).await?;
         let url = crate::api::config::api_url(&self.backend_url, path);
         tracing::debug!("[integrations] POST(multipart) {}", url);
@@ -682,6 +705,8 @@ impl IntegrationClient {
         &self,
         path: &str,
     ) -> anyhow::Result<(bytes::Bytes, Option<String>, Option<String>)> {
+        enforce_backend_egress(path)?;
+        emit_backend_egress(path);
         self.ensure_budget_available(path).await?;
         let url = crate::api::config::api_url(&self.backend_url, path);
         tracing::debug!("[integrations] GET(bytes) {}", url);

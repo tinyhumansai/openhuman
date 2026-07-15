@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { renderWithProviders } from '../../../test/test-utils';
 import PrivacyModeSection from './PrivacyModeSection';
 
 const callCoreRpc = vi.fn();
@@ -23,7 +24,7 @@ beforeEach(() => {
 
 describe('PrivacyModeSection', () => {
   it('renders the three privacy mode options', async () => {
-    render(<PrivacyModeSection />);
+    renderWithProviders(<PrivacyModeSection />);
     await waitFor(() =>
       expect(screen.getByTestId('privacy-mode-option-standard')).toBeInTheDocument()
     );
@@ -33,7 +34,7 @@ describe('PrivacyModeSection', () => {
   });
 
   it('marks the loaded mode as selected', async () => {
-    render(<PrivacyModeSection />);
+    renderWithProviders(<PrivacyModeSection />);
     await waitFor(() =>
       expect(screen.getByTestId('privacy-mode-option-standard')).toHaveAttribute(
         'aria-checked',
@@ -47,7 +48,7 @@ describe('PrivacyModeSection', () => {
   });
 
   it('calls the set RPC with the chosen mode on selection', async () => {
-    render(<PrivacyModeSection />);
+    renderWithProviders(<PrivacyModeSection />);
     await waitFor(() =>
       expect(screen.getByTestId('privacy-mode-option-local_only')).toBeInTheDocument()
     );
@@ -71,7 +72,7 @@ describe('PrivacyModeSection', () => {
   });
 
   it('does not re-issue the set RPC when the current mode is clicked', async () => {
-    render(<PrivacyModeSection />);
+    renderWithProviders(<PrivacyModeSection />);
     await waitFor(() =>
       expect(screen.getByTestId('privacy-mode-option-standard')).toHaveAttribute(
         'aria-checked',

@@ -397,6 +397,12 @@ End-to-end coverage of the agent harness via the web-chat RPC surface against an
 | 9.3.2 | Execution Trigger       | WD    | `cron-jobs-flow.spec.ts` | ✅     |                          |
 | 9.3.3 | Retry Handling          | RU    | `src/openhuman/cron/`    | 🟡     | Backoff branches partial |
 
+### 9.4 Workflow Run History
+
+| ID    | Feature                              | Layer | Test path(s)                                                                                                        | Status | Notes                                                                                                                                                            |
+| ----- | ------------------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 9.4.1 | Aggregate run history (all workflows) | RU+VU | `src/openhuman/flows/ops_tests.rs::flows_list_all_runs_aggregates_across_flows_newest_first`, `app/src/pages/WorkflowRunsPage.test.tsx` | ✅     | New `openhuman.flows_list_all_runs` RPC (`store::list_all_flow_runs`) backs the Workflows page "Workflow Runs" sub-view. RU asserts cross-flow, newest-first aggregation; VU asserts the list/empty/error render. |
+
 ---
 
 ## 10. Unified Messaging Hub

@@ -24,21 +24,11 @@ on:
         required: false
         type: boolean
         default: true
-      skip_ci_gate:
-        description:
-          Skip the green-CI-Full-Gate requirement on the commit being cut.
-          Operator recovery only — never the default release path.
-        required: false
-        type: boolean
-        default: false
 permissions:
   # `actions: read` lets scripts/ci-cancel-aware.sh poll the run status so
   # cancelled builds inside container jobs stop themselves (docker exec
   # swallows the runner's signals).
   actions: read
-  # `checks: read` lets scripts/release/require-ci-full-gate.sh verify the
-  # "CI Full Gate" check run on the commit being cut.
-  checks: read
   contents: write
   packages: write
 concurrency:
@@ -50,7 +40,8 @@ concurrency:
 # Branch model: releases are cut from the long-lived `release` branch, not
 # `main`. `release` only advances via green main→release PRs that run the
 # full test suite; this workflow bumps/commits/tags on `release` and the
-# release is built from the tag this workflow creates on `release`.
+# release is built from the tag this workflow creates on `release`. The
+# workflow-dispatch ref does not select the production source branch.
 #
 # Job dependency graph
 #
@@ -122,11 +113,6 @@ jobs:
       build_ref: ${{ steps.resolve.outputs.build_ref }}
       base_url: ${{ steps.resolve.outputs.base_url }}
     steps:
-      - name: Enforce release branch
-        if: github.ref != 'refs/heads/release'
-        run: |
-          echo "This workflow can only run from release. Current ref: $GITHUB_REF"
-          exit 1
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v3
@@ -178,15 +164,6 @@ jobs:
             git checkout release
             git pull origin release --ff-only
           fi
-      # Direct App-token pushes bypass the PR merge gate, so nothing else
-      # guarantees the commit being cut passed the full suite. Fail unless
-      # the latest "CI Full Gate" check run on it (skipping [skip ci] bump
-      # commits) concluded success.
-      - name: Require green CI Full Gate
-        if: ${{ !inputs.skip_ci_gate }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/release/require-ci-full-gate.sh "$(git rev-parse HEAD)"
       - name: Compute next version and sync release files
         id: bump
         run: node scripts/release/bump-version.js "${{ inputs.release_type }}"

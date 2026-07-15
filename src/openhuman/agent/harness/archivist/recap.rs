@@ -64,6 +64,7 @@ impl ArchivistHook {
     /// - NEVER mutates DB state (no `segment_set_summary`, no embedding).
     /// - NEVER closes a segment.
     /// - Safe to call on both open and closed segments.
+    ///
     /// Summarize a set of episodic entries into a recap string.
     ///
     /// Returns `(text, produced_by_llm)`. `produced_by_llm == false` means the

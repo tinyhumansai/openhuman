@@ -55,6 +55,7 @@ const INTENTIONAL_ENGLISH = new Set([
   "agentWorld.world.title", // "Tiny Place" — brand/product name, same in every locale
   "app.connectionIndicator.coreOffline",
   "channels.activeRouteValue",
+  "conversations.backgroundTasks.cronSchedCron", // Cron expression label; Cron is the scheduler name
   "composio.integrationSlugsExample",
   "composio.integrationSlugsPlaceholder",
   "devOptions.toolPolicyDiagnostics.mcpAllowlists.allowDeny",
@@ -75,6 +76,8 @@ const INTENTIONAL_ENGLISH = new Set([
   "namespaceOverview.entitiesShort",
   "screenAwareness.debug.defaultPanicHotkey",
   "settings.ai.connectionsPerTick",
+  "settings.ai.claudeCode.button", // Claude Code is a product name
+  "settings.ai.claudeCode.modalTitle", // Claude Code CLI is a product name
   "settings.ai.localModelResolved",
   "settings.ai.localOllama",
   "settings.ai.minutesShort",

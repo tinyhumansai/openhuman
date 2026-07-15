@@ -35,7 +35,8 @@ import {
   SUPPORT_URL,
   TAURI_CARGO_VERSION,
 } from '../utils/config';
-import { CoreRpcError } from './coreRpcClient';
+import { startInteractionTracking } from './analyticsInteractions';
+import { currentAppPath, currentPageHash, normalizeAnalyticsPagePath } from './analyticsRoutes';
 
 // ---------------------------------------------------------------------------
 // Google Analytics 4 typings — raw gtag.js API
@@ -55,10 +56,6 @@ declare global {
 
 const OPENPANEL_TRACK_URL = `${OPENPANEL_API_URL}/track`;
 const MAX_PENDING_ANALYTICS_EVENTS = 20;
-const INTERACTIVE_CLICK_SELECTOR =
-  'button,a,[role="button"],summary,[data-track],[data-analytics-id],[data-testid],[data-walkthrough]';
-const CONTROL_CHANGE_SELECTOR =
-  'select,input[type="checkbox"],input[type="radio"],input[type="range"],[role="switch"],[role="checkbox"],[role="radio"]';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -67,9 +64,8 @@ const CONTROL_CHANGE_SELECTOR =
 let gaInitialized = false;
 let opInitialized = false;
 let analyticsConsentSynced = false;
-let uiInteractionTrackingStarted = false;
 
-type AnalyticsParams = Record<string, string | number | boolean>;
+export type AnalyticsParams = Record<string, string | number | boolean>;
 
 interface PendingAnalyticsEvent {
   type: 'event' | 'page_view';
@@ -93,7 +89,7 @@ let analyticsEnabled = false;
  * Any `trackEvent` call with a name not in this set is dropped and a warning
  * is logged.
  */
-export const ALLOWED_EVENTS = new Set([
+const ALLOWED_EVENT_NAMES = [
   'app_open',
   'onboarding_start',
   'onboarding_step_complete',
@@ -101,6 +97,9 @@ export const ALLOWED_EVENTS = new Set([
   'account_connect_start',
   'account_connect_success',
   'chat_message_sent',
+  'automation_run_started',
+  'automation_run_resumed',
+  'automation_run_cancelled',
   'skill_install',
   'skill_uninstall',
   'tab_bar_change',
@@ -108,7 +107,10 @@ export const ALLOWED_EVENTS = new Set([
   'ui_click',
   'ui_control_change',
   'ui_form_submit',
-]);
+] as const;
+
+export type AnalyticsEventName = (typeof ALLOWED_EVENT_NAMES)[number];
+export const ALLOWED_EVENTS: ReadonlySet<string> = new Set(ALLOWED_EVENT_NAMES);
 
 /** Check if the current user has opted into analytics. */
 export function isAnalyticsEnabled(): boolean {
@@ -117,13 +119,12 @@ export function isAnalyticsEnabled(): boolean {
 
 /**
  * Cross-realm-safe check for a `CoreRpcError` with `kind === 'timeout'`.
- * `instanceof` can fail across module scopes (test harness, dynamic import,
- * Vitest module isolation), so also accept a duck-typed match on `name`
- * and `kind`. Used by the Sentry `beforeSend` filter to drop the
+ * Use a duck-typed match on `name` and `kind` so this service stays independent
+ * from the RPC client and works across test/module realms. Used by the Sentry
+ * `beforeSend` filter to drop the
  * OPENHUMAN-REACT-15/11/10/12/Z/Y family at the source.
  */
 function isCoreRpcTimeoutError(err: unknown): boolean {
-  if (err instanceof CoreRpcError) return err.kind === 'timeout';
   if (typeof err !== 'object' || err === null) return false;
   const candidate = err as { name?: unknown; kind?: unknown };
   return candidate.name === 'CoreRpcError' && candidate.kind === 'timeout';
@@ -389,6 +390,22 @@ export function trackPageView(path: string): void {
  * are dropped and a console warning is emitted.
  */
 export function trackEvent(eventName: string, params?: AnalyticsParams): void {
+  try {
+    trackEventUnsafe(eventName, params);
+  } catch (error) {
+    console.warn('[analytics] trackEvent failed', {
+      eventName,
+      error: error instanceof Error ? error.name : typeof error,
+    });
+  }
+}
+
+/** Typed, best-effort facade for successful domain outcomes. */
+export function trackAnalyticsEvent(eventName: AnalyticsEventName, params?: AnalyticsParams): void {
+  trackEvent(eventName, params);
+}
+
+function trackEventUnsafe(eventName: string, params?: AnalyticsParams): void {
   if (!ALLOWED_EVENTS.has(eventName)) {
     console.warn(
       `[analytics] trackEvent dropped — '${eventName}' is not in ALLOWED_EVENTS allowlist`
@@ -413,56 +430,7 @@ export function trackEvent(eventName: string, params?: AnalyticsParams): void {
 }
 
 export function startUiInteractionTracking(): () => void {
-  if (uiInteractionTrackingStarted || typeof document === 'undefined') return () => undefined;
-  uiInteractionTrackingStarted = true;
-
-  const handleClick = (event: MouseEvent) => {
-    const target = event.target instanceof Element ? event.target : null;
-    const element = target?.closest(INTERACTIVE_CLICK_SELECTOR);
-    if (!(element instanceof HTMLElement) || shouldSkipInteractionElement(element)) return;
-
-    trackEvent('ui_click', {
-      ...interactionBaseProperties(element),
-      interaction_kind: 'click',
-      control_id: controlIdentifier(element),
-      destination: destinationForElement(element),
-    });
-  };
-
-  const handleChange = (event: Event) => {
-    const target = event.target instanceof Element ? event.target : null;
-    const element = target?.closest(CONTROL_CHANGE_SELECTOR);
-    if (!(element instanceof HTMLElement) || shouldSkipInteractionElement(element)) return;
-
-    trackEvent('ui_control_change', {
-      ...interactionBaseProperties(element),
-      interaction_kind: 'change',
-      control_id: controlIdentifier(element),
-      control_state: controlState(element),
-    });
-  };
-
-  const handleSubmit = (event: SubmitEvent) => {
-    const form = event.target instanceof HTMLFormElement ? event.target : null;
-    if (!form || shouldSkipInteractionElement(form)) return;
-
-    trackEvent('ui_form_submit', {
-      ...interactionBaseProperties(form),
-      interaction_kind: 'submit',
-      control_id: controlIdentifier(form),
-    });
-  };
-
-  document.addEventListener('click', handleClick, true);
-  document.addEventListener('change', handleChange, true);
-  document.addEventListener('submit', handleSubmit, true);
-
-  return () => {
-    document.removeEventListener('click', handleClick, true);
-    document.removeEventListener('change', handleChange, true);
-    document.removeEventListener('submit', handleSubmit, true);
-    uiInteractionTrackingStarted = false;
-  };
+  return startInteractionTracking(trackEvent);
 }
 
 function queuePendingAnalyticsEvent(event: PendingAnalyticsEvent): void {
@@ -483,122 +451,6 @@ function flushPendingAnalyticsEvents(): void {
       trackEvent(event.name, event.params);
     }
   }
-}
-
-function interactionBaseProperties(element: HTMLElement): AnalyticsParams {
-  return {
-    page: currentAppPath(),
-    page_hash: currentPageHash(),
-    element_tag: element.tagName.toLowerCase(),
-    element_role: scrubIdentifier(element.getAttribute('role')) ?? '',
-    element_type: scrubIdentifier(element.getAttribute('type')) ?? '',
-  };
-}
-
-function controlIdentifier(element: HTMLElement): string {
-  const explicit =
-    element.getAttribute('data-analytics-id') ??
-    element.getAttribute('data-track') ??
-    element.getAttribute('data-testid') ??
-    element.getAttribute('data-walkthrough') ??
-    element.getAttribute('name') ??
-    element.id;
-  const scrubbed = scrubIdentifier(explicit);
-  if (scrubbed) return scrubbed;
-
-  const hrefDestination = destinationForElement(element);
-  if (hrefDestination) return `link_${scrubIdentifier(hrefDestination) ?? 'internal'}`;
-
-  const container = nearestStableContainer(element);
-  const tag = element.tagName.toLowerCase();
-  if (container) return `${tag}_in_${container}`;
-  return tag;
-}
-
-function destinationForElement(element: HTMLElement): string {
-  const href = element instanceof HTMLAnchorElement ? element.getAttribute('href') : null;
-  if (!href) return '';
-  if (href.startsWith('#/')) return href.slice(1);
-  if (href.startsWith('/')) return href;
-  return href.startsWith('http') ? 'external' : '';
-}
-
-function controlState(element: HTMLElement): string {
-  if (element instanceof HTMLInputElement) {
-    if (element.type === 'checkbox' || element.type === 'radio') {
-      return element.checked ? 'checked' : 'unchecked';
-    }
-    if (element.type === 'range') return 'changed';
-  }
-  if (element instanceof HTMLSelectElement) return 'selected';
-
-  const ariaChecked = element.getAttribute('aria-checked');
-  if (ariaChecked === 'true' || ariaChecked === 'false' || ariaChecked === 'mixed') {
-    return ariaChecked;
-  }
-  return 'changed';
-}
-
-function nearestStableContainer(element: HTMLElement): string | undefined {
-  const container = element.closest('[data-testid],[data-walkthrough],[data-analytics-id]');
-  if (!(container instanceof HTMLElement) || container === element) return undefined;
-  return scrubIdentifier(
-    container.getAttribute('data-analytics-id') ??
-      container.getAttribute('data-testid') ??
-      container.getAttribute('data-walkthrough')
-  );
-}
-
-function shouldSkipInteractionElement(element: HTMLElement): boolean {
-  if (element.closest('[data-analytics-skip="true"],[data-no-analytics="true"]')) return true;
-  if (element.closest('[contenteditable="true"]')) return true;
-  if (element instanceof HTMLInputElement) {
-    return ['text', 'search', 'email', 'password', 'tel', 'url', 'number', 'file'].includes(
-      element.type
-    );
-  }
-  if (element instanceof HTMLTextAreaElement) return true;
-  return false;
-}
-
-function scrubIdentifier(value: string | null | undefined): string | undefined {
-  const trimmed = value?.trim();
-  if (!trimmed) return undefined;
-  const withoutQuery = trimmed.split(/[?#]/)[0] ?? trimmed;
-  const scrubbed = withoutQuery
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, ':email')
-    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ':id')
-    .replace(/\b[0-9a-f]{16,}\b/gi, ':id')
-    .replace(/\b\d{3,}\b/g, ':num')
-    .replace(/[^a-zA-Z0-9:_/-]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .toLowerCase()
-    .slice(0, 80);
-  return scrubbed || undefined;
-}
-
-function currentAppPath(): string {
-  if (typeof window === 'undefined') return '';
-  return normalizeAnalyticsPagePath(window.location.pathname);
-}
-
-function currentPageHash(): string {
-  if (typeof window === 'undefined') return '';
-  return window.location.hash.startsWith('#/') ? window.location.hash : '';
-}
-
-function normalizeAnalyticsPagePath(path: string): string {
-  if (typeof window !== 'undefined' && window.location.hash.startsWith('#/')) {
-    return hashToPath(window.location.hash);
-  }
-  if (path.startsWith('#/')) return hashToPath(path);
-  return path || '/';
-}
-
-function hashToPath(hash: string): string {
-  const withoutHash = hash.slice(1);
-  return withoutHash || '/';
 }
 
 async function sendOpenPanelTrack(eventName: string, params?: AnalyticsParams): Promise<void> {

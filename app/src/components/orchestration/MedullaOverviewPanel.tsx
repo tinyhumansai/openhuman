@@ -10,7 +10,7 @@
  * ("Medulla", "OpenHuman", "Discord") stay in every locale.
  */
 import { useT } from '../../lib/i18n/I18nContext';
-import { DISCORD_INVITE_URL } from '../../utils/links';
+import { BILLING_DASHBOARD_URL, DISCORD_INVITE_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
 
 export default function MedullaOverviewPanel() {
@@ -76,6 +76,13 @@ export default function MedullaOverviewPanel() {
             <p className="mt-1 text-xs leading-relaxed text-content-muted">
               {t('orchPage.medulla.subscriberNote')}
             </p>
+            <button
+              type="button"
+              data-testid="orch-medulla-subscribe"
+              onClick={() => void openUrl(BILLING_DASHBOARD_URL)}
+              className="mt-auto flex w-full items-center justify-center gap-2 rounded-xl bg-primary-500 px-4 py-2 text-xs font-semibold text-content-inverted shadow-soft transition-colors hover:bg-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1">
+              {t('orchPage.medulla.subscriberCta')}
+            </button>
           </div>
 
           {/* Discord */}
@@ -97,7 +104,7 @@ export default function MedullaOverviewPanel() {
               type="button"
               data-testid="orch-medulla-discord"
               onClick={() => void openUrl(DISCORD_INVITE_URL)}
-              className="mt-3 inline-flex items-center justify-center gap-2 self-start rounded-xl bg-primary-500 px-4 py-2 text-xs font-semibold text-content-inverted shadow-soft transition-colors hover:bg-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1">
+              className="mt-auto flex w-full items-center justify-center gap-2 rounded-xl bg-primary-500 px-4 py-2 text-xs font-semibold text-content-inverted shadow-soft transition-colors hover:bg-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1">
               {t('orchPage.medulla.cta')}
             </button>
           </div>

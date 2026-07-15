@@ -50,18 +50,18 @@ The cycle:
 
 1. A maintainer dispatches [`promote-main-to-release.yml`](../../.github/workflows/promote-main-to-release.yml), which pushes a **merge commit from `main` into `release`** (no PR). Re-dispatching refreshes `release` with main's latest while preserving fix commits already on `release`; when `release` already contains `main` it's a no-op.
 2. CI Full runs on the promotion push. If it finds breakage, anyone with write access opens a **fix PR directly against `release`**; fix PRs run both lanes — CI Lite for quick lint/coverage feedback and CI Full as the merge-blocking `CI Full Gate` check — and the post-merge push re-runs CI Full on the merge result.
-3. Once CI Full is green on `release` HEAD, cut a build with `release-staging.yml` or `release-production.yml`. Both workflows **enforce** this: `scripts/release/require-ci-full-gate.sh` fails the run unless the latest `CI Full Gate` check on the commit being cut (walking past `[skip ci]` bump commits) concluded success. The `skip_ci_gate` input overrides it for operator recovery only.
-4. **Every cut back-merges `release` into `main`** (`scripts/release/merge-release-into-main.sh`: fast-forward when possible, else a versioned merge commit such as `chore(release): merge release v1.2.4 back into main`), so bump commits and fix commits flow back. Version-bump commits carry `[skip ci]` so cutting a build does not re-run CI Full on the already-validated tree.
+3. Once CI Full is green on `release` HEAD, cut production with `release-production.yml`. Staging may instead be dispatched from `main` when QA needs to validate main before promotion. The release workflows do not query or enforce the `CI Full Gate`; operators verify the relevant CI evidence before cutting.
+4. A cut sourced from `release` back-merges `release` into `main` (`scripts/release/merge-release-into-main.sh`: fast-forward when possible, else a versioned merge commit such as `chore(release): merge release v1.2.4 back into main`), so bump commits and fix commits flow back. A staging cut sourced from `main` needs no back-merge. Version-bump commits carry `[skip ci]`.
 
 Required GitHub settings for this model (repo **Settings → Rules**): `main` requires the `PR CI Gate` status check on PRs; `release` requires PRs for non-bypass actors with the `CI Full Gate` status check required (it runs on PRs targeting release); the release GitHub App's identity sits on the bypass list of both rulesets so the promote/release workflows can push directly.
 
 ## Workflows: staging vs. production
 
-Two first-class GitHub Actions workflows, one per environment. Pick by intent rather than toggling a flag. Both run from the `release` branch only.
+Two first-class GitHub Actions workflows, one per environment. Pick by intent rather than toggling a flag. Staging follows the selected `main` or `release` dispatch ref; production always checks out `release`, regardless of the dispatch ref shown by GitHub's workflow UI.
 
 | Workflow                                                | Branch    | Bumps   | Tags pushed                | Concurrency group       | Use when                                                              |
 | ------------------------------------------------------- | --------- | ------- | -------------------------- | ----------------------- | --------------------------------------------------------------------- |
-| [`release-staging.yml`](../../.github/workflows/release-staging.yml) | `release` | `patch` only | `v<version>-staging`        | `release-staging`       | Cutting a staging build for QA. Runs frequently; narrow semver moves. |
+| [`release-staging.yml`](../../.github/workflows/release-staging.yml) | `main` or `release` | `patch` only | `v<version>-staging`        | `release-staging`       | Cutting a staging build for QA from the selected branch. |
 | [`release-production.yml`](../../.github/workflows/release-production.yml) | `release` | `patch` / `minor` / `major` (`release_type` input) | `v<version>`                | `release-production`    | Shipping a production release from validated `release` HEAD (or a pinned `commit_sha`). |
 
 The matrix build / sign / Sentry-DIF / artifact-upload pipeline used by both flows lives in [`.github/workflows/build-desktop.yml`](../../.github/workflows/build-desktop.yml) as a `workflow_call` reusable workflow. The two top-level workflows above own ref resolution, version bumping, tagging, and publish/cleanup; the build itself is shared.
@@ -117,12 +117,12 @@ There is no separate `staging` branch — staging cuts and production releases b
 - **Naming.** Staging tags use the SemVer pre-release suffix `-staging` (`v1.2.4-staging`) so they sort *before* the matching production tag.
 - **Collisions.** Both workflows fail fast if the target tag already exists locally or on `origin`. Resolve by deleting the stale tag (org maintainers only) or bumping past it.
 - **Rollback (production).** A failed build matrix triggers `cleanup-failed-release`, which deletes both the draft GitHub Release and the `v<version>` tag.
-- **Rollback (staging).** A failed staging build deletes the `v<version>-staging` tag. The bump commit on `release` is left in place; the next staging cut continues from the new patch number rather than re-using it (we accept a small “gap” in patch numbers over racing with concurrent merges).
+- **Rollback (staging).** A failed staging build deletes the `v<version>-staging` tag. The bump commit on the selected source branch is left in place; the next staging cut continues from the new patch number rather than re-using it (we accept a small “gap” in patch numbers over racing with concurrent merges).
 - **Who can delete tags.** Same write-access as `main`. Workflow-driven cleanup deletes run with the workflow's token via `actions/github-script` (the GitHub App token is only used by `prepare-build` for the bump commit + tag push); manual deletes (`git push --delete origin <tag>`) require equivalent maintainer permissions.
 
 ## Release App token: approval gate and rotation
 
-`release-production.yml` bumps the version, **commits to `release` and back-merges into `main`**, pushing those commits + tag with a GitHub App token (`secrets.XGITHUB_APP_ID` / `secrets.XGITHUB_APP_PRIVATE_KEY`) that **bypasses branch protection**. The same App pushes staging bumps (`release-staging.yml`) and promotion merge commits (`promote-main-to-release.yml`). A leaked private key (via a log, a compromised action, or a misconfigured runner) would let an attacker push arbitrary commits to protected branches ([CWE-250: Execution with Unnecessary Privileges](https://cwe.mitre.org/data/definitions/250.html)). Two controls bound that blast radius.
+`release-production.yml` bumps the version, **commits to `release` and back-merges into `main`**, pushing those commits + tag with a GitHub App token (`secrets.XGITHUB_APP_ID` / `secrets.XGITHUB_APP_PRIVATE_KEY`) that **bypasses branch protection**. The same App pushes staging bumps to the selected `main` or `release` source (`release-staging.yml`) and promotion merge commits (`promote-main-to-release.yml`). A leaked private key (via a log, a compromised action, or a misconfigured runner) would let an attacker push arbitrary commits to protected branches ([CWE-250: Execution with Unnecessary Privileges](https://cwe.mitre.org/data/definitions/250.html)). Two controls bound that blast radius.
 
 ### Manual approval gate
 

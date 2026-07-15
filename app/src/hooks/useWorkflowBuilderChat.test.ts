@@ -56,6 +56,7 @@ const okResult = (over: Partial<BuilderTurnResult> = {}): BuilderTurnResult => (
   proposal: null,
   assistantText: 'done',
   error: null,
+  capped: false,
   ...over,
 });
 
@@ -127,6 +128,62 @@ describe('useWorkflowBuilderChat', () => {
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'setProposal', p: { threadId: 'builder-1', proposal } })
     );
+  });
+
+  it('B34: surfaces `capped` when the turn hit the iteration cap with no proposal', async () => {
+    buildWorkflow.mockResolvedValue(okResult({ capped: true, proposal: null }));
+    const { result } = renderHook(() => useWorkflowBuilderChat());
+    expect(result.current.capped).toBe(false);
+    await act(async () => {
+      await result.current.send({
+        displayText: 'build me something complex',
+        request: { mode: 'create', instruction: 'x' },
+      });
+    });
+    expect(result.current.capped).toBe(true);
+  });
+
+  it('B34: does not surface `capped` for a normal turn (not capped)', async () => {
+    buildWorkflow.mockResolvedValue(okResult({ capped: false }));
+    const { result } = renderHook(() => useWorkflowBuilderChat());
+    await act(async () => {
+      await result.current.send({
+        displayText: 'hi',
+        request: { mode: 'create', instruction: 'x' },
+      });
+    });
+    expect(result.current.capped).toBe(false);
+  });
+
+  it('B34: resets a stale `capped=true` at the start of a new turn even if the server sends capped again with a proposal', async () => {
+    // First turn: capped, no proposal.
+    buildWorkflow.mockResolvedValueOnce(okResult({ capped: true, proposal: null }));
+    const { result } = renderHook(() => useWorkflowBuilderChat());
+    await act(async () => {
+      await result.current.send({
+        displayText: 'build me something complex',
+        request: { mode: 'create', instruction: 'x' },
+      });
+    });
+    expect(result.current.capped).toBe(true);
+
+    // Second turn resolves with a proposal — `capped` must clear even if the
+    // (malformed/stale) server payload still says `capped: true`, since the
+    // hook re-checks `!result.proposal` itself, not just at the top of send().
+    const proposal: WorkflowProposal = {
+      name: 'Digest',
+      graph: { nodes: [], edges: [] },
+      requireApproval: true,
+      summary: { trigger: 'schedule', steps: [] },
+    };
+    buildWorkflow.mockResolvedValueOnce(okResult({ capped: true, proposal }));
+    await act(async () => {
+      await result.current.send({
+        displayText: 'continue',
+        request: { mode: 'revise', instruction: 'continue' },
+      });
+    });
+    expect(result.current.capped).toBe(false);
   });
 
   it('appends the user turn locally but never the agent reply — onDone is the single authoritative path (B26)', async () => {

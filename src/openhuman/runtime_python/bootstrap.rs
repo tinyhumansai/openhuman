@@ -276,6 +276,7 @@ async fn acquire_install_lock(install_dir: &Path) -> Result<std::fs::File> {
 
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path_for_task)

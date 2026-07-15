@@ -151,6 +151,38 @@ describe('ConnectionsPanel', () => {
     expect(screen.getByTestId('orch-connections-panel')).toBeInTheDocument();
   });
 
+  it('routes a runtime tool-approval decision back as an allow reply', async () => {
+    const contact = { agentId: ADDR, status: 'accepted', direction: 'outgoing' };
+    sessionsHook.byContact.set(ADDR, [session({})]);
+    pairing.current = { ...pairing.current, state: okState([contact]) as never };
+    transcriptHook.current = {
+      state: { status: 'ok' },
+      messages: [
+        {
+          id: 'ap',
+          from: 'agent',
+          body: 'gh pr status',
+          timestamp: '2026-07-08T00:00:00Z',
+          encrypted: false,
+          eventKind: 'approval_request',
+          toolName: 'shell',
+        },
+      ],
+      refresh: vi.fn(),
+    };
+    render(<ConnectionsPanel />);
+    fireEvent.click(screen.getByTestId(`orch-connection-${ADDR}`).querySelector('button')!);
+    fireEvent.click(await screen.findByTestId('orch-session-s1'));
+    fireEvent.click(screen.getByText('chat.approval.approve'));
+    await waitFor(() =>
+      expect(sendMasterMessage).toHaveBeenCalledWith({
+        body: 'allow',
+        recipient: ADDR,
+        sessionId: 's1',
+      })
+    );
+  });
+
   it('surfaces a reply send failure instead of swallowing it', async () => {
     const contact = { agentId: ADDR, status: 'accepted', direction: 'outgoing' };
     sessionsHook.byContact.set(ADDR, [session({})]);

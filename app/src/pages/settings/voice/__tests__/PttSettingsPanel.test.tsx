@@ -29,9 +29,7 @@ function renderPanel(pttOverrides: Partial<PttState> = {}) {
 describe('PttSettingsPanel', () => {
   it('renders the "not set" hint when no shortcut is bound', () => {
     renderPanel({ shortcut: null });
-    expect(
-      screen.getByText(/Push-to-talk is off — pick a hotkey to enable\./i)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Push-to-talk is off: pick a hotkey to enable\./i)).toBeInTheDocument();
   });
 
   it('renders the bound shortcut when set', () => {
@@ -39,7 +37,7 @@ describe('PttSettingsPanel', () => {
     expect(screen.getByTestId('ptt-shortcut-input')).toHaveValue('F13');
     // The unset hint should NOT show once a shortcut is bound.
     expect(
-      screen.queryByText(/Push-to-talk is off — pick a hotkey to enable\./i)
+      screen.queryByText(/Push-to-talk is off: pick a hotkey to enable\./i)
     ).not.toBeInTheDocument();
   });
 

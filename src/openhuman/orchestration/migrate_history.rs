@@ -68,10 +68,16 @@ async fn resume_pending(config: &Config) -> Result<usize, String> {
         let Some(msg) = latest else {
             continue;
         };
-        // Only a genuinely pending human ask is resumed; a thread whose last turn
-        // is an assistant/owner/system message is already handled (or not the
-        // brain's job) and must not be re-answered.
-        if msg.role != "user" || msg.seq <= 0 {
+        // Only a genuinely pending inbound ask is resumed; a thread whose last
+        // turn is an assistant/owner/system message is already handled (or not
+        // the brain's job) and must not be re-answered. Inbound peer Master DMs
+        // are persisted role "peer" (they left-align in the transcript per
+        // #4777) but are still a pending ask that must wake the brain on resume,
+        // exactly as the live `forward_event` path does — so treat "peer" like
+        // "user" here. (The replay envelope re-sanitizes "peer" → "user" in
+        // `wire::build`, so the hosted brain sees the same role either way; the
+        // distinction is display-only and never reaches inference.)
+        if !matches!(msg.role.as_str(), "user" | "peer") || msg.seq <= 0 {
             continue;
         }
 

@@ -330,6 +330,7 @@ impl MeetAgentSession {
     ///   * none present  → `advance_speaker` yields `None` and the
     ///     reply-speech backend keeps picking its own default voice
     ///     (exact previous behavior).
+    ///
     /// The active slot starts at 0 so an idle session reports the primary
     /// mascot; [`Self::advance_speaker`] keeps the first reply there and
     /// rotates thereafter.

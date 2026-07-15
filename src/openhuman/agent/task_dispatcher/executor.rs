@@ -135,7 +135,6 @@ pub(super) async fn run_autonomous(
     run_id: &str,
     session_thread_id: Option<String>,
 ) -> Result<String, String> {
-    config.agent.max_tool_iterations = TASK_RUN_MAX_ITERATIONS;
     // Match skill-run egress handling: only widen to the permissive default
     // when the operator hasn't configured an explicit allow-list. See the
     // threat-model note above on why `*` is the default here.
@@ -151,6 +150,20 @@ pub(super) async fn run_autonomous(
         executor.profile.as_ref(),
     )
     .map_err(|e| format!("build agent: {e:#}"))?;
+    // Issue #4868 — apply the autonomous task-run iteration budget AFTER
+    // construction. The session builder now stamps the resolved agent
+    // definition's own cap onto the agent; an autonomous task run
+    // intentionally needs a much larger budget (200), so this must be a
+    // post-construction override rather than a pre-set on `config` (which
+    // the builder would otherwise clobber).
+    agent.set_max_tool_iterations(TASK_RUN_MAX_ITERATIONS);
+    tracing::debug!(
+        agent_id = %executor.agent_id,
+        run_id = %run_id,
+        max_tool_iterations = TASK_RUN_MAX_ITERATIONS,
+        "[task_dispatcher] pinned autonomous task-run iteration budget post-construction \
+         (overrides the session builder's per-definition cap)"
+    );
     agent.set_event_context(run_id.to_string(), "task");
     agent.set_agent_definition_name(format!(
         "task-{}-{}",

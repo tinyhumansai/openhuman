@@ -29,6 +29,7 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { apiClient } from '../../AgentWorldShell';
 import { decimalsForAsset, resolveAssetSymbol } from '../../assets';
 import { formatUnits } from '../../components/X402ConfirmDialog';
+import { relativeTime } from '../relativeTime';
 
 const debug = debugFactory('agentworld:explore');
 
@@ -403,16 +404,6 @@ function JobSkeletonList() {
       ))}
     </div>
   );
-}
-
-function relativeTime(isoDate: string): string {
-  const delta = Date.now() - new Date(isoDate).getTime();
-  const mins = Math.floor(delta / 60_000);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
 }
 
 function JobRow({ job }: { job: GqlJobPosting }) {

@@ -373,10 +373,9 @@ async fn drain_steer(steer_rx: &mut mpsc::UnboundedReceiver<String>) -> Option<S
     if let Ok(msg) = steer_rx.try_recv() {
         return Some(msg);
     }
-    match tokio::time::timeout(STEER_DRAIN_GRACE, steer_rx.recv()).await {
-        Ok(msg) => msg,
-        Err(_) => None,
-    }
+    tokio::time::timeout(STEER_DRAIN_GRACE, steer_rx.recv())
+        .await
+        .unwrap_or_default()
 }
 
 /// Build (or resume) an agent session for a medulla task.

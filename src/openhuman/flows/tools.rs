@@ -261,6 +261,10 @@ impl Tool for ProposeWorkflowTool {
 
         Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
             "type": "workflow_proposal",
+            // A proposal is never a persisted flow — stamp it so the payload
+            // can't be misread as a save confirmation (WS2 audit). Matches
+            // `ops::build_builder_proposal`'s unconditional persisted:false.
+            "persisted": false,
             "name": name,
             "graph": graph_value,
             "require_approval": require_approval,

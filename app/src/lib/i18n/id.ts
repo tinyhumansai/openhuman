@@ -7,7 +7,7 @@ const messages: TranslationMap = {
   'agentWorld.welcome.eyebrow': 'TinyPlace',
   'agentWorld.welcome.title': 'Dunia tempat agen Anda bertemu',
   'agentWorld.welcome.body':
-    'TinyPlace adalah lapisan sosial untuk agen AI — agen Anda bisa menemukan agen lain, mengirim pesan, mengambil bounty, dan bertransaksi, semuanya atas nama Anda. Masuki dunia ini dan lihat apa yang mereka lakukan.',
+    'TinyPlace adalah lapisan sosial untuk agen AI: agen Anda bisa menemukan agen lain, mengirim pesan, mengambil bounty, dan bertransaksi, semuanya atas nama Anda. Masuki dunia ini dan lihat apa yang mereka lakukan.',
   'agentWorld.welcome.ctaWorld': 'Masuki dunia',
   'agentWorld.welcome.ctaFeed': 'Jelajahi feed',
   'agentWorld.welcome.ctaDirectory': 'Temukan agen',
@@ -19,7 +19,7 @@ const messages: TranslationMap = {
     'Agen Anda bisa menghasilkan dengan menyelesaikan pekerjaan yang diposting.',
   'agentWorld.welcome.feat3Title': 'Berdagang & bertransaksi',
   'agentWorld.welcome.feat3Body': 'Pembayaran berbasis dompet antaragen, dengan persetujuan Anda.',
-  'brain.header.graph': 'Bagaimana pengetahuan agen Anda terhubung — orang, topik, dan memori.',
+  'brain.header.graph': 'Bagaimana pengetahuan agen Anda terhubung: orang, topik, dan memori.',
   'brain.header.goals': 'Apa yang sedang diupayakan agen Anda, dan alasannya.',
   'brain.header.sources': 'Data yang dipelajari agen Anda.',
   'brain.header.sync': 'Jaga memori Anda tetap segar dan tinjau apa yang berubah.',
@@ -28,7 +28,7 @@ const messages: TranslationMap = {
   'brain.welcome.eyebrow': 'Otak',
   'brain.welcome.title': 'Memori agen Anda, dipetakan',
   'brain.welcome.body':
-    'Brain adalah tempat agen Anda menyimpan apa yang diketahuinya — orang, percakapan, sumber, dan tujuan yang dijadikan acuan untuk membantu Anda dengan konteks nyata alih-alih memulai dari nol setiap kali.',
+    'Brain adalah tempat agen Anda menyimpan apa yang diketahuinya: orang, percakapan, sumber, dan tujuan yang dijadikan acuan untuk membantu Anda dengan konteks nyata alih-alih memulai dari nol setiap kali.',
   'brain.welcome.ctaGraph': 'Buka grafik memori',
   'brain.welcome.ctaGoals': 'Tetapkan tujuan',
   'brain.welcome.ctaSources': 'Sambungkan sumber',
@@ -52,7 +52,7 @@ const messages: TranslationMap = {
   'feedback.welcome.ctaBoard': 'Lihat papan',
   'feedback.welcome.featsLabel': 'Apa yang bisa Anda lakukan',
   'feedback.welcome.feat1Title': 'Bagikan ide',
-  'feedback.welcome.feat1Body': 'Bug, permintaan fitur, gagasan kasar — semuanya diterima.',
+  'feedback.welcome.feat1Body': 'Bug, permintaan fitur, gagasan kasar: semuanya diterima.',
   'feedback.welcome.feat2Title': 'Beri suara',
   'feedback.welcome.feat2Body':
     'Beri suara pada yang penting agar kami tahu apa yang harus diprioritaskan.',
@@ -82,14 +82,14 @@ const messages: TranslationMap = {
   'connections.welcome.eyebrow': 'Koneksi',
   'connections.welcome.title': 'Semua yang Anda gunakan, dalam satu tempat',
   'connections.welcome.body':
-    'Sambungkan aplikasi pesan, email, kalender, dan alat Anda agar agen Anda dapat membaca konteks dan bertindak di semuanya — tanpa menyalin-tempel di antara belasan tab. Anda tetap mengendalikan apa yang boleh disentuhnya.',
+    'Sambungkan aplikasi pesan, email, kalender, dan alat Anda agar agen Anda dapat membaca konteks dan bertindak di semuanya: tanpa menyalin-tempel di antara belasan tab. Anda tetap mengendalikan apa yang boleh disentuhnya.',
   'connections.welcome.ctaChannel': 'Sambungkan saluran',
   'connections.welcome.ctaApps': 'Sambungkan aplikasi',
   'connections.welcome.ctaSkills': 'Jelajahi keahlian',
   'connections.welcome.featsLabel': 'Apa yang bisa Anda lakukan di sini',
   'connections.welcome.feat1Title': 'Bawa saluran masuk',
   'connections.welcome.feat1Body':
-    'Slack, WhatsApp, Telegram, Gmail dan lainnya — tertaut dalam beberapa klik.',
+    'Slack, WhatsApp, Telegram, Gmail dan lainnya: tertaut dalam beberapa klik.',
   'connections.welcome.feat2Title': 'Biarkan agen Anda bertindak',
   'connections.welcome.feat2Body':
     'Ia membaca, menyusun, dan membalas dengan konteks penuh dari semua yang tersambung.',
@@ -102,7 +102,7 @@ const messages: TranslationMap = {
   'notifications.welcome.eyebrow': 'Notifikasi',
   'notifications.welcome.title': 'Hanya yang benar-benar membutuhkan Anda',
   'notifications.welcome.body':
-    'Ringkasan tenang dan berperingkat tentang apa yang dilakukan agen Anda dan apa yang butuh keputusan — sehingga hal penting muncul dan kebisingan tidak menghalangi Anda.',
+    'Ringkasan tenang dan berperingkat tentang apa yang dilakukan agen Anda dan apa yang butuh keputusan: sehingga hal penting muncul dan kebisingan tidak menghalangi Anda.',
   'notifications.welcome.ctaView': 'Lihat peringatan',
   'notifications.welcome.featsLabel': 'Apa yang akan Anda lihat',
   'notifications.welcome.feat1Title': 'Apa yang membutuhkan Anda',
@@ -111,14 +111,14 @@ const messages: TranslationMap = {
   'notifications.welcome.feat2Body':
     'Catatan berjalan tentang apa yang dijalankan dan apa yang dihasilkannya.',
   'notifications.welcome.feat3Title': 'Difilter menurut kategori',
-  'notifications.welcome.feat3Body': 'Pesan, rapat, pengingat — dipilah sesuai cara Anda berpikir.',
+  'notifications.welcome.feat3Body': 'Pesan, rapat, pengingat: dipilah sesuai cara Anda berpikir.',
   'rewards.header.desc': 'Poin, rentetan, rujukan, dan keuntungan Anda.',
   'rewards.welcome.nav': 'Selamat datang',
   'rewards.welcome.main': 'Hadiah',
   'rewards.welcome.eyebrow': 'Hadiah',
   'rewards.welcome.title': 'Dapatkan hadiah karena hadir',
   'rewards.welcome.body':
-    'Kumpulkan poin saat Anda menggunakan OpenHuman dan mengundang orang lain, jaga rentetan Anda tetap hidup, dan tukarkan yang telah Anda peroleh — semuanya terlacak dalam satu tempat.',
+    'Kumpulkan poin saat Anda menggunakan OpenHuman dan mengundang orang lain, jaga rentetan Anda tetap hidup, dan tukarkan yang telah Anda peroleh: semuanya terlacak dalam satu tempat.',
   'rewards.welcome.ctaView': 'Lihat hadiah',
   'rewards.welcome.featsLabel': 'Cara kerjanya',
   'rewards.welcome.feat1Title': 'Kumpulkan poin',
@@ -132,7 +132,7 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': 'Alur kerja',
   'flows.welcome.title': 'Jadikan pekerjaan rutin berjalan otomatis',
   'flows.welcome.body':
-    'Uraikan sesuatu yang Anda lakukan berulang kali — triase, tindak lanjut, ringkasan — dan agen Anda mengubahnya menjadi alur kerja yang bisa dijalankan dari awal sampai akhir, terjadwal atau sesuai permintaan.',
+    'Uraikan sesuatu yang Anda lakukan berulang kali: triase, tindak lanjut, ringkasan: dan agen Anda mengubahnya menjadi alur kerja yang bisa dijalankan dari awal sampai akhir, terjadwal atau sesuai permintaan.',
   'flows.welcome.ctaNew': 'Alur kerja baru',
   'flows.welcome.ctaBrowse': 'Jelajahi alur kerja',
   'flows.welcome.featsLabel': 'Apa yang bisa Anda otomatiskan',
@@ -141,10 +141,10 @@ const messages: TranslationMap = {
     'Katakan apa yang Anda inginkan dalam bahasa sederhana; pembangun menyusun alurnya.',
   'flows.welcome.feat2Title': 'Jalankan sesuai jadwal',
   'flows.welcome.feat2Body':
-    'Picu dengan pengatur waktu, sebuah peristiwa, atau sebuah tombol — terserah Anda.',
+    'Picu dengan pengatur waktu, sebuah peristiwa, atau sebuah tombol: terserah Anda.',
   'flows.welcome.feat3Title': 'Libatkan manusia dalam prosesnya',
   'flows.welcome.feat3Body': 'Setujui langkah sensitif sebelum apa pun terkirim.',
-  // Privacy Mode selector (#4435) — data-egress posture
+  // Privacy Mode selector (#4435): data-egress posture
   'privacy.mode.title': 'Mode Privasi',
   'privacy.mode.description':
     'Mengontrol seberapa banyak data Anda yang boleh keluar dari perangkat ini. Terpisah dari mode akses agen.',
@@ -191,7 +191,7 @@ const messages: TranslationMap = {
   'conversations.toolFailure.serviceUnavailable.cause':
     'Layanan yang dibutuhkan OpenHuman sedang tidak tersedia untuk sementara.',
   'conversations.toolFailure.serviceUnavailable.next':
-    'OpenHuman akan mencoba lagi sebentar lagi — tidak perlu tindakan apa pun.',
+    'OpenHuman akan mencoba lagi sebentar lagi: tidak perlu tindakan apa pun.',
   'conversations.toolFailure.badCredentials.cause':
     'Detail masuk yang tersimpan tidak ada atau tidak lagi valid.',
   'conversations.toolFailure.badCredentials.next':
@@ -208,15 +208,15 @@ const messages: TranslationMap = {
     'OpenHuman akan mencoba lagi, atau Anda dapat mengulanginya secara manual.',
   'conversations.toolFailure.denied.cause': 'Anda menolak tindakan ini.',
   'conversations.toolFailure.denied.next':
-    'Tidak ada yang perlu dilakukan — tindakan ini tidak dijalankan. Minta lagi jika Anda berubah pikiran.',
+    'Tidak ada yang perlu dilakukan: tindakan ini tidak dijalankan. Minta lagi jika Anda berubah pikiran.',
   'conversations.toolFailure.approvalExpired.cause':
     'Permintaan persetujuan kedaluwarsa sebelum ada yang merespons.',
   'conversations.toolFailure.approvalExpired.next':
-    'Minta lagi untuk menjalankannya — OpenHuman tidak akan mencobanya sendiri.',
+    'Minta lagi untuk menjalankannya: OpenHuman tidak akan mencobanya sendiri.',
   'conversations.toolFailure.unknown.cause': 'Terjadi kesalahan pada tindakan ini.',
   'conversations.toolFailure.unknown.next':
     'Coba lagi; jika terus gagal, jalankan diagnostik dari Pengaturan.',
-  'conversations.backgroundTasks.title': 'Background tasks',
+  'conversations.backgroundTasks.title': 'Tugas latar belakang',
   'nav.feedback': 'Bagikan masukan',
   'feedback.board': 'Papan masukan',
   'feedback.empty': 'Belum ada masukan. Jadilah yang pertama membagikan ide.',
@@ -255,21 +255,21 @@ const messages: TranslationMap = {
   'feedback.comments.loadError': 'Gagal memuat komentar',
   'feedback.comments.postError': 'Gagal mengirim komentar',
   'feedback.comments.you': 'Anda',
-  'conversations.backgroundTasks.titleWithCount': 'Background tasks ({count})',
-  'conversations.backgroundTasks.running': '{count} running',
-  'conversations.backgroundTasks.noneRunning': 'none running',
-  'conversations.backgroundTasks.total': '{count} total',
+  'conversations.backgroundTasks.titleWithCount': 'Tugas latar belakang ({count})',
+  'conversations.backgroundTasks.running': '{count} berjalan',
+  'conversations.backgroundTasks.noneRunning': 'tidak ada yang berjalan',
+  'conversations.backgroundTasks.total': '{count} jumlah',
   'conversations.backgroundTasks.empty':
-    'No background tasks in this chat. Ask the assistant to do something in the background and it shows up here.',
+    'Tidak ada tugas latar belakang dalam obrolan ini. Minta asisten untuk melakukan sesuatu di latar belakang dan itu akan muncul di sini.',
   'conversations.backgroundTasks.statusRunning': 'Running',
   'conversations.backgroundTasks.statusDone': 'Done',
   'conversations.backgroundTasks.statusFailed': 'Failed',
-  'conversations.backgroundTasks.statusNeedsYou': 'Needs you',
+  'conversations.backgroundTasks.statusNeedsYou': 'Membutuhkanmu',
   'conversations.backgroundTasks.statusCancelled': 'Dibatalkan',
-  'conversations.backgroundTasks.toolCallOne': '{count} tool call',
-  'conversations.backgroundTasks.toolCallOther': '{count} tool calls',
-  'conversations.backgroundTasks.steps': '{count} steps',
-  'conversations.backgroundTasks.viewDetails': 'View details →',
+  'conversations.backgroundTasks.toolCallOne': 'Panggilan alat {count}',
+  'conversations.backgroundTasks.toolCallOther': 'Panggilan alat {count}',
+  'conversations.backgroundTasks.steps': 'langkah {count}',
+  'conversations.backgroundTasks.viewDetails': 'Lihat detailnya →',
   'conversations.backgroundTasks.close': 'Close',
   'conversations.backgroundTasks.sectionThisChat': 'Di obrolan ini',
   'conversations.backgroundTasks.sectionScheduled': 'Tugas terjadwal',
@@ -318,9 +318,11 @@ const messages: TranslationMap = {
   'nav.activity': 'Aktivitas',
   'nav.brain': 'Otak',
   'nav.flows': 'Alur Kerja',
+  'nav.workflowRuns': 'Eksekusi alur kerja',
+  'nav.workflowDiscoveries': 'Temukan alur kerja',
   'nav.orchestration': 'Orkestrasi',
   'orchestration.cloudUnreachable':
-    'Otak cloud tidak dapat dijangkau — menampilkan tampilan yang tersimpan.',
+    'Otak cloud tidak dapat dijangkau: menampilkan tampilan yang tersimpan.',
   'orchPage.subtitle': 'Koordinasikan agen utama Anda',
   'orchPage.group.agent': 'Agen',
   'orchPage.group.network': 'Jaringan',
@@ -336,12 +338,14 @@ const messages: TranslationMap = {
   'orchPage.medulla.title': 'Medulla',
   'orchPage.medulla.tagline': 'Model orkestrasi OpenHuman',
   'orchPage.medulla.body':
-    'Medulla adalah LLM buatan sendiri dari OpenHuman, direkayasa untuk mengorkestrasi ribuan agen sekaligus — dengan jendela konteks 10 juta token dan orkestrasi berbiaya sangat rendah.',
+    'Medulla adalah LLM buatan sendiri dari OpenHuman, direkayasa untuk mengorkestrasi ribuan agen sekaligus: dengan jendela konteks 10 juta token dan orkestrasi berbiaya sangat rendah.',
   'orchPage.medulla.featAgents': 'Ribuan agen',
   'orchPage.medulla.featContext': 'Konteks 10M token',
   'orchPage.medulla.featCost': 'Orkestrasi berbiaya rendah',
   'orchPage.medulla.subscriberTitle': 'Pelanggan OpenHuman',
-  'orchPage.medulla.subscriberNote': 'Dapatkan akses awal ke Medulla dan mesin orkestrasi.',
+  'orchPage.medulla.subscriberNote':
+    'Saat Medulla diluncurkan, akan eksklusif untuk pelanggan OpenHuman.',
+  'orchPage.medulla.subscriberCta': 'Dapatkan langganan',
   'orchPage.medulla.discordTitle': 'Gabung Discord',
   'orchPage.medulla.earlyAccess':
     'Ingin lebih dulu? Gabung Discord kami dan dapatkan undangan akses awal.',
@@ -362,7 +366,7 @@ const messages: TranslationMap = {
   'orchPage.demo.peerSessions': '{count} sub-agen',
   'orchPage.demo.chat.user1': 'Koordinasikan kampanye penjangkauan di semua saluran saya.',
   'orchPage.demo.chat.assistant1':
-    'Siap — menjalankan 120 agen di 2 perangkat untuk menjalankan penjangkauan, pengayaan, dan tindak lanjut secara paralel.',
+    'Siap: menjalankan 120 agen di 2 perangkat untuk menjalankan penjangkauan, pengayaan, dan tindak lanjut secara paralel.',
   'orchPage.demo.chat.activity1': 'perangkat 1 · 100 agen mengarahkan 1.284 percakapan',
   'orchPage.demo.chat.activity2': 'perangkat 2 · 20 agen memperkaya 512 kontak',
   'orchPage.demo.chat.activity3': 'menyusun 640 balasan yang dipersonalisasi',
@@ -394,7 +398,7 @@ const messages: TranslationMap = {
   'orchPage.connections.nav': 'Koneksi',
   'orchPage.connections.title': 'Agen tertaut',
   'orchPage.connections.description':
-    'Rekan yang dikoordinasikan agen Anda — perluas salah satu untuk melihat sesi Anda dengannya',
+    'Rekan yang dikoordinasikan agen Anda: perluas salah satu untuk melihat sesi Anda dengannya',
   'orchPage.connections.empty': 'Belum ada koneksi.',
   'orchPage.connections.emptyCta': 'Tambahkan koneksi',
   'orchPage.connections.statContacts': 'Koneksi',
@@ -407,7 +411,7 @@ const messages: TranslationMap = {
   'orchPage.connections.replyPlaceholder': 'Balas…',
   'orchPage.connections.initTitle': 'Inisialisasi agen atau instans',
   'orchPage.connections.initDesc':
-    'Buat sub-agen baru untuk bekerja bersama Anda. Buka obrolan agen dan jelaskan peran, tujuan, serta alat yang harus digunakan — OpenHuman menyediakan instans khusus yang dapat Anda kendalikan dari sini.',
+    'Buat sub-agen baru untuk bekerja bersama Anda. Buka obrolan agen dan jelaskan peran, tujuan, serta alat yang harus digunakan: OpenHuman menyediakan instans khusus yang dapat Anda kendalikan dari sini.',
   'orchPage.connections.initCta': 'Mulai di obrolan',
   'orchPage.connections.status.needsYou': 'Perlu Anda',
   'orchPage.connections.status.running': 'Berjalan',
@@ -471,7 +475,7 @@ const messages: TranslationMap = {
   'agentWorld.addressCopied': 'Disalin',
   'agentWorld.walletUnavailable': 'Dompet tidak tersedia',
   'agentWorld.walletRetry': 'Coba muat dompet lagi',
-  // Agent World — Explore section live data
+  // Agent World: Explore section live data
   'explore.networkOverview': 'Ikhtisar Jaringan',
   'explore.trendingCommunities': 'Komunitas Trending',
   'explore.activeJobs': 'Pekerjaan Aktif',
@@ -489,7 +493,7 @@ const messages: TranslationMap = {
   'nav.avatarMenu.invites': 'Undang teman',
   'nav.avatarMenu.wallet': 'Dompet',
 
-  // Brain — full-page memory knowledge-graph surface
+  // Brain: full-page memory knowledge-graph surface
   'brain.subtitle': 'Grafik pengetahuan, sumber memori, dan kontrol Anda.',
   'brain.tabs.memory': 'Memori',
   'brain.tabs.subconscious': 'Alam Bawah Sadar',
@@ -568,7 +572,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.makeDiscoverable': 'Jadikan dapat ditemukan',
   'tinyplaceOrchestration.identity.republish': 'Terbitkan ulang kunci',
   'tinyplaceOrchestration.identity.publishing': 'Menerbitkan…',
-  'tinyplaceOrchestration.identity.publishFailed': 'Gagal menerbitkan — coba lagi',
+  'tinyplaceOrchestration.identity.publishFailed': 'Gagal menerbitkan: coba lagi',
   'tinyplaceOrchestration.identity.card': 'Kartu direktori',
   'tinyplaceOrchestration.identity.key': 'Kunci enkripsi',
   'tinyplaceOrchestration.identity.published': 'Diterbitkan',
@@ -589,7 +593,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.attention.kind.approval': 'Persetujuan',
   'tinyplaceOrchestration.attention.kind.needsInput': 'Perlu masukan',
   'tinyplaceOrchestration.attention.kind.unread': 'Belum dibaca',
-  'brain.empty': 'Otak Anda masih kosong — hubungkan sumber untuk mulai membangun memori.',
+  'brain.empty': 'Otak Anda masih kosong: hubungkan sumber untuk mulai membangun memori.',
   'brain.error': 'Tidak dapat memuat otak Anda. Silakan coba lagi.',
   'common.cancel': 'Batal',
   'common.save': 'Simpan',
@@ -651,7 +655,7 @@ const messages: TranslationMap = {
   'common.breadcrumb': 'Breadcrumb',
   'common.beta': 'Beta',
   'common.betaDisclaimer':
-    'Fitur ini dalam tahap beta. Mungkin berubah atau memiliki kekurangan — masukan Anda membantu kami memperbaikinya.',
+    'Fitur ini dalam tahap beta. Mungkin berubah atau memiliki kekurangan: masukan Anda membantu kami memperbaikinya.',
   'settings.general': 'Umum',
   // Settings layman groups (Phase 4 IA revamp)
   'settings.groups.account': 'Akun',
@@ -692,7 +696,7 @@ const messages: TranslationMap = {
   'settings.devGroups.council': 'Dewan',
   'settings.analysisViews.title': 'Tampilan analisis',
   'settings.analysisViews.menuDesc':
-    'Analisis grafik memori — diagram, sentralitas, kohesi, asosiasi, kesegaran, lini masa, jalur, dan namespace',
+    'Analisis grafik memori: diagram, sentralitas, kohesi, asosiasi, kesegaran, lini masa, jalur, dan namespace',
   'settings.buildInfo.title': 'Info build / versi',
   'settings.buildInfo.menuDesc': 'Build aplikasi, versi, dan detail koneksi core',
   'settings.tokenUsage.title': 'Token & Biaya',
@@ -739,7 +743,7 @@ const messages: TranslationMap = {
   'settings.tokenUsage.ccrDiskDesc':
     'Pertahankan naskah asli yang dapat dipulihkan di seluruh mulai ulang.',
   'settings.dataSync.title': 'Sinkronisasi Data',
-  'settings.dataSync.menuDesc': 'Yang disinkronkan asisten Anda — sumber, kesegaran, dan status',
+  'settings.dataSync.menuDesc': 'Yang disinkronkan asisten Anda: sumber, kesegaran, dan status',
   'settings.dataSync.description':
     'Kelola apa yang disinkronkan ke memori asisten Anda: setiap sumber terhubung dengan waktu sinkronisasi terakhirnya, seberapa banyak yang disinkronkan, dan apakah sedang menyinkronkan sekarang.',
   'settings.devGroups.diagnosticsLogs': 'Diagnostik & Log',
@@ -826,7 +830,7 @@ const messages: TranslationMap = {
   'migration.applyRunning': 'Mengimpor…',
   'migration.applyDisclaimer':
     'Terapkan terbuka setelah Pratinjau berhasil untuk sumber yang sama. Memori yang ada dicadangkan sebelum impor apa pun.',
-  'migration.reportTitlePreview': 'Pratinjau — belum ada yang diimpor',
+  'migration.reportTitlePreview': 'Pratinjau: belum ada yang diimpor',
   'migration.reportTitleApplied': 'Impor selesai',
   'migration.report.source': 'Ruang kerja sumber',
   'migration.report.target': 'Ruang kerja tujuan',
@@ -878,7 +882,7 @@ const messages: TranslationMap = {
   'welcome.clearingAppData': 'Menghapus data aplikasi...',
   'welcome.clearAppDataAndRestart': 'Hapus data aplikasi & memulai ulang',
   'welcome.clearAppDataWarning':
-    'Ini akan menghapus rahasia dan akun yang tersimpan secara lokal di perangkat ini. Akun cloud Anda tidak terpengaruh — Anda dapat masuk kembali segera setelahnya.',
+    'Ini akan menghapus rahasia dan akun yang tersimpan secara lokal di perangkat ini. Akun cloud Anda tidak terpengaruh: Anda dapat masuk kembali segera setelahnya.',
   'welcome.resetErrorFallback':
     'Tidak dapat menghapus data aplikasi. Silakan keluar dan buka kembali OpenHuman, lalu coba lagi.',
   'welcome.signingIn': 'Memasukkan Anda...',
@@ -929,7 +933,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'Belum pernah dijalankan',
   'routines.runNow': 'Jalankan Sekarang',
   'routines.running': 'Berjalan...',
-  'routines.runNowTimedOut': 'Waktu habis — silakan muat ulang dan coba lagi.',
+  'routines.runNowTimedOut': 'Waktu habis: silakan muat ulang dan coba lagi.',
   'routines.viewHistory': 'Lihat riwayat',
   'routines.loadingHistory': 'Memuat…',
   'routines.noHistory': 'Belum ada riwayat eksekusi.',
@@ -949,12 +953,12 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'Apa yang bisa saya bantu hari ini?',
   'chat.send': 'Kirim pesan',
   'chat.stopGeneration': 'Hentikan pembuatan',
-  'chat.parallelBranchHint': 'Ketik cabang paralel — ⌘/Ctrl+Enter untuk mengirim',
+  'chat.parallelBranchHint': 'Ketik cabang paralel: ⌘/Ctrl+Enter untuk mengirim',
   'chat.followupHint':
-    'Antrekan tindak lanjut — dikirim setelah balasan ini · ⌘/Ctrl+Enter untuk cabang paralel',
+    'Antrekan tindak lanjut: dikirim setelah balasan ini · ⌘/Ctrl+Enter untuk cabang paralel',
   'chat.queuedFollowups.label': 'Tindak lanjut dalam antrean',
   'chat.queuedFollowups.clear': 'Hapus',
-  'chat.queuedFollowups.clearFailed': 'Gagal mengosongkan antrean — coba lagi.',
+  'chat.queuedFollowups.clearFailed': 'Gagal mengosongkan antrean: coba lagi.',
   'chat.parallelBranchLabel': 'Cabang paralel',
   'chat.thinking': 'Berpikir...',
   'chat.noMessages': 'Belum ada pesan',
@@ -1006,7 +1010,7 @@ const messages: TranslationMap = {
   'skills.explorer.installing': 'Memasang…',
   'skills.integrations': 'Integrasi Composio',
   'skills.integrationsSubtitle':
-    'Koneksi OAuth berbasis cloud — masuk dengan akun Anda dan Composio mengelola token agar agen dapat membaca dan bertindak atas nama Anda. Tidak perlu mengelola API key.',
+    'Koneksi OAuth berbasis cloud: masuk dengan akun Anda dan Composio mengelola token agar agen dapat membaca dan bertindak atas nama Anda. Tidak perlu mengelola API key.',
   'skills.composio.noApiKeyTitle': 'Belum ada API key Composio yang dikonfigurasi',
   'skills.composio.noApiKeyDescription':
     'Mode lokal menggunakan API key Composio milik Anda sendiri. Buka Pengaturan → Lanjutan → Composio untuk menambahkannya sebelum menghubungkan integrasi di sini.',
@@ -1035,23 +1039,23 @@ const messages: TranslationMap = {
   'memory.tab.memoryTree': 'Pohon Memori',
   'memory.tab.tasks': 'Tugas',
   'memory.tab.tasksDescription':
-    'Buat dan lacak tugas — to-do Anda sendiri beserta papan yang dibangun agen Anda di berbagai percakapan.',
+    'Buat dan lacak tugas: to-do Anda sendiri beserta papan yang dibangun agen Anda di berbagai percakapan.',
   'memory.tab.subconscious': 'Bawah sadar',
   'memory.tab.agentWork': 'Kerja agen',
   'memory.tab.agentWorkDescription':
-    'Pusat kendali untuk setiap proses agen latar belakang — dikelompokkan berdasarkan apa yang butuh masukan Anda, apa yang sedang berjalan, dan apa yang sudah selesai.',
+    'Pusat kendali untuk setiap proses agen latar belakang: dikelompokkan berdasarkan apa yang butuh masukan Anda, apa yang sedang berjalan, dan apa yang sudah selesai.',
   'memory.tab.worktrees': 'Worktree',
   'memory.tab.worktreesDescription':
-    'Worktree git terisolasi dari worker agen paralel — periksa perubahan, buka, atau bersihkan.',
+    'Worktree git terisolasi dari worker agen paralel: periksa perubahan, buka, atau bersihkan.',
   'memory.tab.teams': 'Tim',
   'memory.tab.teamsDescription':
-    'Tim agen yang terkoordinasi — siapa yang menangani setiap tugas, apa yang terhambat, dan apa yang dibicarakan rekan satu tim satu sama lain.',
+    'Tim agen yang terkoordinasi: siapa yang menangani setiap tugas, apa yang terhambat, dan apa yang dibicarakan rekan satu tim satu sama lain.',
   'memory.tab.agents': 'Perpustakaan',
   'memory.tab.agentsDescription':
-    'Telusuri dan jalankan agen yang tersedia — masing-masing dengan alat, kemampuan, dan area fokusnya sendiri.',
+    'Telusuri dan jalankan agen yang tersedia: masing-masing dengan alat, kemampuan, dan area fokusnya sendiri.',
   'memory.tab.workflows': 'Workflows',
   'memory.tab.workflowsDescription':
-    'Prosedur yang dapat digunakan ulang dan dijalankan — sebuah tujuan beserta langkah-langkah untuk mencapainya. Buat satu, instal dari URL, atau buka alur kerja untuk menjalankannya.',
+    'Prosedur yang dapat digunakan ulang dan dijalankan: sebuah tujuan beserta langkah-langkah untuk mencapainya. Buat satu, instal dari URL, atau buka alur kerja untuk menjalankannya.',
   'memory.tab.dreams': 'Mimpi',
   'memory.tab.calls': 'Panggilan',
   'memory.tab.diagram': 'Diagram',
@@ -1062,7 +1066,7 @@ const messages: TranslationMap = {
   'memory.analyzeNow': 'Analisis Sekarang',
   'memoryTimeline.title': 'Lini Masa Memori',
   'memoryTimeline.intro':
-    'Kapan asisten mempelajari tentang Anda — fakta dikelompokkan berdasarkan bulan terakhir diperkuat. Menunjukkan pertumbuhan, lonjakan aktivitas, dan periode tenang.',
+    'Kapan asisten mempelajari tentang Anda: fakta dikelompokkan berdasarkan bulan terakhir diperkuat. Menunjukkan pertumbuhan, lonjakan aktivitas, dan periode tenang.',
   'memoryTimeline.loading': 'Membangun lini masa…',
   'memoryTimeline.errorPrefix': 'Tidak dapat memuat graf:',
   'memoryTimeline.retry': 'Retry',
@@ -1080,7 +1084,7 @@ const messages: TranslationMap = {
   'memoryTimeline.truncated': 'Menampilkan {shown} terbaru dari {total} bulan.',
   'namespaceOverview.title': 'Ikhtisar Namespace',
   'namespaceOverview.intro':
-    'Bagaimana pengetahuan Anda terdistribusi di seluruh konteks — jumlah fakta dan entitas berbeda yang tercatat di setiap namespace.',
+    'Bagaimana pengetahuan Anda terdistribusi di seluruh konteks: jumlah fakta dan entitas berbeda yang tercatat di setiap namespace.',
   'namespaceOverview.loading': 'Menggabungkan namespace…',
   'namespaceOverview.errorPrefix': 'Tidak dapat memuat grafiknya:',
   'namespaceOverview.retry': 'Coba lagi',
@@ -1125,7 +1129,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': 'Asosiasi Entitas',
   'entityAssociations.intro':
-    'Entitas yang berbagi banyak koneksi yang sama berasosiasi — meskipun tidak ada satu fakta pun yang menghubungkan mereka secara langsung. Kesamaan Jaccard mengungkap pasangan tersembunyi ini.',
+    'Entitas yang berbagi banyak koneksi yang sama berasosiasi: meskipun tidak ada satu fakta pun yang menghubungkan mereka secara langsung. Kesamaan Jaccard mengungkap pasangan tersembunyi ini.',
   'entityAssociations.loading': 'Menghitung asosiasi…',
   'entityAssociations.errorPrefix': 'Tidak dapat memuat graf:',
   'entityAssociations.retry': 'Retry',
@@ -1141,10 +1145,10 @@ const messages: TranslationMap = {
   'entityAssociations.inferredBadge': 'inferred',
   'entityAssociations.linkedTitle': 'Entitas-entitas ini terhubung langsung.',
   'entityAssociations.inferredTitle':
-    'Tidak ada tautan langsung — terkait hanya melalui koneksi bersama.',
+    'Tidak ada tautan langsung: terkait hanya melalui koneksi bersama.',
   'entityAssociations.sharedLabel': '{shared} bersama',
   'entityAssociations.pairTitle': '{jaccard}% mirip · {shared} dari {union} koneksi bersama',
-  'entityAssociations.truncated': 'Menampilkan {shown} dari {total} — terkuat lebih dulu.',
+  'entityAssociations.truncated': 'Menampilkan {shown} dari {total}: terkuat lebih dulu.',
   'memory.tab.freshness': 'Freshness',
   'memoryFreshness.title': 'Kesegaran Pengetahuan',
   'memoryFreshness.intro':
@@ -1162,8 +1166,8 @@ const messages: TranslationMap = {
   'memoryFreshness.metricStale': 'Stale',
   'memoryFreshness.recallCaption': 'Rata-rata recall {recall}% dari {total} fakta',
   'memoryFreshness.queueHeading': 'Antrean konfirmasi ulang',
-  'memoryFreshness.queueTruncated': 'Menampilkan {shown} dari {total} — tangani ini lebih dulu.',
-  'memoryFreshness.allFresh': 'Semua fakta masih segar — tidak perlu dikonfirmasi ulang.',
+  'memoryFreshness.queueTruncated': 'Menampilkan {shown} dari {total}: tangani ini lebih dulu.',
+  'memoryFreshness.allFresh': 'Semua fakta masih segar: tidak perlu dikonfirmasi ulang.',
   'memoryFreshness.statusFading': 'fading',
   'memoryFreshness.statusStale': 'stale',
   'memoryFreshness.ageLabel': '{days} hari lalu',
@@ -1171,7 +1175,7 @@ const messages: TranslationMap = {
   'memory.tab.path': 'Jalur',
   'connectionPath.title': 'Jalur Koneksi',
   'connectionPath.intro':
-    'Telusuri rantai relasi terpendek yang menghubungkan dua entitas mana pun — bagaimana graf menghubungkan keduanya, bahkan melalui beberapa lompatan.',
+    'Telusuri rantai relasi terpendek yang menghubungkan dua entitas mana pun: bagaimana graf menghubungkan keduanya, bahkan melalui beberapa lompatan.',
   'connectionPath.loading': 'Memuat graf…',
   'connectionPath.errorPrefix': 'Tidak dapat memuat graf:',
   'connectionPath.retry': 'Coba lagi',
@@ -1279,7 +1283,7 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiLabel': 'API key OpenAI',
   'onboarding.apiKeys.openaiPlaceholder': 'sk-...',
   'onboarding.apiKeys.openaiOauthHint':
-    'Gunakan ChatGPT Plus/Pro (berlangganan) atau kunci OpenAI API — keduanya tidak diperlukan.',
+    'Gunakan ChatGPT Plus/Pro (berlangganan) atau kunci OpenAI API: keduanya tidak diperlukan.',
   'onboarding.apiKeys.openaiOauthOpening': 'Membuka proses masuk…',
   'onboarding.apiKeys.openaiOauthConnect': 'Masuk dengan ChatGPT',
   'onboarding.apiKeys.openaiOauthConnected': 'Terhubung dengan ChatGPT',
@@ -1582,7 +1586,7 @@ const messages: TranslationMap = {
   'settings.costDashboard.dailyTarget': 'Target harian',
   'settings.costDashboard.today': 'Hari ini',
   'settings.costDashboard.todayBadge': 'TODAY',
-  'settings.costDashboard.unknownProvider': '-',
+  'settings.costDashboard.unknownProvider': 'Tidak ada',
   'settings.costDashboard.justNow': 'Baru saja',
   'settings.costDashboard.secondsAgo': '{value}s yang lalu',
   'settings.costDashboard.minutesAgo': '{value}m yang lalu',
@@ -1619,7 +1623,7 @@ const messages: TranslationMap = {
     'Hapus alat pencarian dari konteks agen dan daftar alat yang tersedia.',
   'settings.search.engineManagedLabel': 'OpenHuman Dikelola',
   'settings.search.engineManagedDesc':
-    'Baku. Diarahkan melalui backend OpenHuman — tidak diperlukan kunci API.',
+    'Baku. Diarahkan melalui backend OpenHuman: tidak diperlukan kunci API.',
   'settings.search.localManagedUnavailable':
     'Pencarian OpenHuman Managed tidak tersedia untuk pengguna lokal. Tambahkan API key Parallel atau Brave Anda sendiri untuk mengaktifkan pencarian web.',
   'settings.search.engineParallelLabel': 'Parallel',
@@ -1652,7 +1656,7 @@ const messages: TranslationMap = {
   'settings.search.placeholderQuerit': 'kunci Querit API',
   'settings.search.allowedSitesLabel': 'Situs yang diijinkan',
   'settings.search.allowedSitesHint':
-    'Host yang boleh dibuka dan dibaca oleh asisten — melalui pengambilan web dan alat browser — satu per baris, mis. reuters.com. Sebuah host juga mencakup subdomain-nya. Penelusuran web itu sendiri tidak dibatasi oleh daftar ini.',
+    'Host yang boleh dibuka dan dibaca oleh asisten: melalui pengambilan web dan alat browser: satu per baris, mis. reuters.com. Sebuah host juga mencakup subdomain-nya. Penelusuran web itu sendiri tidak dibatasi oleh daftar ini.',
   'settings.search.allowedSitesAllOn':
     'Asisten dapat membuka website publik. Alamat lokal dan pribadi tetap diblokir.',
   'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
@@ -1701,7 +1705,7 @@ const messages: TranslationMap = {
   'settings.embeddings.applyCustom': 'Terapkan',
   'settings.embeddings.testConnection': 'Uji koneksi',
   'settings.embeddings.testing': 'Menguji…',
-  'settings.embeddings.testSuccess': 'Terhubung — {dims} dimensi',
+  'settings.embeddings.testSuccess': 'Terhubung: {dims} dimensi',
   'settings.embeddings.connectionTestFailed': 'Pengujian gagal',
   'settings.embeddings.verifyFallback':
     'Tidak dapat memverifikasi endpoint embeddings. Pastikan endpoint berjalan dan menyediakan model embedding, lalu simpan lagi.',
@@ -1726,7 +1730,7 @@ const messages: TranslationMap = {
   'mcp.alphaBannerText':
     'Dukungan server MCP masih dalam tahap alpha awal. Registry, alur instalasi, dan koneksi alat mungkin berperilaku tidak terduga atau berubah antara rilis.',
   'mcp.toolList.noTools': 'Tidak ada alat yang tersedia.',
-  'mcp.setup.secretDialog.title': 'MCP Penyiapan — Masukkan Rahasia',
+  'mcp.setup.secretDialog.title': 'MCP Penyiapan: Masukkan Rahasia',
   'mcp.setup.secretDialog.bodyPrefix': 'Agen penyiapan MCP memerlukan',
   'mcp.setup.secretDialog.bodySuffix':
     'Nilai Anda dikirim langsung ke inti proses dan tidak pernah memasuki percakapan AI.',
@@ -1949,8 +1953,8 @@ const messages: TranslationMap = {
   'mcp.tab.link.website': 'Situs web',
   'mcp.tab.link.repo': 'Repositori',
   'mcp.tab.transport.hostedHint':
-    'Berjalan di server jarak jauh — masuk atau token diatur saat memasang',
-  'mcp.tab.transport.localHint': 'Berjalan di perangkat Anda — mungkin perlu token saat memasang',
+    'Berjalan di server jarak jauh: masuk atau token diatur saat memasang',
+  'mcp.tab.transport.localHint': 'Berjalan di perangkat Anda: mungkin perlu token saat memasang',
   'mcp.tab.officialBadge': 'Resmi',
   'mcp.tab.officialHint': 'Server resmi dari vendor',
   'mcp.tab.badge.installed': 'Terpasang',
@@ -2035,7 +2039,7 @@ const messages: TranslationMap = {
     'Sudah punya token akses? Tempelkan sebagai header Authorization di bawah ini saja.',
   'mcp.connectAuth.oauthTimeout': 'Waktu menunggu proses masuk lewat browser habis. Coba lagi.',
   'mcp.connectAuth.authError.oauthRequired':
-    'Server ini menggunakan OAuth. Gunakan “Masuk dengan browser” — token yang ditempelkan tidak akan diterima.',
+    'Server ini menggunakan OAuth. Gunakan “Masuk dengan browser”: token yang ditempelkan tidak akan diterima.',
   'mcp.connectAuth.authError.tokenRejected':
     'Server menolak token ini. Pastikan token benar dan belum kedaluwarsa.',
   'mcp.connectAuth.authError.credentialRequired':
@@ -2053,7 +2057,7 @@ const messages: TranslationMap = {
   'autonomy.statusSaving': 'Menyimpan…',
   'autonomy.statusSaved': 'Tersimpan.',
   'autonomy.statusFailed': 'Gagal',
-  'autonomy.unlimitedNote': 'Tidak terbatas — pembatasan tarif dinonaktifkan.',
+  'autonomy.unlimitedNote': 'Tidak terbatas: pembatasan tarif dinonaktifkan.',
   'autonomy.invalidIntegerMsg':
     'Harus berupa bilangan bulat positif (gunakan preset Tidak Terbatas untuk tanpa batas).',
   'autonomy.presetUnlimited': 'Tidak terbatas (default)',
@@ -2161,14 +2165,14 @@ const messages: TranslationMap = {
   'devOptions.cloud': 'Cloud',
   'devOptions.remoteCoreRpc': 'RPC core jarak jauh',
   'devOptions.token': 'Token',
-  'devOptions.tokenNotSet': 'belum diatur — RPC akan 401',
+  'devOptions.tokenNotSet': 'belum diatur: RPC akan 401',
   'devOptions.triggerSentryTest': 'Picu Tes Sentry (staging)',
   'devOptions.triggerSentryTestDesc':
-    'Mengirim error bertag untuk memverifikasi pipeline Sentry. Issue #1072 — hapus setelah verifikasi.',
+    'Mengirim error bertag untuk memverifikasi pipeline Sentry. Issue #1072: hapus setelah verifikasi.',
   'devOptions.sendTestEvent': 'Kirim event tes',
   'devOptions.sending': 'Mengirim...',
   'devOptions.eventSent': 'Event terkirim',
-  'devOptions.sentryDisabled': '(tidak ada id — Penjaga dinonaktifkan dalam build ini)',
+  'devOptions.sentryDisabled': '(tidak ada id: Penjaga dinonaktifkan dalam build ini)',
   'devOptions.failed': 'Gagal',
   'devOptions.appLogs': 'Log aplikasi',
   'devOptions.appLogsDesc':
@@ -2332,7 +2336,7 @@ const messages: TranslationMap = {
   'voice.providers.failedToInstallPiper': 'Gagal menginstal Piper',
   'voice.providers.title': 'Penyedia Suara',
   'voice.providers.desc':
-    'Pilih tempat transkripsi dan sintesis dijalankan. Gunakan tombol Instal secara lokal untuk mengunduh biner dan model ke workspace Anda. Penyedia lokal dapat disimpan sebelum instalasi selesai — tidak perlu pengaturan WHISPER_BIN atau PIPER_BIN secara manual.',
+    'Pilih tempat transkripsi dan sintesis dijalankan. Gunakan tombol Instal secara lokal untuk mengunduh biner dan model ke workspace Anda. Penyedia lokal dapat disimpan sebelum instalasi selesai: tidak perlu pengaturan WHISPER_BIN atau PIPER_BIN secara manual.',
   'voice.providers.sttProvider': 'Penyedia Ucapan-ke-Teks',
   'voice.providers.sttProviderAria': 'Penyedia STT',
   'voice.providers.cloudWhisperProxy': 'Cloud (Proksi Bisikan)',
@@ -2431,22 +2435,21 @@ const messages: TranslationMap = {
     'Tahan sebuah tombol untuk berbicara dengan OpenHuman saat kamu sedang di aplikasi lain. Lepas tombol untuk mengirim; jika «Bacakan balasan» aktif, OpenHuman akan menyuarakan balasannya.',
   'pttSettings.shortcutLabel': 'Pintasan',
   'pttSettings.shortcutPlaceholder': 'Tekan sebuah tombol (mis. F13)',
-  'pttSettings.shortcutUnsetHint':
-    'Tekan untuk bicara mati — pilih pintasan untuk mengaktifkannya.',
+  'pttSettings.shortcutUnsetHint': 'Tekan untuk bicara mati: pilih pintasan untuk mengaktifkannya.',
   'pttSettings.speakRepliesLabel': 'Suarakan balasan agen',
   'pttSettings.showOverlayLabel': 'Tampilkan lapisan saat tombol ditahan',
   'pttSettings.errorConflictsWithDictation':
     'Pintasan ini sudah dipakai oleh dikte. Pilih tombol lain.',
   'pttSettings.errorModifierOnly':
-    'Pilih tombol biasa (mis. F13) — pintasan hanya pengubah tidak berfungsi untuk tekan untuk bicara.',
+    'Pilih tombol biasa (mis. F13): pintasan hanya pengubah tidak berfungsi untuk tekan untuk bicara.',
   'pttSettings.errorEmpty': 'Pilih tombol untuk diikat.',
   'pttSettings.errorAccessibility':
     'macOS memerlukan izin Aksesibilitas untuk pintasan ini. Buka Pengaturan Sistem → Privasi & Keamanan → Aksesibilitas lalu aktifkan OpenHuman.',
   'pttSettings.errorShortcutInUse': 'Aplikasi lain sudah memakai pintasan ini. Pilih yang lain.',
   'pttSettings.errorUnsupportedWayland':
-    'Sesi Wayland belum mendukung pintasan global di OpenHuman — beralihlah ke sesi X11 atau gunakan tombol dikte di dalam aplikasi.',
+    'Sesi Wayland belum mendukung pintasan global di OpenHuman: beralihlah ke sesi X11 atau gunakan tombol dikte di dalam aplikasi.',
   'pttSettings.exclusiveFullscreenHint':
-    'Pada game layar penuh eksklusif, lapisan tidak akan tampil — kamu hanya akan mendengar nada. Beralihlah ke layar penuh tanpa bingkai untuk melihat lapisan.',
+    'Pada game layar penuh eksklusif, lapisan tidak akan tampil: kamu hanya akan mendengar nada. Beralihlah ke layar penuh tanpa bingkai untuk melihat lapisan.',
   'pttOverlay.listening': 'Mendengarkan…',
   'pttOverlay.idle': 'Siaga',
   'autocomplete.title': 'Pelengkap Otomatis',
@@ -2483,10 +2486,10 @@ const messages: TranslationMap = {
   'chat.sendMessage': 'Kirim Pesan',
   'composio.triageTitle': 'Pemicu Integrasi',
   'composio.triageDesc':
-    'Saat aktif, setiap pemicu Composio yang masuk menjalani langkah triase AI yang mengklasifikasikan event dan mungkin memulai tindakan otomatis — satu giliran LLM lokal per pemicu. Nonaktifkan secara global atau per integrasi jika Anda lebih suka tinjauan manual. Jika variabel lingkungan',
+    'Saat aktif, setiap pemicu Composio yang masuk menjalani langkah triase AI yang mengklasifikasikan event dan mungkin memulai tindakan otomatis: satu giliran LLM lokal per pemicu. Nonaktifkan secara global atau per integrasi jika Anda lebih suka tinjauan manual. Jika variabel lingkungan',
   'composio.disableAllTriage': 'Nonaktifkan triase AI untuk semua pemicu',
   'composio.triggersStillRecorded':
-    'Pemicu tetap dicatat ke riwayat — tidak ada giliran LLM yang dijalankan.',
+    'Pemicu tetap dicatat ke riwayat: tidak ada giliran LLM yang dijalankan.',
   'composio.disableSpecificIntegrations': 'Nonaktifkan triase AI untuk integrasi tertentu',
   'composio.settingsSaved': 'Pengaturan disimpan',
   'composio.saveFailed': 'Gagal menyimpan. Coba lagi.',
@@ -2513,7 +2516,7 @@ const messages: TranslationMap = {
   'screenAwareness.debug.baselineFps': 'FPS Dasar',
   'screenAwareness.debug.useVisionModel': 'Gunakan Model Visi',
   'screenAwareness.debug.useVisionModelDesc':
-    'Kirim tangkapan layar ke LLM vision untuk konteks yang lebih kaya. Jika dinonaktifkan, hanya teks OCR yang digunakan dengan LLM teks — lebih cepat dan tidak memerlukan model vision.',
+    'Kirim tangkapan layar ke LLM vision untuk konteks yang lebih kaya. Jika dinonaktifkan, hanya teks OCR yang digunakan dengan LLM teks: lebih cepat dan tidak memerlukan model vision.',
   'screenAwareness.debug.keepScreenshots': 'Simpan Tangkapan Layar',
   'screenAwareness.debug.keepScreenshotsDesc':
     'Simpan tangkapan layar yang diambil ke workspace alih-alih menghapusnya setelah diproses',
@@ -2614,14 +2617,14 @@ const messages: TranslationMap = {
     'Setiap notifikasi dari akun yang terhubung dinilai oleh model AI lokal. Notifikasi penting secara otomatis diteruskan ke agen orkestrator Anda agar tidak ada yang terlewat.',
   'notifications.routing.howItWorks': 'Cara kerjanya',
   'notifications.routing.level.drop': 'Hapus',
-  'notifications.routing.level.dropDesc': 'Kebisingan / spam — disimpan tetapi tidak muncul',
+  'notifications.routing.level.dropDesc': 'Kebisingan / spam: disimpan tetapi tidak muncul',
   'notifications.routing.level.acknowledge': 'Akui',
   'notifications.routing.level.acknowledgeDesc':
-    'Prioritas rendah — ditampilkan di pusat notifikasi',
+    'Prioritas rendah: ditampilkan di pusat notifikasi',
   'notifications.routing.level.react': 'Bereaksi',
-  'notifications.routing.level.reactDesc': 'Prioritas sedang — memicu respons agen terfokus',
+  'notifications.routing.level.reactDesc': 'Prioritas sedang: memicu respons agen terfokus',
   'notifications.routing.level.escalate': 'Eskalasi',
-  'notifications.routing.level.escalateDesc': 'Prioritas tinggi — diteruskan ke agen orkestra',
+  'notifications.routing.level.escalateDesc': 'Prioritas tinggi: diteruskan ke agen orkestra',
   'notifications.routing.perProvider': 'Per penyedia perutean',
   'notifications.routing.threshold': 'Ambang batas',
   'notifications.routing.routeToOrchestrator': 'Rute ke orkestrator',
@@ -2728,7 +2731,7 @@ const messages: TranslationMap = {
   'mic.unavailable': 'Mikrofon tidak tersedia',
   'mic.permissionDenied': 'Izin mikrofon ditolak',
   'mic.failedToStartRecorder': 'Gagal memulai perekam',
-  'mic.deviceUnavailable': 'Mikrofon yang dipilih tidak tersedia — coba perangkat lain.',
+  'mic.deviceUnavailable': 'Mikrofon yang dipilih tidak tersedia: coba perangkat lain.',
   'mic.deviceInUse': 'Mikrofon sedang digunakan oleh aplikasi lain.',
   'mic.error': 'Kesalahan mikrofon',
   'mic.transcribing': 'Mentranskripsi...',
@@ -2764,10 +2767,10 @@ const messages: TranslationMap = {
   'token.noSubAgents': 'Belum ada penggunaan sub-agen',
   'token.popInput': 'Token masukan',
   'token.popOutput': 'Token keluaran',
-  'token.popCacheHit': 'Cache hit',
+  'token.popCacheHit': 'Cache terkena',
   'token.popContext': 'Jendela konteks',
   'token.tipInput':
-    'Token yang dikirim ke model pada sesi ini — prompt Anda ditambah riwayat percakapan.',
+    'Token yang dikirim ke model pada sesi ini: prompt Anda ditambah riwayat percakapan.',
   'token.tipOutput': 'Token yang dihasilkan model pada sesi ini.',
   'token.tipCacheHit':
     'Token masukan yang dilayani dari prefiks prompt yang di-cache, ditagih dengan tarif lebih rendah.',
@@ -2847,9 +2850,9 @@ const messages: TranslationMap = {
   'workspace.revealFolder': 'Tampilkan Folder',
   'workspace.checkingVault': 'Memeriksa…',
   'workspace.vaultNotRegisteredHelp':
-    'Obsidian hanya membuka folder yang telah Anda tambahkan sebagai vault. Di Obsidian, pilih "Buka folder sebagai vault" dan pilih folder di bawah — Anda hanya perlu melakukan ini sekali. Lalu klik Lihat Vault lagi.',
+    'Obsidian hanya membuka folder yang telah Anda tambahkan sebagai vault. Di Obsidian, pilih "Buka folder sebagai vault" dan pilih folder di bawah: Anda hanya perlu melakukan ini sekali. Lalu klik Lihat Vault lagi.',
   'workspace.obsidianNotFoundHelp':
-    'Kami tidak dapat menemukan Obsidian di perangkat ini. Instal, atau — jika dipasang di lokasi non-standar — atur folder konfigurasinya di Lanjutan.',
+    'Kami tidak dapat menemukan Obsidian di perangkat ini. Instal, atau: jika dipasang di lokasi non-standar: atur folder konfigurasinya di Lanjutan.',
   'workspace.openAnyway': 'Buka di Obsidian tetap',
   'workspace.installObsidian': 'Instal Obsidian',
   'workspace.obsidianAdvanced': 'Obsidian dipasang di tempat lain?',
@@ -3105,7 +3108,7 @@ const messages: TranslationMap = {
   'bootCheck.validUrlRequired': 'Itu bukan URL yang valid (coba https://core.example.com/rpc)',
   'bootCheck.tokenRequired': 'Kami memerlukan token autentikasi untuk terhubung.',
   'bootCheck.httpPublicWarning':
-    'Ini adalah URL HTTP biasa pada host publik — lalu lintas tidak akan dienkripsi. Gunakan HTTPS kecuali Anda memercayai jaringan ini.',
+    'Ini adalah URL HTTP biasa pada host publik: lalu lintas tidak akan dienkripsi. Gunakan HTTPS kecuali Anda memercayai jaringan ini.',
   'bootCheck.chooseCoreMode': 'Pilih Runtime',
   'bootCheck.connectToCore': 'Hubungkan ke Runtime Anda',
   'bootCheck.desktopDescription':
@@ -3229,7 +3232,7 @@ const messages: TranslationMap = {
   'composio.envVarOverrides': 'diatur, itu menggantikan pengaturan ini.',
   'composio.previewBadge': 'Pratinjau',
   'composio.previewTooltip':
-    'Integrasi agen segera hadir — Anda dapat terhubung, tetapi agen belum dapat menggunakan perangkat ini.',
+    'Integrasi agen segera hadir: Anda dapat terhubung, tetapi agen belum dapat menggunakan perangkat ini.',
   'memory.day.sun': 'Min',
   'memory.day.mon': 'Sen',
   'memory.day.tue': 'Sel',
@@ -3242,7 +3245,7 @@ const messages: TranslationMap = {
   'memory.ingestingTitle': 'Mengingesti {title}',
   'mic.noAudioCaptured': 'Tidak ada audio tertangkap',
   'mic.noSpeechDetected': 'Tidak ada suara terdeteksi',
-  'mic.lowConfidenceResult': 'Tidak dapat memahami audio dengan jelas — silakan coba lagi',
+  'mic.lowConfidenceResult': 'Tidak dapat memahami audio dengan jelas: silakan coba lagi',
   'mic.failedToStopRecording': 'Gagal menghentikan perekaman: {message}',
   'mic.transcriptionFailed': 'Transkripsi gagal: {message}',
   'reflections.kind.retrospective': 'Retrospektif',
@@ -3315,7 +3318,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk3': 'Keuntungan 3',
   'app.openhumanLink.discord.perk4': 'Keuntungan 4',
   'app.openhumanLink.discordReport.intro':
-    'Mohon maaf — terjadi kesalahan di pihak kami. Kami berusaha mencatat error ini secara otomatis, tetapi membagikan detailnya di Discord membantu kami memperbaikinya lebih cepat.',
+    'Mohon maaf: terjadi kesalahan di pihak kami. Kami berusaha mencatat error ini secara otomatis, tetapi membagikan detailnya di Discord membantu kami memperbaikinya lebih cepat.',
   'app.openhumanLink.discordReport.openDiscord': 'Buka Discord',
   'app.openhumanLink.done': 'Selesai',
   'app.openhumanLink.notifications.desktopOnly':
@@ -3477,7 +3480,7 @@ const messages: TranslationMap = {
   'channels.web.displayName': 'Web',
   'channels.web.description': 'Mengobrol melalui UI web bawaan.',
   'channels.web.authMode.managed_dm.description':
-    'Gunakan obrolan web tertanam — tidak perlu penyiapan.',
+    'Gunakan obrolan web tertanam: tidak perlu penyiapan.',
   'channels.yuanbao.connect': 'Connect',
   'channels.yuanbao.connecting': 'Menghubungkan…',
   'channels.yuanbao.fieldRequired': '{field} wajib diisi',
@@ -3812,7 +3815,7 @@ const messages: TranslationMap = {
   'intelligence.tasks.composer.attachLabel': 'Lampirkan ke percakapan',
   'intelligence.tasks.composer.attachNone': 'Pribadi (tanpa percakapan)',
   'intelligence.tasks.composer.objectiveLabel': 'Tujuan',
-  'intelligence.tasks.composer.objectivePlaceholder': 'Opsional — hasil yang diinginkan',
+  'intelligence.tasks.composer.objectivePlaceholder': 'Opsional: hasil yang diinginkan',
   'intelligence.tasks.composer.notesLabel': 'Catatan',
   'intelligence.tasks.composer.notesPlaceholder': 'Catatan opsional',
   'intelligence.tasks.composer.create': 'Buat tugas',
@@ -3893,7 +3896,7 @@ const messages: TranslationMap = {
     'Tidak ada worktree terisolasi. Worker paralel dengan isolasi worktree akan muncul di sini.',
   'worktree.panel.overlapsTitle': 'Perubahan yang tumpang tindih',
   'worktree.panel.overlapHint':
-    'Berkas-berkas ini diubah oleh lebih dari satu worktree — selaraskan sebelum menggabungkan.',
+    'Berkas-berkas ini diubah oleh lebih dari satu worktree: selaraskan sebelum menggabungkan.',
   'intelligence.agentWork.action.stop': 'Hentikan',
   'intelligence.agentWork.action.retry': 'Coba lagi',
   'intelligence.agentWork.action.continue': 'Lanjutkan',
@@ -4051,6 +4054,20 @@ const messages: TranslationMap = {
   'flows.list.lastRun': 'Terakhir dijalankan',
   'flows.list.neverRun': 'Belum pernah dijalankan',
   'flows.list.justNow': 'Baru saja',
+  'flows.discoveries.title': 'Temuan alur kerja',
+  'flows.discoveries.description':
+    'Otomatisasi yang disarankan Flow Scout, berdasarkan cara Anda bekerja.',
+  'flows.allRuns.title': 'Eksekusi alur kerja',
+  'flows.allRuns.description': 'Setiap eksekusi alur kerja di ruang kerja Anda, terbaru dulu.',
+  'flows.allRuns.loading': 'Memuat eksekusi…',
+  'flows.allRuns.empty': 'Belum ada eksekusi alur kerja.',
+  'flows.allRuns.unknownWorkflow': 'Alur kerja tidak dikenal',
+  'flows.allRuns.status.running': 'Berjalan',
+  'flows.allRuns.status.completed': 'Selesai',
+  'flows.allRuns.status.completed_with_warnings': 'Selesai dengan peringatan',
+  'flows.allRuns.status.pending_approval': 'Menunggu persetujuan',
+  'flows.allRuns.status.failed': 'Gagal',
+  'flows.allRuns.status.cancelled': 'Dibatalkan',
   'flows.list.minutesAgo': '{count} menit lalu',
   'flows.list.hoursAgo': '{count} jam lalu',
   'flows.list.daysAgo': '{count} hari lalu',
@@ -4067,8 +4084,12 @@ const messages: TranslationMap = {
   'flows.runs.loadError': 'Tidak dapat memuat proses',
   'flows.runs.empty': 'Belum ada proses',
   'flows.promptBar.label': 'Jelaskan sebuah alur kerja',
-  'flows.promptBar.placeholder': 'Jelaskan sebuah alur kerja…',
+  'flows.promptBar.placeholder': 'Jelaskan alur kerja Anda',
+  'flows.promptBar.copilotTitle': 'Kopilot',
   'flows.promptBar.submit': 'Buat',
+  'flows.promptBar.startBuilding': 'Mulai membangun',
+  'flows.promptBar.disclaimer':
+    'Kopilot adalah AI dan bisa membuat kesalahan. Harap periksa kembali respons.',
   'flows.promptBar.thinking': 'Membuat…',
   'flows.promptBar.heroTitle': 'Jelaskan sebuah alur kerja',
   'flows.promptBar.heroSubtitle':
@@ -4108,13 +4129,18 @@ const messages: TranslationMap = {
   'flows.copilot.removed': '{count} dihapus',
   'flows.copilot.noChanges': 'Usulan ini tidak mengubah simpul apa pun.',
   'flows.copilot.accept': 'Terapkan ke draf',
+  'flows.copilot.acceptAndSave': 'Terima & simpan',
+  'flows.copilot.saving': 'Menyimpan…',
   'flows.copilot.reject': 'Buang',
-  'flows.copilot.previewHint': 'Meninjau draf yang diusulkan — belum ada yang disimpan.',
+  'flows.copilot.previewHint': 'Meninjau draf yang diusulkan: belum ada yang disimpan.',
   'flows.copilot.repairDisplay': 'Sebuah eksekusi gagal; periksa dan usulkan perbaikan.',
   'flows.copilot.tool.proposing': 'Mengusulkan alur kerja…',
   'flows.copilot.tool.dryRunning': 'Menjalankan uji coba alur kerja…',
   'flows.copilot.tool.saving': 'Menyimpan alur kerja…',
   'flows.copilot.tool.usingTools': 'Menggunakan alat…',
+  'flows.copilot.cappedNotice':
+    'Builder mencapai batas iterasinya sebelum menyelesaikan alur kerja ini. Jika dilanjutkan, builder akan terus membangun dari draf saat ini.',
+  'flows.copilot.continueBuilding': 'Lanjutkan membangun',
   'flows.list.view': 'Lihat alur kerja',
   'flows.list.export': 'Ekspor',
   'flows.list.exported': 'Alur kerja diekspor',
@@ -4153,6 +4179,15 @@ const messages: TranslationMap = {
   'flows.editor.validate': 'Validasi',
   'flows.editor.validating': 'Memvalidasi…',
   'flows.editor.discard': 'Buang perubahan',
+  'flows.editor.confirm.runTitle': 'Jalankan alur kerja?',
+  'flows.editor.confirm.runBody': 'Ini akan menjalankan alur kerja sekarang.',
+  'flows.editor.confirm.saveTitle': 'Simpan perubahan?',
+  'flows.editor.confirm.saveBody': 'Ini akan menyimpan perubahan Anda pada alur kerja.',
+  'flows.editor.confirm.discardTitle': 'Buang perubahan?',
+  'flows.editor.confirm.discardBody':
+    'Ini mengembalikan semua suntingan yang belum disimpan dan tidak dapat dibatalkan.',
+  'flows.editor.confirm.confirm': 'Konfirmasi',
+  'flows.editor.confirm.cancel': 'Batal',
   'flows.editor.unsaved': 'Perubahan belum disimpan',
   'flows.editor.saveBlocked': 'Perbaiki kesalahan di bawah sebelum menyimpan.',
   'flows.editor.errorsTitle': 'Kesalahan',
@@ -4163,7 +4198,7 @@ const messages: TranslationMap = {
     'Anda memiliki perubahan yang belum disimpan pada alur kerja ini. Jika keluar sekarang, perubahan akan hilang.',
   'flows.editor.leaveStay': 'Tetap di sini',
   'flows.editor.leaveDiscard': 'Keluar',
-  // ── Node config drawer (issue B5b / Phase 3b) — per-kind config forms
+  // ── Node config drawer (issue B5b / Phase 3b): per-kind config forms
   'flowRuns.inspector.diagnosticsTitle': 'Peringatan ekspresi',
   'flowRuns.inspector.diagnosticResolvedNull': 'diselesaikan menjadi null',
   'flows.runs.sidebarTitle': 'Jalankan',
@@ -4187,7 +4222,7 @@ const messages: TranslationMap = {
   'flows.nodeConfig.trigger.scheduleUnit_hours': 'jam',
   'flows.nodeConfig.trigger.scheduleAt': 'pada',
   'flows.nodeConfig.trigger.scheduleTime': 'Waktu dalam hari',
-  'flows.nodeConfig.trigger.scheduleDays': 'Pada hari (opsional — kosongkan untuk setiap hari)',
+  'flows.nodeConfig.trigger.scheduleDays': 'Pada hari (opsional: kosongkan untuk setiap hari)',
   'flows.nodeConfig.trigger.scheduleAdvanced': 'Lanjutan (edit cron)',
   'flows.nodeConfig.trigger.scheduleSimple': 'Kembali ke jadwal sederhana',
   'flows.nodeConfig.trigger.pickApp': 'Pilih aplikasi yang terhubung terlebih dahulu.',
@@ -4199,18 +4234,18 @@ const messages: TranslationMap = {
   'flows.nodeConfig.composio.loading': 'Memuat…',
   'flows.nodeConfig.composio.custom': 'Masukkan manual…',
   'flows.nodeConfig.composio.customPlaceholder': 'SLUG_NAME',
-  'flows.nodeConfig.agent.modelHint': 'Pilih tingkat kemampuan — workspace akan menentukan model.',
+  'flows.nodeConfig.agent.modelHint': 'Pilih tingkat kemampuan: workspace akan menentukan model.',
   'flows.nodeConfig.agent.modelInherit': 'Default (warisi)',
   'flows.nodeConfig.agent.agentRefLabel': 'Agen',
   'flows.nodeConfig.agent.agentRefHint':
-    'Jalankan node ini sebagai agen terdaftar — alat dan pengamannya berlaku.',
+    'Jalankan node ini sebagai agen terdaftar: alat dan pengamannya berlaku.',
   'flows.nodeConfig.agent.agentRefInherit': 'Bawaan (pembuat alur kerja)',
   'flows.nodeConfig.agent.modelManagedTiers': 'Tingkat terkelola',
   'flows.nodeConfig.agent.modelHints': 'Petunjuk model',
   'flows.nodeConfig.agent.modelCustom': 'Model kustom…',
   'flows.nodeConfig.agent.modelCustomPlaceholder': 'mis. gpt-4o-mini',
   'flows.nodeConfig.tool.requiredMark': 'wajib',
-  'flows.nodeConfig.tool.requiredMissing': 'Wajib — belum tersambung',
+  'flows.nodeConfig.tool.requiredMissing': 'Wajib: belum tersambung',
   'flows.nodeConfig.tool.argsAdvancedLabel': 'Semua argumen (lanjutan)',
   'flows.nodeConfig.upstream.insert': 'Sisipkan…',
   'flows.nodeConfig.upstream.insertLabel': 'Sisipkan nilai dari langkah sebelumnya',
@@ -4225,7 +4260,7 @@ const messages: TranslationMap = {
   'flows.nodeConfig.editJson': 'Edit sebagai JSON',
   'flows.nodeConfig.rawJsonLabel': 'Konfigurasi (JSON)',
   'flows.nodeConfig.rawJsonHint': 'Konfigurasi bebas untuk node ini.',
-  'flows.nodeConfig.rawJsonInvalid': 'JSON tidak valid — perubahan tidak diterapkan sampai valid.',
+  'flows.nodeConfig.rawJsonInvalid': 'JSON tidak valid: perubahan tidak diterapkan sampai valid.',
   'flows.nodeConfig.expressionHint':
     'Mulai dengan = untuk menghitung nilai dari input node, mis. =item.url',
   'flows.nodeConfig.expressionBadge': 'Ekspresi',
@@ -4316,20 +4351,20 @@ const messages: TranslationMap = {
 
   'oauth.button.connecting': 'Menghubungkan...',
   'oauth.button.loopbackTimeout':
-    'Masuk habis waktu — browser tidak menyelesaikan pengalihan OAuth. Silakan coba lagi.',
+    'Masuk habis waktu: browser tidak menyelesaikan pengalihan OAuth. Silakan coba lagi.',
   'oauth.login.continueWith': 'Lanjutkan dengan',
   'onboarding.contextGathering.buildingDesc': 'Deskripsi pembangunan',
   'onboarding.contextGathering.buildingProfile': 'Membangun profil Anda...',
   'onboarding.contextGathering.continueToChat': 'Lanjutkan ke chat',
   'onboarding.contextGathering.coreAlive':
-    'Core dapat diakses — peluncuran pertama bisa memakan waktu satu menit.',
+    'Core dapat diakses: peluncuran pertama bisa memakan waktu satu menit.',
   'onboarding.contextGathering.coreAliveProbing': 'Memeriksa koneksi core…',
   'onboarding.contextGathering.coreUnreachable':
     'Core tidak merespons. Anda bisa melanjutkan dan coba lagi nanti.',
   'onboarding.contextGathering.errorDesc':
-    'Kami tidak bisa membangun profil lengkap Anda sekarang, tapi tidak apa-apa — Anda bisa lanjut dan profil Anda akan terbentuk seiring waktu.',
+    'Kami tidak bisa membangun profil lengkap Anda sekarang, tapi tidak apa-apa: Anda bisa lanjut dan profil Anda akan terbentuk seiring waktu.',
   'onboarding.contextGathering.stillWorkingDesc':
-    'Peluncuran pertama bisa memakan waktu 30–60 detik sementara kami menyiapkan model dan alat lokal Anda. Anda bisa melanjutkan ke chat kapan saja — pembuatan profil tetap berjalan di latar belakang.',
+    'Peluncuran pertama bisa memakan waktu 30–60 detik sementara kami menyiapkan model dan alat lokal Anda. Anda bisa melanjutkan ke chat kapan saja: pembuatan profil tetap berjalan di latar belakang.',
   'onboarding.contextGathering.stillWorkingTitle': 'Masih membangun profil Anda…',
   'onboarding.contextGathering.title': 'Pengumpulan Konteks',
   'openhuman.team_list_teams': 'Daftar tim',
@@ -4369,7 +4404,7 @@ const messages: TranslationMap = {
     'Mode perutean, pemicu integrasi, dan arsip riwayat pemicu.',
   'pages.settings.features.desktopCompanion': 'Pendamping Desktop',
   'pages.settings.features.desktopCompanionDesc':
-    'Asisten suara dengan kesadaran layar — mendengar, melihat, berbicara, menunjuk',
+    'Asisten suara dengan kesadaran layar: mendengar, melihat, berbicara, menunjuk',
   'pages.settings.features.messagingChannels': 'Kanal pesan',
   'pages.settings.features.messagingChannelsDesc': 'Deskripsi kanal pesan',
   'pages.settings.features.notifications': 'Notifikasi',
@@ -4523,7 +4558,7 @@ const messages: TranslationMap = {
   'settings.ai.routing': 'Perutean',
   'settings.ai.claudeCode.button': 'Claude Code',
   'settings.ai.claudeCode.inlineNotConnected':
-    'Tidak terhubung — merutekan obrolan melalui Claude Code CLI lokal Anda.',
+    'Tidak terhubung: merutekan obrolan melalui Claude Code CLI lokal Anda.',
   'settings.ai.claudeCode.checkingSignIn': 'Memeriksa status masuk…',
   'settings.ai.claudeCode.inlineConnected': 'Terhubung.',
   'settings.ai.claudeCode.signedInAs': 'Masuk sebagai',
@@ -4534,7 +4569,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.connectedNotSignedIn': 'Terhubung · belum masuk',
   'settings.ai.claudeCode.modalTitle': 'Claude Code CLI',
   'settings.ai.claudeCode.modalDescription':
-    'Merutekan beban kerja obrolan, agentik, dan penalaran melalui Claude Code CLI yang terpasang secara lokal. Tanpa kunci API — menggunakan login milik CLI itu sendiri.',
+    'Merutekan beban kerja obrolan, agentik, dan penalaran melalui Claude Code CLI yang terpasang secara lokal. Tanpa kunci API: menggunakan login milik CLI itu sendiri.',
   'settings.ai.claudeCode.close': 'Tutup',
   'settings.ai.claudeCode.connection': 'Koneksi',
   'settings.ai.claudeCode.enabled': 'Aktif',
@@ -4556,17 +4591,17 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.fullAccessOn':
     'Claude Code dapat menjalankan perintah, menggunakan jaringan, dan membuat subagen.',
   'settings.ai.claudeCode.fullAccessOff':
-    'Hanya terima suntingan — menerapkan suntingan berkas secara otomatis, membatasi perintah & jaringan.',
+    'Hanya terima suntingan: menerapkan suntingan berkas secara otomatis, membatasi perintah & jaringan.',
   'settings.ai.claudeCode.sandboxNoteMac':
     'Di macOS, ~/.openhuman tetap dilindungi oleh sandbox di kedua mode.',
   'settings.ai.claudeCode.sandboxNoteOther':
-    'Akses penuh tidak dibatasi di platform ini — aktifkan hanya jika Anda mempercayai ruang kerja.',
+    'Akses penuh tidak dibatasi di platform ini: aktifkan hanya jika Anda mempercayai ruang kerja.',
   'settings.ai.claudeCode.enableToCheck': 'Aktifkan Claude Code untuk memeriksa status masuk.',
   'settings.ai.claudeCode.usingApiKeyEnvDetail': 'Menggunakan ANTHROPIC_API_KEY dari lingkungan.',
   'settings.ai.claudeCode.notFoundInstall':
-    'Claude Code CLI tidak ditemukan — pasang dengan: npm install -g @anthropic-ai/claude-code',
+    'Claude Code CLI tidak ditemukan: pasang dengan: npm install -g @anthropic-ai/claude-code',
   'settings.ai.claudeCode.unknownDetail':
-    'Tidak dapat menentukan status masuk. claude CLI Anda mungkin lebih lama dari dukungan status autentikasi — coba Hubungkan ulang, lalu Periksa ulang.',
+    'Tidak dapat menentukan status masuk. claude CLI Anda mungkin lebih lama dari dukungan status autentikasi: coba Hubungkan ulang, lalu Periksa ulang.',
   'settings.ai.claudeCode.notSignedIn': 'Belum masuk.',
   'settings.ai.routingCustom': 'Routing kustom',
   'settings.ai.routingDefault': 'Bawaan',
@@ -4665,7 +4700,7 @@ const messages: TranslationMap = {
   'settings.ai.testingModel': 'Pengujian model...',
   'settings.ai.modelResponse': 'Respons model',
   'settings.ai.providerWithValue': 'Penyedia: {value}',
-  'settings.ai.noneDash': '-',
+  'settings.ai.noneDash': 'Tidak ada',
   'settings.ai.promptHelloWorld': 'Perintah: Halo dunia',
   'settings.ai.startedAt': 'Dimulai: {value}',
   'settings.ai.waitingForModelResponse': 'Menunggu respon dari model yang dipilih...',
@@ -4706,9 +4741,9 @@ const messages: TranslationMap = {
   'settings.ai.memoryWorkerPolls': 'Jajak pendapat pekerja memori',
   'settings.ai.defaultProviderName': 'OpenHuman',
   'settings.ai.routing.managed': 'Terkelola',
-  'settings.ai.routing.managedAlwaysOn': 'Always on',
+  'settings.ai.routing.managedAlwaysOn': 'Selalu aktif',
   'settings.ai.routing.managedHint':
-    'Managed is always available as a fallback. To use your own model, choose a routing mode below.',
+    'Terkelola selalu tersedia sebagai cadangan. Untuk menggunakan model Anda sendiri, pilih mode perutean di bawah.',
   'settings.ai.routing.managedDesc':
     'OpenHuman akan menjalankan semua kesimpulan di awan, memilih model terbaik untuk tugas ini, mengoptimalkan biaya, dan menjaga standar routing teraman.',
   'settings.ai.routing.managedMsg':
@@ -4729,44 +4764,47 @@ const messages: TranslationMap = {
     'Model digunakan di luar aliran percakapan utama untuk summarisasi, detak jantung, pembelajaran, dan evaluasi bawah sadar.',
   'settings.ai.routing.workload.chat.label': 'Chat',
   'settings.ai.routing.workload.chat.description':
-    'Direct conversational back-and-forth — “Quick” mode in Conversations',
+    'Percakapan langsung bolak-balik: Mode “Cepat” dalam Percakapan',
   'settings.ai.routing.workload.chat.hint':
-    'Recommended: a cheap or mid-cost fast chat model with high tokens/sec and low latency. Open-source local models can work well here if they feel responsive.',
+    'Direkomendasikan: model obrolan cepat murah atau berbiaya menengah dengan token/dtk tinggi dan latensi rendah. Model lokal sumber terbuka dapat bekerja dengan baik di sini jika terasa responsif.',
   'settings.ai.routing.workload.reasoning.label': 'Reasoning',
   'settings.ai.routing.workload.reasoning.description':
-    'Main chat agent, meeting summarizer — “Reasoning” mode in Conversations',
+    'Agen obrolan utama, peringkas pertemuan: mode “Penalaran” dalam Percakapan',
   'settings.ai.routing.workload.reasoning.hint':
-    'Recommended: a more expensive frontier or strong reasoning model for deep thinking. This is used for the main chat agent, meeting summaries, and heavier answer synthesis.',
+    'Direkomendasikan: model terdepan yang lebih mahal atau model penalaran yang kuat untuk pemikiran yang mendalam. Ini digunakan untuk agen obrolan utama, ringkasan rapat, dan sintesis jawaban yang lebih berat.',
   'settings.ai.routing.workload.agentic.label': 'Agentic',
   'settings.ai.routing.workload.agentic.description':
-    'Sub-agent runners, tool loops, GIF decisions',
+    'Pelari sub-agen, putaran alat, keputusan GIF',
   'settings.ai.routing.workload.agentic.hint':
-    'Recommended: a reliable instruction-following model with strong tool use. Mid-cost frontier models are usually safest; capable open-source models can work if tool calling is stable.',
+    'Direkomendasikan: model mengikuti instruksi yang andal dengan penggunaan alat yang kuat. Model perbatasan berbiaya menengah biasanya paling aman; model sumber terbuka yang mumpuni dapat berfungsi jika pemanggilan alat stabil.',
   'settings.ai.routing.workload.coding.label': 'Coding',
-  'settings.ai.routing.workload.coding.description': 'Code generation and refactor passes',
+  'settings.ai.routing.workload.coding.description':
+    'Pembuatan kode dan pemfaktoran ulang berhasil',
   'settings.ai.routing.workload.coding.hint':
-    'Recommended: a coding-tuned model with strong instruction following, edit quality, and long-context performance. This is usually worth spending more on.',
+    'Direkomendasikan: model yang disesuaikan dengan pengkodean dengan mengikuti instruksi yang kuat, kualitas pengeditan, dan kinerja konteks panjang. Ini biasanya layak untuk dibelanjakan lebih banyak.',
   'settings.ai.routing.workload.vision.label': 'Vision',
   'settings.ai.routing.workload.vision.description':
-    'Image understanding for the vision sub-agent — always multimodal',
+    'Pemahaman gambaran untuk sub-agen visi: selalu multimodal',
   'settings.ai.routing.workload.vision.hint':
-    'Recommended: a multimodal model that accepts image input. The managed default (vision-v1) is image-capable; any provider you route here is always treated as vision-enabled.',
-  'settings.ai.routing.workload.memory.label': 'Memory summarization',
-  'settings.ai.routing.workload.memory.description': 'Tree-extracts and consolidations',
+    'Direkomendasikan: model multimodal yang menerima masukan gambar. Default yang dikelola (vision-v1) berkemampuan gambar; penyedia mana pun yang Anda rutekan ke sini selalu dianggap mendukung visi.',
+  'settings.ai.routing.workload.memory.label': 'Ringkasan memori',
+  'settings.ai.routing.workload.memory.description': 'Ekstraksi dan konsolidasi pohon',
   'settings.ai.routing.workload.memory.hint':
-    'Recommended: a cheaper summarization model. It should be consistent and compact, but it does not need premium frontier-level reasoning.',
+    'Direkomendasikan: model peringkasan yang lebih murah. Hal ini harus konsisten dan kompak, namun tidak memerlukan penalaran tingkat premium.',
   'settings.ai.routing.workload.heartbeat.label': 'Heartbeat',
-  'settings.ai.routing.workload.heartbeat.description': 'Background reasoning between user turns',
+  'settings.ai.routing.workload.heartbeat.description':
+    'Alasan latar belakang antar giliran pengguna',
   'settings.ai.routing.workload.heartbeat.hint':
-    'Recommended: a cheap, efficient background model. This runs often between turns, so low cost matters more than maximum intelligence.',
-  'settings.ai.routing.workload.learning.label': 'Learning · Reflections',
-  'settings.ai.routing.workload.learning.description': 'Periodic reflection over recent history',
+    'Direkomendasikan: model latar belakang yang murah dan efisien. Hal ini sering terjadi di antara belokan, jadi biaya rendah lebih penting daripada kecerdasan maksimal.',
+  'settings.ai.routing.workload.learning.label': 'Pembelajaran · Refleksi',
+  'settings.ai.routing.workload.learning.description': 'Refleksi berkala atas sejarah terkini',
   'settings.ai.routing.workload.learning.hint':
-    'Recommended: a stronger reflective model. This can be mid-cost or premium because it benefits from better synthesis over recent history.',
+    'Direkomendasikan: model reflektif yang lebih kuat. Ini bisa menjadi biaya menengah atau premium karena mendapat manfaat dari sintesis yang lebih baik dalam sejarah terkini.',
   'settings.ai.routing.workload.subconscious.label': 'Subconscious',
-  'settings.ai.routing.workload.subconscious.description': 'Eventfulness scoring + drift checks',
+  'settings.ai.routing.workload.subconscious.description':
+    'Penilaian kejadian + pemeriksaan penyimpangan',
   'settings.ai.routing.workload.subconscious.hint':
-    'Recommended: a very cheap monitoring model, ideally one that is lightweight and predictable. This is for eventfulness scoring, drift checks, and quiet background evaluation.',
+    'Direkomendasikan: model pemantauan yang sangat murah, idealnya model yang ringan dan dapat diprediksi. Ini untuk penilaian kejadian, pemeriksaan penyimpangan, dan evaluasi latar belakang yang tenang.',
   'settings.ai.routing.addCustomProvider': 'Tambahkan Penyedia Khusus',
   'settings.ai.globalModel.title': 'Pilih satu model untuk semuanya',
   'settings.ai.globalModel.desc':
@@ -4805,9 +4843,9 @@ const messages: TranslationMap = {
   'settings.autocomplete.appFilter.runtime': 'Waktu proses',
   'settings.autocomplete.appFilter.test': 'Tes',
   'settings.autocomplete.completionStyle.acceptedCompletion':
-    '{count} pelengkapan diterima tersimpan — digunakan untuk mempersonalisasi saran berikutnya.',
+    '{count} pelengkapan diterima tersimpan: digunakan untuk mempersonalisasi saran berikutnya.',
   'settings.autocomplete.completionStyle.acceptedCompletions':
-    '{count} pelengkapan diterima tersimpan — digunakan untuk mempersonalisasi saran berikutnya.',
+    '{count} pelengkapan diterima tersimpan: digunakan untuk mempersonalisasi saran berikutnya.',
   'settings.autocomplete.completionStyle.clearHistory': 'Membersihkan...',
   'settings.autocomplete.completionStyle.clearing': 'Membersihkan...',
   'settings.autocomplete.completionStyle.debounce': 'Tunda input (ms)',
@@ -4936,12 +4974,12 @@ const messages: TranslationMap = {
   'settings.composio.confirmItem2':
     'Menghubungkan ulang setiap integrasi melalui akun Composio pribadi Anda',
   'settings.composio.confirmItem3':
-    'Catatan: trigger Composio (webhook real-time) belum berjalan di mode Direct — hanya pemanggilan tool sinkron',
+    'Catatan: trigger Composio (webhook real-time) belum berjalan di mode Direct: hanya pemanggilan tool sinkron',
   'settings.composio.confirmNeedItems': 'Anda akan butuh:',
   'settings.composio.confirmSwitch': 'Saya mengerti, beralih ke Direct',
   'settings.composio.confirmTitle': '⚠️ Beralih ke mode Direct',
   'settings.composio.confirmWarning':
-    'Integrasi Anda yang sudah ada (Gmail, Slack, GitHub, dll. yang terhubung melalui OpenHuman) tidak akan terlihat — mereka berada di tenant Composio yang dikelola OpenHuman.',
+    'Integrasi Anda yang sudah ada (Gmail, Slack, GitHub, dll. yang terhubung melalui OpenHuman) tidak akan terlihat: mereka berada di tenant Composio yang dikelola OpenHuman.',
   'settings.composio.intro':
     'Composio mengintegrasikan 250+ aplikasi eksternal sebagai tool yang dapat dipanggil agen Anda. Pilih cara pemanggilan tool tersebut dirutekan.',
   'settings.composio.title': 'Composio',
@@ -5068,7 +5106,7 @@ const messages: TranslationMap = {
   'settings.localModel.deviceCapability.installingOllama': 'Menginstal Ollama',
   'settings.localModel.deviceCapability.loadingDeviceInfo': 'Memuat info perangkat',
   'settings.localModel.deviceCapability.localAiDisabled':
-    'AI lokal dinonaktifkan — menggunakan fallback cloud.',
+    'AI lokal dinonaktifkan: menggunakan fallback cloud.',
   'settings.localModel.deviceCapability.modelTier': 'Tingkat Model',
   'settings.localModel.deviceCapability.needsOllama': 'Memerlukan Ollama',
   'settings.localModel.deviceCapability.notDetected': 'Tidak terdeteksi',
@@ -5342,7 +5380,7 @@ const messages: TranslationMap = {
   'settings.devWorkflow.schedule.onceDaily': 'Setiap hari (jam 9 pagi)',
   'settings.developerMenu.tasks.title': 'Tugas',
   'settings.developerMenu.tasks.desc':
-    'Jelajahi dan kelola papan tugas — daftar tugas Anda sendiri serta papan yang dibuat agen di seluruh percakapan.',
+    'Jelajahi dan kelola papan tugas: daftar tugas Anda sendiri serta papan yang dibuat agen di seluruh percakapan.',
   'settings.developerMenu.cronJobs.title': 'Pekerjaan Cron',
   'settings.developerMenu.cronJobs.desc': 'Lihat dan atur pekerjaan terjadwal untuk skill runtime',
   'settings.developerMenu.localModelDebug.title': 'Debug Model Lokal',
@@ -5447,7 +5485,7 @@ const messages: TranslationMap = {
     'Jeda sebelum agen yang ditugaskan mengeksekusi suatu tugas singkat.',
   'settings.agentAccess.tinyplaceAutopilot.title': 'Agen tiny.place otonom',
   'settings.agentAccess.tinyplaceAutopilot.desc':
-    'Biarkan OpenHuman bertindak di tiny.place sendiri: secara terjadwal ia mencari pekerjaan yang berharga — bounty terbuka lebih dulu —, mengerjakan yang sesuai keahliannya, dan bertindak dari identitas Anda. Ia berjalan tanpa pengawasan dan dapat membelanjakan dana, jadi gunakan devnet saat menguji. Nonaktif secara bawaan.',
+    'Biarkan OpenHuman bertindak sendiri di tiny.place. Sesuai jadwal, ia mencari pekerjaan yang bermanfaat (mendahulukan bounty terbuka), mengerjakan tugas yang sesuai dengan keahliannya, dan bertindak dengan identitas Anda. Ia berjalan tanpa pengawasan dan dapat membelanjakan dana, jadi gunakan devnet saat menguji. Nonaktif secara bawaan.',
   'settings.agentAccess.tinyplaceAutopilot.label': 'Jalankan otomatis',
   'settings.agentAccess.timeout.label': 'Batas waktu tindakan',
   'settings.agentAccess.timeout.desc':
@@ -5496,9 +5534,9 @@ const messages: TranslationMap = {
   'settings.agentAccess.actionDirEmptyError': 'Jalur tidak boleh kosong.',
   'settings.agentAccess.actionDirSaveError': 'Tidak dapat memperbarui sandbox tindakan.',
   'settings.agentAccess.actionDirEnvOverrideError':
-    'OPENHUMAN_ACTION_DIR sudah diatur — hapus variabel env untuk mengedit ini dari Pengaturan.',
+    'OPENHUMAN_ACTION_DIR sudah diatur: hapus variabel env untuk mengedit ini dari Pengaturan.',
   'settings.agentAccess.actionDirEnvOverrideNote':
-    'Ditimpa oleh OPENHUMAN_ACTION_DIR — hapus variabel env untuk mengelola dari Pengaturan.',
+    'Ditimpa oleh OPENHUMAN_ACTION_DIR: hapus variabel env untuk mengelola dari Pengaturan.',
   'settings.agentAccess.approvalHistory': 'Riwayat persetujuan',
   'settings.agentAccess.approvalHistoryDesc':
     'Tinjau keputusan Setuju / Tolak yang diminta oleh agen sebelumnya.',
@@ -5513,7 +5551,7 @@ const messages: TranslationMap = {
     'Pilih seberapa banyak kebebasan yang dimiliki asisten saat mengambil tindakan di komputer Anda.',
   'settings.permissions.preset.readonly.title': 'Lihat, jangan sentuh',
   'settings.permissions.preset.readonly.desc':
-    'Asisten dapat membaca file dan menjelajah — tetapi tidak pernah menulis, mengedit, atau menjalankan apa pun yang mengubah status.',
+    'Asisten dapat membaca file dan menjelajah: tetapi tidak pernah menulis, mengedit, atau menjalankan apa pun yang mengubah status.',
   'settings.permissions.preset.supervised.title': 'Tanya saya dulu',
   'settings.permissions.preset.supervised.desc':
     'Dapat membuat file baru secara bebas, tetapi selalu meminta persetujuan Anda sebelum mengedit, menjalankan perintah, atau mengakses jaringan.',
@@ -5552,7 +5590,7 @@ const messages: TranslationMap = {
   'settings.sandbox.desktopOnly': 'Pengaturan sandbox hanya tersedia di aplikasi desktop.',
   'settings.sandbox.loadError': 'Gagal memuat pengaturan sandbox.',
   'settings.sandbox.saveError': 'Gagal menyimpan pengaturan sandbox.',
-  'settings.sandbox.saved': 'Tersimpan — berlaku untuk sesi agen baru.',
+  'settings.sandbox.saved': 'Tersimpan: berlaku untuk sesi agen baru.',
   'settings.sandbox.saving': 'Menyimpan…',
   'settings.sandbox.status': 'Status',
   'settings.sandbox.dockerStatus': 'Docker',
@@ -5617,7 +5655,7 @@ const messages: TranslationMap = {
   'settings.theme.copyName': '{name} (khusus)',
   'settings.theme.importedName': 'Tema yang diimpor',
   'settings.theme.contrastWarn':
-    'Kontras rendah antara teks dan latar belakang — tema ini mungkin sulit dibaca.',
+    'Kontras rendah antara teks dan latar belakang: tema ini mungkin sulit dibaca.',
   'settings.theme.group.surfaces': 'Permukaan',
   'settings.theme.group.text': 'Teks',
   'settings.theme.group.borders': 'Batas',
@@ -5655,7 +5693,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeHeading': 'Ukuran font',
   'settings.appearance.fontSizeAria': 'Ukuran font',
   'settings.appearance.fontSizeSmall': 'Kecil',
-  'settings.appearance.fontSizeSmallDesc': 'Teks ringkas — tampilkan lebih banyak di layar.',
+  'settings.appearance.fontSizeSmallDesc': 'Teks ringkas: tampilkan lebih banyak di layar.',
   'settings.appearance.fontSizeMedium': 'Sedang',
   'settings.appearance.fontSizeMediumDesc': 'Ukuran default yang seimbang.',
   'settings.appearance.fontSizeLarge': 'Besar',
@@ -5663,7 +5701,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'Sangat besar',
   'settings.appearance.fontSizeXLargeDesc': 'Teks terbesar untuk keterbacaan maksimal.',
   'settings.appearance.fontSizeHelperText':
-    'Menskalakan teks di seluruh aplikasi — obrolan, pengaturan, dan panel — terlepas dari pengaturan font sistem Anda.',
+    'Menskalakan teks di seluruh aplikasi: obrolan, pengaturan, dan panel: terlepas dari pengaturan font sistem Anda.',
   'settings.appearance.fontSizeCustomLabel': 'Ukuran khusus',
   'settings.appearance.fontSizeCustomAria': 'Ukuran font khusus dalam piksel',
   'settings.appearance.fontSizeCustomSliderAria': 'Penggeser ukuran font khusus, dalam piksel',
@@ -5720,7 +5758,7 @@ const messages: TranslationMap = {
   'settings.mascot.secondaryVoiceLabel': 'Suara maskot kedua',
   'settings.mascot.voice.current': 'saat ini',
   'settings.mascot.voice.customDesc':
-    'Temukan ID suara di api.elevenlabs.io/v1/voices atau dasbor ElevenLabs Anda. Hanya ID yang disimpan — kunci API Anda tetap di backend.',
+    'Temukan ID suara di api.elevenlabs.io/v1/voices atau dasbor ElevenLabs Anda. Hanya ID yang disimpan: kunci API Anda tetap di backend.',
   'settings.mascot.voice.customHeading': 'ID suara kustom',
   'settings.mascot.voice.customOption': 'Lainnya (tempel ID suara)…',
   'settings.mascot.voice.customPlaceholder': 'mis. 21m00Tcm4TlvDq8ikWAM',
@@ -5775,12 +5813,12 @@ const messages: TranslationMap = {
   'settings.persona.builder.aboutPlaceholder':
     'mis. Saya menjalankan studio desain kecil dan lebih suka bahasa yang sederhana.',
   'settings.persona.builder.preservedNote':
-    'Bagian lain yang Anda tulis sendiri tetap disimpan — beralih ke Lanjutan untuk melihat persona lengkap.',
+    'Bagian lain yang Anda tulis sendiri tetap disimpan: beralih ke Lanjutan untuk melihat persona lengkap.',
   'settings.persona.builder.securityNote': 'Ingin memilih apa yang boleh dilakukan asisten?',
   'settings.persona.builder.securityLink': 'Buka Akses agen',
   'settings.persona.templates.heading': 'Mulai dari templat',
   'settings.persona.templates.desc':
-    'Pilih titik awal — mengisi Kepribadian dan Gaya komunikasi. Anda bisa mengedit semuanya setelahnya.',
+    'Pilih titik awal: mengisi Kepribadian dan Gaya komunikasi. Anda bisa mengedit semuanya setelahnya.',
   'settings.persona.templates.doctor.label': 'Asisten klinis',
   'settings.persona.templates.doctor.desc': 'Cermat, menyebut sumber, menandai ketidakpastian',
   'settings.persona.templates.researcher.label': 'Asisten riset',
@@ -5799,10 +5837,10 @@ const messages: TranslationMap = {
   'settings.persona.openMascotSettings': 'Buka pengaturan Mascot',
   'settings.memoryWindow.balanced.badge': 'Direkomendasikan',
   'settings.memoryWindow.balanced.hint':
-    'Default yang masuk akal — kontinuitas yang baik tanpa membakar token tambahan di setiap run.',
+    'Default yang masuk akal: kontinuitas yang baik tanpa membakar token tambahan di setiap run.',
   'settings.memoryWindow.balanced.label': 'Seimbang',
   'settings.memoryWindow.description':
-    'Seberapa banyak konteks yang diingat OpenHuman dimasukkan ke setiap run agen baru. Jendela yang lebih besar terasa lebih sadar akan percakapan sebelumnya, tetapi menggunakan lebih banyak token — dan biaya lebih mahal — di setiap run.',
+    'Seberapa banyak konteks yang diingat OpenHuman dimasukkan ke setiap run agen baru. Jendela yang lebih besar terasa lebih sadar akan percakapan sebelumnya, tetapi menggunakan lebih banyak token: dan biaya lebih mahal: di setiap run.',
   'settings.memoryWindow.extended.badge': 'Lebih banyak konteks',
   'settings.memoryWindow.extended.hint':
     'Lebih banyak memori jangka panjang yang dimasukkan ke setiap run. Biaya token per giliran lebih tinggi.',
@@ -5858,7 +5896,7 @@ const messages: TranslationMap = {
   'settings.desktopAgent.grant': 'Berikan',
   'settings.desktopAgent.notRequiredOnOs': 'Tidak diperlukan di sistem operasi ini',
   'settings.desktopAgent.allGranted':
-    'Semua siap — agen desktop memiliki semua izin yang dibutuhkan.',
+    'Semua siap: agen desktop memiliki semua izin yang dibutuhkan.',
   'settings.desktopAgent.recheck': 'Periksa ulang',
   'settings.desktopAgent.restartAndRecheck': 'Mulai ulang inti dan periksa ulang',
   'settings.desktopAgent.seamless.title': 'Tindakan agen',
@@ -5866,9 +5904,9 @@ const messages: TranslationMap = {
   'settings.desktopAgent.seamless.description':
     'Berikan akses penuh dan setujui otomatis tindakan desktop (membuka aplikasi, mengendalikan antarmuka aplikasi) agar agen menjalankannya tanpa permintaan persetujuan.',
   'settings.desktopAgent.seamless.note':
-    'Hanya tindakan desktop yang melewati permintaan — menjalankan perintah shell, menyunting berkas, permintaan jaringan, dan memasang perangkat lunak tetap meminta izin. Mematikan ini menghentikan persetujuan otomatis tindakan desktop, tetapi tingkat akses tidak berubah.',
+    'Hanya tindakan desktop yang melewati permintaan: menjalankan perintah shell, menyunting berkas, permintaan jaringan, dan memasang perangkat lunak tetap meminta izin. Mematikan ini menghentikan persetujuan otomatis tindakan desktop, tetapi tingkat akses tidak berubah.',
   'settings.desktopAgent.beta':
-    'Beta — agen desktop masih eksperimental dan mungkin tidak selalu bekerja seperti yang diharapkan.',
+    'Beta: agen desktop masih eksperimental dan mungkin tidak selalu bekerja seperti yang diharapkan.',
   'settings.desktopAgent.wakeWordHint':
     'Ucapkan “Hey Tiny” sebelum perintah Anda untuk membangunkan agen.',
   'settings.screenIntel.permissions.accessibility': 'Aksesibilitas',
@@ -5928,7 +5966,7 @@ const messages: TranslationMap = {
   'skills.create.scope': 'Cakupan',
   'skills.create.scopeProjectHint': '/.openhuman/skills/',
   'skills.create.scopeUserHint':
-    'Ditulis ke ~/.openhuman/skills/<slug>/SKILL.md — tersedia di semua workspace.',
+    'Ditulis ke ~/.openhuman/skills/<slug>/SKILL.md: tersedia di semua workspace.',
   'skills.create.slugLabel': 'Label slug',
   'skills.create.subtitle': 'SKILL.md',
   'skills.create.tags': 'Tag',
@@ -6038,7 +6076,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.recentCallsAriaLabel': 'Panggilan rapat terbaru',
   'skills.meetingBots.recentCallsHeading': 'Panggilan terbaru',
   'skills.meetingBots.recentCallsEmpty':
-    'Belum ada panggilan sebelumnya — riwayat rapat Anda akan muncul di sini.',
+    'Belum ada panggilan sebelumnya: riwayat rapat Anda akan muncul di sini.',
   'skills.meetingBots.recentCallsLoading': 'Memuat\u2026',
   'skills.meetingBots.recentCallAddedBy': 'Ditambahkan oleh {name}',
   'skills.meetingBots.recentCallParticipants': 'Dengan {names}',
@@ -6069,7 +6107,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.respondToParticipantHint': 'mis. Budi (nama tampilan Anda di panggilan)',
   'skills.meetingBots.replyName.label': 'Nama Anda di rapat',
   'skills.meetingBots.replyName.description':
-    'Nama yang didengarkan dan dibalas oleh bot. Masukkan nama Anda seperti yang tampil di panggilan — berlaku untuk setiap rapat yang diikutinya.',
+    'Nama yang didengarkan dan dibalas oleh bot. Masukkan nama Anda seperti yang tampil di panggilan: berlaku untuk setiap rapat yang diikutinya.',
   'skills.meetingBots.replyName.placeholder': 'mis. Alex Kim',
   'skills.meetingBots.respondToParticipantDesc':
     'Masukkan nama tampilan Anda yang tepat dari rapat. Bot hanya merespons ketika Anda menyebut namanya (frasa bangun).',
@@ -6106,7 +6144,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.upcoming.today': 'Hari ini',
   'skills.meetingBots.upcoming.tomorrow': 'Besok',
   'skills.meetingBots.upcoming.empty':
-    'Tidak ada rapat mendatang — hubungkan Google Calendar untuk melihatnya di sini.',
+    'Tidak ada rapat mendatang: hubungkan Google Calendar untuk melihatnya di sini.',
   'skills.meetingBots.upcoming.error': 'Tidak dapat memuat rapat mendatang.',
   'skills.meetingBots.upcoming.retry': 'Coba lagi',
   'skills.meetingBots.upcoming.refresh': 'Segarkan',
@@ -6116,7 +6154,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.upcoming.autoJoinsAt': 'Bergabung otomatis ~pukul {time}',
   'skills.meetingBots.upcoming.asksAtStart': 'Bertanya saat mulai',
   'skills.meetingBots.upcoming.watchCalendarHint':
-    "Aktifkan 'Pantau kalender saya' di Pengaturan Default (ikon gigi) agar Auto/Tanya berlaku — jika tidak, kebijakan ini disimpan tetapi tidak akan dipicu.",
+    "Aktifkan 'Pantau kalender saya' di Pengaturan Default (ikon gigi) agar Auto/Tanya berlaku: jika tidak, kebijakan ini disimpan tetapi tidak akan dipicu.",
   'skills.meetingBots.relative.now': 'sekarang',
   'skills.meetingBots.relative.inMinutes': 'dalam {count}m',
   'skills.meetingBots.relative.inHours': 'dalam {count}j',
@@ -6401,7 +6439,7 @@ const messages: TranslationMap = {
   'walletBalances.refresh': 'Refresh',
   'walletBalances.loading': 'Memuat saldo…',
   'walletBalances.retry': 'Retry',
-  'walletBalances.emptyState': 'Belum ada akun dompet — atur dompet di Frasa Pemulihan.',
+  'walletBalances.emptyState': 'Belum ada akun dompet: atur dompet di Frasa Pemulihan.',
   'walletBalances.copyAddress': 'Salin alamat',
   'walletBalances.providerMissing': 'penyedia tidak tersedia',
   'walletBalances.rawBalance': 'Mentah: {raw}',
@@ -6426,7 +6464,7 @@ const messages: TranslationMap = {
   'walletSend.review': 'Tinjau',
   'walletSend.preparing': 'Menyiapkan…',
   'walletSend.confirmHint':
-    'Tinjau detail di bawah. Penandatanganan dilakukan secara lokal — tidak ada yang disiarkan sampai Anda mengonfirmasi.',
+    'Tinjau detail di bawah. Penandatanganan dilakukan secara lokal: tidak ada yang disiarkan sampai Anda mengonfirmasi.',
   'walletSend.estimatedFee': 'Estimasi biaya jaringan',
   'walletSend.confirmSend': 'Konfirmasi & kirim',
   'walletSend.sending': 'Mengirim…',
@@ -6532,7 +6570,7 @@ const messages: TranslationMap = {
   'nav.workflows': 'Workflows',
   'workflows.title': 'Alur Kerja',
   'workflows.subtitle':
-    'Prosedur yang dapat digunakan ulang dan dijalankan — sebuah tujuan beserta langkah-langkah untuk mencapainya. Buat satu, instal dari URL, atau buka alur kerja untuk menjalankannya.',
+    'Prosedur yang dapat digunakan ulang dan dijalankan: sebuah tujuan beserta langkah-langkah untuk mencapainya. Buat satu, instal dari URL, atau buka alur kerja untuk menjalankannya.',
   'workflows.createNew': 'Alur kerja baru',
   'workflows.listHeading': 'Workflows',
   'workflows.delete': 'Hapus Alur Kerja',
@@ -6610,7 +6648,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'Agen bawaan tidak dapat diedit. Anda dapat mengaktifkan, menonaktifkan, atau meresetnya dari daftar agen.',
-  // Chat — agent-generated artifacts (#2779)
+  // Chat: agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Artefak: {title}',
   'chat.artifact.generating': 'Membuat {kind}…',
   'chat.artifact.ready': 'Siap',
@@ -6624,7 +6662,7 @@ const messages: TranslationMap = {
   'chat.artifact.show_more': 'Tampilkan selengkapnya',
   'chat.artifact.show_less': 'Tampilkan lebih sedikit',
 
-  // Chat — files panel (#3024)
+  // Chat: files panel (#3024)
   'chat.files.chip.aria.one': '{count} file di chat ini',
   'chat.files.chip.aria.other': '{count} file di chat ini',
   'chat.files.panel.aria': 'File di chat ini',
@@ -6648,7 +6686,7 @@ const messages: TranslationMap = {
   'memory.tab.council': 'Council',
   'activity.tabs.automations': 'Otomatisasi',
   'activity.tabs.automationsDescription':
-    'Prosedur yang dapat digunakan kembali dan dijalankan — tujuan beserta langkah-langkah untuk mencapainya.',
+    'Prosedur yang dapat digunakan kembali dan dijalankan: tujuan beserta langkah-langkah untuk mencapainya.',
   'activity.tabs.backgroundActivity': 'Bawah sadar',
   'activity.tabs.alerts': 'Peringatan',
 
@@ -6808,7 +6846,7 @@ const messages: TranslationMap = {
   'modelCouncil.usageTotalTokens': 'Total',
   'graphCohesion.brokerBadge': 'broker',
   'graphCohesion.brokerTitle':
-    'Lubang struktural: tetangga entitas ini tidak saling terhubung — entitas inilah satu-satunya tautan di antara mereka.',
+    'Lubang struktural: tetangga entitas ini tidak saling terhubung: entitas inilah satu-satunya tautan di antara mereka.',
   'graphCohesion.colCohesion': 'Kohesi',
   'graphCohesion.colEntity': 'Entitas',
   'graphCohesion.colLinks': 'Tautan',
@@ -6818,7 +6856,7 @@ const messages: TranslationMap = {
     'Saat asisten mencatat fakta-fakta terhubung tentang Anda, struktur pengelompokannya akan muncul di sini.',
   'graphCohesion.errorPrefix': 'Tidak dapat memuat graf:',
   'graphCohesion.intro':
-    'Seberapa rapat lingkungan di sekitar setiap entitas terjalin. Broker — entitas yang tetangganya tidak saling terhubung — adalah titik-titik tunggal yang menyatukan klaster yang sebenarnya terpisah, hal yang tidak dapat diungkap oleh pengurutan frekuensi atau PageRank.',
+    'Seberapa rapat lingkungan di sekitar setiap entitas terjalin. Broker: entitas yang tetangganya tidak saling terhubung: adalah titik-titik tunggal yang menyatukan klaster yang sebenarnya terpisah, hal yang tidak dapat diungkap oleh pengurutan frekuensi atau PageRank.',
   'graphCohesion.loading': 'Menghitung kohesi…',
   'graphCohesion.metricConnections': 'Koneksi',
   'graphCohesion.metricEntities': 'Entitas',
@@ -6826,7 +6864,7 @@ const messages: TranslationMap = {
   'graphCohesion.namespaceAll': 'Semua ruang nama',
   'graphCohesion.namespaceLabel': 'Ruang nama',
   'graphCohesion.noBrokers': 'Belum ada entitas dengan dua atau lebih koneksi.',
-  'graphCohesion.rankedHeading': 'Broker — lingkungan paling renggang',
+  'graphCohesion.rankedHeading': 'Broker: lingkungan paling renggang',
   'graphCohesion.retry': 'Coba lagi',
   'graphCohesion.summaryCaption': 'Pengelompokan rata-rata {avg} · transitivitas {transitivity}',
   'graphCohesion.title': 'Kohesi Graf',
@@ -6846,7 +6884,7 @@ const messages: TranslationMap = {
   'harnessInit.stateSkipped': 'Dilewati',
   'harnessInit.stateFailed': 'Gagal',
   'harnessInit.failedMessage':
-    'Beberapa langkah penyiapan tidak selesai. Anda dapat mencoba lagi atau melanjutkan — OpenHuman akan menggunakan cadangan bawaan.',
+    'Beberapa langkah penyiapan tidak selesai. Anda dapat mencoba lagi atau melanjutkan: OpenHuman akan menggunakan cadangan bawaan.',
   'harnessInit.retry': 'Coba lagi',
   'harnessInit.continueAnyway': 'Lanjutkan saja',
   'harnessInit.runInBackground': 'Jalankan di latar belakang',
@@ -6908,14 +6946,14 @@ const messages: TranslationMap = {
   'memory.health.remediation.summarizer_unavailable':
     'Tidak ada penyedia ringkasan yang tersedia untuk Buat Pohon Ringkasan. Aktifkan AI lokal (Ollama), atau setel memory_tree.cloud_summarization_opt_in=true dan konfigurasikan penyedia LLM di Koneksi → Kunci API → LLM.',
   'memory.health.remediation.empty_input_refused':
-    'Item memori dilewati karena teksnya kosong. Tidak diperlukan tindakan — item baru tetap disematkan seperti biasa.',
+    'Item memori dilewati karena teksnya kosong. Tidak diperlukan tindakan: item baru tetap disematkan seperti biasa.',
   'memory.health.remediation.storage_unavailable':
-    'OpenHuman tidak dapat menulis ke penyimpanan memorinya — disk atau kartu SD tampaknya rusak, penuh, atau hanya-baca. Periksa drive dan kosongkan ruang; pemrosesan memori akan dilanjutkan secara otomatis setelah penyimpanan dapat ditulisi kembali.',
+    'OpenHuman tidak dapat menulis ke penyimpanan memorinya: disk atau kartu SD tampaknya rusak, penuh, atau hanya-baca. Periksa drive dan kosongkan ruang; pemrosesan memori akan dilanjutkan secara otomatis setelah penyimpanan dapat ditulisi kembali.',
   'memory.health.remediation.transient':
     'Kesalahan sementara mengganggu pemrosesan memori. Akan dicoba lagi secara otomatis.',
   'memory.health.remediation.unknown':
     'Pemrosesan memori mengalami masalah. Periksa Koneksi → Kunci API untuk konfigurasi.',
-  // Chat — agent-generated artifacts (#2779)
+  // Chat: agent-generated artifacts (#2779)
 
   // Chat composer toolbar
   'composer.attachFile': 'Lampirkan file',
@@ -6980,7 +7018,7 @@ const messages: TranslationMap = {
   'onboarding.custom.activity.subtitle':
     'Seberapa proaktif agen Anda memantau dan bertindak di latar belakang.',
   'onboarding.custom.activity.defaultDesc':
-    'Aktivitas sedang — sinkronisasi per jam, ringkasan harian.',
+    'Aktivitas sedang: sinkronisasi per jam, ringkasan harian.',
   'onboarding.custom.activity.configureDesc':
     'Pilih tingkat aktivitas Anda sendiri. Konfigurasi di Pengaturan › Tingkat aktivitas agen.',
   'onboarding.custom.vault.title': 'Pengaturan Memori & Vault',
@@ -7032,7 +7070,7 @@ const messages: TranslationMap = {
     'OpenHuman menulis catatan memori yang dihasilkan ke memory_tree/content.',
   'memoryData.connectedSources': 'Sumber terhubung · baca',
   'memoryData.connectedSourcesDesc':
-    'Folder, kotak surat, obrolan, dan repositori diimpor untuk pengindeksan memori — file aslinya tidak pernah ditulis ulang.',
+    'Folder, kotak surat, obrolan, dan repositori diimpor untuk pengindeksan memori: file aslinya tidak pernah ditulis ulang.',
   'memoryData.internalFiles': 'File pohon memori internal',
   'memoryData.internalFilesDesc':
     'Indeks, status antrean, dan ringkasan dikelola oleh OpenHuman agar pemanggilan dan sinkronisasi tetap sehat.',
@@ -7076,7 +7114,7 @@ const messages: TranslationMap = {
   'notch.executing': 'Mengeksekusi…',
   'memory.tab.orchestration': 'Orkestrasi',
   'memory.tab.orchestrationDescription':
-    'Jalankan alur kerja multi-agen — sebarkan satu pertanyaan ke agen-agen paralel, periksa silang temuan mereka, dan saksikan setiap fase berakhir menjadi satu jawaban tersintesis.',
+    'Jalankan alur kerja multi-agen: sebarkan satu pertanyaan ke agen-agen paralel, periksa silang temuan mereka, dan saksikan setiap fase berakhir menjadi satu jawaban tersintesis.',
   'orchestration.subtitle':
     'Mulai alur kerja multi-agen, pantau kemajuan fasenya, dan baca hasil tersintesisnya.',
   'orchestration.loading': 'Memuat alur kerja…',
@@ -7128,7 +7166,7 @@ const messages: TranslationMap = {
   // ── Agent Profiles ───────────────────────────────────────────────────────
   'settings.profiles.title': 'Profil Agen',
   'settings.profiles.subtitle':
-    'Agen dengan kepribadian — masing-masing dengan jiwa, memori, konektor, dan keterampilannya sendiri.',
+    'Agen dengan kepribadian: masing-masing dengan jiwa, memori, konektor, dan keterampilannya sendiri.',
   'settings.profiles.menuDesc': 'Buat dan kelola profil agen',
   'settings.profiles.new': 'Profil baru',
   'settings.profiles.empty': 'Belum ada profil agen',
@@ -7205,7 +7243,7 @@ const messages: TranslationMap = {
     'Penyedia AI Anda belum memiliki kunci API. Tambahkan satu di pengaturan penyedia untuk melanjutkan.',
   'userErrors.scope.chat': 'Obrolan',
   'userErrors.scope.cron': 'Tugas terjadwal',
-  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  // Agent World: Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Jumlah',
   'agentWorld.trading.networkLabel': 'Jaringan',
   'agentWorld.trading.balanceLabel': 'Saldo Anda',
@@ -7228,12 +7266,12 @@ const messages: TranslationMap = {
   'agentWorld.trading.spendBroadcastNote':
     'Dompet Anda akan menandatangani dan menyiarkan pembayaran ini di',
   'agentWorld.trading.commitInsufficientWarning':
-    'Saldo Anda mungkin tidak menutupi ini jika komitmen diterima. Anda tetap dapat mengirimkannya — dana hanya berpindah saat diterima.',
+    'Saldo Anda mungkin tidak menutupi ini jika komitmen diterima. Anda tetap dapat mengirimkannya: dana hanya berpindah saat diterima.',
   'agentWorld.trading.commitSettleNote':
-    'Ini adalah komitmen bertanda tangan — dana hanya berpindah jika diterima.',
+    'Ini adalah komitmen bertanda tangan: dana hanya berpindah jika diterima.',
   'agentWorld.trading.commitReviewSubtitle': 'Tinjau komitmen Anda sebelum mengirim.',
   'agentWorld.trading.balanceUnverified':
-    'Kami tidak dapat memverifikasi saldo dompet Anda. Anda tetap dapat melanjutkan — pembayaran diperiksa saat dikirim.',
+    'Kami tidak dapat memverifikasi saldo dompet Anda. Anda tetap dapat melanjutkan: pembayaran diperiksa saat dikirim.',
   'agentWorld.trading.amountTooManyDecimals': 'Jumlah ini memiliki terlalu banyak angka desimal.',
   'agentWorld.trading.amountMustBePositive': 'Masukkan jumlah lebih besar dari nol.',
   'agentWorld.trading.amountInvalid': 'Masukkan jumlah yang valid.',
@@ -7263,6 +7301,13 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Hapus',
   'flows.delete.deleting': 'Menghapus…',
   'flows.canvas.renameLabel': 'Ganti nama alur kerja',
+  'flows.canvas.sidePanelToggle': 'Panel samping',
+  'flows.canvas.legendTab': 'Manual',
+
+  // Privacy status pill + per-action egress disclosure (#4437 / S3)
+  'privacy.status.ariaLabel': 'Status privasi',
+  'privacy.status.external': 'Di luar perangkat',
+  'privacy.status.local': 'Di perangkat',
 };
 
 export default messages;

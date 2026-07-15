@@ -2712,3 +2712,28 @@ describe('Conversations — message list reserves room for the floating composer
     }
   });
 });
+
+// The in-chat "Leaving your device" external-transfer disclosure card was
+// removed. This guards against it coming back: even with a live external
+// transfer flagged on the active thread, no such card renders in the chat view.
+describe('Conversations — external-transfer disclosure card removed', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+    mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  it('never renders a "Leaving your device" card', async () => {
+    const thread = makeThread({ id: 't-sel' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(screen.queryByText('Leaving your device')).toBeNull();
+  });
+});

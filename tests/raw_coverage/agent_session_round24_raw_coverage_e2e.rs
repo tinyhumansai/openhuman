@@ -411,6 +411,10 @@ async fn max_iteration_checkpoint_uses_deterministic_fallback_and_hooks() {
     let calls = Arc::new(AtomicUsize::new(0));
     let hook_calls = Arc::new(AtomicUsize::new(0));
     let hook_contexts = Arc::new(Mutex::new(Vec::new()));
+    // The wrap-up ignores the no-tools instruction and emits another
+    // prompt-formatted tool call plus a streamed delta. Validation must reject
+    // both before progress consumers see them, then use the deterministic
+    // checkpoint fallback.
     let provider = ScriptedProvider::with_stream(
         vec![
             xml_tool_response("alpha"),
@@ -454,7 +458,7 @@ async fn max_iteration_checkpoint_uses_deterministic_fallback_and_hooks() {
     let answer = agent.turn("hit the cap").await.unwrap();
 
     assert!(answer.contains("I reached the tool-call limit for this turn (1 steps)"));
-    // The unified TurnEngine digest uses `- round24_echo [ok]: ...` format (no backticks).
+    // The deterministic checkpoint lists each executed tool, e.g. ``- `round24_echo` — ok``.
     assert!(answer.contains("round24_echo"));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     wait_for_hook_calls(&hook_calls, 1).await;
@@ -480,13 +484,13 @@ async fn max_iteration_checkpoint_uses_deterministic_fallback_and_hooks() {
     while let Ok(event) = progress_rx.try_recv() {
         streamed.push(event);
     }
-    assert!(streamed.iter().any(|event| matches!(
+    assert!(!streamed.iter().any(|event| matches!(
         event,
         openhuman_core::openhuman::agent::progress::AgentProgress::TextDelta {
             delta,
             iteration: 2
         } if delta == "checkpoint delta"
-    )));
+    )), "rejected checkpoint deltas must not leak to progress consumers");
 }
 
 #[tokio::test]

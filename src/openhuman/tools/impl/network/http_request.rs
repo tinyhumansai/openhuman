@@ -379,6 +379,23 @@ impl Tool for HttpRequestTool {
             return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
         }
 
+        // Local-only enforcement (privacy epic S7, #4441): mirror the read-only
+        // `can_act()` deny above — under LocalOnly, refuse the outbound request
+        // before URL validation / DNS so nothing (not even a DNS lookup for the
+        // host) leaves the device. The post-validation `emit_external_transfer`
+        // below stays the S2 disclosure point for permitted requests.
+        {
+            let host = reqwest::Url::parse(url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "unknown".to_string());
+            if let Some(msg) = crate::openhuman::security::egress::local_only_tool_block(
+                &crate::openhuman::security::egress::EgressDescriptor::network_fetch(host),
+            ) {
+                return Ok(ToolResult::error(msg));
+            }
+        }
+
         let url = match self.validate_url(url).await {
             Ok(v) => v,
             Err(e) => return Ok(ToolResult::error(e.to_string())),

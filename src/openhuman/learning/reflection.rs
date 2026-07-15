@@ -60,7 +60,7 @@ async fn invoke_cloud_reflection(
     prompt: &str,
 ) -> anyhow::Result<String> {
     use tinyagents::harness::message::Message;
-    use tinyagents::harness::model::{ChatModel, ModelRequest};
+    use tinyagents::harness::model::ModelRequest;
     Ok(provider
         .invoke(
             &(),
