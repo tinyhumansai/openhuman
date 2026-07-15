@@ -132,7 +132,17 @@ cef = { version = "=146.4.1", default-features = false }
 # by tying the core's lifetime to the GUI process. The existing port-7788
 # probe in `core_process::ensure_running` still attaches to a running
 # `openhuman-core run` harness when one is already listening.
-openhuman_core = { path = "../..", package = "openhuman", default-features = false }
+#
+# `default-features = false` predates the core's default features (#1061-era,
+# when `[features]` had no `default` list) — every default the core gains must
+# therefore be opted back in HERE or it silently vanishes from the shipped app.
+# `voice` is required: without it the `#[cfg(feature = "voice")]` controllers in
+# `src/core/all.rs` are never registered, so the whole `openhuman.voice_*`
+# namespace answers "unknown method" at runtime (#4901). The `VOICE_COMPILED_IN`
+# const assert at the top of `src/lib.rs` fails the build if this is dropped.
+openhuman_core = { path = "../..", package = "openhuman", default-features = false, features = [
+    "voice",
+] }
 tinyjuice = { version = "0.2.1", default-features = false }
 
 [target.'cfg(unix)'.dependencies]

@@ -92,6 +92,17 @@ pub(crate) fn cloud_transcribe_default_model() -> &'static str {
     "whisper-v1"
 }
 
+/// Whether the real voice domain was compiled into this binary.
+///
+/// Part of the always-compiled facade so downstream crates can assert the gate
+/// resolved the way they need. Cargo features are per-crate and invisible to
+/// dependents' `#[cfg]`, so a consumer that *requires* voice (the desktop shell)
+/// has no other way to detect that it silently got the stubbed build — which is
+/// exactly how #4901 shipped: the shell's `default-features = false` dropped the
+/// default-ON `voice` feature, unregistering every `openhuman.voice_*`
+/// controller.
+pub const VOICE_COMPILED_IN: bool = cfg!(feature = "voice");
+
 // ---------------------------------------------------------------------------
 // Disabled facade — compiled only when the `voice` feature is OFF.
 // ---------------------------------------------------------------------------

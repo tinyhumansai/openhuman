@@ -33,7 +33,7 @@ const STT_RETRY_BASE_MS = 500;
  * Matched case-insensitively against the error message.
  */
 const PERMANENT_ERROR_PATTERNS = [
-  'unknown method', // stale sidecar
+  'unknown method', // core built without the `voice` feature (#4901)
   'audio blob is empty',
   'unavailable in this build',
 ];

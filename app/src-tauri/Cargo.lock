@@ -3565,6 +3565,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
+
+[[package]]
 name = "html5ever"
 version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5608,9 +5614,11 @@ dependencies = [
  "hkdf",
  "hmac 0.12.1",
  "hostname",
+ "hound",
  "iana-time-zone",
  "image",
  "keyring",
+ "lettre",
  "libc",
  "log",
  "mail-parser",
