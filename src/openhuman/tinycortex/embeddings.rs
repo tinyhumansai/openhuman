@@ -4,6 +4,7 @@
 //! OpenHuman owns the concrete providers (voyage / openai / cohere / ollama /
 //! cloud / noop) and the `embeddings/factory.rs` construction policy (rate-limit
 //! + retry). TinyCortex "never makes a network call" — it takes compute through
+//!
 //! [`EmbeddingBackend`] (the vector store) and [`Embedder`] (retrieval / seal
 //! scoring). This adapter wraps one `Arc<dyn EmbeddingProvider>` and re-exposes
 //! it as both, so the engine drives OpenHuman embeddings without cloning any

@@ -1861,7 +1861,8 @@ async fn approval_gate_timeout_inner() {
 // ─── Task 7: Max iterations + empty provider response ────────────────────────
 //
 // max_iterations_exceeded:
-//   Default max_tool_iterations = 10 (tool_loop.rs:15).
+//   The orchestrator's effective max_tool_iterations comes from its agent
+//   definition (currently 15), rather than the global default of 10.
 //   Circuit breakers (REPEAT_FAILURE_THRESHOLD=3 on failing calls,
 //   NO_PROGRESS_FAILURE_THRESHOLD=6 on consecutive fails) only fire on
 //   success=false outcomes. We must pick a tool that:
@@ -1879,9 +1880,9 @@ async fn approval_gate_timeout_inner() {
 //   resolve_time IS in ops.rs (line 192) and in orchestrator named (agent.toml:173).
 //   It's a pure chrono calculation, no I/O, always succeeds. Varying the
 //   `expression` arg (format!("{i}m ago")) gives a different hash each iteration,
-//   preventing REPEAT_OUTPUT_THRESHOLD from firing. Queuing 12 calls trips the
-//   max_tool_iterations cap at 10 (DEFAULT_MAX_TOOL_ITERATIONS, tool_loop.rs:15).
-//   AgentError::MaxIterationsExceeded → "Agent exceeded maximum tool iterations (10)"
+//   preventing REPEAT_OUTPUT_THRESHOLD from firing. Queuing beyond the
+//   definition-derived cap trips max_tool_iterations. AgentError::MaxIterationsExceeded →
+//   "Agent exceeded maximum tool iterations (N)"
 //   (error.rs:89-90; MAX_ITERATIONS_ERROR_PREFIX at error.rs:176).
 //
 // empty_provider_response:
@@ -1910,11 +1911,19 @@ fn max_iterations_exceeded() {
 
 async fn max_iterations_exceeded_inner() {
     let _lock = env_lock();
-    // 12 tool calls > default max_tool_iterations (10). Each uses a unique
+    init_agent_def_registry();
+    let max_iterations = AgentDefinitionRegistry::global()
+        .and_then(|registry| registry.get("orchestrator"))
+        .map(|definition| definition.effective_max_iterations())
+        .expect("built-in orchestrator definition must exist");
+
+    // Queue beyond the definition-derived cap. Deriving this count from the
+    // same definition used by the session builder keeps the regression valid
+    // when the orchestrator's policy changes. Each call uses a unique
     // expression to prevent REPEAT_OUTPUT_THRESHOLD from firing first.
     // resolve_time is a pure computation tool (no I/O) that always succeeds.
     // The required parameter name is "expr" (resolve_time.rs schema).
-    let responses: Vec<Value> = (0..12)
+    let responses: Vec<Value> = (0..max_iterations + 5)
         .map(|i| tool_call_completion("resolve_time", json!({ "expr": format!("{}m ago", i + 1) })))
         .collect();
     reset_script(responses);

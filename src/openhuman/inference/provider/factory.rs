@@ -1605,10 +1605,10 @@ pub(crate) fn create_turn_chat_model_from_string_with_native_tools(
 /// `make_omlx_provider` / `make_local_openai_provider` — they share the endpoint
 /// helpers but each builds its own client, so an endpoint/auth change must touch
 /// both until the `Provider` path is deleted.
-fn try_create_local_runtime_chat_model(
-    role: &str,
-    config: &Config,
-) -> Option<anyhow::Result<(Arc<dyn ChatModel<()>>, String)>> {
+type ResolvedChatModel = (Arc<dyn ChatModel<()>>, String);
+type OptionalChatModelResult = Option<anyhow::Result<ResolvedChatModel>>;
+
+fn try_create_local_runtime_chat_model(role: &str, config: &Config) -> OptionalChatModelResult {
     let resolved = provider_for_role(role, config);
     try_create_local_runtime_chat_model_from_string(role, &resolved, config, true)
 }
@@ -1618,7 +1618,7 @@ fn try_create_local_runtime_chat_model_from_string(
     provider: &str,
     config: &Config,
     require_session: bool,
-) -> Option<anyhow::Result<(Arc<dyn ChatModel<()>>, String)>> {
+) -> OptionalChatModelResult {
     use crate::openhuman::inference::local::profile::{
         LOCAL_OPENAI_PROFILE, MLX_PROFILE, OMLX_PROFILE,
     };
@@ -2514,10 +2514,7 @@ fn make_cloud_provider_by_slug(
 /// `verify_session_active`) runs before building. Temperature rides the per-call
 /// `ModelRequest` (managed/local parity; the `@<temp>` suffix still bakes a fixed
 /// override).
-fn try_create_cloud_slug_chat_model(
-    role: &str,
-    config: &Config,
-) -> Option<anyhow::Result<(Arc<dyn ChatModel<()>>, String)>> {
+fn try_create_cloud_slug_chat_model(role: &str, config: &Config) -> OptionalChatModelResult {
     try_create_cloud_slug_chat_model_with_native_tools(role, config, true)
 }
 
@@ -2525,7 +2522,7 @@ fn try_create_cloud_slug_chat_model_with_native_tools(
     role: &str,
     config: &Config,
     native_tool_calling: bool,
-) -> Option<anyhow::Result<(Arc<dyn ChatModel<()>>, String)>> {
+) -> OptionalChatModelResult {
     // Resolve the role's provider string, expanding the empty / "cloud" sentinel
     // to the primary cloud target (mirroring create_chat_provider_from_string).
     let mut resolved = provider_for_role(role, config);
@@ -2544,7 +2541,7 @@ fn try_create_cloud_slug_chat_model_from_string(
     role: &str,
     provider: &str,
     config: &Config,
-) -> Option<anyhow::Result<(Arc<dyn ChatModel<()>>, String)>> {
+) -> OptionalChatModelResult {
     try_create_cloud_slug_chat_model_from_string_with_native_tools(role, provider, config, true)
 }
 
@@ -2553,7 +2550,7 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
     provider: &str,
     config: &Config,
     native_tool_calling: bool,
-) -> Option<anyhow::Result<(Arc<dyn ChatModel<()>>, String)>> {
+) -> OptionalChatModelResult {
     let p = provider.trim().to_string();
 
     // Only the "<slug>:<model>[@temp]" cloud form routes here. The managed

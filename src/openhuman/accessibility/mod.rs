@@ -28,8 +28,6 @@ mod vision_click;
 #[cfg(target_os = "windows")]
 mod uia_interact;
 
-#[cfg(test)]
-pub(crate) use automation_state::test_lock as automation_state_test_lock;
 pub use automation_state::{
     clear as clear_automation_denial, mark_system_events_denied, system_events_denied,
 };
