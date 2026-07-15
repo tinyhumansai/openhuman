@@ -40,7 +40,7 @@ describe('<ModelCostTable />', () => {
     expect(screen.getByTestId('model-cost-table-empty')).toBeInTheDocument();
   });
 
-  it('renders a dash when the provider is unknown', () => {
+  it('renders None when the provider is unknown', () => {
     render(
       <ModelCostTable
         models={[
@@ -56,6 +56,6 @@ describe('<ModelCostTable />', () => {
         currency="USD"
       />
     );
-    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(screen.getByText('None')).toBeInTheDocument();
   });
 });

@@ -31,7 +31,6 @@ import chatRuntimeReducer, {
   setTurnTimelinesForThread,
 } from '../../store/chatRuntimeSlice';
 import layoutReducer from '../../store/layoutSlice';
-import privacyReducer, { type PrivacyDisclosure } from '../../store/privacySlice';
 import socketReducer from '../../store/socketSlice';
 import themeReducer from '../../store/themeSlice';
 import threadReducer, { setSelectedThread } from '../../store/threadSlice';
@@ -203,7 +202,6 @@ function buildStore(preload: Record<string, unknown> = {}) {
       chatRuntime: chatRuntimeReducer,
       agentProfiles: agentProfileReducer,
       theme: themeReducer,
-      privacy: privacyReducer,
     }),
     preloadedState: preload as never,
   });
@@ -2715,11 +2713,10 @@ describe('Conversations — message list reserves room for the floating composer
   });
 });
 
-// External-transfer disclosure surface (#4437 / S3). The card's own unit test
-// covers the component in isolation; these drive the SELECTION path in
-// Conversations — latest-per-thread, `firstActiveThreadId` fallback, and
-// clear-after-dismissal — which the isolated card test cannot reach.
-describe('Conversations — external-transfer disclosure surface (#4437 / S3)', () => {
+// The in-chat "Leaving your device" external-transfer disclosure card was
+// removed. This guards against it coming back: even with a live external
+// transfer flagged on the active thread, no such card renders in the chat view.
+describe('Conversations — external-transfer disclosure card removed', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
@@ -2727,92 +2724,16 @@ describe('Conversations — external-transfer disclosure surface (#4437 / S3)', 
     mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
   });
 
-  function disclosure(over: Partial<PrivacyDisclosure> = {}): PrivacyDisclosure {
-    return {
-      id: 'd1',
-      providerSlug: 'openai',
-      service: 'OpenAI',
-      isExternal: true,
-      reason: 'inference',
-      dataKinds: ['prompt'],
-      riskLevel: 'unknown',
-      riskCategories: [],
-      receivedAt: 0,
-      ...over,
-    };
-  }
-
-  it('surfaces the latest disclosure for the selected thread', async () => {
+  it('never renders a "Leaving your device" card', async () => {
     const thread = makeThread({ id: 't-sel' });
     mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
     await act(async () => {
       await renderConversations({
         thread: selectedThreadState(thread),
         socket: socketState('connected'),
-        privacy: {
-          privacyMode: 'standard',
-          disclosuresByThread: {
-            't-sel': [
-              disclosure({ id: 'old', service: 'OldService' }),
-              disclosure({ id: 'new', service: 'OpenAI' }),
-            ],
-          },
-        },
       });
     });
 
-    const title = await screen.findByText('Leaving your device');
-    const card = title.closest('[role="status"]');
-    expect(card).not.toBeNull();
-    // Latest wins — the newest disclosure's destination, not the older one.
-    expect(card).toHaveTextContent('OpenAI');
-    expect(card).not.toHaveTextContent('OldService');
-  });
-
-  it('falls back to firstActiveThreadId when no thread is selected', async () => {
-    const thread = makeThread({ id: 't-act' });
-    // Keep thread loading pending so the mount flow's auto-select can't fire. With a
-    // resolved load the sole thread `t-act` would be auto-selected, and the assertion
-    // would then pass through the normal selected-thread path instead of the intended
-    // `selectedThreadId ?? firstActiveThreadId` fallback (CR #4849). A pending load
-    // leaves `selectedThreadId` null, so the fallback is the ONLY way the card shows.
-    mockGetThreads.mockReturnValue(new Promise(() => {}));
-    let store: Awaited<ReturnType<typeof renderConversations>>;
-    await act(async () => {
-      store = await renderConversations({
-        // No selectedThreadId — only an active thread present.
-        thread: { ...emptyThreadState, threads: [thread], activeThreadIds: { 't-act': true } },
-        socket: socketState('connected'),
-        privacy: {
-          privacyMode: 'standard',
-          disclosuresByThread: { 't-act': [disclosure({ service: 'Anthropic' })] },
-        },
-      });
-    });
-
-    // Auto-selection must NOT have fired — the fallback branch is what surfaces the
-    // card, not the normal selected-thread path.
-    expect(store!.getState().thread.selectedThreadId).toBeNull();
-    const title = await screen.findByText('Leaving your device');
-    expect(title.closest('[role="status"]')).toHaveTextContent('Anthropic');
-  });
-
-  it('clears the card after dismissal', async () => {
-    const thread = makeThread({ id: 't-sel' });
-    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
-    await act(async () => {
-      await renderConversations({
-        thread: selectedThreadState(thread),
-        socket: socketState('connected'),
-        privacy: { privacyMode: 'standard', disclosuresByThread: { 't-sel': [disclosure()] } },
-      });
-    });
-
-    const title = await screen.findByText('Leaving your device');
-    const card = title.closest('[role="status"]') as HTMLElement;
-    await act(async () => {
-      fireEvent.click(within(card).getByRole('button', { name: 'Got it' }));
-    });
     expect(screen.queryByText('Leaving your device')).toBeNull();
   });
 });

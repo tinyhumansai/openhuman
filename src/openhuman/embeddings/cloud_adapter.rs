@@ -85,12 +85,44 @@ impl EmbeddingProvider for OpenHumanCloudEmbedding {
     async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
         // Egress spine (privacy epic S2, #4436): the input texts leave the
         // device for the cloud embedding backend — disclose before the request.
-        crate::openhuman::security::egress::emit_external_transfer(
-            crate::openhuman::security::egress::EgressDescriptor::embedding(
-                "cloud",
-                self.inner.model_id(),
-            ),
+        let egress = crate::openhuman::security::egress::EgressDescriptor::embedding(
+            "cloud",
+            self.inner.model_id(),
         );
+        // Local-only enforcement (privacy epic S7, #4441): refuse cloud
+        // embedding under LocalOnly before disclosing or sending the texts.
+        crate::openhuman::security::egress::enforce_egress(&egress)?;
+        crate::openhuman::security::egress::emit_external_transfer(egress);
         self.inner.embed(texts).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Privacy epic S7 (#4441): under LocalOnly, `embed` refuses before touching
+    /// the inner cloud transport (so no network / no auth is needed to observe
+    /// the block). Uses the thread-scoped privacy override so it never mutates
+    /// the process-global policy that sibling tests read.
+    #[tokio::test]
+    async fn embed_blocked_under_local_only() {
+        let _mode = crate::openhuman::security::live_policy::test_privacy_scope(
+            crate::openhuman::config::PrivacyMode::LocalOnly,
+        );
+        let provider = OpenHumanCloudEmbedding::new(
+            Some("http://127.0.0.1:0".into()),
+            Some(std::env::temp_dir().join("openhuman_embeddings_localonly_state")),
+            false,
+            DEFAULT_CLOUD_EMBEDDING_MODEL,
+            DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
+        );
+
+        let err = provider.embed(&["hello"]).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Local-only privacy mode is active"),
+            "unexpected error: {err}"
+        );
     }
 }

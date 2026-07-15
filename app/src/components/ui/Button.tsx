@@ -26,6 +26,8 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   iconOnly?: boolean;
   leadingIcon?: ReactNode;
   trailingIcon?: ReactNode;
+  /** Stable, content-free identifier consumed by the app-wide analytics tracker. */
+  analyticsId?: string;
 }
 
 const BASE =
@@ -84,6 +86,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>((props, ref) => {
     iconOnly = false,
     leadingIcon,
     trailingIcon,
+    analyticsId,
     className,
     type,
     children,
@@ -96,7 +99,12 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>((props, ref) => {
     .join(' ');
 
   return (
-    <button ref={ref} type={type ?? 'button'} className={classes} {...rest}>
+    <button
+      ref={ref}
+      type={type ?? 'button'}
+      className={classes}
+      data-analytics-id={analyticsId}
+      {...rest}>
       {leadingIcon}
       {children}
       {trailingIcon}

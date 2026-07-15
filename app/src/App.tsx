@@ -11,6 +11,7 @@ import { PersistGate } from 'redux-persist/integration/react';
 
 import AppRoutes from './AppRoutes';
 import WebviewHost from './components/accounts/WebviewHost';
+import { AnalyticsPageTracker } from './components/analytics';
 import AnnouncementGate from './components/Announcement/AnnouncementGate';
 import AppBackground from './components/AppBackground';
 import AppUpdatePrompt from './components/AppUpdatePrompt';
@@ -53,7 +54,6 @@ import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
 import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
 import ThemeProvider from './providers/ThemeProvider';
-import { trackPageView } from './services/analytics';
 import { startCoreHealthMonitor, stopCoreHealthMonitor } from './services/coreHealthMonitor';
 import {
   startInternetStatusListener,
@@ -152,6 +152,7 @@ function App() {
                       <Router>
                         <CommandProvider>
                           <ServiceBlockingGate>
+                            <AnalyticsPageTracker />
                             <AppShell />
                             <SecurityBanner />
                             {!onMobile && <DictationHotkeyManager />}
@@ -234,11 +235,6 @@ export function AppShellDesktop() {
     navigate,
   ]);
 
-  // Track route changes as anonymous page views.
-  useEffect(() => {
-    trackPageView(location.pathname);
-  }, [location.pathname]);
-
   // Hide the active connected-app webview when we navigate away from the chat
   // surface. Provider CEF selection is intentionally route-independent; any
   // real route change clears that high-level selection so the native view
@@ -289,7 +285,11 @@ export function AppShellDesktop() {
   const onHiddenChromePath = ['/', '/login'].some(
     path => location.pathname === path || location.pathname.startsWith(`${path}/`)
   );
-  const chromeless = !token || onOnboardingRoute || onHiddenChromePath;
+  // The workflow graph canvas (`/flows/:id`, `/flows/draft`) owns the full
+  // viewport for a focused builder — no app sidebar. The `/flows` list (and its
+  // in-page Runs / Discoveries sub-views on `?view=`) keep their chrome.
+  const onWorkflowCanvas = location.pathname.startsWith('/flows/');
+  const chromeless = !token || onOnboardingRoute || onHiddenChromePath || onWorkflowCanvas;
 
   // Desktop Settings is a modal overlay (the backgroundLocation pattern): when
   // the URL is a settings path we keep rendering the page *behind* it

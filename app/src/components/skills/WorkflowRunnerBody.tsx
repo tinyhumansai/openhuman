@@ -1173,6 +1173,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="primary"
+                      analyticsId="skills-runner-run"
                       onClick={() => void handleRun()}
                       disabled={
                         run.status === 'submitting' || runBusy || missingRequired.length > 0
@@ -1335,6 +1336,7 @@ export const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyPr
                               <Button
                                 variant="primary"
                                 size="sm"
+                                analyticsId="skills-runner-scheduled-run"
                                 disabled={runBusy}
                                 onClick={() => void handleRunJobNow(job)}>
                                 {t('settings.skillsRunner.schedule.runNow')}

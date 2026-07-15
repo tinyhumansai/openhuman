@@ -5,13 +5,13 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../../chat/chatSendError';
 import { checkPromptInjection, promptGuardMessage } from '../../chat/promptInjectionGuard';
+import { trackAnalyticsEvent } from '../../components/analytics';
 import ApprovalRequestCard from '../../components/chat/ApprovalRequestCard';
 import ArtifactCard from '../../components/chat/ArtifactCard';
 import ChatComposer from '../../components/chat/ChatComposer';
 import ChatFilesChip from '../../components/chat/ChatFilesChip';
 import ChatNewWindowHero from '../../components/chat/ChatNewWindowHero';
 import ComposerTokenStats from '../../components/chat/ComposerTokenStats';
-import { ExternalTransferDisclosureCard } from '../../components/chat/ExternalTransferDisclosureCard';
 import { FlowApprovalRequestCard } from '../../components/chat/FlowApprovalRequestCard';
 import IntegrationConnectCard from '../../components/chat/IntegrationConnectCard';
 import QueuedFollowups from '../../components/chat/QueuedFollowups';
@@ -77,7 +77,6 @@ import {
   validateAndReadFile,
 } from '../../lib/attachments';
 import { useT } from '../../lib/i18n/I18nContext';
-import { trackEvent } from '../../services/analytics';
 import { applyOpenRouterFreeModels } from '../../services/api/openrouterFreeModels';
 import { subagentApi } from '../../services/api/subagentApi';
 import { threadApi } from '../../services/api/threadApi';
@@ -114,7 +113,6 @@ import {
   type ToolTimelineEntry,
 } from '../../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import type { PrivacyDisclosure } from '../../store/privacySlice';
 import { selectSocketStatus } from '../../store/socketSelectors';
 import {
   addMessageLocal,
@@ -231,11 +229,6 @@ interface ConversationsProps {
 // object identity when the slice field is absent (narrow test stores),
 // avoiding spurious re-renders.
 const EMPTY_ACTIVE_THREADS: Record<string, true> = {};
-
-// Stable empty reference for the privacy disclosure map — the `privacy` slice
-// may be absent from narrow test stores, so default to this shared object
-// identity instead of throwing / re-rendering.
-const EMPTY_DISCLOSURES: Record<string, PrivacyDisclosure[]> = {};
 
 // Stable empty reference for the queued-follow-ups map, so the selector keeps
 // the same identity when the slice field is absent (narrow test stores).
@@ -411,12 +404,6 @@ const Conversations = ({
   const artifactsByThread = useAppSelector(state => state.chatRuntime.artifactsByThread);
   const pendingApprovalByThread = useAppSelector(
     state => state.chatRuntime.pendingApprovalByThread
-  );
-  // External-transfer disclosures per thread (#4437 / S3). Read-only surface —
-  // the card discloses what's leaving the device; dismissal is the only action.
-  // Optional-chain + default: narrow test stores may omit the `privacy` slice.
-  const disclosuresByThread = useAppSelector(
-    state => state.privacy?.disclosuresByThread ?? EMPTY_DISCLOSURES
   );
   // Flow-approval surface (chat): a paused tinyflows run's gate, pushed via
   // the `flow_approval_request` socket event. Not thread-scoped — the
@@ -1205,7 +1192,10 @@ const Conversations = ({
         profileId: selectedAgentProfileId,
         locale: uiLocale,
       });
-      trackEvent('chat_message_sent');
+      trackAnalyticsEvent('chat_message_sent', {
+        send_mode: 'standard',
+        has_attachments: pendingAttachments.length > 0,
+      });
       // Backend accepted the send; lifecycle ('started' → 'streaming') now
       // owns the `isSending` UI lock. Release the pending guard so the next
       // user turn isn't blocked by a stale ref/state.
@@ -1305,7 +1295,10 @@ const Conversations = ({
       if (requestId) {
         dispatch(registerParallelRequest({ threadId, requestId }));
       }
-      trackEvent('chat_parallel_message_sent');
+      trackAnalyticsEvent('chat_message_sent', {
+        send_mode: 'parallel',
+        has_attachments: pendingAttachments.length > 0,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setSendError(chatSendError('cloud_send_failed', msg));
@@ -1384,7 +1377,10 @@ const Conversations = ({
       setInputValue('');
       setAttachments([]);
       dispatch(enqueueFollowup({ threadId, message: followupMessage, label }));
-      trackEvent('chat_followup_queued');
+      trackAnalyticsEvent('chat_message_sent', {
+        send_mode: 'followup',
+        has_attachments: pendingAttachments.length > 0,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setSendError(chatSendError('cloud_send_failed', msg));
@@ -2810,28 +2806,6 @@ const Conversations = ({
           );
         })()}
 
-        {(() => {
-          // External-transfer disclosure (#4437 / S3). Surface the most recent
-          // pending disclosure for the shown thread just above the composer,
-          // mirroring the approval-card placement so it's visible without
-          // scrolling. DISCLOSURE ONLY — dismissal is the only action.
-          const disclosureThreadId = selectedThreadId ?? firstActiveThreadId;
-          const disclosures = disclosureThreadId
-            ? disclosuresByThread[disclosureThreadId]
-            : undefined;
-          const latest = disclosures?.[disclosures.length - 1];
-          if (!latest || !disclosureThreadId) return null;
-          return (
-            <div className="mb-2">
-              <ExternalTransferDisclosureCard
-                key={latest.id}
-                threadId={disclosureThreadId}
-                disclosure={latest}
-              />
-            </div>
-          );
-        })()}
-
         {/* Flow-approval surface (chat): actionable banner(s) for paused
             tinyflows runs, pushed via the `flow_approval_request` socket
             event (issue: flow-approval surfacing). Not gated on the selected
@@ -3126,7 +3100,9 @@ const Conversations = ({
                   activity — use the raw `messages` (not `hasVisibleMessages`,
                   which ignores hidden transcript entries) so an already-started
                   thread never looks "fresh" here. */}
-              {messages.length === 0 && <SuperContextToggle />}
+              {/* Key by thread so switching to another empty chat remounts the
+                  toggle and re-runs its off-by-default reset (PR #4874 review). */}
+              {messages.length === 0 && <SuperContextToggle key={selectedThreadId ?? 'new-chat'} />}
               {selectedThreadId && (
                 <button
                   type="button"

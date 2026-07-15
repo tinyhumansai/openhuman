@@ -23,7 +23,6 @@ import {
   type ChatTaskBoardUpdatedEvent,
   type ChatToolCallEvent,
   type ChatToolResultEvent,
-  type ExternalTransferPendingEvent,
   type ProactiveMessageEvent,
   segmentText,
   subscribeChatEvents,
@@ -67,12 +66,6 @@ import {
   type WorkflowProposal,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import {
-  clearActiveExternalForThread,
-  disclosureFromEvent,
-  hydratePrivacyMode,
-  pushDisclosureForThread,
-} from '../store/privacySlice';
 import { selectSocketStatus } from '../store/socketSelectors';
 import {
   addInferenceResponse,
@@ -279,30 +272,27 @@ function chatTurnUsagePayload(event: ChatDoneEvent): {
  * card.
  */
 /**
- * Tool names whose successful `output` carries a `workflow_proposal` payload.
- * `propose_workflow` (first draft) and `revise_workflow` (iterative refine)
- * both return the identical wire shape (see `src/openhuman/flows/builder_tools.rs`),
- * so the runtime surfaces a `WorkflowProposalCard` from either. These run inside
- * the `workflow_builder` specialist — reached either as the main agent's own
- * tool or, in the Flows copilot / prompt-bar flow, as a delegated subagent
- * (`build_workflow`) — so BOTH `onToolResult` and `onSubagentToolResult` funnel
- * through {@link maybeParseWorkflowProposalTool}.
- */
-const WORKFLOW_PROPOSAL_TOOLS = new Set(['propose_workflow', 'revise_workflow']);
-
-/**
- * If a completed tool result is a successful workflow-builder proposal
- * (`propose_workflow`/`revise_workflow`), parse it. Returns `null` for anything
- * else so callers can cheaply gate on it. Keyed by the tool NAME + success, not
- * by agent, so a proposal surfaces whether the tool ran in the main agent or in
- * the delegated `workflow_builder` worker.
+ * Recognition is content-based, not name-based: ANY workflow-builder tool
+ * (`propose_workflow`, `revise_workflow`, `edit_workflow`, and any future
+ * addition) whose successful `output` is `{ type: "workflow_proposal", ... }`
+ * (see `src/openhuman/flows/builder_tools.rs` / `ops::build_builder_proposal`)
+ * is surfaced as a `WorkflowProposalCard`. This mirrors the Rust-side blocking
+ * path's `extract_workflow_proposal`, which also scans tool results by
+ * payload `type` rather than tool name — a name allowlist here can silently
+ * drop proposals from newly added tools (as happened when `edit_workflow` was
+ * added without updating this list). `parseWorkflowProposal`'s own
+ * `obj.type !== 'workflow_proposal'` check is the only gate needed. These
+ * tools run inside the `workflow_builder` specialist — reached either as the
+ * main agent's own tool or, in the Flows copilot / prompt-bar flow, as a
+ * delegated subagent (`build_workflow`) — so BOTH `onToolResult` and
+ * `onSubagentToolResult` funnel through {@link maybeParseWorkflowProposalTool}.
  */
 function maybeParseWorkflowProposalTool(
-  toolName: string,
+  _toolName: string,
   success: boolean,
   output: string | undefined
 ): WorkflowProposal | null {
-  if (!success || !WORKFLOW_PROPOSAL_TOOLS.has(toolName) || !output) return null;
+  if (!success || !output) return null;
   return parseWorkflowProposal(output);
 }
 
@@ -362,13 +352,6 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   // (#4273, AC3). Single instance for the provider's lifetime; observability
   // only — it never gates or cancels a turn.
   const skillLatencyRef = useRef(createSkillToolChainLatencyTracker());
-
-  // Hydrate the current Privacy Mode once on mount so the persistent status
-  // pill can show the posture immediately (#4437 / S3). Failures resolve to
-  // null inside the thunk — the pill degrades gracefully.
-  useEffect(() => {
-    void dispatch(hydratePrivacyMode());
-  }, [dispatch]);
 
   useEffect(() => {
     toolTimelineRef.current = toolTimelineByThread;
@@ -1071,25 +1054,6 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           })
         );
       },
-      onExternalTransferPending: (event: ExternalTransferPendingEvent) => {
-        // #4437 / S3 — DISCLOSURE ONLY. Project the egress descriptor onto the
-        // thread's privacy ledger so the in-chat card + status pill can render
-        // what/where/why. No approve/deny here (that's S4 #4438).
-        rtLog('external_transfer_pending', {
-          thread: event.thread_id,
-          provider: event.provider_slug,
-          service: event.service,
-          reason: event.reason,
-          kinds: event.data_kinds.length,
-          external: String(event.is_external),
-        });
-        dispatch(
-          pushDisclosureForThread({
-            threadId: event.thread_id,
-            disclosure: disclosureFromEvent(event),
-          })
-        );
-      },
       onApprovalRequest: (event: ChatApprovalRequestEvent) => {
         rtLog('approval_request', {
           thread: event.thread_id,
@@ -1221,10 +1185,6 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         dispatch(clearStreamingAssistantForThread({ threadId: event.thread_id }));
         dispatch(clearPendingApprovalForThread({ threadId: event.thread_id }));
         dispatch(clearPendingPlanReviewForThread({ threadId: event.thread_id }));
-        // Turn boundary: this turn's external transfers are done, so return the
-        // privacy pill to on-device. The (un-dismissed) disclosure ledger stays
-        // for the in-chat card's history — only the live flag clears (#4437).
-        dispatch(clearActiveExternalForThread({ threadId: event.thread_id }));
 
         const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         if (existing.length > 0) {
@@ -1377,9 +1337,6 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         dispatch(clearStreamingAssistantForThread({ threadId: event.thread_id }));
         dispatch(clearPendingApprovalForThread({ threadId: event.thread_id }));
         dispatch(clearPendingPlanReviewForThread({ threadId: event.thread_id }));
-        // Turn boundary (error path): clear the live external-transfer flag so
-        // the privacy pill resets to on-device, mirroring the done path (#4437).
-        dispatch(clearActiveExternalForThread({ threadId: event.thread_id }));
 
         const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         if (existing.length > 0) {
@@ -1467,10 +1424,6 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       // can't complete.
       dispatch(clearPendingApprovalForThread({ threadId }));
       dispatch(clearPendingPlanReviewForThread({ threadId }));
-      // A disconnect tears the turn down without a done/error event, so clear
-      // the live external-transfer flag here too — otherwise the privacy pill
-      // would stay off-device for a turn that can never complete (#4437).
-      dispatch(clearActiveExternalForThread({ threadId }));
       dispatch(endInferenceTurn({ threadId }));
     }
     // A disconnect kills every in-flight turn on the dead session, so clear all

@@ -176,7 +176,6 @@ pub async fn spawn_workflow_run_background(
                     return;
                 }
             };
-            config.agent.max_tool_iterations = WORKFLOW_RUN_MAX_ITERATIONS;
             // Only apply the permissive wildcard default when the operator
             // hasn't configured an explicit allow-list — preserve any
             // configured egress policy instead of unconditionally widening it.
@@ -196,6 +195,19 @@ pub async fn spawn_workflow_run_background(
                     return;
                 }
             };
+            // Issue #4868 — apply the workflow-run iteration budget AFTER
+            // construction. The session builder now stamps `orchestrator`'s
+            // definition cap (15) onto the agent; a full workflow run
+            // intentionally needs a much larger budget (200), so this must be
+            // a post-construction override rather than a pre-set on `config`
+            // (which the builder would otherwise clobber).
+            agent.set_max_tool_iterations(WORKFLOW_RUN_MAX_ITERATIONS);
+            tracing::debug!(
+                run_id = %run_id,
+                max_tool_iterations = WORKFLOW_RUN_MAX_ITERATIONS,
+                "[skills] workflow_run: pinned iteration budget post-construction (overrides \
+                 the session builder's orchestrator definition cap)"
+            );
             agent.set_event_context(run_id.clone(), "skill");
             agent.set_agent_definition_name(format!(
                 "orchestrator-skill-{}",

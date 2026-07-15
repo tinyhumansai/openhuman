@@ -18,6 +18,7 @@
  */
 import debug from 'debug';
 
+import { trackAnalyticsEvent } from '../analytics';
 import { callCoreRpc } from '../coreRpcClient';
 
 const log = debug('workflowRunsApi');
@@ -233,6 +234,7 @@ export const workflowRunsApi = {
     log('startRun: request definitionId=%s', params.definitionId);
     const result = await callCoreRpc<RunResult>({ method: 'openhuman.workflow_run_start', params });
     log('startRun: id=%s status=%s', result.workflowRun.id, result.workflowRun.status);
+    trackAnalyticsEvent('automation_run_started', { automation_kind: 'orchestration' });
     return result.workflowRun;
   },
 
@@ -244,6 +246,9 @@ export const workflowRunsApi = {
       params: { id },
     });
     log('stopRun: status=%s', result?.workflowRun?.status ?? 'null');
+    if (result?.workflowRun) {
+      trackAnalyticsEvent('automation_run_cancelled', { automation_kind: 'orchestration' });
+    }
     return result?.workflowRun ?? null;
   },
 
@@ -255,6 +260,7 @@ export const workflowRunsApi = {
       params: { id },
     });
     log('resumeRun: status=%s', result.workflowRun.status);
+    trackAnalyticsEvent('automation_run_resumed', { automation_kind: 'orchestration' });
     return result.workflowRun;
   },
 };

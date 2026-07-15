@@ -158,6 +158,21 @@ impl Agent {
         &self.config
     }
 
+    /// Override the agent's tool-iteration cap after construction.
+    ///
+    /// Issue #4868 — `build_session_agent_inner` now stamps every agent with
+    /// its `AgentDefinition::effective_max_iterations()`, which is the correct
+    /// behavior for direct-invocation call sites. A handful of callers need a
+    /// *different* cap than the definition's declared budget (e.g. long-running
+    /// workflow/task-dispatcher runs that intentionally exceed any single
+    /// agent's normal budget). Those callers should apply their override
+    /// AFTER construction via this setter, so the shared definition-cap logic
+    /// in the builder doesn't get silently clobbered by pre-construction
+    /// mutations (and vice versa).
+    pub fn set_max_tool_iterations(&mut self, cap: usize) {
+        self.config.max_tool_iterations = cap;
+    }
+
     /// Returns the current conversation history.
     pub fn history(&self) -> &[ConversationMessage] {
         &self.history

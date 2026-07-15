@@ -63,7 +63,7 @@ fn validate_delivery(config: &Config, delivery: &DeliveryConfig) -> Result<(), S
     }
 
     match allowed_users_for_channel(config, channel) {
-        Some(list) if list.is_empty() => Ok(()),
+        Some([]) => Ok(()),
         Some(list) => {
             if list.iter().any(|u| u == to) {
                 Ok(())

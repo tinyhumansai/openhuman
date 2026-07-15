@@ -108,13 +108,15 @@ pub(crate) fn try_forward_deep_links() -> ForwardResult {
 // Pending URLs collected before setup() has an app handle.
 static PENDING_URLS: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
 // Live handler installed by drain_pending_urls — dispatches directly to app.
-static LIVE_HANDLER: OnceLock<Mutex<Option<Box<dyn Fn(String) + Send + Sync>>>> = OnceLock::new();
+type LiveHandler = Box<dyn Fn(String) + Send + Sync>;
+type LiveHandlerSlot = Mutex<Option<LiveHandler>>;
+static LIVE_HANDLER: OnceLock<LiveHandlerSlot> = OnceLock::new();
 
 fn pending_queue() -> &'static Arc<Mutex<Vec<String>>> {
     PENDING_URLS.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
 }
 
-fn live_handler() -> &'static Mutex<Option<Box<dyn Fn(String) + Send + Sync>>> {
+fn live_handler() -> &'static LiveHandlerSlot {
     LIVE_HANDLER.get_or_init(|| Mutex::new(None))
 }
 

@@ -7,43 +7,39 @@ import SuperContextToggle from '../SuperContextToggle';
 // mock fns they reference must be created with `vi.hoisted` (hoisted alongside
 // them) — a plain `const` would be in the TDZ when the factory runs and could
 // throw on import. See CodeRabbit/Codex review on PR #4085.
-const { isTauriMock, getMock, setMock } = vi.hoisted(() => ({
+const { isTauriMock, setMock } = vi.hoisted(() => ({
   isTauriMock: vi.fn(() => true),
-  getMock: vi.fn(),
   setMock: vi.fn(),
 }));
 
 vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
 vi.mock('../../../utils/tauriCommands/common', () => ({ isTauri: () => isTauriMock() }));
 vi.mock('../../../utils/tauriCommands/config', () => ({
-  openhumanGetSuperContextEnabled: () => getMock(),
   openhumanSetSuperContextEnabled: (value: boolean) => setMock(value),
 }));
 
 beforeEach(() => {
   isTauriMock.mockReturnValue(true);
-  getMock.mockReset();
   setMock.mockReset();
+  // Echo the written value back so the component reflects it on success.
+  setMock.mockImplementation((v: boolean) => Promise.resolve({ result: v, logs: [] }));
 });
 
 describe('<SuperContextToggle />', () => {
-  it('loads the persisted flag and reflects it as the switch state', async () => {
-    getMock.mockResolvedValue({ result: true, logs: [] });
-
+  it('resets super context to off on mount, ignoring any persisted value', async () => {
     render(<SuperContextToggle />);
 
     const sw = screen.getByTestId('super-context-toggle');
-    await waitFor(() => expect(sw).toHaveAttribute('aria-checked', 'true'));
-    expect(getMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(sw).not.toBeDisabled());
+    // New chat always starts off, and the core flag is reset to false.
+    expect(sw).toHaveAttribute('aria-checked', 'false');
+    expect(setMock).toHaveBeenCalledWith(false);
   });
 
   it('persists the new value and optimistically updates on toggle', async () => {
-    getMock.mockResolvedValue({ result: false, logs: [] });
-    setMock.mockResolvedValue({ result: true, logs: [] });
-
     render(<SuperContextToggle />);
     const sw = screen.getByTestId('super-context-toggle');
-    // Wait for the initial read to enable the switch.
+    // Wait for the reset write to settle and enable the switch.
     await waitFor(() => expect(sw).not.toBeDisabled());
 
     fireEvent.click(sw);
@@ -54,8 +50,10 @@ describe('<SuperContextToggle />', () => {
   });
 
   it('rolls back the optimistic flip when persistence fails', async () => {
-    getMock.mockResolvedValue({ result: false, logs: [] });
-    setMock.mockRejectedValue(new Error('rpc down'));
+    // Reset write (false) succeeds; the toggle write (true) then fails.
+    setMock
+      .mockResolvedValueOnce({ result: false, logs: [] })
+      .mockRejectedValueOnce(new Error('rpc down'));
 
     render(<SuperContextToggle />);
     const sw = screen.getByTestId('super-context-toggle');
@@ -73,7 +71,7 @@ describe('<SuperContextToggle />', () => {
 
     render(<SuperContextToggle />);
 
-    expect(getMock).not.toHaveBeenCalled();
+    expect(setMock).not.toHaveBeenCalled();
     const sw = screen.getByTestId('super-context-toggle');
     // Treated as loaded (enabled) immediately, default-off.
     expect(sw).toHaveAttribute('aria-checked', 'false');

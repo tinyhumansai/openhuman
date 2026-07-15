@@ -160,16 +160,35 @@ impl MemoryProfile {
             }
             SubconsciousMode::Off => return Ok(0),
         }
+        let mode_iteration_cap = effective.agent.max_tool_iterations;
 
         let mut agent = Agent::from_config(&effective).map_err(|e| {
             warn!("[subconscious:memory] agent init failed: {e}");
             format!("agent init: {e}")
         })?;
+        // Stable per-tick correlation id — minted once and reused below for
+        // the pin log, the agent's event context, and the turn origin's
+        // `job_id`, so `mode`/`max_tool_iterations` (which repeat across
+        // ticks) don't leave concurrent/successive subconscious ticks
+        // indistinguishable in logs.
+        let tick_id = format!("subconscious:tick:{}", now_secs() as u64);
 
-        agent.set_event_context(
-            format!("subconscious:tick:{}", now_secs() as u64),
-            "subconscious",
+        // Issue #4868 — `Agent::from_config` builds as the `orchestrator`
+        // definition (max_iterations=15, strict), so the session builder
+        // would stamp orchestrator's cap onto this agent regardless of mode
+        // — silently dropping `Aggressive`/`EventDriven` mode's intended
+        // 30-iteration budget set above to 15. Re-apply the mode-specific
+        // cap post-construction so this tick keeps its previous behavior.
+        agent.set_max_tool_iterations(mode_iteration_cap);
+        debug!(
+            tick_id = %tick_id,
+            "[subconscious:memory] pinned mode-specific iteration budget post-construction: \
+             mode={:?} max_tool_iterations={} (overrides the session builder's orchestrator \
+             definition cap)",
+            self.mode, mode_iteration_cap
         );
+
+        agent.set_event_context(tick_id.clone(), "subconscious");
 
         let mode_guidance = match self.mode {
             SubconsciousMode::Aggressive | SubconsciousMode::EventDriven => {
@@ -193,10 +212,10 @@ impl MemoryProfile {
              ticks. Do not invent busywork.{mode_guidance}",
         );
 
-        debug!("[subconscious:memory] spawning decision agent");
+        debug!(tick_id = %tick_id, "[subconscious:memory] spawning decision agent");
         let source = tick_origin_source(has_external_content);
         let origin = crate::openhuman::agent::turn_origin::AgentTurnOrigin::TrustedAutomation {
-            job_id: format!("subconscious:tick:{}", now_secs() as u64),
+            job_id: tick_id.clone(),
             source,
         };
         let response = crate::openhuman::agent::turn_origin::with_origin(

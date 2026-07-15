@@ -33,7 +33,7 @@ function NodePalette({ onAdd }: NodePaletteProps) {
 
   return (
     <aside
-      className="pointer-events-auto absolute left-3 top-3 z-10 flex max-h-[calc(100%-1.5rem)] w-48 flex-col overflow-hidden rounded-xl border border-line bg-surface/95 shadow-sm backdrop-blur"
+      className="pointer-events-auto absolute right-3 top-14 z-10 flex max-h-[calc(100%-4rem)] w-48 flex-col overflow-hidden rounded-xl border border-line bg-surface/95 shadow-sm backdrop-blur"
       data-testid="flow-node-palette"
       aria-label={t('flows.palette.title')}>
       <div className="flex flex-col gap-2 overflow-y-auto p-2">

@@ -82,6 +82,7 @@ pub struct ScreenSource {
 
 /// What kind of source a parsed DesktopMediaID-format string describes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(any(target_os = "macos", test))]
 pub(crate) enum SourceKind {
     Screen,
     Window,
@@ -93,6 +94,7 @@ pub(crate) enum SourceKind {
 /// match what the enumerator emits. Pure logic so it can be unit-tested
 /// without touching platform APIs; macOS callers use it before dispatching
 /// to the capture backend.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn parse_source_id(id: &str) -> Option<(SourceKind, u32)> {
     let mut parts = id.splitn(3, ':');
     let kind = match parts.next()? {

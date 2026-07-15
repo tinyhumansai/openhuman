@@ -58,6 +58,7 @@ pub mod harness_init;
 pub mod health;
 pub mod heartbeat;
 pub mod http_host;
+#[cfg(feature = "media")]
 pub mod image;
 pub mod inference;
 pub mod integrations;
@@ -69,6 +70,7 @@ pub mod mcp_audit;
 pub mod mcp_client;
 pub mod mcp_registry;
 pub mod mcp_server;
+#[cfg(feature = "media")]
 pub mod media_generation;
 pub mod meet;
 pub mod meet_agent;
