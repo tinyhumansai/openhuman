@@ -163,7 +163,7 @@ async fn read_recent_from(path: &Path, limit: usize) -> Result<Vec<MeetCallRecor
     }
     // Newest first. Compare on started_at_ms for stability against
     // future out-of-order writes (e.g. a future async flush race).
-    all.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+    all.sort_by_key(|item| std::cmp::Reverse(item.started_at_ms));
     all.truncate(limit);
     Ok(all)
 }

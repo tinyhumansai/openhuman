@@ -131,9 +131,9 @@ describe('FlowsPage', () => {
     fireEvent.click(screen.getByTestId('flow-toggle-flow-1'));
 
     expect(setFlowEnabled).toHaveBeenCalledWith('flow-1', false);
-    // The toggle is an icon button now; state is conveyed via aria-pressed.
+    // The toggle is a SettingsSwitch (role=switch) now; state is conveyed via aria-checked.
     await waitFor(() =>
-      expect(screen.getByTestId('flow-toggle-flow-1')).toHaveAttribute('aria-pressed', 'false')
+      expect(screen.getByTestId('flow-toggle-flow-1')).toHaveAttribute('aria-checked', 'false')
     );
   });
 
@@ -275,6 +275,8 @@ describe('FlowsPage', () => {
     deleteFlow.mockResolvedValue('flow-1');
     renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
+    // Delete now lives behind the row's "⋯" overflow menu, alongside
+    // Export/Duplicate, rather than a standalone icon button.
     fireEvent.click(await screen.findByTestId('flow-menu-flow-1'));
     fireEvent.click(await screen.findByTestId('flow-delete-flow-1'));
 

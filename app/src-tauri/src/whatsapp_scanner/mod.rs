@@ -29,8 +29,6 @@ use tauri::{AppHandle, Emitter, Runtime};
 use tokio::task::AbortHandle;
 use tokio::time::sleep;
 
-use crate::cdp::CdpConn;
-
 mod dom_snapshot;
 #[cfg(test)]
 mod dom_snapshot_tests;
@@ -1209,7 +1207,7 @@ fn merge_dom_into_snapshot(
             continue;
         }
         if let Some(mid) = mid_opt {
-            let bare_mid = mid.rsplitn(2, '_').next().map(str::to_string);
+            let bare_mid = mid.rsplit('_').next().map(str::to_string);
             let lookup = by_msg_id
                 .get(&mid)
                 .cloned()

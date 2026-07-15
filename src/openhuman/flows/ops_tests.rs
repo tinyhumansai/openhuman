@@ -228,6 +228,119 @@ async fn flows_run_completes_trigger_only_graph() {
     assert!(reloaded.value.last_run_at.is_some());
 }
 
+/// Live finding: a trigger-only graph (no downstream action nodes at all)
+/// used to report `status="completed" pending_approvals=0` from `flows_run`
+/// completely indistinguishably from a run that actually did something —
+/// "triggered but nothing happened" read as a plain success. This asserts
+/// the run still completes (running an empty flow isn't an error), but now
+/// carries a human-readable `note` in the result so the UI can show
+/// "nothing to run" instead of a bare "completed".
+#[tokio::test]
+async fn flows_run_on_trigger_only_graph_surfaces_no_actionable_nodes_note() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let created = flows_create(&config, "empty".to_string(), trigger_only_graph(), false)
+        .await
+        .unwrap();
+
+    let outcome = flows_run(&config, &created.value.id, json!({}), FlowRunTrigger::Rpc)
+        .await
+        .unwrap();
+
+    let note = outcome.value["note"]
+        .as_str()
+        .expect("trigger-only run must carry a human-readable 'note' field");
+    assert!(
+        note.contains("no actionable nodes") || note.to_lowercase().contains("nothing"),
+        "note should explain that nothing ran, got: {note}"
+    );
+    assert!(
+        outcome.logs.iter().any(|l| l.contains("no actionable")),
+        "the note should also surface via the RpcOutcome logs, got: {:?}",
+        outcome.logs
+    );
+
+    // Still a completed run, not an error — an empty flow isn't a failure,
+    // just a no-op that must not masquerade as having done real work.
+    let reloaded = flows_get(&config, &created.value.id).await.unwrap();
+    assert_eq!(reloaded.value.last_status.as_deref(), Some("completed"));
+}
+
+/// A graph with a real downstream node, wired up by an edge, must NOT carry
+/// the "nothing to run" note — only a graph with no actionable nodes at all.
+/// Uses `output_parser` nodes (like the approval-gated fixture above) rather
+/// than an `agent`/`tool_call` node so the run completes deterministically
+/// without needing a configured LLM provider or network access.
+#[tokio::test]
+async fn flows_run_on_graph_with_actionable_nodes_has_no_empty_flow_note() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let graph = json!({
+        "name": "has-work",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger" },
+            { "id": "downstream", "kind": "output_parser", "name": "Downstream" }
+        ],
+        "edges": [
+            { "from_node": "t", "to_node": "downstream" }
+        ]
+    });
+    let created = flows_create(&config, "has-work".to_string(), graph, false)
+        .await
+        .unwrap();
+
+    let outcome = flows_run(&config, &created.value.id, json!({}), FlowRunTrigger::Rpc)
+        .await
+        .unwrap();
+
+    assert!(
+        outcome.value.get("note").is_none(),
+        "a graph with real downstream nodes must not get the empty-flow note, got: {:?}",
+        outcome.value.get("note")
+    );
+}
+
+/// `graph_has_actionable_nodes` must walk from the trigger, not merely check
+/// "any non-trigger node plus any edge". A component with edges of its own,
+/// but no path back to the trigger, is unreachable and must still surface
+/// the "nothing to run" note — a naive count-based check would have missed
+/// this and wrongly suppressed the note.
+#[tokio::test]
+async fn flows_run_on_graph_with_disconnected_component_still_surfaces_empty_flow_note() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let graph = json!({
+        "name": "disconnected",
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Trigger" },
+            { "id": "a", "kind": "output_parser", "name": "Orphan A" },
+            { "id": "b", "kind": "output_parser", "name": "Orphan B" }
+        ],
+        "edges": [
+            // "a" -> "b" is wired up, but neither is reachable from "t" — the
+            // trigger has no outgoing edges at all.
+            { "from_node": "a", "to_node": "b" }
+        ]
+    });
+    let created = flows_create(&config, "disconnected".to_string(), graph, false)
+        .await
+        .unwrap();
+
+    let outcome = flows_run(&config, &created.value.id, json!({}), FlowRunTrigger::Rpc)
+        .await
+        .unwrap();
+
+    let note = outcome.value["note"]
+        .as_str()
+        .expect("a component disconnected from the trigger must still surface the empty-flow note");
+    assert!(
+        note.contains("no actionable nodes") || note.to_lowercase().contains("nothing"),
+        "note should explain that nothing ran, got: {note}"
+    );
+}
+
 #[tokio::test]
 async fn flows_run_reports_pending_approval_and_blocks_downstream() {
     let tmp = TempDir::new().unwrap();
@@ -557,6 +670,191 @@ async fn flows_update_does_not_rebind_when_graph_is_not_supplied() {
         .expect("cron job still bound");
     assert_eq!(job.id, old_job.id);
     assert_eq!(job.expression, old_job.expression);
+}
+
+// ── flows_update B29 Rule 1 analogue (save/enable safety on update) ───────
+//
+// `flows_create` already refuses to persist an automatic-trigger graph as
+// `enabled` (Rule 1, above). Live finding: `flows_update` had no equivalent
+// — a flow created `enabled: true` with a manual trigger could later have an
+// automatic-trigger graph (schedule / app_event / webhook) saved onto it via
+// `flows_update` and go LIVE immediately with no user review. These tests
+// cover the manual→automatic transition (must disarm), automatic→automatic
+// re-edit (must NOT disarm — the user already opted in), and manual→manual
+// (never touched).
+
+#[tokio::test]
+async fn flows_update_disables_on_manual_to_automatic_trigger_transition_when_enabled() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // A manual-trigger flow persists enabled straight from create (Rule 1
+    // only gates automatic triggers).
+    let created = flows_create(
+        &config,
+        "manual-then-scheduled".to_string(),
+        manual_trigger_graph(),
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(created.value.enabled, "manual-trigger flows create enabled");
+
+    // Saving an automatic-trigger graph onto that enabled flow must disarm
+    // it — not go live unattended.
+    let updated = flows_update(
+        &config,
+        &created.value.id,
+        None,
+        Some(schedule_trigger_graph("0 8 * * *")),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !updated.value.enabled,
+        "an enabled flow whose trigger just changed from manual to automatic must be \
+         auto-disabled, not armed live"
+    );
+    assert!(
+        updated.logs.iter().any(|l| l.contains("auto-disabled")),
+        "the disarm must be surfaced in the outcome logs, got: {:?}",
+        updated.logs
+    );
+
+    // Persisted, not just returned in-memory.
+    let reloaded = flows_get(&config, &created.value.id).await.unwrap();
+    assert!(!reloaded.value.enabled);
+
+    // And no cron job was left bound — the flow never actually went live.
+    assert!(
+        crate::openhuman::cron::find_flow_schedule_job(&config, &created.value.id)
+            .unwrap()
+            .is_none(),
+        "an auto-disabled flow must not have its schedule cron job bound"
+    );
+}
+
+/// Regression: the manual→automatic disarm must apply unconditionally, not
+/// only when `flows_update`'s own `existing` read observes `enabled: true`.
+/// A live race (Codex, this PR) could leave that read stale — a concurrent
+/// `flows_set_enabled(id, true)` landing between the read and the guarded
+/// write would previously compute `should_disarm = false` from the stale
+/// snapshot and let the automatic graph persist enabled. This test pins the
+/// non-racy half of that contract directly at the `flows_update` level: even
+/// starting from an *observed* `enabled: false`, a manual→automatic
+/// transition still writes the override (a no-op here since the flow was
+/// already disabled) rather than skipping it — see
+/// `store::update_flow_graph_override_wins_over_concurrently_enabled_row`
+/// (store_tests.rs) for the deterministic proof that this override also wins
+/// a genuine concurrent-enable race.
+#[tokio::test]
+async fn flows_update_disarms_manual_to_automatic_transition_even_when_already_disabled() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let created = flows_create(
+        &config,
+        "manual-then-scheduled".to_string(),
+        manual_trigger_graph(),
+        false,
+    )
+    .await
+    .unwrap();
+    flows_set_enabled(&config, &created.value.id, false)
+        .await
+        .unwrap();
+
+    let updated = flows_update(
+        &config,
+        &created.value.id,
+        None,
+        Some(schedule_trigger_graph("0 8 * * *")),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !updated.value.enabled,
+        "a manual→automatic transition must never leave the flow enabled, regardless of \
+         whether it looked enabled going in"
+    );
+    let reloaded = flows_get(&config, &created.value.id).await.unwrap();
+    assert!(!reloaded.value.enabled);
+}
+
+#[tokio::test]
+async fn flows_update_preserves_enabled_when_already_automatic() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Rule 1 creates an automatic-trigger flow disabled; the user arms it
+    // explicitly — this IS the "already reviewed and opted in" state.
+    let created = flows_create(
+        &config,
+        "scheduled".to_string(),
+        schedule_trigger_graph("0 9 * * *"),
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(!created.value.enabled);
+    flows_set_enabled(&config, &created.value.id, true)
+        .await
+        .unwrap();
+
+    // A legitimate re-edit (still an automatic trigger, just a new cron
+    // expression) must NOT be treated as a fresh unattended arm.
+    let updated = flows_update(
+        &config,
+        &created.value.id,
+        None,
+        Some(schedule_trigger_graph("30 8 * * *")),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        updated.value.enabled,
+        "re-editing an already-enabled automatic-trigger flow must not disarm it — the \
+         user already opted in once"
+    );
+    assert!(!updated.logs.iter().any(|l| l.contains("auto-disabled")));
+}
+
+#[tokio::test]
+async fn flows_update_preserves_enabled_for_manual_target() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let created = flows_create(&config, "manual".to_string(), manual_trigger_graph(), false)
+        .await
+        .unwrap();
+    assert!(created.value.enabled);
+
+    // manual → manual: no automatic trigger ever enters the picture, so
+    // `enabled` must be left completely untouched.
+    let mut new_graph = manual_trigger_graph();
+    new_graph["name"] = json!("manual-renamed");
+    let updated = flows_update(
+        &config,
+        &created.value.id,
+        None,
+        Some(new_graph),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(updated.value.enabled);
+    assert!(!updated.logs.iter().any(|l| l.contains("auto-disabled")));
 }
 
 // ── flows_resume (issue B2) ───────────────────────────────────────────────
@@ -2008,7 +2306,7 @@ async fn validate_tool_contracts_rejects_a_hallucinated_slug() {
             { "id": "t", "kind": "trigger", "name": "Manual" },
             { "id": "post", "kind": "tool_call", "name": "Post",
               "config": { "slug": "SLACK_POST_MESSAGE_TO_CHANNEL",
-                "args": { "channel": "#general", "text": "hi" } } }
+                "args": { "channel": "#general", "markdown_text": "hi" } } }
         ],
         "edges": [ { "from_node": "t", "to_node": "post" } ]
     }));
@@ -3454,27 +3752,39 @@ fn finalize_terminal_status_no_error_when_clean() {
     assert_eq!(error, None);
 }
 
-/// Regression for issue #4593: the `flows_build` builder turn runs under
-/// `AgentTurnOrigin::Cli`, which makes the `ApprovalGate` auto-allow every
-/// `external_effect` tool. The flows live-runner executes a *live* saved flow,
-/// so it must be unreachable on this path — `restrict_builder_toolset` drops it
-/// from the builder's callable belt while leaving the authoring tools in place
-/// so the turn still functions (never fail-closes).
+/// Regression for issue #4593 (widened for #4881's `resume_flow_run`/
+/// `cancel_flow_run` addition to the belt): the `flows_build` builder turn
+/// runs under `AgentTurnOrigin::Cli`, which makes the `ApprovalGate`
+/// auto-allow every `external_effect` tool. The flows live-runner (`run_flow`)
+/// and the run-resume tool (`resume_flow_run`) both execute/advance a *live*
+/// saved flow's real outbound effects, so both must be unreachable on this
+/// path — `restrict_builder_toolset` drops them (plus `cancel_flow_run`, out
+/// of caution) from the builder's callable belt while leaving the authoring
+/// tools in place so the turn still functions (never fail-closes).
 #[tokio::test]
 async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 
-    // Document WHY the live-runner must be hidden: running a saved flow fires
-    // real Slack/Gmail/HTTP/code effects, so it is an external-effect tool. This
-    // pins that invariant independently of belt name-resolution so the
-    // hide-list can't silently stop covering a live-run tool.
+    // Document WHY each run-advancing tool must be hidden: running or
+    // resuming a saved flow fires real Slack/Gmail/HTTP/code effects, so both
+    // are external-effect tools. This pins that invariant independently of
+    // belt name-resolution so the hide-list can't silently stop covering a
+    // live-run/resume tool.
     use crate::openhuman::tools::Tool as _;
     let live_runner =
         crate::openhuman::flows::tools::RunFlowTool::new(std::sync::Arc::new(config.clone()));
     assert!(
         live_runner.external_effect(),
         "the flows live-runner must be external-effect for the #4593 concern to apply"
+    );
+    let resumer = crate::openhuman::flows::builder_tools::ResumeFlowRunTool::new(
+        std::sync::Arc::new(config.clone()),
+    );
+    assert!(
+        resumer.external_effect(),
+        "resume_flow_run advances a real run's outbound effects, so it must be \
+         external-effect for the same #4593/#4881 concern to apply"
     );
 
     crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
@@ -3484,27 +3794,36 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
             .expect("build workflow_builder agent");
     agent.set_agent_definition_name("workflow_builder".to_string());
 
-    // Precondition: the builder advertises the live-run tool (`run_flow`) on its
-    // belt before restriction — the exact tool #4593 is about.
-    assert!(
-        agent.visible_tool_names_for_test().contains("run_flow"),
-        "precondition: workflow_builder belt should advertise the live-run tool `run_flow`; \
-         visible = {:?}",
-        agent.visible_tool_names_for_test()
-    );
+    // Precondition: the builder advertises all four run-advancing tools on its
+    // belt before restriction — the exact set #4593/#4881 are about.
+    let visible_before = agent.visible_tool_names_for_test();
+    for present in ["run_flow", "resume_flow_run", "cancel_flow_run"] {
+        assert!(
+            visible_before.contains(present),
+            "precondition: workflow_builder belt should advertise `{present}`; visible = \
+             {visible_before:?}"
+        );
+    }
 
     restrict_builder_toolset(&mut agent);
 
-    // After restriction neither the current name nor the post-rename name is
-    // callable on the flows_build path — the hide-list covers both (#4593).
+    // After restriction none of the run-advancing tools are callable on the
+    // flows_build path — the hide-list covers all of them (#4593 + #4881).
     let visible = agent.visible_tool_names_for_test();
-    for hidden in ["run_workflow", "run_flow"] {
+    for hidden in [
+        "run_workflow",
+        "run_flow",
+        "resume_flow_run",
+        "cancel_flow_run",
+    ] {
         assert!(
             !visible.contains(hidden),
-            "live-run tool `{hidden}` must be hidden on the flows_build path; visible = {visible:?}"
+            "run-advancing tool `{hidden}` must be hidden on the flows_build path; visible = \
+             {visible:?}"
         );
     }
-    // Authoring / read tools stay reachable so the builder turn still works
+    // Authoring / read tools — including the born-disabled `create_workflow`
+    // and `duplicate_flow` — stay reachable so the builder turn still works
     // headlessly under the CLI origin (no fail-close).
     for keep in [
         "propose_workflow",
@@ -3512,6 +3831,8 @@ async fn flows_build_hides_the_live_run_tool_from_the_builder_belt() {
         "save_workflow",
         "dry_run_workflow",
         "list_flows",
+        "create_workflow",
+        "duplicate_flow",
     ] {
         assert!(
             visible.contains(keep),
@@ -4239,4 +4560,285 @@ async fn compute_required_connections_skips_native_and_http_nodes() {
         required.is_empty(),
         "native oh: and http_request need no connection: {required:?}"
     );
+}
+
+// ── extract_workflow_proposal: survives large, tabulation-eligible graphs ─────
+//
+// Regression coverage for the "blank canvas on ≥4-node graphs" bug: tinyjuice's
+// JSON compressor tabulates any uniform object-array of >= 3 rows over ~512
+// bytes, which strips the `"type": "workflow_proposal"` marker this extractor
+// keys on. The fix lives in `tinyagents::middleware::ToolOutputMiddleware`
+// (COMPACTION_EXEMPT_TOOLS), which keeps proposal-tool results out of
+// tokenjuice entirely — so by the time a payload reaches `agent.history()`
+// here, it must still be the untabulated, structurally-intact JSON.
+
+#[test]
+fn extract_workflow_proposal_survives_large_graph() {
+    use crate::openhuman::inference::provider::{ConversationMessage, ToolResultMessage};
+
+    // 6 nodes, several columns each — comfortably over tinyjuice's MIN_ROWS (3)
+    // and ~512-byte tabulation thresholds, so an unprotected payload would get
+    // compacted into a `[json table: …]` marker and lose the `"type"` field.
+    let nodes: Vec<serde_json::Value> = (0..6)
+        .map(|i| {
+            json!({
+                "id": format!("node-{i}"),
+                "kind": if i == 0 { "trigger" } else { "tool_call" },
+                "name": format!("Step {i}"),
+                "config": {
+                    "slug": format!("oh:placeholder_action_{i}"),
+                    "args": { "input": format!("value-{i}"), "note": "generic placeholder payload for size padding" }
+                }
+            })
+        })
+        .collect();
+    let edges: Vec<serde_json::Value> = (0..5)
+        .map(|i| json!({ "from_node": format!("node-{i}"), "to_node": format!("node-{}", i + 1) }))
+        .collect();
+    let proposal_payload = json!({
+        "type": "workflow_proposal",
+        "flow_id": "flow-large-graph",
+        "graph": { "nodes": nodes, "edges": edges },
+    });
+    let payload_str = serde_json::to_string(&proposal_payload).unwrap();
+    assert!(
+        payload_str.len() > 512,
+        "test payload must exceed tinyjuice's tabulation byte threshold: {} bytes",
+        payload_str.len()
+    );
+
+    let history = vec![ConversationMessage::ToolResults(vec![ToolResultMessage {
+        tool_call_id: "call-1".to_string(),
+        content: payload_str,
+    }])];
+
+    let proposal = extract_workflow_proposal(&history).expect("proposal should be extractable");
+    assert_eq!(
+        proposal.get("type").and_then(serde_json::Value::as_str),
+        Some("workflow_proposal")
+    );
+    assert_eq!(
+        proposal["graph"]["nodes"].as_array().unwrap().len(),
+        6,
+        "all 6 nodes must survive intact: {proposal}"
+    );
+}
+
+#[test]
+fn extract_workflow_proposal_returns_the_latest_of_multiple_results() {
+    use crate::openhuman::inference::provider::{ConversationMessage, ToolResultMessage};
+
+    let first = json!({ "type": "workflow_proposal", "flow_id": "first" });
+    let second = json!({ "type": "workflow_proposal", "flow_id": "second" });
+    let history = vec![
+        ConversationMessage::ToolResults(vec![ToolResultMessage {
+            tool_call_id: "call-1".to_string(),
+            content: first.to_string(),
+        }]),
+        ConversationMessage::ToolResults(vec![ToolResultMessage {
+            tool_call_id: "call-2".to_string(),
+            content: second.to_string(),
+        }]),
+    ];
+
+    let proposal = extract_workflow_proposal(&history).expect("proposal should be extractable");
+    assert_eq!(proposal["flow_id"], "second");
+}
+
+#[test]
+fn extract_workflow_proposal_ignores_non_proposal_tool_results() {
+    use crate::openhuman::inference::provider::{ConversationMessage, ToolResultMessage};
+
+    let history = vec![ConversationMessage::ToolResults(vec![ToolResultMessage {
+        tool_call_id: "call-1".to_string(),
+        content: json!({ "type": "search_results", "items": [] }).to_string(),
+    }])];
+
+    assert!(extract_workflow_proposal(&history).is_none());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Builder convergence fix — trail-off backstop (`flows_build`'s terminal-state
+// guarantee: every turn ends in a proposal or a real question, never silence).
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn builder_tool_call(
+    id: &str,
+    name: &str,
+) -> crate::openhuman::inference::provider::ConversationMessage {
+    use crate::openhuman::inference::provider::{ConversationMessage, ToolCall};
+    ConversationMessage::AssistantToolCalls {
+        text: None,
+        tool_calls: vec![ToolCall {
+            id: id.to_string(),
+            name: name.to_string(),
+            arguments: "{}".to_string(),
+            extra_content: None,
+        }],
+        reasoning_content: None,
+        extra_metadata: None,
+    }
+}
+
+fn builder_tool_result(
+    call_id: &str,
+    content: &str,
+) -> crate::openhuman::inference::provider::ConversationMessage {
+    use crate::openhuman::inference::provider::{ConversationMessage, ToolResultMessage};
+    ConversationMessage::ToolResults(vec![ToolResultMessage {
+        tool_call_id: call_id.to_string(),
+        content: content.to_string(),
+    }])
+}
+
+#[test]
+fn text_looks_like_question_detects_trailing_question_mark() {
+    assert!(text_looks_like_question(
+        "Which Slack channel should I post to?"
+    ));
+    assert!(text_looks_like_question("Which channel?\n"));
+    // Trailing markdown/punctuation noise after the '?' shouldn't defeat it.
+    assert!(text_looks_like_question("Which channel should I use?\""));
+    // A trailing blank line after the question is still detected (the last
+    // NON-BLANK line is what's checked).
+    assert!(text_looks_like_question(
+        "Which channel should I post to?\n\n"
+    ));
+}
+
+/// A question followed by a further trailing sentence on its own line
+/// ("...channel?\n\nLet me know!") is an accepted false negative — the
+/// heuristic is deliberately conservative (see the function doc). Pin that
+/// this case is NOT detected so a future "improvement" doesn't silently
+/// change the accepted trade-off without a matching design review.
+#[test]
+fn text_looks_like_question_accepts_false_negative_on_trailing_pleasantry() {
+    assert!(!text_looks_like_question(
+        "Which channel should I post to?\n\nLet me know!"
+    ));
+}
+
+#[test]
+fn text_looks_like_question_rejects_status_dumps_and_silence() {
+    assert!(!text_looks_like_question(
+        "## Done so far\n- Checked connections\n- Verified contracts"
+    ));
+    assert!(!text_looks_like_question(""));
+    assert!(!text_looks_like_question("   "));
+    assert!(!text_looks_like_question("I'll continue working on this."));
+}
+
+/// The terminal-state guarantee's core invariant: whatever `build_trail_off_fallback`
+/// returns, it must ALWAYS read as a question — the user is never left with
+/// silence, regardless of what (if anything) the tool history contains.
+#[test]
+fn build_trail_off_fallback_always_yields_a_question() {
+    let fallback = build_trail_off_fallback(&[]);
+    assert!(
+        text_looks_like_question(&fallback),
+        "fallback with no tool history must still be a question: {fallback}"
+    );
+    assert!(!fallback.trim().is_empty());
+}
+
+#[test]
+fn build_trail_off_fallback_surfaces_last_dry_run_blocker() {
+    let history = vec![
+        builder_tool_call("call_1", "dry_run_workflow"),
+        builder_tool_result(
+            "call_1",
+            r#"{"ok": false, "null_resolutions": [{"node_id": "send", "path": "args.channel"}]}"#,
+        ),
+    ];
+    let fallback = build_trail_off_fallback(&history);
+    assert!(
+        text_looks_like_question(&fallback),
+        "blocker fallback must still end in a question: {fallback}"
+    );
+    assert!(
+        fallback.contains("null_resolutions"),
+        "fallback should surface the actual dry-run blocker, got: {fallback}"
+    );
+}
+
+#[test]
+fn build_trail_off_fallback_surfaces_gate_rejection_error_text() {
+    let history = vec![
+        builder_tool_call("call_1", "propose_workflow"),
+        builder_tool_result(
+            "call_1",
+            "propose_workflow rejected: tool slug 'slack:not_a_real_action' does not exist",
+        ),
+    ];
+    let fallback = build_trail_off_fallback(&history);
+    assert!(text_looks_like_question(&fallback));
+    assert!(fallback.contains("does not exist"));
+}
+
+#[test]
+fn build_trail_off_fallback_ignores_unrelated_read_tool_output() {
+    // A plain-text result from a tool OUTSIDE the builder authoring belt (e.g.
+    // a read-only history lookup) must never be misattributed as the blocker
+    // — this stays tool-agnostic within the authoring belt, not "any tool".
+    let history = vec![
+        builder_tool_call("call_1", "get_flow_history"),
+        builder_tool_result("call_1", "no prior revisions found"),
+    ];
+    let fallback = build_trail_off_fallback(&history);
+    assert!(text_looks_like_question(&fallback));
+    assert!(
+        !fallback.contains("no prior revisions found"),
+        "must not surface an unrelated read-tool's output as the blocker: {fallback}"
+    );
+}
+
+#[test]
+fn build_trail_off_fallback_ignores_a_successful_proposal_payload() {
+    let history = vec![
+        builder_tool_call("call_1", "propose_workflow"),
+        builder_tool_result(
+            "call_1",
+            r#"{"type": "workflow_proposal", "name": "demo", "graph": {}}"#,
+        ),
+    ];
+    let fallback = build_trail_off_fallback(&history);
+    assert!(text_looks_like_question(&fallback));
+    assert!(!fallback.contains("workflow_proposal"));
+}
+
+#[test]
+fn build_trail_off_fallback_picks_the_most_recent_blocker() {
+    // Two dry-run failures in the history: the fallback should describe the
+    // LAST one (the one the agent was still stuck on), not the first.
+    let history = vec![
+        builder_tool_call("call_1", "dry_run_workflow"),
+        builder_tool_result("call_1", r#"{"ok": false, "errors": ["first issue"]}"#),
+        builder_tool_call("call_2", "dry_run_workflow"),
+        builder_tool_result("call_2", r#"{"ok": false, "errors": ["second issue"]}"#),
+    ];
+    let fallback = build_trail_off_fallback(&history);
+    assert!(fallback.contains("second issue"));
+    assert!(!fallback.contains("first issue"));
+}
+
+/// Regression for review feedback (chatgpt-codex-connector, PR #4887): a
+/// dry-run failure that the agent goes on to FIX later in the same turn
+/// (a later `{"ok": true}` from the same authoring belt) must not be
+/// resurfaced as "here's where I got stuck" — that failure is already
+/// resolved. The scan must stop at the most recent authoring-belt result,
+/// not keep walking backward past a success to an older, stale blocker.
+#[test]
+fn build_trail_off_fallback_does_not_resurface_a_resolved_blocker() {
+    let history = vec![
+        builder_tool_call("call_1", "dry_run_workflow"),
+        builder_tool_result("call_1", r#"{"ok": false, "errors": ["first issue"]}"#),
+        builder_tool_call("call_2", "dry_run_workflow"),
+        builder_tool_result("call_2", r#"{"ok": true, "warnings": []}"#),
+    ];
+    let fallback = build_trail_off_fallback(&history);
+    assert!(
+        !fallback.contains("first issue"),
+        "must not surface an already-resolved blocker: {fallback}"
+    );
+    assert!(text_looks_like_question(&fallback));
 }

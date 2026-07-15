@@ -1360,7 +1360,7 @@ async fn test_save_preserves_backup_file() {
     let config_path = tmp.path().join("config.toml");
     let backup_path = tmp.path().join("config.toml.bak");
 
-    let mut config = Config {
+    let config = Config {
         config_path: config_path.clone(),
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
@@ -1387,7 +1387,7 @@ async fn test_save_then_corrupt_then_recover() {
     let tmp = tempfile::tempdir().unwrap();
     let config_path = tmp.path().join("config.toml");
 
-    let mut config = Config {
+    let config = Config {
         config_path: config_path.clone(),
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),

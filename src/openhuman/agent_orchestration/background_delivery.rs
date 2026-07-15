@@ -148,29 +148,30 @@ async fn try_deliver(session: String) {
                 .remove(&session);
             return;
         }
-        match (
+        if let (Some(thread_id), Some(notice)) = (
             background_completions::batch_thread_id(&batch),
             background_completions::build_batched_notice(&batch),
         ) {
-            (Some(thread_id), Some(notice)) => {
-                log::info!(
-                    "[background_delivery] delivering {} batched background result(s) \
-                     session={session} thread_id={thread_id}",
-                    batch.len()
+            log::info!(
+                "[background_delivery] delivering {} batched background result(s) \
+                 session={session} thread_id={thread_id}",
+                batch.len()
+            );
+            if let Err(e) = crate::openhuman::agent::task_dispatcher::run_system_turn_on_thread(
+                thread_id, notice,
+            )
+            .await
+            {
+                log::warn!(
+                    "[background_delivery] delivery turn failed session={session} error={e}"
                 );
-                if let Err(e) = crate::openhuman::agent::task_dispatcher::run_system_turn_on_thread(
-                    thread_id, notice,
-                )
-                .await
-                {
-                    log::warn!(
-                        "[background_delivery] delivery turn failed session={session} error={e}"
-                    );
-                    requeue(&session, batch); // don't lose results on a failed turn
-                }
+                requeue(&session, batch); // don't lose results on a failed turn
             }
-            // Headless (no originating thread to stream into) — drop the batch.
-            _ => {}
+        } else {
+            log::warn!(
+                "[background_delivery] dropping headless batch session={session} count={}",
+                batch.len()
+            );
         }
     }
 

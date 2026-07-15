@@ -4166,6 +4166,8 @@ const messages: TranslationMap = {
   'flows.copilot.removed': 'usunięto: {count}',
   'flows.copilot.noChanges': 'Ta propozycja nie zmienia żadnego węzła.',
   'flows.copilot.accept': 'Zastosuj do wersji roboczej',
+  'flows.copilot.acceptAndSave': 'Zaakceptuj i zapisz',
+  'flows.copilot.saving': 'Zapisywanie…',
   'flows.copilot.reject': 'Odrzuć',
   'flows.copilot.previewHint':
     'Przeglądasz proponowaną wersję roboczą: nic nie zostało jeszcze zapisane.',

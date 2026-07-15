@@ -24,8 +24,8 @@ use tokio::task::JoinHandle;
 // elapsed check honours `tokio::time::pause()` / `advance()` in unit tests.
 use tokio::time::{sleep, Instant};
 
+use super::find_page_target_where;
 use super::target::conn_for_account;
-use super::{find_page_target_where, CdpConn};
 use crate::webview_accounts::{emit_load_finished, redact_url_for_log, RevealTrigger};
 
 /// Backoff between failed attach attempts / reconnects. Intentionally
@@ -517,7 +517,7 @@ async fn run_session_cycle<R: Runtime>(
     // page reaches the CEF helper's notify-IPC, which posts back to
     // `forward_native_notification` in `webview_accounts`. Without it,
     // the constructor silently no-ops and no toast ever fires (#1016).
-    if let Some(origin) = origin_of(&real_url) {
+    if let Some(origin) = origin_of(real_url) {
         // Default permission set every embedded provider needs. Origin-scoped
         // so we don't leak grants across providers running in the same CEF
         // browser process.

@@ -2,14 +2,12 @@
 
 use super::entry::{
     create_stt_provider, create_tts_provider, default_stt_provider, default_tts_provider,
-    DEFAULT_WHISPER_MODEL, WHISPER_MODEL_PRESETS,
+    WHISPER_MODEL_PRESETS,
 };
 use super::helpers::{effective_stt_provider, effective_tts_provider, split_slug_model};
 use super::stt_providers::WhisperSttProvider;
 use super::traits::SttProvider;
-use crate::openhuman::config::schema::voice_providers::{
-    SttApiStyle, TtsApiStyle, VoiceCapability,
-};
+use crate::openhuman::config::schema::voice_providers::{SttApiStyle, VoiceCapability};
 use crate::openhuman::config::Config;
 
 fn cfg() -> Config {

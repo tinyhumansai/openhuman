@@ -3,8 +3,9 @@
  * dynamic left sidebar while a flow is open on the canvas (`/flows/:id`). A
  * compact, scannable run history (status dot + status + relative time); clicking
  * a run opens the full {@link FlowRunInspectorDrawer} (which polls its live
- * status). One-shot fetch via `listFlowRuns` with a manual refresh — the engine
- * emits no list-level socket events, so this mirrors `FlowRunsDrawer`'s model.
+ * status). Fetches via `listFlowRuns`, with a manual refresh button plus
+ * {@link useFlowRunsLiveRefresh} keeping the list itself live while any run
+ * shown here is still active (no manual refresh/navigate-away required).
  *
  * Rendered by `FlowCanvasPage` inside a `SidebarContent` portal, so it only
  * appears for a persisted flow (a draft has no runs yet).
@@ -13,6 +14,11 @@ import createDebug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import { useFlowRunsLiveRefresh } from '../../hooks/useFlowRunsLiveRefresh';
+import {
+  resolveDisplayStatus,
+  useRunsPendingApprovalSet,
+} from '../../hooks/useRunsPendingApprovalSet';
 import { useT } from '../../lib/i18n/I18nContext';
 import { type FlowRun, listFlowRuns } from '../../services/api/flowsApi';
 import { CenteredLoadingState, ErrorBanner } from '../ui/LoadingState';
@@ -98,6 +104,9 @@ export default function FlowRunsSidebar({ flowId }: FlowRunsSidebarProps) {
     void load();
   }, [load]);
 
+  useFlowRunsLiveRefresh(runs, load);
+  const pendingRunIds = useRunsPendingApprovalSet(runs);
+
   return (
     <div className="flex h-full flex-col" data-testid="flow-runs-sidebar">
       <div className="flex flex-shrink-0 items-center justify-between gap-2 px-3 py-2">
@@ -146,31 +155,34 @@ export default function FlowRunsSidebar({ flowId }: FlowRunsSidebarProps) {
         )}
 
         <ul className="space-y-1">
-          {runs.map(run => (
-            <li key={run.id}>
-              <button
-                type="button"
-                data-testid={`flow-runs-sidebar-run-${run.id}`}
-                onClick={() => setSelectedRunId(run.id)}
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-hover ${
-                  selectedRunId === run.id ? 'bg-surface-hover' : ''
-                }`}>
-                <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${FLOW_RUN_STATUS_DOT[run.status]}`}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 flex-1">
+          {runs.map(run => {
+            const displayStatus = resolveDisplayStatus(run, pendingRunIds);
+            return (
+              <li key={run.id}>
+                <button
+                  type="button"
+                  data-testid={`flow-runs-sidebar-run-${run.id}`}
+                  onClick={() => setSelectedRunId(run.id)}
+                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-hover ${
+                    selectedRunId === run.id ? 'bg-surface-hover' : ''
+                  }`}>
                   <span
-                    className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${FLOW_RUN_STATUS_ACCENT[run.status]}`}>
-                    {t(FLOW_RUN_STATUS_KEY[run.status])}
+                    className={`h-2 w-2 shrink-0 rounded-full ${FLOW_RUN_STATUS_DOT[displayStatus]}`}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${FLOW_RUN_STATUS_ACCENT[displayStatus]}`}>
+                      {t(FLOW_RUN_STATUS_KEY[displayStatus])}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[11px] text-content-faint">
+                      {relativeTime(run.started_at, t)}
+                    </span>
                   </span>
-                  <span className="mt-0.5 block truncate text-[11px] text-content-faint">
-                    {relativeTime(run.started_at, t)}
-                  </span>
-                </span>
-              </button>
-            </li>
-          ))}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       </div>
 

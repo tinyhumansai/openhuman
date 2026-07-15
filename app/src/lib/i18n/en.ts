@@ -4804,6 +4804,8 @@ const en: TranslationMap = {
   'flows.copilot.removed': '{count} removed',
   'flows.copilot.noChanges': 'No node changes in this proposal.',
   'flows.copilot.accept': 'Apply to draft',
+  'flows.copilot.acceptAndSave': 'Accept & save',
+  'flows.copilot.saving': 'Saving…',
   'flows.copilot.reject': 'Dismiss',
   'flows.copilot.previewHint': 'Reviewing a proposed draft: nothing is saved yet.',
   'flows.copilot.repairDisplay': 'A run failed: please look at it and propose a fix.',

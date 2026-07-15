@@ -61,9 +61,7 @@ pub(super) use provider::LazyToolkitResolver;
 pub(super) use super::tool_prep::filter_tool_indices;
 // Types used by tests that were previously in scope via the flat ops.rs imports.
 #[cfg(test)]
-pub(super) use super::types::{
-    SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome,
-};
+pub(super) use super::types::{SubagentMode, SubagentRunError, SubagentRunOptions};
 #[cfg(test)]
 pub(super) use crate::openhuman::agent::harness::definition::{AgentDefinition, PromptSource};
 #[cfg(test)]

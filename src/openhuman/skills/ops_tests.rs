@@ -1678,7 +1678,6 @@ fn uninstall_resolves_agents_skills_legacy_root() {
     // discover_workflows surfaces ~/.agents/skills/, so uninstall must reach it
     // too — otherwise a listed workflow can never be deleted via this API.
     let home = tempfile::tempdir().unwrap();
-    let ws = tempfile::tempdir().unwrap();
     let dir = home.path().join(".agents").join("skills").join("agenty");
     write(
         &dir.join(SKILL_MD),

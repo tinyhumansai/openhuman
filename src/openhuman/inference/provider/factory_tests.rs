@@ -927,7 +927,7 @@ fn verify_session_active_rejects_when_no_session_token() {
 #[test]
 fn verify_session_active_rejects_when_token_is_empty() {
     let tmp = TempDir::new().expect("tempdir");
-    let mut config = config_in_tempdir(&tmp);
+    let config = config_in_tempdir(&tmp);
     let auth = AuthService::new(tmp.path(), config.secrets.encrypt);
     auth.store_provider_token("app-session", "default", "", Default::default(), false)
         .expect("store empty token");
@@ -941,7 +941,7 @@ fn verify_session_active_rejects_when_token_is_empty() {
 #[test]
 fn verify_session_active_passes_when_session_token_present() {
     let tmp = TempDir::new().expect("tempdir");
-    let mut config = config_in_tempdir(&tmp);
+    let config = config_in_tempdir(&tmp);
     let auth = AuthService::new(tmp.path(), config.secrets.encrypt);
     auth.store_provider_token(
         "app-session",
@@ -2780,7 +2780,7 @@ async fn create_chat_model_wraps_provider_and_round_trips() {
     use async_trait::async_trait;
     use std::sync::Arc;
     use tinyagents::harness::message::Message;
-    use tinyagents::harness::model::{ChatModel, ModelRequest};
+    use tinyagents::harness::model::ModelRequest;
 
     let _guard = crate::openhuman::inference::inference_test_guard();
 
@@ -2834,8 +2834,6 @@ fn resolves_to_managed_backend_for_default_config_but_not_for_local() {
 
 #[test]
 fn create_chat_model_routes_managed_backend_to_crate_native() {
-    use tinyagents::harness::model::ChatModel;
-
     let _guard = crate::openhuman::inference::inference_test_guard();
     // No test-provider override installed → the managed short-circuit engages.
     let config = Config::default();
@@ -2851,8 +2849,6 @@ fn create_chat_model_routes_managed_backend_to_crate_native() {
 
 #[test]
 fn create_chat_model_routes_local_runtime_to_crate_native() {
-    use tinyagents::harness::model::ChatModel;
-
     let _guard = crate::openhuman::inference::inference_test_guard();
     let mut config = Config::default();
     config.chat_provider = Some("ollama:qwen2.5".to_string());
@@ -2917,8 +2913,6 @@ fn deepseek_entry(id: &str) -> CloudProviderCreds {
 
 #[test]
 fn create_chat_model_routes_plain_bearer_cloud_slug_to_crate_native() {
-    use tinyagents::harness::model::ChatModel;
-
     let _guard = crate::openhuman::inference::inference_test_guard();
     // DeepSeek is a built-in chat-completions-only Bearer provider: no
     // `/v1/responses` fallback and no codex-oauth, so it is wire-equivalent and
@@ -2961,8 +2955,6 @@ fn explicit_cloud_provider_string_routes_to_crate_native_model() {
 
 #[test]
 fn create_chat_model_routes_anthropic_auth_cloud_slug_to_crate_native() {
-    use tinyagents::harness::model::ChatModel;
-
     let _guard = crate::openhuman::inference::inference_test_guard();
     // Anthropic-auth cloud slugs are always wire-equivalent (their endpoints have
     // no `/v1/responses`, so the host's dormant fallback is behavior-neutral).
@@ -2982,8 +2974,6 @@ fn create_chat_model_routes_anthropic_auth_cloud_slug_to_crate_native() {
 
 #[test]
 fn try_create_cloud_slug_flips_openai_but_declines_non_cloud() {
-    use tinyagents::harness::model::ChatModel;
-
     let _guard = crate::openhuman::inference::inference_test_guard();
     // `openai` (API-key Bearer, no codex OAuth) now flips crate-native on Chat
     // Completions — the legacy `/v1/responses` fallback is not replicated.

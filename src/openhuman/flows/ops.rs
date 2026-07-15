@@ -366,6 +366,49 @@ pub(crate) fn graph_has_outbound_side_effect(graph: &WorkflowGraph) -> bool {
     })
 }
 
+/// Whether `graph` has anything for [`flows_run`] to actually *do* — i.e. at
+/// least one non-`trigger` node **reachable from the trigger** by following
+/// directed edges. A graph made of nothing but a bare `trigger` node (or a
+/// `trigger` plus unreachable/disconnected nodes — even ones wired to each
+/// other by their own edges, just not to the trigger) can compile and "run"
+/// cleanly while producing no work whatsoever — the exact live finding this
+/// guards: a trigger-only flow reported `status="completed"
+/// pending_approvals=0` having done nothing, which reads as a successful
+/// automation to anyone not staring at the node count. Used by `flows_run`
+/// to attach a human-readable note to an otherwise-silent "success".
+///
+/// Deliberately a reachability walk rather than "any edge at all exists":
+/// `nodes.len() > 1 && !edges.is_empty()` would count a disconnected
+/// component's internal edges as actionable even though nothing downstream
+/// of the trigger ever runs.
+pub(crate) fn graph_has_actionable_nodes(graph: &WorkflowGraph) -> bool {
+    let Some(trigger) = graph.trigger() else {
+        // No single resolvable trigger to walk from — fall back to the
+        // coarse "any non-trigger node wired up by an edge" check so a
+        // malformed/ambiguous-trigger graph doesn't spuriously suppress the
+        // empty-flow note.
+        return graph.nodes.iter().any(|n| n.kind != NodeKind::Trigger) && !graph.edges.is_empty();
+    };
+
+    let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut stack = vec![trigger.id.as_str()];
+    while let Some(current) = stack.pop() {
+        if !visited.insert(current) {
+            continue;
+        }
+        for next in graph.successors(current) {
+            if !visited.contains(next) {
+                stack.push(next);
+            }
+        }
+    }
+
+    visited
+        .into_iter()
+        .filter_map(|id| graph.node(id))
+        .any(|n| n.kind != NodeKind::Trigger)
+}
+
 /// Produces host-side, **non-fatal** validation warnings for a graph — today
 /// exactly one: "this trigger kind does not fire automatically yet". Returns
 /// an empty vec when the trigger fires (`manual`/`schedule`/`app_event`), when
@@ -2462,6 +2505,40 @@ fn map_flow_update_error(e: store::FlowUpdateError) -> String {
 /// old cadence, or a newly-added schedule would never get bound at all.
 /// Skipped entirely for a name/`require_approval`-only update (no
 /// `graph_json` supplied), since the trigger definitely didn't change.
+///
+/// **B29 Rule 1 analogue for saves** (save/enable safety — same issue
+/// `flows_create` guards at creation time, see its doc): `flows_create`
+/// refuses to persist an automatic-trigger graph (`schedule` / `app_event` /
+/// `webhook`, see [`trigger_is_automatic`]) as `enabled`, but that guard only
+/// runs once, at creation. Without an equivalent here, a flow created
+/// `enabled: true` with a manual/no-op trigger could later have an
+/// automatic-trigger graph saved onto it — via the `save_workflow` agent
+/// tool, the canvas Save button, a proposal apply, or any other
+/// `flows_update` caller — and go LIVE immediately with no user review
+/// (confirmed live: a flow started firing on an unreviewed 8am schedule).
+/// So: when the *new* graph's trigger is automatic and the *previous*
+/// graph's trigger was NOT automatic (a manual/none → automatic
+/// transition), this forces the persisted `enabled` back to `false` in the
+/// same store write — the user must explicitly re-arm via
+/// `flows_set_enabled` after reviewing the new trigger. An automatic →
+/// automatic re-edit (e.g. tweaking a cron expression) is left alone — the
+/// user already opted in once, and re-disarming on every edit would just be
+/// friction.
+///
+/// The override is applied **unconditionally** on a manual/none → automatic
+/// transition — it does *not* gate on whether the flow *looked* enabled in
+/// the `existing` read above. That read is a snapshot taken before
+/// `store::update_flow_graph`'s own guarded UPDATE re-reads the row; a
+/// concurrent `flows_set_enabled(id, true)` landing in the gap would leave
+/// this snapshot stale while the row is actually enabled by the time the
+/// guarded UPDATE runs — and since `set_enabled` bumps `updated_at` too,
+/// such a race wouldn't even trip the optimistic-concurrency conflict, it
+/// would just silently persist the automatic graph as enabled (the exact
+/// bug this rule exists to close). Gating on the stale `existing.enabled`
+/// re-opens that race; forcing the override on every transition, enabled-or-
+/// not, is exactly as safe as Rule 1's at-create version — a transition on
+/// an already-disabled flow is just a no-op write of `enabled=false` over
+/// `enabled=false`.
 pub async fn flows_update(
     config: &Config,
     id: &str,
@@ -2485,16 +2562,53 @@ pub async fn flows_update(
         }
     };
 
+    // B29 Rule 1 analogue: disarm every manual/none → automatic trigger
+    // transition, unconditionally — see the doc comment above for why this
+    // must NOT gate on the (possibly stale) `existing.enabled` read.
+    let was_auto = trigger_is_automatic(&existing.graph);
+    let now_auto = trigger_is_automatic(&graph);
+    let is_manual_to_auto_transition = now_auto && !was_auto;
+    let enabled_override = is_manual_to_auto_transition.then_some(false);
+    // Best-effort flag for the info log / result message below: whether the
+    // flow *appeared* live going into this update. Not used for the
+    // override decision itself (that's unconditional, see above) — only to
+    // avoid telling the user "flow was auto-disabled" when it was already
+    // disabled going in.
+    let should_disarm = is_manual_to_auto_transition && existing.enabled;
+    tracing::debug!(
+        target: "flows",
+        flow_id = %id,
+        was_auto,
+        now_auto,
+        currently_enabled = existing.enabled,
+        is_manual_to_auto_transition,
+        should_disarm,
+        "[flows] flows_update: auto-trigger disarm decision inputs"
+    );
+
     tracing::debug!(target: "flows", flow_id = %id, has_expected = expected_version.is_some(), "[flows] flows_update: persisting changes");
+    // `enabled_override` is threaded into the same guarded UPDATE as the
+    // graph/name/require_approval write (see `store::update_flow_graph`)
+    // rather than a follow-up `flows_set_enabled` call, so the disarm can
+    // never race a concurrent read/write of `enabled`.
     let updated = store::update_flow_graph(
         config,
         id,
         new_name,
         graph,
         new_require_approval,
+        enabled_override,
         expected_version.as_deref(),
     )
     .map_err(map_flow_update_error)?;
+
+    if should_disarm {
+        tracing::info!(
+            target: "flows",
+            flow_id = %id,
+            "[flows] flows_update: auto-disabled — graph changed manual→automatic trigger on an enabled flow"
+        );
+    }
 
     if graph_changed && updated.enabled {
         let trigger_unchanged = bus::extract_trigger_kind(&existing)
@@ -2508,10 +2622,16 @@ pub async fn flows_update(
     }
 
     publish_flow_changed(id, "updated", "system");
-    Ok(RpcOutcome::single_log(
-        updated,
-        format!("flow updated: {id}"),
-    ))
+    let mut logs = vec![format!("flow updated: {id}")];
+    if should_disarm {
+        logs.push(
+            "Flow was auto-disabled because its trigger changed from manual to automatic \
+             (schedule / app_event / webhook). Enable it explicitly (flows_set_enabled) once \
+             you've reviewed the new trigger."
+                .to_string(),
+        );
+    }
+    Ok(RpcOutcome::new(updated, logs))
 }
 
 /// Lists a flow's revision history (prior graph snapshots), newest first,
@@ -2856,6 +2976,24 @@ pub async fn flows_run(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("flow '{flow_id}' not found"))?;
 
+    // Live finding: a graph with no actionable nodes (only a `trigger`, or a
+    // `trigger` plus nodes with no edges wiring them up) compiles and "runs"
+    // cleanly but does nothing — and previously reported
+    // `status="completed" pending_approvals=0` indistinguishably from a real
+    // run, reading as "triggered but nothing happened" was actually a
+    // success. Surface it loudly instead of letting it pass silently: warn
+    // now (independent of how the run below turns out), and attach a
+    // human-readable note to the returned outcome so the UI can show
+    // "nothing to run" rather than a bare "completed".
+    let no_actionable_nodes = !graph_has_actionable_nodes(&flow.graph);
+    if no_actionable_nodes {
+        tracing::warn!(
+            target: "flows",
+            flow_id = %flow_id,
+            "[flows] flows_run: flow has no actionable nodes — nothing to execute"
+        );
+    }
+
     // `store::get_flow` already ran the stored `graph_json` through
     // `tinyflows::migrate::migrate` before deserializing, so `flow.graph` is
     // always on the current schema here.
@@ -3011,17 +3149,26 @@ pub async fn flows_run(
         flow_id = %flow_id,
         status,
         pending_approvals = outcome.pending_approvals.len(),
+        no_actionable_nodes,
         "[flows] flows_run: finished"
     );
 
-    Ok(RpcOutcome::single_log(
-        json!({
-            "output": outcome.output,
-            "pending_approvals": outcome.pending_approvals,
-            "thread_id": thread_id,
-        }),
-        format!("flow run {status}"),
-    ))
+    const NO_ACTIONABLE_NODES_NOTE: &str = "This flow's graph has no actionable nodes beyond \
+         its trigger (no downstream action nodes, or no edges connecting them) — the run \
+         completed without doing anything. Add and wire up at least one action node.";
+
+    let mut result = json!({
+        "output": outcome.output,
+        "pending_approvals": outcome.pending_approvals,
+        "thread_id": thread_id,
+    });
+    let mut logs = vec![format!("flow run {status}")];
+    if no_actionable_nodes {
+        result["note"] = json!(NO_ACTIONABLE_NODES_NOTE);
+        logs.push(NO_ACTIONABLE_NODES_NOTE.to_string());
+    }
+
+    Ok(RpcOutcome::new(result, logs))
 }
 
 /// Resumes a `flows_run` that paused at a human-in-the-loop approval gate,
@@ -3414,7 +3561,6 @@ pub async fn flows_cancel_run(config: &Config, run_id: &str) -> Result<RpcOutcom
 /// rejects any non-`pending_approval` status); dropping the checkpoint is
 /// belt-and-suspenders that also reclaims the storage.
 async fn drop_checkpoint(config: &Config, thread_id: &str) {
-    use tinyflows::engine::Checkpointer as _;
     match crate::openhuman::tinyflows::open_flow_checkpointer(config) {
         Ok(checkpointer) => match checkpointer.delete_thread(thread_id).await {
             Ok(()) => {
@@ -3949,7 +4095,9 @@ pub async fn flows_discover(
 const FLOW_BUILD_TIMEOUT_SECS: u64 = 600;
 
 /// Tools stripped from the `workflow_builder` belt on the direct `flows_build`
-/// RPC path (issue #4593).
+/// RPC path (issue #4593; widened for `resume_flow_run`/`cancel_flow_run`
+/// alongside issue #4881, which added both to the belt without extending
+/// this list).
 ///
 /// `flows_build` runs the builder under [`AgentTurnOrigin::Cli`] so the approval
 /// gate does not fail-closed in a headless/streamed run — but that same origin
@@ -3969,22 +4117,46 @@ const FLOW_BUILD_TIMEOUT_SECS: u64 = 600;
 /// name (now the unrelated harness spawn tool) is listed too as belt-and-braces
 /// against a re-rename or the name ever leaking back onto this belt;
 /// `hide_tools` no-ops on a name that isn't present.
-const FLOWS_BUILD_HIDDEN_TOOLS: &[&str] = &["run_workflow", "run_flow"];
+///
+/// `resume_flow_run` ([`builder_tools::ResumeFlowRunTool`]) is the exact same
+/// concern as `run_flow`, one hop later: it is `external_effect() == true`
+/// (its own description says "This ADVANCES A REAL RUN — approved outbound
+/// nodes will fire") and would be auto-allowed by the same `Cli`-origin gate
+/// bypass, letting an authoring turn (or a confused/prompt-injected model)
+/// approve a live run's parked Slack/Gmail/HTTP node with zero human
+/// confirmation — the exact HITL hole #4593 closed, reopened by #4881
+/// widening the belt.
+///
+/// `cancel_flow_run` fires no new outbound effect
+/// (`external_effect() == false`), so it isn't a gate-bypass concern the same
+/// way — but an authoring turn still has no business tearing down a run the
+/// *user* started, so it is hidden alongside the two above out of caution.
+///
+/// `create_workflow` / `duplicate_flow` are deliberately **left visible**:
+/// both are hard-forced **born disabled** (see [`builder_tools::CreateWorkflowTool`]
+/// / [`builder_tools::DuplicateFlowTool`]), so even an unattended call can't
+/// leave anything live — lower risk than the run/resume/cancel trio above.
+const FLOWS_BUILD_HIDDEN_TOOLS: &[&str] = &[
+    "run_workflow",
+    "run_flow",
+    "resume_flow_run",
+    "cancel_flow_run",
+];
 
-/// Strip the live-run tool(s) in [`FLOWS_BUILD_HIDDEN_TOOLS`] from `agent`'s
-/// callable set for the direct `flows_build` RPC path.
+/// Strip the live-run / resume / cancel tool(s) in [`FLOWS_BUILD_HIDDEN_TOOLS`]
+/// from `agent`'s callable set for the direct `flows_build` RPC path.
 ///
 /// Delegates to [`crate::openhuman::agent::Agent::hide_tools`], which removes
 /// the names from the builder's (already narrow) visible belt and rebuilds the
 /// session's `ToolPolicySession` so they resolve to `Deny` at the tool-call
 /// boundary — a hard execution guarantee even if the model requests the tool.
-/// The authoring tools (`propose`/`revise`/`save`/`dry_run`/reads) are all
-/// `external_effect() == false` and untouched, so the turn never fail-closes.
+/// The authoring tools (`propose`/`revise`/`save`/`dry_run`/reads/`create_workflow`/
+/// `duplicate_flow`) stay visible and untouched, so the turn never fail-closes.
 fn restrict_builder_toolset(agent: &mut crate::openhuman::agent::Agent) {
     tracing::debug!(
         target: "flows",
         hidden = ?FLOWS_BUILD_HIDDEN_TOOLS,
-        "[flows] flows_build: hiding live-run tools from builder belt"
+        "[flows] flows_build: hiding live-run/resume/cancel tools from builder belt"
     );
     agent.hide_tools(FLOWS_BUILD_HIDDEN_TOOLS);
 }
@@ -4095,26 +4267,25 @@ pub async fn flows_build(
         }
     };
 
-    // Emit the terminal chat event so a client viewing the copilot thread stops
-    // "processing" and finalizes the assistant bubble (the bridge streams only
-    // intermediate deltas). Success delivers `chat_done`; a run error delivers
-    // `chat_error`. The blocking return below is unchanged.
-    if let Some(target) = &stream {
-        let terminal: Result<String, String> = match &run_error {
-            None => Ok(assistant_text.clone()),
-            Some(err) => Err(err.clone()),
-        };
-        finalize_flow_stream(target, &terminal, &prompt).await;
-    }
-
     // Capture the proposal from the run's tool history (propose/revise/save all
     // emit the same self-describing `{ type: "workflow_proposal", … }` payload).
+    // Extracted BEFORE the stream is finalized below (issue: builder
+    // convergence): the trail-off backstop needs `proposal`/`capped` to decide
+    // whether to override `assistant_text`, and the streamed copilot-pane chat
+    // bubble must render the SAME (possibly-overridden) text as the RPC
+    // response — the frontend renders from the stream, not the return value,
+    // so patching only the latter would still leave an interactive user
+    // staring at the original silent/status-only text.
     let proposal = extract_workflow_proposal(agent.history());
 
     // A run that both errored AND produced no proposal is a hard failure; a run
     // that proposed before erroring still returns the proposal for review.
     if proposal.is_none() {
         if let Some(err) = &run_error {
+            if let Some(target) = &stream {
+                let terminal: Result<String, String> = Err(err.clone());
+                finalize_flow_stream(target, &terminal, &prompt).await;
+            }
             return Err(format!("workflow_builder produced no proposal: {err}"));
         }
     }
@@ -4132,11 +4303,51 @@ pub async fn flows_build(
     let hit_cap = agent.last_turn_hit_cap();
     let capped = hit_cap && proposal.is_none();
 
+    // Terminal-state guarantee (builder convergence fix): a turn can end
+    // "naturally" (no more tool calls, not capped, no run error) yet still
+    // produce neither a proposal nor a real question — the model ran out of
+    // steam mid-build and left a status dump ("Done so far: checked
+    // connections…") as its final reply. `prompt.md` tells the model to
+    // always end a building turn in a proposal or a question, but a prompt
+    // rule can be silently ignored; this is the fail-closed backend backstop
+    // that makes it a hard invariant regardless of model behavior — the user
+    // is NEVER left with silence or an unanswerable status note.
+    let trail_off = !capped && proposal.is_none() && run_error.is_none();
+    let assistant_text = if trail_off && !text_looks_like_question(&assistant_text) {
+        let fallback = build_trail_off_fallback(agent.history());
+        tracing::warn!(
+            target: "flows",
+            flow_id = req.flow_id.as_deref().unwrap_or("<none>"),
+            original_len = assistant_text.len(),
+            fallback_len = fallback.len(),
+            "[flows] flows_build: trail-off detected (no proposal, no cap, no question) — \
+             guaranteeing a fallback question instead of silence"
+        );
+        fallback
+    } else {
+        assistant_text
+    };
+
+    // Emit the terminal chat event so a client viewing the copilot thread stops
+    // "processing" and finalizes the assistant bubble (the bridge streams only
+    // intermediate deltas). Success delivers `chat_done`; a run error delivers
+    // `chat_error`. The blocking return below is unchanged. Uses the
+    // (possibly trail-off-overridden) `assistant_text` above.
+    if let Some(target) = &stream {
+        let terminal: Result<String, String> = match &run_error {
+            None => Ok(assistant_text.clone()),
+            Some(err) => Err(err.clone()),
+        };
+        finalize_flow_stream(target, &terminal, &prompt).await;
+    }
+
     tracing::info!(
         target: "flows",
+        flow_id = req.flow_id.as_deref().unwrap_or("<none>"),
         has_proposal = proposal.is_some(),
         hit_cap,
         capped,
+        trail_off,
         "[flows] flows_build: workflow_builder turn complete"
     );
     Ok(RpcOutcome::single_log(
@@ -4145,9 +4356,152 @@ pub async fn flows_build(
             "assistant_text": assistant_text,
             "error": run_error,
             "capped": capped,
+            "trail_off": trail_off,
         }),
         "workflow builder turn complete",
     ))
+}
+
+/// Heuristic: does `text` already end with a clear, answerable question?
+/// Conservative by design (issue: builder convergence) — a false negative (an
+/// actual question this misses) just wraps it in the trail-off fallback,
+/// which still includes the blocker context, so the safe failure mode is
+/// "over-wrap", never "under-detect and stay silent".
+fn text_looks_like_question(text: &str) -> bool {
+    let trimmed = text
+        .trim()
+        .trim_end_matches(['"', '\'', ')', ']', '*', '_', '`', '.'])
+        .trim_end();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.ends_with('?') {
+        return true;
+    }
+    // The question may not be the literal last character (trailing markdown
+    // like a closing code fence or list marker on its own line) — fall back
+    // to the last non-blank line. This does NOT catch a question followed by
+    // a further trailing sentence ("...channel?\n\nLet me know!") — that's
+    // an accepted false negative: the turn still ends in a real (if
+    // over-eagerly replaced) question, never in silence, which is the
+    // invariant this function exists to protect.
+    trimmed
+        .lines()
+        .rfind(|line| !line.trim().is_empty())
+        .is_some_and(|last_line| last_line.trim_end().ends_with('?'))
+}
+
+/// Builder-authoring tools whose result body can explain a trail-off — the
+/// authoring belt `dry_run_workflow`/`validate_workflow`/`propose_workflow`/
+/// `revise_workflow`/`edit_workflow`/`save_workflow` all report either a hard
+/// gate rejection (`ToolResult::error`) or a self-reported broken-graph
+/// result (`"ok": false` in a successful body), so a plain-text read-only
+/// tool's output is never misattributed as the blocker.
+const TRAIL_OFF_BLOCKER_TOOLS: &[&str] = &[
+    "dry_run_workflow",
+    "validate_workflow",
+    "propose_workflow",
+    "revise_workflow",
+    "edit_workflow",
+    "save_workflow",
+];
+
+/// Synthesizes a guaranteed, user-facing fallback for a trail-off turn (no
+/// proposal, not capped, no run error, and the model's own text isn't a
+/// question). Scans the run's tool history for the last builder-tool result
+/// that looks like a blocker (a hard-gate rejection, or a `dry_run_workflow`/
+/// `validate_workflow` report with `"ok": false`) and asks the user about it;
+/// falls back to a generic "what should I focus on" question when no such
+/// blocker is found (the model may have simply stopped with nothing to point
+/// to).
+fn build_trail_off_fallback(
+    history: &[crate::openhuman::inference::provider::ConversationMessage],
+) -> String {
+    match last_builder_tool_blocker(history) {
+        Some(blocker) => format!(
+            "I wasn't able to finish building this workflow. Here's where I got stuck:\n\n{blocker}\n\n\
+             Could you tell me how you'd like me to resolve that, or share more detail about what's needed here?"
+        ),
+        None => "I wasn't able to finish building this workflow in this turn. Could you describe \
+                  what you'd like in more detail, or tell me which part to focus on?"
+            .to_string(),
+    }
+}
+
+/// Scans `history` in reverse for the last result from a
+/// [`TRAIL_OFF_BLOCKER_TOOLS`] call that reads as a failure — a plain-text
+/// error message (gate rejection), or a JSON body with `"ok": false` — and
+/// returns a truncated, human-readable description of it. Tool names are
+/// resolved by correlating each `ToolResults` entry's `tool_call_id` back to
+/// the `AssistantToolCalls` message that issued it, so this never
+/// misattributes an unrelated read-only tool's plain-text output as a
+/// blocker.
+fn last_builder_tool_blocker(
+    history: &[crate::openhuman::inference::provider::ConversationMessage],
+) -> Option<String> {
+    use crate::openhuman::inference::provider::ConversationMessage;
+
+    let mut call_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for message in history {
+        if let ConversationMessage::AssistantToolCalls { tool_calls, .. } = message {
+            for call in tool_calls {
+                call_names.insert(call.id.clone(), call.name.clone());
+            }
+        }
+    }
+
+    for message in history.iter().rev() {
+        let ConversationMessage::ToolResults(results) = message else {
+            continue;
+        };
+        for result in results.iter().rev() {
+            let Some(name) = call_names.get(&result.tool_call_id) else {
+                continue;
+            };
+            if !TRAIL_OFF_BLOCKER_TOOLS.contains(&name.as_str()) {
+                continue;
+            }
+            // This is the MOST RECENT authoring-belt tool result in the
+            // turn (results are scanned newest-first). Whatever it reads as
+            // is authoritative: a success/progress result here means any
+            // earlier failure from the same tool was already resolved
+            // within this turn, so we must stop at this result rather than
+            // keep walking backward and surfacing a stale, already-fixed
+            // blocker (see review discussion on this PR).
+            return describe_tool_result_blocker(&result.content)
+                .map(|desc| crate::openhuman::util::truncate_with_ellipsis(&desc, 500));
+        }
+    }
+    None
+}
+
+/// Reads one builder tool result's content as a failure description, or
+/// `None` when it reads as success/progress (a `workflow_proposal` payload,
+/// or an `"ok": true` report). The whole body is the description, never one
+/// hardcoded field, so this stays correct regardless of which fields a given
+/// tool uses to explain its failure.
+fn describe_tool_result_blocker(content: &str) -> Option<String> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if value.get("type").and_then(Value::as_str) == Some("workflow_proposal") {
+            return None; // Success: a proposal was emitted.
+        }
+        if let Some(ok) = value.get("ok").and_then(Value::as_bool) {
+            return if ok { None } else { Some(value.to_string()) };
+        }
+        // Some other structured payload with no `ok`/`type` marker this
+        // function recognises — not confidently a blocker, skip it.
+        return None;
+    }
+    // Non-JSON content: a hard-gate rejection (`ToolResult::error`) puts the
+    // plain error message straight into the content — since every builder
+    // tool's SUCCESS shape is JSON (a proposal or a `{ ok, ... }` report), a
+    // bare string here is, by elimination, an error message.
+    Some(trimmed.to_string())
 }
 
 /// Scans an agent run's conversation history for the workflow proposal a builder

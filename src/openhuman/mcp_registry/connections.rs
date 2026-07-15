@@ -595,6 +595,7 @@ pub async fn call_tool(
 ///   and the re-auth affordance keyed off the status alone.
 /// - other recorded connect failure in `LAST_ERRORS` → `Error` + message.
 /// - otherwise → `Disconnected`.
+///
 /// Pure status decision for one installed server, factored out of
 /// [`all_status`] so the priority order is unit-testable without a live
 /// connection registry or store. Inputs:

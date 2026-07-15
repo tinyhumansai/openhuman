@@ -288,7 +288,7 @@ impl StabilityDetector {
                     facet_type: FacetType::Preference,
                     key: full_key.clone(),
                     value,
-                    confidence: (agg_score).min(1.0).max(0.0),
+                    confidence: agg_score.clamp(0.0, 1.0),
                     evidence_count: new_evidence_count,
                     source_segment_ids: existing.and_then(|f| f.source_segment_ids.clone()),
                     first_seen_at: first_seen,
@@ -551,9 +551,7 @@ fn state_from_stability(score: f64, user_state: UserState) -> FacetState {
         return FacetState::Dropped;
     }
 
-    if score.is_infinite() {
-        FacetState::Active
-    } else if score >= TAU_PROMOTE {
+    if score.is_infinite() || score >= TAU_PROMOTE {
         FacetState::Active
     } else if score >= TAU_PROVISIONAL {
         FacetState::Provisional

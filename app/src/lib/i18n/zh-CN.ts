@@ -3896,6 +3896,8 @@ const messages: TranslationMap = {
   'flows.copilot.removed': '移除 {count} 个',
   'flows.copilot.noChanges': '此方案未更改任何节点。',
   'flows.copilot.accept': '应用到草稿',
+  'flows.copilot.acceptAndSave': '接受并保存',
+  'flows.copilot.saving': '保存中…',
   'flows.copilot.reject': '放弃',
   'flows.copilot.previewHint': '正在查看建议的草稿：尚未保存任何内容。',
   'flows.copilot.repairDisplay': '一次运行失败了，请查看并提出修复方案。',

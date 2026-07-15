@@ -272,30 +272,27 @@ function chatTurnUsagePayload(event: ChatDoneEvent): {
  * card.
  */
 /**
- * Tool names whose successful `output` carries a `workflow_proposal` payload.
- * `propose_workflow` (first draft) and `revise_workflow` (iterative refine)
- * both return the identical wire shape (see `src/openhuman/flows/builder_tools.rs`),
- * so the runtime surfaces a `WorkflowProposalCard` from either. These run inside
- * the `workflow_builder` specialist — reached either as the main agent's own
- * tool or, in the Flows copilot / prompt-bar flow, as a delegated subagent
- * (`build_workflow`) — so BOTH `onToolResult` and `onSubagentToolResult` funnel
- * through {@link maybeParseWorkflowProposalTool}.
- */
-const WORKFLOW_PROPOSAL_TOOLS = new Set(['propose_workflow', 'revise_workflow']);
-
-/**
- * If a completed tool result is a successful workflow-builder proposal
- * (`propose_workflow`/`revise_workflow`), parse it. Returns `null` for anything
- * else so callers can cheaply gate on it. Keyed by the tool NAME + success, not
- * by agent, so a proposal surfaces whether the tool ran in the main agent or in
- * the delegated `workflow_builder` worker.
+ * Recognition is content-based, not name-based: ANY workflow-builder tool
+ * (`propose_workflow`, `revise_workflow`, `edit_workflow`, and any future
+ * addition) whose successful `output` is `{ type: "workflow_proposal", ... }`
+ * (see `src/openhuman/flows/builder_tools.rs` / `ops::build_builder_proposal`)
+ * is surfaced as a `WorkflowProposalCard`. This mirrors the Rust-side blocking
+ * path's `extract_workflow_proposal`, which also scans tool results by
+ * payload `type` rather than tool name — a name allowlist here can silently
+ * drop proposals from newly added tools (as happened when `edit_workflow` was
+ * added without updating this list). `parseWorkflowProposal`'s own
+ * `obj.type !== 'workflow_proposal'` check is the only gate needed. These
+ * tools run inside the `workflow_builder` specialist — reached either as the
+ * main agent's own tool or, in the Flows copilot / prompt-bar flow, as a
+ * delegated subagent (`build_workflow`) — so BOTH `onToolResult` and
+ * `onSubagentToolResult` funnel through {@link maybeParseWorkflowProposalTool}.
  */
 function maybeParseWorkflowProposalTool(
-  toolName: string,
+  _toolName: string,
   success: boolean,
   output: string | undefined
 ): WorkflowProposal | null {
-  if (!success || !WORKFLOW_PROPOSAL_TOOLS.has(toolName) || !output) return null;
+  if (!success || !output) return null;
   return parseWorkflowProposal(output);
 }
 

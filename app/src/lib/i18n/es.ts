@@ -4185,6 +4185,8 @@ const messages: TranslationMap = {
   'flows.copilot.removed': '{count} eliminados',
   'flows.copilot.noChanges': 'Esta propuesta no cambia ningún nodo.',
   'flows.copilot.accept': 'Aplicar al borrador',
+  'flows.copilot.acceptAndSave': 'Aceptar y guardar',
+  'flows.copilot.saving': 'Guardando…',
   'flows.copilot.reject': 'Descartar',
   'flows.copilot.previewHint': 'Revisando un borrador propuesto: aún no se ha guardado nada.',
   'flows.copilot.repairDisplay': 'Falló una ejecución; revísala y propón una solución.',

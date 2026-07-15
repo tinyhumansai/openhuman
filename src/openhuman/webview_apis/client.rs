@@ -34,6 +34,8 @@ pub const PORT_ENV: &str = "OPENHUMAN_WEBVIEW_APIS_PORT";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 static CLIENT: OnceLock<Client> = OnceLock::new();
+type PendingResponse = oneshot::Sender<Result<Value, String>>;
+type PendingRequests = Arc<Mutex<HashMap<String, PendingResponse>>>;
 
 fn client() -> &'static Client {
     CLIENT.get_or_init(Client::new)
@@ -75,7 +77,7 @@ where
 
 struct Client {
     next_id: AtomicU64,
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>,
+    pending: PendingRequests,
     sink: Arc<Mutex<Option<mpsc::Sender<String>>>>,
 }
 

@@ -1001,18 +1001,20 @@ mod tests {
     }
 
     #[test]
-    fn workflow_builder_is_registered_worker_with_narrow_propose_or_read_scope() {
+    fn workflow_builder_is_registered_worker_with_bounded_authoring_scope() {
         // Phase 5a/5b: the workflow-builder must be a Worker-tier leaf whose
-        // tool scope is EXACTLY the propose-or-read + Composio discovery/connect
-        // + confirmed test-run + save-onto-existing belt — no flow creation
-        // (flows_create/set_enabled), no shell, no file writes, no channel
-        // sends, and no composio_execute. It can list toolkits/connections,
+        // tool scope is EXACTLY the bounded authoring/read + Composio
+        // discovery/connect belt. Creation is limited to `create_workflow`
+        // and `duplicate_flow`, which always produce disabled flows; the raw
+        // flows_create/update/set_enabled tools remain unavailable, as do
+        // shell, file writes, channel sends, and composio_execute. It can list
+        // toolkits/connections,
         // raise the inline connect card, `run_flow` a flow the user already
         // SAVED to test it (a real run the prompt gates behind user
         // confirmation), and `save_workflow` a built graph onto a flow the host
         // ALREADY created (the prompt bar's instant-create path) — but it can
-        // never create/enable a flow or perform an arbitrary raw integration
-        // action. One narrow, deliberate carve-out (B12): `get_tool_output_sample`
+        // never enable a flow or perform an arbitrary raw integration action.
+        // One narrow, deliberate carve-out (B12): `get_tool_output_sample`
         // DOES make a real Composio call, but only ever a Read-scope one
         // (hard-refused otherwise, regardless of the user's scope preference)
         // against an already-connected toolkit — see `builder_tools.rs`'s
@@ -1090,14 +1092,12 @@ mod tests {
                 assert_eq!(
                     names.len(),
                     expected.len(),
-                    "workflow_builder scope must be EXACTLY the propose-or-read belt (got {names:?})"
+                    "workflow_builder scope must be EXACTLY the bounded authoring belt (got {names:?})"
                 );
-                // Hard exclusions: nothing that reaches the raw flow
-                // controller directly, executes raw integration actions, or
-                // touches the host.
-                // (Persistence onto an EXISTING flow is the deliberate
-                // `save_workflow` carve-out above; raw `flows_update` — which
-                // could also rename/re-gate arbitrary flows — stays out.)
+                // Hard exclusions: no unrestricted flow mutation, raw
+                // integration actions, or host access. Creation is exposed
+                // only through the bounded tools above; raw `flows_update`
+                // could rename or re-gate arbitrary flows, so it stays out.
                 for forbidden in [
                     "flows_create",
                     "flows_update",
@@ -1113,7 +1113,7 @@ mod tests {
                 ] {
                     assert!(
                         !names.iter().any(|n| n == forbidden),
-                        "workflow_builder must NOT have `{forbidden}` — propose/read only"
+                        "workflow_builder must NOT have unrestricted tool `{forbidden}`"
                     );
                 }
             }

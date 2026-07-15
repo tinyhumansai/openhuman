@@ -15,6 +15,12 @@ use super::jail::{Jail, JailBackend};
 
 pub struct LandlockBackend;
 
+impl Default for LandlockBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LandlockBackend {
     pub fn new() -> Self {
         Self
@@ -29,7 +35,7 @@ impl JailBackend for LandlockBackend {
     fn is_available(&self) -> bool {
         #[cfg(feature = "sandbox-landlock")]
         {
-            use landlock::{AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr};
+            use landlock::{AccessFs, Ruleset, RulesetAttr};
             Ruleset::default()
                 .handle_access(AccessFs::ReadFile)
                 .and_then(|r| r.create())

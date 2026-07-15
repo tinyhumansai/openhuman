@@ -4067,6 +4067,8 @@ const messages: TranslationMap = {
   'flows.copilot.removed': '{count}개 제거',
   'flows.copilot.noChanges': '이 제안은 노드를 변경하지 않습니다.',
   'flows.copilot.accept': '초안에 적용',
+  'flows.copilot.acceptAndSave': '수락 및 저장',
+  'flows.copilot.saving': '저장 중…',
   'flows.copilot.reject': '버리기',
   'flows.copilot.previewHint': '제안된 초안을 검토 중입니다: 아직 저장되지 않았습니다.',
   'flows.copilot.repairDisplay': '실행이 실패했습니다. 확인하고 수정을 제안하세요.',
