@@ -32,6 +32,7 @@ pub use crate::openhuman::flows::tools::*;
 pub use crate::openhuman::health::tools::*;
 pub use crate::openhuman::integrations::tools::*;
 pub use crate::openhuman::learning::tools::*;
+#[cfg(feature = "mcp")]
 pub use crate::openhuman::mcp_registry::tools::*;
 pub use crate::openhuman::memory::tools::*;
 pub use crate::openhuman::memory_diff::tools::*;

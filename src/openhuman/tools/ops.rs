@@ -646,16 +646,30 @@ pub fn all_tools_with_runtime(
         Box::new(ScreenGlobeStopTool),
         Box::new(ScreenRequestPermissionsTool),
         Box::new(ScreenRequestPermissionTool),
+        // MCP registry (dynamic, user-installed servers) — compiled out with
+        // the `mcp` feature. Per-element attrs inside the `vec![]` mirror the
+        // voice idiom used earlier in this same literal.
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistrySearchTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryGetTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryInstalledListTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryStatusTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryListToolsTool),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryConnectTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryDisconnectTool),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryToolCallTool),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryConfigAssistTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryInstallTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryUninstallTool::new(config.clone())),
         Box::new(WorkspaceReadPersonaTool::new(config.clone())),
         Box::new(WorkspaceUpdatePersonaTool::new(config.clone())),
@@ -834,6 +848,8 @@ pub fn all_tools_with_runtime(
     // Registered unconditionally — the `mcp_setup` sub-agent filters to just
     // these via its `[tools] named = [...]` allowlist, and the host agent's
     // own tool list is wide enough that the extra five entries are negligible.
+    // Compiled out entirely with the `mcp` feature.
+    #[cfg(feature = "mcp")]
     {
         let cfg = Arc::new(root_config.clone());
         tools.push(Box::new(McpSetupSearchTool::new(Arc::clone(&cfg))));
@@ -847,28 +863,36 @@ pub fn all_tools_with_runtime(
     // Generic remote MCP bridge tools. These let the agent enumerate
     // named MCP servers and forward `tools/call` through the core
     // instead of hardcoding one bespoke MCP integration per server.
-    let mcp_registry = {
-        let base = crate::openhuman::mcp_client::McpServerRegistry::from_config(root_config);
-        // Scope the MCP surface to the active profile's allowlist. `None` keeps
-        // every configured server; `Some(&[])` yields an empty registry.
-        match mcp_allowlist {
-            Some(allowed) => Arc::new(base.retaining_servers(allowed)),
-            None => Arc::new(base),
+    //
+    // Backed by the STATIC, config-declared server set (`[[mcp_client.servers]]`
+    // in TOML) — despite the local binding's name, this is NOT the dynamic
+    // `mcp_registry` domain gated above. Both are compiled out by the `mcp`
+    // feature; see the static-vs-dynamic note in AGENTS.md.
+    #[cfg(feature = "mcp")]
+    {
+        let mcp_registry = {
+            let base = crate::openhuman::mcp_client::McpServerRegistry::from_config(root_config);
+            // Scope the MCP surface to the active profile's allowlist. `None` keeps
+            // every configured server; `Some(&[])` yields an empty registry.
+            match mcp_allowlist {
+                Some(allowed) => Arc::new(base.retaining_servers(allowed)),
+                None => Arc::new(base),
+            }
+        };
+        if !mcp_registry.is_empty() {
+            tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_registry))));
+            tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_registry))));
+            tools.push(Box::new(McpCallTool::new(
+                Arc::clone(&mcp_registry),
+                security.clone(),
+            )));
+            tracing::debug!(
+                count = mcp_registry.list().len(),
+                "[mcp_client] registered generic MCP bridge tools"
+            );
+        } else {
+            tracing::debug!("[mcp_client] no MCP servers registered — bridge tools skipped");
         }
-    };
-    if !mcp_registry.is_empty() {
-        tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_registry))));
-        tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_registry))));
-        tools.push(Box::new(McpCallTool::new(
-            Arc::clone(&mcp_registry),
-            security.clone(),
-        )));
-        tracing::debug!(
-            count = mcp_registry.list().len(),
-            "[mcp_client] registered generic MCP bridge tools"
-        );
-    } else {
-        tracing::debug!("[mcp_client] no MCP servers registered — bridge tools skipped");
     }
 
     tools.extend(crate::openhuman::search::build_search_tools(root_config));
