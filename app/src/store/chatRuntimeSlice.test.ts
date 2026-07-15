@@ -17,6 +17,7 @@ import chatRuntimeReducer, {
   resetSessionTokenUsage,
   setPendingApprovalForThread,
   setQueueStatusForThread,
+  setStreamingAssistantForThread,
   setToolTimelineForThread,
   setWorkflowProposalForThread,
 } from './chatRuntimeSlice';
@@ -756,6 +757,102 @@ describe('hydrateRuntimeFromSnapshot — workflow proposal race guard', () => {
     expect(store.getState().chatRuntime.pendingWorkflowProposalsByThread['t-settled']).toEqual(
       makeProposal('Fresh')
     );
+  });
+});
+
+// Regression: a `completed` snapshot rehydration must not clobber streaming
+// narration / a tool timeline that is fresher than the snapshot itself. This
+// happens when the socket-disconnect reconciliation path (ChatRuntimeProvider)
+// deliberately preserves `streamingAssistantByThread` across `endInferenceTurn`
+// so a partial reply stays visible while the socket reconnects, and a
+// `fetchAndHydrateTurnState` rehydration then lands with a `completed`
+// snapshot for that same (now-settled) turn. Only `interrupted` (a genuine
+// crash — nothing fresher can exist) should unconditionally clobber; a
+// `completed` snapshot should only fill in when there is no live state to
+// lose (cold boot / new window).
+describe('hydrateRuntimeFromSnapshot — streaming/timeline race guard', () => {
+  function makeTimelineSnapshot(
+    threadId: string,
+    lifecycle: PersistedTurnState['lifecycle']
+  ): PersistedTurnState {
+    return {
+      threadId,
+      requestId: 'req-snapshot',
+      lifecycle,
+      iteration: 3,
+      maxIterations: 10,
+      streamingText: '',
+      thinking: '',
+      toolTimeline: [{ id: 'c-snapshot', name: 'web_search', round: 1, status: 'success' }],
+      startedAt: '2026-06-23T00:00:00Z',
+      updatedAt: '2026-06-23T00:00:00Z',
+    };
+  }
+
+  it('does not wipe a fresher streaming/tool-timeline lane on a completed snapshot', () => {
+    const store = makeStore();
+    // The live driver already has state for this thread — e.g. the
+    // disconnect-reconciliation path kept the streaming bubble around while
+    // the socket reconnects.
+    store.dispatch(
+      setStreamingAssistantForThread({
+        threadId: 't-settled',
+        streaming: { requestId: 'req-live', content: 'partial reply so far', thinking: '' },
+      })
+    );
+    store.dispatch(
+      setToolTimelineForThread({
+        threadId: 't-settled',
+        entries: [{ id: 'c-live', name: 'read_file', round: 1, status: 'success' }],
+      })
+    );
+
+    store.dispatch(
+      hydrateRuntimeFromSnapshot({ snapshot: makeTimelineSnapshot('t-settled', 'completed') })
+    );
+
+    const state = store.getState().chatRuntime;
+    // The fresher live streaming bubble survives untouched…
+    expect(state.streamingAssistantByThread['t-settled']?.content).toBe('partial reply so far');
+    // …and so does the live tool timeline, rather than being replaced by the
+    // (behind) snapshot's single row.
+    expect(state.toolTimelineByThread['t-settled'].map(e => e.id)).toEqual(['c-live']);
+  });
+
+  it('clears the streaming/tool-timeline lanes on an interrupted snapshot (crash cleanup)', () => {
+    const store = makeStore();
+    store.dispatch(
+      setStreamingAssistantForThread({
+        threadId: 't-crashed',
+        streaming: { requestId: 'req-stale', content: 'stale partial reply', thinking: '' },
+      })
+    );
+    store.dispatch(
+      setToolTimelineForThread({
+        threadId: 't-crashed',
+        entries: [{ id: 'c-stale', name: 'read_file', round: 1, status: 'running' }],
+      })
+    );
+
+    store.dispatch(
+      hydrateRuntimeFromSnapshot({ snapshot: makeTimelineSnapshot('t-crashed', 'interrupted') })
+    );
+
+    const state = store.getState().chatRuntime;
+    expect(state.streamingAssistantByThread['t-crashed']).toBeUndefined();
+    expect(state.toolTimelineByThread['t-crashed'].map(e => e.id)).toEqual(['c-snapshot']);
+  });
+
+  it('still hydrates the timeline from a completed snapshot on cold boot (no prior live state)', () => {
+    const store = makeStore();
+
+    store.dispatch(
+      hydrateRuntimeFromSnapshot({ snapshot: makeTimelineSnapshot('t-cold-boot', 'completed') })
+    );
+
+    const state = store.getState().chatRuntime;
+    expect(state.streamingAssistantByThread['t-cold-boot']).toBeUndefined();
+    expect(state.toolTimelineByThread['t-cold-boot'].map(e => e.id)).toEqual(['c-snapshot']);
   });
 });
 

@@ -2379,6 +2379,31 @@ fn args_fingerprint(arguments: &serde_json::Value) -> String {
     format!("{:x}", hasher.finish())
 }
 
+/// Detect a **body-level** failure from `validate_workflow` / `dry_run_workflow`
+/// (issue: flows breaker doesn't see repeated invalid-graph loops). Both tools
+/// report an invalid graph / aborted sandbox run via `ToolResult::success` with
+/// a JSON body carrying top-level `"ok": false`
+/// (`src/openhuman/flows/builder_tools.rs`) rather than `ToolResult::error` — so
+/// `result.error` stays `None` and the no-progress breaker below never counts
+/// the repeat as a failure, letting a graph the model can't fix burn the whole
+/// iteration budget instead of tripping the same nudge/halt ladder.
+///
+/// Scoped to exactly these two tool names: a generic `"ok": false` in some other
+/// tool's JSON body may be legitimate data (not a failure signal), so this must
+/// not reinterpret arbitrary tool output. Tolerant of non-JSON or missing `ok`
+/// content — returns `false` rather than guessing.
+fn is_body_level_failure(name: &str, content: &str) -> bool {
+    if name != "validate_workflow" && name != "dry_run_workflow" {
+        return false;
+    }
+    match serde_json::from_str::<serde_json::Value>(content) {
+        Ok(serde_json::Value::Object(map)) => {
+            matches!(map.get("ok"), Some(serde_json::Value::Bool(false)))
+        }
+        _ => false,
+    }
+}
+
 #[async_trait]
 impl Middleware<()> for RepeatedToolFailureMiddleware {
     fn name(&self) -> &str {
@@ -2413,11 +2438,20 @@ impl Middleware<()> for RepeatedToolFailureMiddleware {
             .unwrap_or_default();
         let step = self.step.fetch_add(1, Ordering::SeqCst) + 1;
 
+        // Body-level failure signal: `validate_workflow` / `dry_run_workflow`
+        // report an invalid graph via a `success` result whose JSON body carries
+        // `"ok": false` — see `is_body_level_failure`. Only meaningful when
+        // `result.error` is `None`; when both are set, `result.error` already
+        // drives every check below, so this never double-counts one failure.
+        let body_level_failure =
+            result.error.is_none() && is_body_level_failure(&result.name, &result.content);
+
         // Combined failure text for classification: the model-facing content plus
         // the (redundant but authoritative) error field. Both are scanned for the
         // policy / terminal-inference / recoverable markers below.
         let failure_text = match result.error.as_deref() {
             Some(err) => format!("{}\n{}", result.content, err),
+            None if body_level_failure => result.content.clone(),
             None => String::new(),
         };
 
@@ -2499,10 +2533,20 @@ impl Middleware<()> for RepeatedToolFailureMiddleware {
         // handles the deterministic 3/6 + hard-reject-2 path below.
         self.reset_recoverable_streak();
 
+        // Union the body-level `ok:false` signal with the existing `error.is_some()`
+        // predicate so the crate tracker (which reads `attempt.error` as its sole
+        // success/failure signal — `None` means "progress was made, reset every
+        // counter") sees the repeat as a failure and feeds it into the same
+        // nudge/halt ladder as a real tool error.
+        let attempt_error: Option<&str> = match result.error.as_deref() {
+            Some(err) => Some(err),
+            None if body_level_failure => Some(failure_text.as_str()),
+            None => None,
+        };
         let attempt = ToolAttempt {
             tool: &result.name,
             arg_fingerprint: &arg_fp,
-            error: result.error.as_deref(),
+            error: attempt_error,
             hard_reject,
             // The unknown-tool recovery sentinel is a C3 concern; today every
             // failure feeds the generic backstop exactly as the legacy ladder did.
@@ -4303,6 +4347,169 @@ mod tests {
                 .policy()
                 .is_allowed(SteeringCommandKind::Redirect),
             "sanity: interactive still refuses Redirect (the lane that crashed it)"
+        );
+    }
+
+    // ── RepeatedToolFailureMiddleware body-level ok:false (flows breaker) ────
+
+    /// A `ToolResult::success` (no `error`) whose JSON body carries a top-level
+    /// `"ok": false` — the shape `validate_workflow` / `dry_run_workflow` return
+    /// for an invalid graph / aborted sandbox run.
+    fn body_failure_result(name: &str, extra: serde_json::Value) -> TaToolResult {
+        let mut body = json!({ "ok": false });
+        if let serde_json::Value::Object(map) = extra {
+            body.as_object_mut().unwrap().extend(map);
+        }
+        tool_result(name, &serde_json::to_string_pretty(&body).unwrap())
+    }
+
+    #[test]
+    fn is_body_level_failure_detects_validate_and_dry_run_only() {
+        assert!(is_body_level_failure(
+            "validate_workflow",
+            r#"{"ok": false, "errors": ["bad node"]}"#,
+        ));
+        assert!(is_body_level_failure(
+            "dry_run_workflow",
+            r#"{"sandbox": true, "ok": false, "error": "aborted"}"#,
+        ));
+        // ok:true never counts as a failure.
+        assert!(!is_body_level_failure(
+            "validate_workflow",
+            r#"{"ok": true}"#,
+        ));
+        // A different tool's ok:false is not reinterpreted as a failure — it may
+        // be legitimate data.
+        assert!(!is_body_level_failure(
+            "some_other_tool",
+            r#"{"ok": false}"#,
+        ));
+        // Tolerant of non-JSON / missing `ok`: never guess.
+        assert!(!is_body_level_failure("validate_workflow", "not json"));
+        assert!(!is_body_level_failure("validate_workflow", r#"{}"#));
+    }
+
+    #[tokio::test]
+    async fn repeated_validate_workflow_ok_false_trips_the_breaker() {
+        // The bug: `validate_workflow` reports an invalid graph via a `success`
+        // result body-level `"ok": false`, never `result.error` — so the breaker
+        // must synthesize a failure signal from the body or it burns the whole
+        // iteration budget on a graph it can never fix.
+        let handle = SteeringHandle::allow_all();
+        let mw = RepeatedToolFailureMiddleware::new(
+            handle.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
+        let mut halted = false;
+        // Same invalid graph re-validated repeatedly (same content each time, no
+        // `error` field): well within the varied-failure any-failure backstop
+        // (halts at 6 consecutive) even before the identical-repeat threshold.
+        for _ in 0..8 {
+            let mut r = body_failure_result(
+                "validate_workflow",
+                json!({ "errors": ["node 'x' has no outgoing edge"] }),
+            );
+            assert!(r.error.is_none(), "the tool call itself did not error");
+            mw.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+            if drain_pause_count(&handle) > 0 {
+                halted = true;
+                break;
+            }
+        }
+        assert!(
+            halted,
+            "repeated validate_workflow ok:false must trip the no-progress breaker"
+        );
+    }
+
+    #[tokio::test]
+    async fn single_or_unrelated_ok_false_does_not_falsely_trip_the_breaker() {
+        let handle = SteeringHandle::allow_all();
+        let mw = RepeatedToolFailureMiddleware::new(
+            handle.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
+        // A single validate_workflow ok:false is not a loop.
+        let mut r = body_failure_result("validate_workflow", json!({}));
+        mw.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+        assert_eq!(
+            drain_pause_count(&handle),
+            0,
+            "a single body-level failure must not halt"
+        );
+
+        // An unrelated tool's ok:false, repeated, must never be reinterpreted as
+        // a failure signal — it may be legitimate data from that tool.
+        for _ in 0..8 {
+            let mut r = body_failure_result("some_other_tool", json!({ "count": 0 }));
+            mw.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+        }
+        assert_eq!(
+            drain_pause_count(&handle),
+            0,
+            "an unrelated tool's ok:false must not trip the breaker"
+        );
+        assert!(
+            handle.drain().is_empty(),
+            "an unrelated tool's ok:false must not even nudge the run"
+        );
+    }
+
+    #[tokio::test]
+    async fn existing_error_is_some_behavior_is_unchanged_by_body_level_check() {
+        // Regression guard: a real `result.error` (no body-level ok:false at all)
+        // must still drive the breaker exactly as before — three identical
+        // failures halt, matching `repeated_tool_failure_pauses_only_after_the_threshold`.
+        let handle = SteeringHandle::allow_all();
+        let mw = RepeatedToolFailureMiddleware::new(
+            handle.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
+        for _ in 0..2 {
+            let mut r = failing_result("flaky", "boom");
+            mw.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+        }
+        assert_eq!(
+            drain_pause_count(&handle),
+            0,
+            "no halt before the threshold"
+        );
+        let mut r = failing_result("flaky", "boom");
+        mw.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+        assert_eq!(
+            drain_pause_count(&handle),
+            1,
+            "error.is_some() behavior must be unchanged by the body-level check"
+        );
+
+        // A tool result with BOTH `error` set AND a body-level ok:false must not
+        // be double-counted — it is still exactly one failed attempt per call.
+        let handle2 = SteeringHandle::allow_all();
+        let mw2 = RepeatedToolFailureMiddleware::new(
+            handle2.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
+        for _ in 0..2 {
+            let mut r = body_failure_result("validate_workflow", json!({}));
+            r.error = Some("validation failed".to_string());
+            mw2.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+        }
+        assert_eq!(
+            drain_pause_count(&handle2),
+            0,
+            "two identical error+ok:false results are one repeat each, not two — below the halt threshold"
+        );
+        let mut r = body_failure_result("validate_workflow", json!({}));
+        r.error = Some("validation failed".to_string());
+        mw2.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+        assert_eq!(
+            drain_pause_count(&handle2),
+            1,
+            "the third identical error+ok:false result halts, same as a plain error"
         );
     }
 

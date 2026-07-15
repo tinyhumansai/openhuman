@@ -354,8 +354,10 @@ jobs:
   # Feature-gate smoke: proves the core still compiles with a domain gate turned
   # OFF. The disabled build is the ONLY thing that catches stub-facade signature
   # drift (see AGENTS.md "Compile-time domain gates"), so it must run in CI, not
-  # just locally. Pathfinder lane for #4803 (voice); extend the --features list
-  # as sibling gates (#4797–#4802, #4804) land.
+  # just locally. Pathfinder lane for #4803 (voice); the explicit --features
+  # list (only tokenjuice-treesitter) turns every default gate OFF, so it also
+  # covers #4804 (media) and each sibling gate as it lands — no edit needed
+  # unless a new gate must stay ON here.
   rust-feature-gate-smoke:
     name: Rust Feature-Gate Smoke (gates off)
     needs: [changes]
@@ -382,7 +384,7 @@ jobs:
           cache-on-failure: true
           shared-key: pr-rust-feature-gate-smoke
 
-      - name: Check core builds with the voice gate disabled
+      - name: Check core builds with the voice + media gates disabled
         run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tokenjuice-treesitter
 
   rust-core-coverage:

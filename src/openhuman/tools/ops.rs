@@ -875,6 +875,9 @@ pub fn all_tools_with_runtime(
 
     // Media generation (image/video via GMI through the backend). Skipped when
     // no integration client is configured; artifacts land under `action_dir`.
+    // Gated by the `media` compile-time feature (#4804); absent from slim
+    // builds. Runtime `DomainSet::media` (#4796) still gates it when compiled.
+    #[cfg(feature = "media")]
     tools.extend(crate::openhuman::media_generation::build_media_tools(
         root_config,
         action_dir,

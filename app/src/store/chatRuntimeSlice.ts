@@ -1989,13 +1989,29 @@ const chatRuntimeSlice = createSlice({
       // is still carried so "View processing" replays the full reasoning.
       if (snapshot.lifecycle === 'interrupted' || snapshot.lifecycle === 'completed') {
         delete state.inferenceStatusByThread[threadId];
-        delete state.streamingAssistantByThread[threadId];
-        // Settle any in-flight rows so their agent names stop pulsing
-        // (no-op for an already-completed snapshot whose rows are terminal).
-        state.toolTimelineByThread[threadId] = preserveLiveSubagentProse(
-          state.toolTimelineByThread[threadId],
-          snapshot.toolTimeline.map(toolTimelineFromPersisted).map(settleOrphanedTimelineEntry)
-        );
+
+        // A `completed` snapshot can still lag behind live state this session
+        // already has for the thread: the socket-disconnect reconciliation
+        // path (`ChatRuntimeProvider`) deliberately *keeps*
+        // `streamingAssistantByThread` set across `endInferenceTurn` so a
+        // partial reply stays visible while the socket reconnects, and a
+        // `fetchAndHydrateTurnState` rehydration can land moments later. The
+        // same applies to `toolTimelineByThread`, which the live event
+        // stream keeps richer/fresher than a flush-boundary persisted copy.
+        // Only let the snapshot clobber those lanes when it is unambiguously
+        // the authority: an `interrupted` snapshot (the process that was
+        // streaming is gone — nothing fresher can exist) or there is no live
+        // streaming state for this thread to lose (cold boot / new window).
+        const hasFresherLiveStream = Boolean(state.streamingAssistantByThread[threadId]);
+        if (snapshot.lifecycle === 'interrupted' || !hasFresherLiveStream) {
+          delete state.streamingAssistantByThread[threadId];
+          // Settle any in-flight rows so their agent names stop pulsing
+          // (no-op for an already-completed snapshot whose rows are terminal).
+          state.toolTimelineByThread[threadId] = preserveLiveSubagentProse(
+            state.toolTimelineByThread[threadId],
+            snapshot.toolTimeline.map(toolTimelineFromPersisted).map(settleOrphanedTimelineEntry)
+          );
+        }
         state.processingByThread[threadId] = snapshot.transcript ?? [];
         return;
       }

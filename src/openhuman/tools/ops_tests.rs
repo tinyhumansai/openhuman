@@ -260,6 +260,40 @@ fn all_tools_always_registers_curl() {
     );
 }
 
+// Compile-time `media` feature gate (#4804). The media-generation agent tools
+// (`media_generate_*`) are present only when the `media` feature is compiled
+// in AND an integration client is configured. The disabled build proves the
+// module + its single call site drop out entirely (leaf gate, no stub facade).
+#[cfg(feature = "media")]
+#[test]
+fn media_tools_registered_when_feature_on() {
+    let tmp = TempDir::new().unwrap();
+    let cfg = integration_test_config(&tmp, "http://127.0.0.1:1");
+    store_test_session_token(&cfg);
+    let tools = integration_tools_for_config(&tmp, &cfg);
+    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    assert!(
+        names.contains(&"media_generate_image"),
+        "media tools must register with the `media` feature on + an integration \
+         client; got: {names:?}"
+    );
+}
+
+#[cfg(not(feature = "media"))]
+#[test]
+fn media_tools_absent_when_feature_off() {
+    let tmp = TempDir::new().unwrap();
+    let cfg = integration_test_config(&tmp, "http://127.0.0.1:1");
+    store_test_session_token(&cfg);
+    let tools = integration_tools_for_config(&tmp, &cfg);
+    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    assert!(
+        !names.iter().any(|n| n.starts_with("media_")),
+        "no `media_*` tools may be registered when the `media` feature is off; \
+         got: {names:?}"
+    );
+}
+
 #[test]
 fn all_tools_registers_gitbooks_when_enabled() {
     let tmp = TempDir::new().unwrap();
