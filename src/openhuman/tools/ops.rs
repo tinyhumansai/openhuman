@@ -286,6 +286,28 @@ pub fn all_tools_with_runtime(
         // read tools are `PermissionLevel::None`, and `dry_run_workflow` is
         // autonomy-tier gated + wired to deterministic mock capabilities.
         Box::new(ReviseWorkflowTool::new(config.clone())),
+        // Structured incremental edits (F1): apply a small ops[] list to a base
+        // graph (saved flow or inline) instead of re-emitting the whole graph,
+        // then validate + gate + return a proposal (same contract as revise).
+        // Proposal-only — never persists.
+        Box::new(EditWorkflowTool::new(config.clone())),
+        // Standalone validate (F3): run the SAME structural + hard-gate stack
+        // the propose/save tools use, without emitting a proposal — a pure
+        // check so the agent can self-verify a draft mid-build. Read-only.
+        Box::new(ValidateWorkflowTool::new(config.clone())),
+        // Read a saved flow's revision history (F6) — prior graph snapshots the
+        // agent can inspect / pick a rollback target from. Read-only.
+        Box::new(GetFlowHistoryTool::new(config.clone())),
+        // Phase 4 self-debug loop (F4): find a failing run, resume a parked
+        // run (approval-gated), or cancel a runaway one.
+        Box::new(ListFlowRunsTool::new(config.clone())),
+        Box::new(ResumeFlowRunTool::new(config.clone())),
+        Box::new(CancelFlowRunTool::new(config.clone())),
+        // Gated create (F4/F12): create a NEW flow — born disabled, approval
+        // gated — and duplicate an existing one (disabled copy) for
+        // clone-then-edit. Behind the Phase 3 safety rails.
+        Box::new(CreateWorkflowTool::new(config.clone())),
+        Box::new(DuplicateFlowTool::new(config.clone())),
         Box::new(ListFlowsTool::new(config.clone())),
         Box::new(GetFlowTool::new(config.clone())),
         Box::new(GetFlowRunTool::new(config.clone())),
@@ -309,6 +331,15 @@ pub fn all_tools_with_runtime(
         // (researcher / code_executor / …) — the agent analogue of
         // search_tool_catalog. Read-only.
         Box::new(ListAgentProfilesTool::new()),
+        // Steer toolkit choice toward what's already connected + surface which
+        // toolkits a flow still needs (Phase 5, item 19). Read-only.
+        Box::new(ListConnectableToolkitsTool::new(config.clone())),
+        // Queryable DSL schema (F2): enumerate the 12 node kinds and fetch one
+        // kind's full config-field/port/example/gotcha contract — the DSL
+        // analogue of search_tool_catalog + get_tool_contract, so an agent need
+        // not rely on prompt prose or memory for node config shapes. Read-only.
+        Box::new(ListNodeKindsTool::new()),
+        Box::new(GetNodeKindContractTool::new()),
         Box::new(DryRunWorkflowTool::new(security.clone(), config.clone())),
         // Real end-to-end test run of a SAVED flow (Write / external-effect). The
         // workflow-builder prompt requires it to ask the user for confirmation
@@ -844,6 +875,9 @@ pub fn all_tools_with_runtime(
 
     // Media generation (image/video via GMI through the backend). Skipped when
     // no integration client is configured; artifacts land under `action_dir`.
+    // Gated by the `media` compile-time feature (#4804); absent from slim
+    // builds. Runtime `DomainSet::media` (#4796) still gates it when compiled.
+    #[cfg(feature = "media")]
     tools.extend(crate::openhuman::media_generation::build_media_tools(
         root_config,
         action_dir,
@@ -1108,7 +1142,7 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         "run_workflow",
         "await_workflow",
         "list_workflows",
-        "create_workflow",
+        "create_skill",
         "describe_workflow",
         "read_workflow_resource",
         "list_workflow_runs",

@@ -176,6 +176,7 @@ impl LongLivedSession {
     /// caps, seeding history from the reserved thread for cold-boot resume.
     fn build_agent(&self, config: &Config, current_message: &str) -> Result<Agent, String> {
         let effective = effective_config(config, self.mode);
+        let mode_iteration_cap = effective.agent.max_tool_iterations;
         // Build as the `subconscious` agent (not the default orchestrator) so
         // the session's promoted turns get the subconscious tool surface —
         // memory_diff + agent_prepare_context + global to-dos/goals + the
@@ -184,6 +185,14 @@ impl LongLivedSession {
             warn!("[subconscious::session] agent init failed: {e}");
             format!("agent init: {e}")
         })?;
+        // Issue #4868 — the session builder now stamps the `subconscious`
+        // agent definition's own `effective_max_iterations()` (30) onto the
+        // agent regardless of mode, which would silently widen `Simple`
+        // mode's intentionally tighter 15-iteration budget set by
+        // `effective_config` above. Re-apply the mode-specific cap
+        // post-construction so `Simple` keeps 15 and `Aggressive`/
+        // `EventDriven` keep 30, exactly as before this fix.
+        agent.set_max_tool_iterations(mode_iteration_cap);
         agent.set_event_context(self.thread_id.clone(), "subconscious");
 
         // Cold-boot resume: prime history from the reserved thread.
@@ -376,5 +385,66 @@ mod tests {
         let eff = effective_config(&cfg, SubconsciousMode::Aggressive);
         assert_eq!(eff.autonomy.level, AutonomyLevel::Full);
         assert_eq!(eff.agent.max_tool_iterations, 30);
+    }
+
+    /// Regression for issue #4868: the `subconscious` `AgentDefinition`
+    /// declares `max_iterations = 30` (strict), so `build_session_agent_inner`
+    /// now stamps 30 onto every session agent regardless of mode — which
+    /// would silently widen `Simple` mode's intentionally tighter
+    /// 15-iteration budget set by `effective_config`. `build_agent` must
+    /// re-apply the mode-specific cap post-construction so `Simple` still
+    /// gets 15.
+    #[test]
+    fn build_agent_preserves_simple_modes_15_iteration_cap() {
+        use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+
+        AgentDefinitionRegistry::init_global_builtins().unwrap();
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let workspace_dir = tmp.path().to_path_buf();
+        std::fs::create_dir_all(&workspace_dir).unwrap();
+        let config = Config {
+            workspace_dir: workspace_dir.clone(),
+            action_dir: workspace_dir.clone(),
+            ..Config::default()
+        };
+
+        let session = LongLivedSession::new(workspace_dir, SubconsciousMode::Simple);
+        let agent = session
+            .build_agent(&config, "hello")
+            .expect("build_agent should succeed");
+
+        assert_eq!(
+            agent.agent_config().max_tool_iterations,
+            15,
+            "Simple mode must keep its 15-iteration cap even though the `subconscious` \
+             definition's own effective_max_iterations() is 30"
+        );
+    }
+
+    /// Companion to the above: `Aggressive`/`EventDriven` mode's 30-iteration
+    /// cap must also survive (it happens to match the definition's own cap
+    /// here, but must come from the mode override, not incidentally).
+    #[test]
+    fn build_agent_preserves_aggressive_modes_30_iteration_cap() {
+        use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+
+        AgentDefinitionRegistry::init_global_builtins().unwrap();
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let workspace_dir = tmp.path().to_path_buf();
+        std::fs::create_dir_all(&workspace_dir).unwrap();
+        let config = Config {
+            workspace_dir: workspace_dir.clone(),
+            action_dir: workspace_dir.clone(),
+            ..Config::default()
+        };
+
+        let session = LongLivedSession::new(workspace_dir, SubconsciousMode::Aggressive);
+        let agent = session
+            .build_agent(&config, "hello")
+            .expect("build_agent should succeed");
+
+        assert_eq!(agent.agent_config().max_tool_iterations, 30);
     }
 }

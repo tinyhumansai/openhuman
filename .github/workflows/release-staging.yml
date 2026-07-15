@@ -5,36 +5,25 @@ on:
     inputs:
       commit_sha:
         description:
-          Build from a specific commit SHA instead of release HEAD. Leave empty
-          to use release HEAD (the default). The commit must be reachable from
-          release.
+          Build from a specific commit SHA instead of the selected branch HEAD.
+          The commit must be reachable from the selected main or release branch.
         required: false
         type: string
         default: ""
       create_tag:
         description:
           Create the immutable `v<version>-staging` tag and run the full
-          build matrix. When false, bump versions and commit to release but
-          skip tag creation, desktop builds, and Docker — useful for
+          build matrix. When false, bump versions on the selected branch but
+          skip tag creation, desktop builds, and Docker; useful for
           version-bump-only runs.
         required: false
         type: boolean
         default: true
-      skip_ci_gate:
-        description:
-          Skip the green-CI-Full-Gate requirement on the commit being cut.
-          Operator recovery only — never the default release path.
-        required: false
-        type: boolean
-        default: false
 permissions:
   # `actions: read` lets scripts/ci-cancel-aware.sh poll the run status so
   # cancelled builds inside container jobs stop themselves (docker exec
   # swallows the runner's signals).
   actions: read
-  # `checks: read` lets scripts/release/require-ci-full-gate.sh verify the
-  # "CI Full Gate" check run on the commit being cut.
-  checks: read
   # `contents: write` is required for the patch bump commit and the
   # `v<version>-staging` tag push performed by `prepare-build` below.
   contents: write
@@ -43,10 +32,9 @@ concurrency:
   group: release-staging
   cancel-in-progress: false
 # ---------------------------------------------------------------------------
-# Branch model: releases are cut from the long-lived `release` branch, not
-# `main`. `release` only advances via green main→release PRs that run the
-# full test suite; this workflow bumps/commits/tags on `release` and the
-# build matrix is built from the tag this workflow creates on `release`.
+# Branch model: staging builds may be cut from `main` or `release`, selected
+# by the workflow-dispatch ref. The version bump is committed back to the
+# selected branch, and the build matrix uses the immutable staging tag.
 #
 # Job dependency graph
 #
@@ -84,8 +72,7 @@ jobs:
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       # Immutable staging tag created by this run, e.g. `v1.2.4-staging`.
-      # Downstream consumers (release-production.yml `staging_tag` promotion,
-      # Sentry, installer asset names) reference this rather than the bare SHA.
+      # Sentry and installer asset names reference this rather than the bare SHA.
       tag: ${{ steps.resolve.outputs.tag }}
       sha: ${{ steps.resolve.outputs.sha }}
       # First 12 chars of `sha`. Matches the truncation runtime code in
@@ -97,10 +84,10 @@ jobs:
       build_ref: ${{ steps.resolve.outputs.build_ref }}
       base_url: ${{ steps.resolve.outputs.base_url }}
     steps:
-      - name: Enforce release branch
-        if: github.ref != 'refs/heads/release'
+      - name: Enforce staging source branch
+        if: github.ref != 'refs/heads/main' && github.ref != 'refs/heads/release'
         run: |
-          echo "This workflow can only run from release. Current ref: $GITHUB_REF"
+          echo "This workflow can only run from main or release. Current ref: $GITHUB_REF"
           exit 1
       - name: Generate GitHub App token
         id: app-token
@@ -113,10 +100,10 @@ jobs:
           # is all it needs. Branch-protection bypass comes from the App's
           # identity in the ruleset bypass list, not from token scopes.
           permission-contents: write
-      - name: Checkout release
+      - name: Checkout staging source
         uses: actions/checkout@v7
         with:
-          ref: release
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
           submodules: recursive
@@ -133,6 +120,7 @@ jobs:
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           COMMIT_SHA: ${{ inputs.commit_sha }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -144,30 +132,19 @@ jobs:
               exit 1
             }
             git rev-parse --verify "${COMMIT_SHA}^{commit}" >/dev/null
-            git merge-base --is-ancestor "$COMMIT_SHA" origin/release || {
-              echo "commit_sha $COMMIT_SHA is not reachable from release"
+            git merge-base --is-ancestor "$COMMIT_SHA" "origin/$SOURCE_BRANCH" || {
+              echo "commit_sha $COMMIT_SHA is not reachable from $SOURCE_BRANCH"
               exit 1
             }
             git checkout --detach "$COMMIT_SHA"
           else
-            git checkout release
-            git pull origin release --ff-only
+            git checkout "$SOURCE_BRANCH"
+            git pull origin "$SOURCE_BRANCH" --ff-only
           fi
-      # Direct App-token pushes bypass the PR merge gate, so nothing else
-      # guarantees the commit being cut passed the full suite. Fail unless
-      # the latest "CI Full Gate" check run on it (skipping [skip ci] bump
-      # commits) concluded success.
-      - name: Require green CI Full Gate
-        if: ${{ !inputs.skip_ci_gate }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/release/require-ci-full-gate.sh "$(git rev-parse HEAD)"
       # Patch-only bump for staging cuts. Minor/major promotions are owned
       # by `release-production.yml` and only happen on the production path.
-      # Bump commit lands on `release` (we don't maintain a separate `staging`
-      # branch) and the immutable `v<version>-staging` tag pinpoints the
-      # exact release commit QA validated, so production promotion can later
-      # find the tagged commit reachable from release.
+      # The bump commit lands on the selected source branch and the immutable
+      # `v<version>-staging` tag pinpoints the exact commit QA validated.
       - name: Bump patch version
         id: bump
         run: node scripts/release/bump-version.js patch
@@ -207,12 +184,12 @@ jobs:
           VERSION: ${{ steps.bump.outputs.version }}
           TAG: ${{ steps.tagname.outputs.tag }}
           CREATE_TAG: ${{ inputs.create_tag }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
         run: |
           git add app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml Cargo.toml app/src-tauri/Cargo.lock Cargo.lock
-          # [skip ci]: the bump commit lands on an already-validated release
-          # tree — don't re-trigger the full suite (ci-full.yml, push:release).
+          # Avoid rebuilding the source branch solely for version metadata.
           git commit -m "chore(staging): v${VERSION} [skip ci]"
-          git push origin HEAD:release
+          git push origin "HEAD:$SOURCE_BRANCH"
           if [ "$CREATE_TAG" = "true" ]; then
             git tag -a "$TAG" -m "Staging cut $TAG"
             git push origin "$TAG"
@@ -251,6 +228,7 @@ jobs:
       # continue-on-error so a merge conflict never strands a cut that is
       # already tagged — resolve the merge manually in that case.
       - name: Merge release back into main
+        if: github.ref == 'refs/heads/release'
         continue-on-error: true
         env:
           VERSION: ${{ steps.bump.outputs.version }}

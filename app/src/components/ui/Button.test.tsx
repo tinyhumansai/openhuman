@@ -99,6 +99,13 @@ describe('Button', () => {
     expect(btn.className).toMatch(/w-full/);
   });
 
+  it('exposes a stable analytics identifier without forwarding the prop name', () => {
+    render(<Button analyticsId="flows-run">Run</Button>);
+    const btn = screen.getByRole('button', { name: 'Run' });
+    expect(btn).toHaveAttribute('data-analytics-id', 'flows-run');
+    expect(btn).not.toHaveAttribute('analyticsId');
+  });
+
   it('respects disabled: does not fire onClick and has disabled attr', () => {
     const onClick = vi.fn();
     render(

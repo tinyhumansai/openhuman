@@ -101,6 +101,117 @@ fn managed_budget_gate_applies_to_agent_integration_paths() {
     assert!(!managed_budget_applies_to_path("/teams/me/usage"));
 }
 
+// ── Unit: local-only egress enforcement (privacy epic S7, #4441) ──
+
+#[test]
+fn backend_egress_descriptor_strips_query_and_targets_backend() {
+    let desc = backend_egress_descriptor("/agent-integrations/composio/execute?foo=bar");
+    assert_eq!(
+        desc.reason,
+        crate::openhuman::security::EgressReason::Integration
+    );
+    assert_eq!(desc.provider_slug, "openhuman_backend");
+    // Query stripped — only the endpoint is disclosed, never carried data.
+    assert_eq!(desc.service, "/agent-integrations/composio/execute");
+    assert!(desc.is_external);
+}
+
+#[test]
+fn enforce_backend_egress_blocks_user_data_but_allows_control_plane() {
+    use crate::openhuman::config::PrivacyMode;
+    use crate::openhuman::security::live_policy::test_privacy_scope;
+    {
+        // Thread-scoped LocalOnly — no process-global mutation, no cross-test race.
+        let _mode = test_privacy_scope(PrivacyMode::LocalOnly);
+        // User-data tool path → refused.
+        let blocked = enforce_backend_egress("/agent-integrations/composio/execute");
+        assert!(blocked.is_err());
+        assert!(blocked
+            .unwrap_err()
+            .to_string()
+            .contains("Local-only privacy mode is active"));
+        // Control-plane (connection-management + pricing) → allowed even under LocalOnly.
+        enforce_backend_egress("/agent-integrations/composio/connections")
+            .expect("connections is control-plane");
+        enforce_backend_egress("/agent-integrations/pricing").expect("pricing is control-plane");
+    }
+
+    // Standard mode → everything allowed.
+    let _mode = test_privacy_scope(PrivacyMode::Standard);
+    enforce_backend_egress("/agent-integrations/composio/execute").expect("Standard allows");
+}
+
+/// Privacy epic S7 (#4441): the LocalOnly gate must fire through the PUBLIC verb
+/// methods, not only via the `enforce_backend_egress` helper. Each of the six
+/// verbs (`post`/`get`/`patch`/`delete`/`upload_multipart`/`get_bytes`) runs the
+/// gate synchronously on first poll — before any `.await` — so a user-data path
+/// is refused before the request leaves the device. The client points at an
+/// unreachable address, so a leaked call would surface a transport error, not
+/// the local-only message; asserting the policy string therefore proves the
+/// short-circuit fired end-to-end through the verb, not just the helper.
+#[tokio::test]
+async fn verb_methods_block_user_data_egress_under_local_only() {
+    use crate::openhuman::config::PrivacyMode;
+    use crate::openhuman::security::live_policy::test_privacy_scope;
+
+    let _mode = test_privacy_scope(PrivacyMode::LocalOnly);
+    let client = client_for("http://127.0.0.1:0".into());
+    let path = "/agent-integrations/composio/execute"; // user-data egress (blocked)
+    let body = json!({ "arguments": { "secret": "leak-me" } });
+
+    let assert_blocked = |verb: &str, msg: String| {
+        assert!(
+            msg.contains("Local-only privacy mode is active"),
+            "{verb}: expected a local-only block before network, got: {msg}"
+        );
+    };
+
+    assert_blocked(
+        "post",
+        client
+            .post::<serde_json::Value>(path, &body)
+            .await
+            .unwrap_err()
+            .to_string(),
+    );
+    assert_blocked(
+        "get",
+        client
+            .get::<serde_json::Value>(path)
+            .await
+            .unwrap_err()
+            .to_string(),
+    );
+    assert_blocked(
+        "patch",
+        client
+            .patch::<serde_json::Value>(path, &body)
+            .await
+            .unwrap_err()
+            .to_string(),
+    );
+    assert_blocked(
+        "delete",
+        client
+            .delete::<serde_json::Value>(path)
+            .await
+            .unwrap_err()
+            .to_string(),
+    );
+    assert_blocked(
+        "upload_multipart",
+        client
+            .upload_multipart::<serde_json::Value>(path, reqwest::multipart::Form::new())
+            .await
+            .unwrap_err()
+            .to_string(),
+    );
+    assert_blocked(
+        "get_bytes",
+        client.get_bytes(path).await.unwrap_err().to_string(),
+    );
+}
+
 // ── Integration: HTTP error propagation through `post`/`get` ──────
 
 async fn start_mock_backend(app: Router) -> String {
@@ -170,6 +281,79 @@ async fn post_500_propagates_html_body_truncated() {
     assert!(
         msg.contains("upstream blew up"),
         "expected raw body in propagated message, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn local_only_rejects_user_data_verb_before_transport() {
+    // End-to-end proof (privacy epic S7, #4441) that a PUBLIC verb
+    // (`post`/`get`) — not just the private `enforce_backend_egress` helper —
+    // honours LocalOnly and refuses a user-data backend call BEFORE it hits
+    // transport. The mock 403s on every route it actually receives, so if the
+    // gate short-circuits first the error is the policy message, never the
+    // mock body.
+    use crate::openhuman::config::PrivacyMode;
+    use crate::openhuman::security::live_policy::test_privacy_scope;
+
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/execute",
+            post(|| async {
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({ "success": false, "error": "mock must not be reached" })),
+                )
+                    .into_response()
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({ "success": false, "error": "control-plane reached transport" })),
+                )
+                    .into_response()
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let client = client_for(base);
+
+    // `#[tokio::test]` runs on a current-thread runtime, so the gate's inline
+    // `current_privacy_mode()` read observes this override on the same thread
+    // (see `TEST_PRIVACY_MODE`).
+    let _mode = test_privacy_scope(PrivacyMode::LocalOnly);
+
+    // (1) User-data verb call is refused by the gate BEFORE transport — the
+    //     error carries the policy message and NOT the mock's 403 body.
+    let err = client
+        .post::<serde_json::Value>(
+            "/agent-integrations/composio/execute",
+            &json!({ "tool": "GMAIL_FETCH_EMAILS" }),
+        )
+        .await
+        .expect_err("LocalOnly must block the user-data POST before transport");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("Local-only privacy mode is active"),
+        "expected policy block, got: {msg}"
+    );
+    assert!(
+        !msg.contains("mock must not be reached"),
+        "gate must short-circuit before the request reaches the mock: {msg}"
+    );
+
+    // (2) A control-plane verb call under the SAME LocalOnly scope passes the
+    //     gate and DOES reach transport (surfaces the mock's 403) — proving the
+    //     gate is selective, not a blanket network kill.
+    let err = client
+        .get::<serde_json::Value>("/agent-integrations/composio/connections")
+        .await
+        .expect_err("control-plane reaches transport and surfaces the mock 403");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("control-plane reached transport"),
+        "control-plane must reach transport under LocalOnly, got: {msg}"
     );
 }
 

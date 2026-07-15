@@ -102,6 +102,34 @@ async fn execute_blocks_when_rate_limited() {
     assert!(result.output().contains("rate limit"));
 }
 
+#[tokio::test]
+async fn execute_blocked_under_local_only_privacy_mode() {
+    // Privacy epic S7 (#4441): under LocalOnly the request is refused with a
+    // `[policy-blocked]` result before URL validation / network.
+    let _mode = super::super::local_only_scope();
+    let tool = HttpRequestTool::new(
+        Arc::new(SecurityPolicy::default()),
+        vec!["example.com".into()],
+        1_000_000,
+        30,
+    );
+    let result = tool
+        .execute(json!({"url": "https://example.com"}))
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(
+        result.output().contains("[policy-blocked]"),
+        "got: {}",
+        result.output()
+    );
+    assert!(
+        result.output().contains("Local-only"),
+        "got: {}",
+        result.output()
+    );
+}
+
 #[test]
 fn truncate_response_within_limit() {
     let tool = test_tool(vec!["example.com"]);

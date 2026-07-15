@@ -181,6 +181,9 @@ async fn run_step(python_bin: &Path, args: &[&str], timeout: Duration, label: &s
     let mut cmd = Command::new(python_bin);
     cmd.args(args);
     cmd.kill_on_drop(true);
+    // spaCy venv provisioning can re-run mid-session if the venv is missing or
+    // its ready marker is stale, so suppress the Windows conhost flash (GH-4814).
+    crate::openhuman::inference::local::process_util::apply_no_window(&mut cmd);
 
     let output = match tokio::time::timeout(timeout, cmd.output()).await {
         Ok(Ok(output)) => output,
@@ -396,5 +399,21 @@ mod tests {
         .unwrap();
         assert_eq!(response.entities[0].label, "PERSON");
         assert_eq!(response.nouns, vec!["migration"]);
+    }
+
+    // Exercises the venv provisioning step path (including the GH-4814
+    // CREATE_NO_WINDOW hook, a no-op off Windows) with a trivial binary so it
+    // stays covered without a real python toolchain.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_step_runs_a_trivial_binary() {
+        run_step(
+            Path::new("/bin/echo"),
+            &["ok"],
+            Duration::from_secs(30),
+            "echo smoke",
+        )
+        .await
+        .expect("echo step succeeds");
     }
 }

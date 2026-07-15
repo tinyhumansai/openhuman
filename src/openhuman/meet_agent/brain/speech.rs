@@ -58,7 +58,6 @@ pub(super) async fn tts(text: &str, voice_id: Option<&str>) -> Result<Vec<i16>, 
         // Per-mascot voice for speaker alternation. `None` preserves the
         // backend's default-voice pick (single-mascot behavior).
         voice_id: voice_id.map(str::to_owned),
-        ..Default::default()
     };
     let outcome = synthesize_reply(&config, text, &opts).await?;
     let result = outcome.value;

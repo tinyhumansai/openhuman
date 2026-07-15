@@ -847,7 +847,7 @@ pub(crate) fn task_id_for_session_in_workspace(
         .into_iter()
         .filter(|record| record_subagent_session_id(record) == Some(subagent_session_id))
         .collect();
-    matches.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    matches.sort_by_key(|item| std::cmp::Reverse(item.updated_at));
 
     for record in matches {
         if record_parent_session(&record) != Some(parent_session) {

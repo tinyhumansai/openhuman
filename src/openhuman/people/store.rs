@@ -16,6 +16,14 @@ use crate::openhuman::people::migrations;
 use crate::openhuman::people::types::{Handle, Interaction, Person, PersonId};
 
 pub type ConnHandle = Arc<Mutex<Connection>>;
+type PersonRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+);
 
 /// Process-global handle to the `PeopleStore`, tagged with the workspace it is
 /// bound to. Controller handlers are free functions with no `&self`, so they
@@ -326,7 +334,7 @@ impl PeopleStore {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> SqlResult<Option<Person>> {
             let guard = conn.blocking_lock();
-            let row: Option<(String, Option<String>, Option<String>, Option<String>, i64, i64)> =
+            let row: Option<PersonRow> =
                 guard
                     .query_row(
                         "SELECT id, display_name, primary_email, primary_phone, created_at, updated_at \

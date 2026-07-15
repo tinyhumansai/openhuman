@@ -202,15 +202,6 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     navGroup: 'general',
     navOrder: 3,
   },
-  {
-    id: 'memory-sync',
-    titleKey: 'settings.dataSync.title',
-    descriptionKey: 'settings.dataSync.menuDesc',
-    section: 'home',
-    searchKeywords: ['sync', 'backup', 'data', 'memory'],
-    navGroup: 'data',
-    navOrder: 0,
-  },
 
   // --- Assistant group ---
   // The old 'ai' and 'agents-settings' hub pages are retired — their slugs
@@ -235,43 +226,12 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     navGroup: 'assistant',
     navOrder: 2,
   },
-  {
-    // automations: lifecycle-bound workflow rules (renders WorkflowsTab).
-    // Legacy /routines and /workflows routes redirect to /settings/automations.
-    id: 'automations',
-    titleKey: 'workflows.title',
-    descriptionKey: 'workflows.subtitle',
-    section: 'home',
-    searchKeywords: ['workflow', 'automation', 'routine', 'rule', 'trigger', 'lifecycle'],
-    navGroup: 'assistant',
-    navOrder: 4,
-  },
 
   // --- Connections group ---
-  // The old 'features' hub page is retired — its slug redirects to
-  // /settings/screen-intelligence; the feature pages are sidebar entries now.
-  {
-    // integrations: merged Integrations page (formerly the composio hub with
-    // task-sources, composio-routing and webhooks-triggers — those slugs
-    // redirect here).
-    id: 'integrations',
-    titleKey: 'settings.integrations.title',
-    descriptionKey: 'settings.integrations.menuDesc',
-    section: 'home',
-    searchKeywords: [
-      'integrations',
-      'composio',
-      'webhooks',
-      'triggers',
-      'tasks',
-      'sources',
-      'inbox',
-      'routing',
-      'oauth',
-    ],
-    navGroup: 'connections',
-    navOrder: 0,
-  },
+  // The Integrations settings section was retired — the composio/OAuth grid
+  // lives on the Connections page and the task-source/webhook triage surface is
+  // no longer used. Screen Awareness, Desktop Agent and Desktop Companion moved
+  // to the Connections page's Desktop group; their slugs redirect there.
 
   // Notifications-hub and crypto hub pages are retired — their slugs redirect
   // to /settings/notifications and /settings/wallet-balances.
@@ -387,8 +347,12 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     // deep-link compatibility but no longer in the settings sidebar.
   },
   {
-    // usage: merged Usage & Limits page (formerly heartbeat, ledger-usage and
-    // cost-dashboard — those slugs redirect here).
+    // usage: merged Usage & Limits surface — cost dashboard, Tokenjuice token
+    // savings (formerly the standalone token-usage page), and background loops
+    // (formerly heartbeat / ledger-usage). Surfaced on the Connections page
+    // (API-keys group); the route redirects there and it's no longer in the
+    // settings sidebar. Legacy heartbeat / ledger-usage / cost-dashboard /
+    // token-usage slugs redirect here.
     id: 'usage',
     titleKey: 'settings.usage.title',
     descriptionKey: 'settings.usage.menuDesc',
@@ -396,6 +360,8 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     searchKeywords: [
       'usage',
       'tokens',
+      'tokenjuice',
+      'savings',
       'ledger',
       'cost',
       'spend',
@@ -405,10 +371,6 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
       'loops',
       'background',
     ],
-    // Usage & Limits now lives in the General group (was a sub-page of LLM,
-    // which has moved to the Connections page).
-    navGroup: 'general',
-    navOrder: 2,
   },
 
   // --- Agent profiles (top-level sidebar destination, Assistant group) ---
@@ -485,15 +447,16 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
   // FEATURES section leaf panels
   // =========================================================================
   {
+    // Surfaced on the Connections page (Desktop group); route redirects there.
+    // Entry kept for search + deep-link compatibility.
     id: 'screen-intelligence',
     titleKey: 'pages.settings.features.screenAwareness',
     descriptionKey: 'pages.settings.features.screenAwarenessDesc',
     section: 'features',
     searchKeywords: ['screen', 'awareness', 'vision', 'capture'],
-    navGroup: 'connections',
-    navOrder: 1,
   },
   {
+    // Surfaced on the Connections page (Desktop group); route redirects there.
     id: 'desktop-agent',
     titleKey: 'settings.desktopAgent.title',
     descriptionKey: 'settings.desktopAgent.description',
@@ -508,8 +471,6 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
       'screen recording',
       'input monitoring',
     ],
-    navGroup: 'connections',
-    navOrder: 2,
   },
   {
     id: 'tools',
@@ -521,16 +482,17 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     navOrder: 3,
   },
   {
+    // Surfaced on the Connections page (Desktop group); route redirects there.
     id: 'companion',
     titleKey: 'pages.settings.features.desktopCompanion',
     descriptionKey: 'pages.settings.features.desktopCompanionDesc',
     section: 'features',
     searchKeywords: ['desktop', 'overlay', 'companion'],
-    navGroup: 'connections',
-    navOrder: 4,
   },
   {
     // meetings: Meeting Assistant settings (issue #3511 / epic #3505 PR-5).
+    // Surfaced on the Connections page (meetings tab, below the meetings list);
+    // the route redirects there and it's no longer in the settings sidebar.
     id: 'meetings',
     titleKey: 'settings.meetings.title',
     descriptionKey: 'settings.meetings.menuDesc',
@@ -546,8 +508,6 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
       'listen only',
       'transcript',
     ],
-    navGroup: 'connections',
-    navOrder: 5,
   },
 
   // =========================================================================
@@ -577,13 +537,13 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     navParent: 'wallet-balances',
   },
   {
+    // Surfaced on the Connections page (Integrations group); route redirects
+    // there. Entry kept for search + deep-link compatibility.
     id: 'wallet-balances',
     titleKey: 'pages.settings.account.walletBalances',
     descriptionKey: 'pages.settings.account.walletBalancesDesc',
     section: 'crypto',
     searchKeywords: ['wallet', 'balance', 'tokens', 'crypto'],
-    navGroup: 'data',
-    navOrder: 1,
   },
 
   // =========================================================================
@@ -607,45 +567,9 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     devOnly: true,
     searchKeywords: ['developer', 'diagnostics', 'debug'],
   },
-  // Knowledge & Memory
-  {
-    id: 'intelligence',
-    titleKey: 'settings.developerMenu.intelligence.title',
-    descriptionKey: 'settings.developerMenu.intelligence.desc',
-    section: 'developer',
-    devOnly: true,
-  },
-  {
-    id: 'memory-data',
-    titleKey: 'devOptions.memoryInspection',
-    descriptionKey: 'devOptions.memoryInspectionDesc',
-    section: 'developer',
-    devOnly: true,
-    searchKeywords: ['memory', 'inspect'],
-  },
-  {
-    id: 'memory-debug',
-    titleKey: 'devOptions.debugPanels',
-    descriptionKey: 'devOptions.debugPanelsDesc',
-    section: 'developer',
-    devOnly: true,
-  },
-  {
-    id: 'analysis-views',
-    titleKey: 'settings.analysisViews.title',
-    descriptionKey: 'settings.analysisViews.menuDesc',
-    section: 'developer',
-    devOnly: true,
-  },
-  // Diagnostics & Logs
-  {
-    id: 'voice-debug',
-    titleKey: 'settings.developerMenu.voiceDebug.title',
-    descriptionKey: 'settings.developerMenu.voiceDebug.desc',
-    section: 'developer',
-    devOnly: true,
-    navGroup: 'modelsInference',
-  },
+  // Knowledge & Memory group retired entirely — memory surfaces live on the
+  // Brain page (graph / goals / sources / sync / subconscious).
+  // voice-debug retired from the settings UI.
   {
     id: 'screen-awareness-debug',
     titleKey: 'settings.developerMenu.screenAwareness.title',
@@ -664,20 +588,13 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     searchKeywords: ['events', 'log'],
   },
   {
+    // Diagnostics lives under Events & Logs (was Agents & Autonomy).
     id: 'tool-policy-diagnostics',
     titleKey: 'devOptions.diagnostics',
     descriptionKey: 'devOptions.toolPolicyDiagnosticsDesc',
     section: 'developer',
     devOnly: true,
-    navGroup: 'agentsAutonomy',
-  },
-  {
-    id: 'model-health',
-    titleKey: 'settings.modelHealth.title',
-    descriptionKey: 'settings.modelHealth.desc',
-    section: 'developer',
-    devOnly: true,
-    navGroup: 'modelsInference',
+    navGroup: 'diagnosticsLogs',
   },
   {
     id: 'agentbox',
@@ -687,14 +604,6 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     devOnly: true,
     navGroup: 'modelsInference',
     searchKeywords: ['agentbox', 'gmi', 'maas', 'marketplace'],
-  },
-  {
-    id: 'webhooks-debug',
-    titleKey: 'settings.developerMenu.webhooks.title',
-    descriptionKey: 'settings.developerMenu.webhooks.desc',
-    section: 'developer',
-    devOnly: true,
-    navGroup: 'automationIntegrations',
   },
   // Automation & Integrations (debug)
   {
@@ -706,14 +615,8 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     navGroup: 'automationIntegrations',
     searchKeywords: ['mcp', 'server'],
   },
-  {
-    id: 'dev-workflow',
-    titleKey: 'settings.developerMenu.devWorkflow.title',
-    descriptionKey: 'settings.developerMenu.devWorkflow.desc',
-    section: 'developer',
-    devOnly: true,
-    navGroup: 'automationIntegrations',
-  },
+  // dev-workflow (the cron-based GitHub dev-automation panel) was retired —
+  // superseded by first-level Workflows (/flows) and the skills workflow runner.
   {
     id: 'cron-jobs',
     titleKey: 'settings.developerMenu.cronJobs.title',
@@ -723,40 +626,8 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     navGroup: 'automationIntegrations',
     searchKeywords: ['cron', 'schedule', 'jobs'],
   },
-  {
-    id: 'tasks',
-    titleKey: 'settings.developerMenu.tasks.title',
-    descriptionKey: 'settings.developerMenu.tasks.desc',
-    section: 'developer',
-    devOnly: true,
-    navGroup: 'automationIntegrations',
-  },
-  {
-    // composio-triggers: renders ComposioTriagePanel — debug alias kept under Developer Options.
-    id: 'composio-triggers',
-    titleKey: 'settings.developerMenu.composio.title',
-    descriptionKey: 'settings.developerMenu.composio.desc',
-    section: 'developer',
-    devOnly: true,
-    navGroup: 'automationIntegrations',
-  },
-  // Agent debug
-  {
-    id: 'agent-chat',
-    titleKey: 'settings.developerMenu.agentChat.title',
-    descriptionKey: 'settings.developerMenu.agentChat.desc',
-    section: 'developer',
-    devOnly: true,
-    navGroup: 'agentsAutonomy',
-  },
-  {
-    id: 'local-model-debug',
-    titleKey: 'settings.developerMenu.localModelDebug.title',
-    descriptionKey: 'settings.developerMenu.localModelDebug.desc',
-    section: 'developer',
-    devOnly: true,
-    navGroup: 'agentsAutonomy',
-  },
+  // Composio trigger-triage config merged into the Connections Composio page.
+  // Agent Chat + Local Model Debug are now chips on the Connections → LLM page.
   {
     id: 'skills-runner',
     titleKey: 'settings.developerMenu.skillsRunner.title',
@@ -784,26 +655,9 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     navGroup: 'diagnosticsLogs',
   },
 
-  // Token & Cost — TokenJuice compression settings + savings statistics.
-  {
-    id: 'token-usage',
-    titleKey: 'settings.tokenUsage.title',
-    descriptionKey: 'settings.tokenUsage.menuDesc',
-    section: 'ai',
-    navGroup: 'modelsInference',
-    navOrder: 5,
-    searchKeywords: [
-      'token',
-      'tokens',
-      'cost',
-      'compression',
-      'compaction',
-      'tokenjuice',
-      'cache',
-      'ccr',
-      'savings',
-    ],
-  },
+  // Token & Cost (TokenJuice compression settings + savings) is now the
+  // "Token savings" tab of the merged Usage & limits surface on Connections —
+  // the standalone token-usage entry was retired (route redirects there).
 
   // =========================================================================
   // INTENTIONALLY HIDDEN / DEEP-LINK ONLY (not surfaced in any menu)

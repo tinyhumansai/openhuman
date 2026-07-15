@@ -30,6 +30,7 @@ import debug from 'debug';
 
 import type { WorkflowGraph } from '../../lib/flows/types';
 import type { WorkflowProposal } from '../../store/chatRuntimeSlice';
+import { trackAnalyticsEvent } from '../analytics';
 import { callCoreRpc } from '../coreRpcClient';
 
 const log = debug('flowsApi');
@@ -142,8 +143,43 @@ export interface Flow {
  */
 export interface FlowValidation {
   valid: boolean;
+  /** All structural errors in one pass (multi-error validation), not just the first. */
   errors: string[];
+  /** Structured, per-node counterpart to {@link errors} (additive). */
+  error_details?: FlowValidationErrorDetail[];
   warnings: string[];
+}
+
+/** One structured validation error (`src/openhuman/flows/types.rs::FlowValidationError`). */
+export interface FlowValidationErrorDetail {
+  /** Stable machine-readable code, e.g. `missing_trigger`, `unknown_node`. */
+  code: string;
+  /** Human-readable message (identical to the matching {@link FlowValidation.errors} entry). */
+  message: string;
+  /** The node this error anchors to, when node-specific. */
+  node_id?: string;
+  /** The offending config field, when field-specific (reserved). */
+  field?: string;
+}
+
+/** Where a {@link FlowDraft} originated (`src/openhuman/flows/types.rs::DraftOrigin`). */
+export type DraftOrigin = 'chat' | 'canvas' | 'import';
+
+/**
+ * A core-managed, durable workflow draft (`src/openhuman/flows/types.rs::FlowDraft`)
+ * — the shared working copy the agent tools and the canvas both read/write by
+ * id across turns and reloads. Never live; promote runs the normal save gates.
+ */
+export interface FlowDraft {
+  id: string;
+  /** The saved flow this draft edits, if any (promote → update vs create). */
+  flow_id?: string;
+  name: string;
+  /** Work-in-progress graph (may be incomplete/invalid) — opaque to this client. */
+  graph: unknown;
+  origin: DraftOrigin;
+  created_at: string;
+  updated_at: string;
 }
 
 /**
@@ -185,6 +221,54 @@ export interface FlowUpdate {
   name?: string;
   graph?: unknown;
   requireApproval?: boolean;
+  /**
+   * Optimistic-concurrency token: the flow's `updated_at` as last observed. If
+   * the flow changed since, the update is refused with a {@link FlowVersionConflict}
+   * error instead of clobbering. Omit for last-write-wins.
+   */
+  expectedVersion?: string;
+  /** Run the agent author hard-gates before persisting (F3). */
+  strict?: boolean;
+}
+
+/** A revision snapshot (`src/openhuman/flows/types.rs::FlowRevision`). */
+export interface FlowRevision {
+  id: string;
+  flow_id: string;
+  graph: unknown;
+  name: string;
+  require_approval: boolean;
+  created_at: string;
+}
+
+/**
+ * The structured error `flows_update` returns on an optimistic-concurrency
+ * conflict (encoded in the RPC error message as JSON). Detect it by parsing a
+ * caught update error — see {@link parseFlowVersionConflict}.
+ */
+export interface FlowVersionConflict {
+  code: 'version_conflict';
+  message: string;
+  current: Flow;
+}
+
+/**
+ * If `err` is a `flows_update` version-conflict error, returns the structured
+ * conflict (with the current server flow) so the UI can offer reload/diff;
+ * otherwise `null`.
+ */
+export function parseFlowVersionConflict(err: unknown): FlowVersionConflict | null {
+  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  if (!message.includes('version_conflict')) return null;
+  try {
+    const parsed = JSON.parse(message) as Partial<FlowVersionConflict>;
+    if (parsed?.code === 'version_conflict' && parsed.current) {
+      return parsed as FlowVersionConflict;
+    }
+  } catch {
+    // Not a JSON conflict payload.
+  }
+  return null;
 }
 
 /** Lifecycle status of a {@link FlowSuggestion} (`src/openhuman/flows/types.rs::SuggestionStatus`). */
@@ -307,6 +391,7 @@ export async function resumeFlow(
     result.thread_id,
     result.pending_approvals?.length ?? 0
   );
+  trackAnalyticsEvent('automation_run_resumed', { automation_kind: 'flow' });
   return result;
 }
 
@@ -323,6 +408,22 @@ export async function listFlowRuns(flowId: string, limit?: number): Promise<Flow
   });
   const runs = unwrapCliEnvelope<FlowRun[]>(response);
   log('listFlowRuns: response count=%d', runs.length);
+  return runs;
+}
+
+/**
+ * List the most recent runs across ALL flows, newest first, via
+ * `openhuman.flows_list_all_runs` (the aggregate "All runs" page). `limit`
+ * defaults to 100 server-side. Each run carries its `flow_id` for grouping.
+ */
+export async function listAllFlowRuns(limit?: number): Promise<FlowRun[]> {
+  log('listAllFlowRuns: request limit=%s', limit ?? 'default');
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_list_all_runs',
+    params: limit === undefined ? {} : { limit },
+  });
+  const runs = unwrapCliEnvelope<FlowRun[]>(response);
+  log('listAllFlowRuns: response count=%d', runs.length);
   return runs;
 }
 
@@ -410,6 +511,7 @@ export async function runFlow(id: string, input?: unknown): Promise<FlowResumeRe
     result.thread_id,
     result.pending_approvals?.length ?? 0
   );
+  trackAnalyticsEvent('automation_run_started', { automation_kind: 'flow' });
   return result;
 }
 
@@ -464,10 +566,40 @@ export async function updateFlow(id: string, update: FlowUpdate): Promise<Flow> 
   if (update.name !== undefined) params.name = update.name;
   if (update.graph !== undefined) params.graph = update.graph;
   if (update.requireApproval !== undefined) params.require_approval = update.requireApproval;
+  if (update.expectedVersion !== undefined) params.expected_version = update.expectedVersion;
+  if (update.strict !== undefined) params.strict = update.strict;
   const response = await callCoreRpc<unknown>({ method: 'openhuman.flows_update', params });
   const flow = unwrapCliEnvelope<Flow>(response);
   log('updateFlow: response id=%s name=%s', flow.id, flow.name);
   return flow;
+}
+
+/** List a flow's revision history via `openhuman.flows_get_history` (newest first). */
+export async function getFlowHistory(id: string, limit?: number): Promise<FlowRevision[]> {
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_get_history',
+    params: { id, limit },
+  });
+  const result = unwrapCliEnvelope<{ revisions: FlowRevision[] }>(response);
+  return result.revisions ?? [];
+}
+
+/**
+ * Roll a flow back to a prior revision via `openhuman.flows_rollback` (restores
+ * that revision's graph through the normal update path — itself snapshotted, so
+ * a rollback is undoable). Honours optimistic concurrency via `expectedVersion`.
+ */
+export async function rollbackFlow(
+  id: string,
+  revisionId: string,
+  expectedVersion?: string
+): Promise<Flow> {
+  log('rollbackFlow: request id=%s revision=%s', id, revisionId);
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_rollback',
+    params: { id, revision_id: revisionId, expected_version: expectedVersion },
+  });
+  return unwrapCliEnvelope<Flow>(response);
 }
 
 /**
@@ -532,14 +664,149 @@ export async function importFlow(
   return result;
 }
 
+// ── Catalog RPCs for the UI (Phase 5, item 16) ───────────────────────────────
+
+/** One search hit from `openhuman.flows_search_tool_catalog` (secret-free). */
+export interface ToolCatalogEntry {
+  slug: string;
+  toolkit: string;
+  description?: string | null;
+  required_args?: string[];
+  output_fields?: string[];
+  primary_array_path?: string | null;
+  /** Curated/featured toolkits rank first. */
+  featured?: boolean;
+}
+
+/** Search the live Composio tool catalog via `openhuman.flows_search_tool_catalog`. */
+export async function searchToolCatalog(
+  query: string,
+  opts?: { toolkit?: string; limit?: number }
+): Promise<ToolCatalogEntry[]> {
+  log('searchToolCatalog: query=%s toolkit=%s', query, opts?.toolkit ?? '(all)');
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_search_tool_catalog',
+    params: { query, toolkit: opts?.toolkit, limit: opts?.limit },
+    timeoutMs: 60_000,
+  });
+  const result = unwrapCliEnvelope<{ tools: ToolCatalogEntry[] }>(response);
+  return result.tools ?? [];
+}
+
+/** A toolkit a graph needs, with its connected state (Phase 5, item 18). */
+export interface RequiredConnection {
+  toolkit: string;
+  status: 'connected' | 'missing';
+}
+
+/**
+ * Compute which Composio toolkits a candidate graph needs and whether each is
+ * connected, via `openhuman.flows_required_connections` — the data behind the
+ * "Connect <toolkit>" CTAs. Also surfaced on the workflow_proposal payload.
+ */
+export async function requiredConnections(graph: unknown): Promise<RequiredConnection[]> {
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_required_connections',
+    params: { graph },
+  });
+  const result = unwrapCliEnvelope<{ required_connections: RequiredConnection[] }>(response);
+  return result.required_connections ?? [];
+}
+
+/** Fetch one action's full contract via `openhuman.flows_get_tool_contract`. */
+export async function getToolContract(slug: string): Promise<unknown> {
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_get_tool_contract',
+    params: { slug },
+    timeoutMs: 60_000,
+  });
+  const result = unwrapCliEnvelope<{ contract: unknown }>(response);
+  return result.contract;
+}
+
+// ── Core-managed drafts (F5) ─────────────────────────────────────────────────
+
+/** Create a durable draft via `openhuman.flows_draft_create`. */
+export async function createDraft(params: {
+  name: string;
+  graph: unknown;
+  flowId?: string;
+  origin?: DraftOrigin;
+}): Promise<FlowDraft> {
+  log('createDraft: request origin=%s', params.origin ?? 'canvas');
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_draft_create',
+    params: {
+      name: params.name,
+      graph: params.graph,
+      flow_id: params.flowId,
+      origin: params.origin,
+    },
+  });
+  return unwrapCliEnvelope<FlowDraft>(response);
+}
+
+/** Fetch a draft by id via `openhuman.flows_draft_get`. */
+export async function getDraft(id: string): Promise<FlowDraft> {
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_draft_get',
+    params: { id },
+  });
+  return unwrapCliEnvelope<FlowDraft>(response);
+}
+
+/** Patch a draft's name/graph/flow_id via `openhuman.flows_draft_update`. */
+export async function updateDraft(
+  id: string,
+  patch: { name?: string; graph?: unknown; flowId?: string }
+): Promise<FlowDraft> {
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_draft_update',
+    params: { id, name: patch.name, graph: patch.graph, flow_id: patch.flowId },
+  });
+  return unwrapCliEnvelope<FlowDraft>(response);
+}
+
+/** List all drafts (newest-updated first) via `openhuman.flows_draft_list`. */
+export async function listDrafts(): Promise<FlowDraft[]> {
+  const response = await callCoreRpc<unknown>({ method: 'openhuman.flows_draft_list', params: {} });
+  const result = unwrapCliEnvelope<{ drafts: FlowDraft[] }>(response);
+  return result.drafts ?? [];
+}
+
+/** Delete a draft via `openhuman.flows_draft_delete`. */
+export async function deleteDraft(id: string): Promise<boolean> {
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_draft_delete',
+    params: { id },
+  });
+  const result = unwrapCliEnvelope<{ id: string; deleted: boolean }>(response);
+  return result.deleted;
+}
+
+/**
+ * Promote a draft into a saved flow via `openhuman.flows_draft_promote` (runs
+ * the normal create/update gates, then removes the draft). Returns the Flow.
+ */
+export async function promoteDraft(id: string, requireApproval?: boolean): Promise<Flow> {
+  log('promoteDraft: request id=%s', id);
+  const response = await callCoreRpc<unknown>({
+    method: 'openhuman.flows_draft_promote',
+    params: { id, require_approval: requireApproval },
+  });
+  return unwrapCliEnvelope<Flow>(response);
+}
+
 /**
  * `openhuman.flows_discover` runs the read-only Flow Scout agent, which reasons
- * over the user's memory/threads/connections/flows and can take up to ~300s
- * server-side (`FLOW_DISCOVER_TIMEOUT_SECS` in `src/openhuman/flows/ops.rs`).
- * Give the client a matching budget so a slow discovery run doesn't time out
- * client-side while the agent is still thinking.
+ * over the user's memory/threads/connections/flows and can take up to ~600s
+ * server-side (`FLOW_DISCOVER_TIMEOUT_SECS` in `src/openhuman/flows/ops.rs`,
+ * raised to match `FLOW_BUILD_TIMEOUT_SECS` for the same iteration cap). Give
+ * the client a matching budget (mirrors {@link FLOW_BUILD_TIMEOUT_MS}) so a
+ * slow discovery run doesn't time out client-side while the agent is still
+ * thinking.
  */
-const FLOW_DISCOVER_TIMEOUT_MS = 310_000;
+const FLOW_DISCOVER_TIMEOUT_MS = 610_000;
 
 /**
  * Run the Flow Scout discovery agent via `openhuman.flows_discover` and return
@@ -619,14 +886,22 @@ export interface BuilderTurnResult {
   assistantText: string;
   /** A run error, if the turn failed but a prior proposal was still captured. */
   error: string | null;
+  /**
+   * `true` when the turn paused because it hit the agent's tool-call budget
+   * (`max_tool_iterations`) with no proposal yet — as opposed to the agent
+   * voluntarily asking a clarifying question or finishing. `assistantText` is
+   * a "Done so far / Next steps" checkpoint in this case; the UI should offer
+   * a "Continue building" action rather than rendering it as a normal reply.
+   */
+  capped: boolean;
 }
 
 /**
- * The `workflow_builder` agent can take up to ~300s server-side
+ * The `workflow_builder` agent can take up to ~600s server-side
  * (`FLOW_BUILD_TIMEOUT_SECS` in `src/openhuman/flows/ops.rs`); match it so a slow
  * authoring turn doesn't time out client-side while the agent is still working.
  */
-const FLOW_BUILD_TIMEOUT_MS = 310_000;
+const FLOW_BUILD_TIMEOUT_MS = 610_000;
 
 /**
  * Map a raw `{ type: 'workflow_proposal', … }` payload (from the agent's
@@ -702,12 +977,18 @@ export async function buildWorkflow(
     proposal: unknown;
     assistant_text: string;
     error: string | null;
+    capped?: boolean;
   }>(response);
-  log('buildWorkflow: response hasProposal=%s', result.proposal != null);
+  log(
+    'buildWorkflow: response hasProposal=%s capped=%s',
+    result.proposal != null,
+    result.capped ?? false
+  );
   return {
     proposal: mapWorkflowProposal(result.proposal),
     assistantText: result.assistant_text ?? '',
     error: result.error ?? null,
+    capped: result.capped ?? false,
   };
 }
 

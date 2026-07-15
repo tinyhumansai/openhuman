@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { loadAISettings } from '../../../../services/api/aiSettingsApi';
@@ -23,6 +24,12 @@ vi.mock('../AIPanel', () => ({
   ),
 }));
 
+vi.mock('../TokenUsagePanel', () => ({
+  default: ({ embedded }: { embedded?: boolean }) => (
+    <div data-testid="stub-token-usage" data-embedded={String(embedded ?? false)} />
+  ),
+}));
+
 vi.mock('../../../../services/api/aiSettingsApi', async () => {
   const actual = await vi.importActual<typeof import('../../../../services/api/aiSettingsApi')>(
     '../../../../services/api/aiSettingsApi'
@@ -44,6 +51,11 @@ const snapshot = { routing: {}, cloudProviders: [] } as unknown as Awaited<
   ReturnType<typeof loadAISettings>
 >;
 
+const LocationProbe = () => {
+  const location = useLocation();
+  return <output data-testid="location-probe">{`${location.search}${location.hash}`}</output>;
+};
+
 describe('UsagePanel', () => {
   beforeEach(() => {
     mockLoad.mockReset();
@@ -58,6 +70,14 @@ describe('UsagePanel', () => {
     expect(screen.getByTestId('stub-cost-dashboard')).toHaveAttribute('data-embedded', 'true');
     // Costs tab must not pay for the AI-settings snapshot.
     expect(mockLoad).not.toHaveBeenCalled();
+  });
+
+  test('#tokens hash selects the Token savings tab with the embedded TokenJuice panel', () => {
+    renderWithProviders(<UsagePanel />, { initialEntries: ['/settings/usage#tokens'] });
+
+    expect(screen.getByTestId('usage-tab-tokens')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('stub-token-usage')).toHaveAttribute('data-embedded', 'true');
+    expect(screen.queryByTestId('stub-cost-dashboard')).not.toBeInTheDocument();
   });
 
   test('#background hash selects the Background tab and renders the loop controls', async () => {
@@ -80,6 +100,22 @@ describe('UsagePanel', () => {
     await screen.findByTestId('stub-background-loops');
     expect(screen.getByTestId('usage-tab-background')).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByTestId('stub-cost-dashboard')).not.toBeInTheDocument();
+  });
+
+  test('preserves the Connections tab query when switching usage subtabs', async () => {
+    renderWithProviders(
+      <>
+        <UsagePanel />
+        <LocationProbe />
+      </>,
+      { initialEntries: ['/connections?tab=usage'] }
+    );
+
+    fireEvent.click(screen.getByTestId('usage-tab-background'));
+
+    await screen.findByTestId('stub-background-loops');
+    expect(screen.getByTestId('usage-tab-background')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('location-probe')).toHaveTextContent('?tab=usage#background');
   });
 
   test('clicking Costs from the Background tab restores the dashboard', async () => {

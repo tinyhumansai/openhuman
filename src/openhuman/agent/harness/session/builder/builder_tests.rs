@@ -125,3 +125,118 @@ fn automatic_memory_policy_does_not_synthesize_delegate_tools() {
         "orchestrator still needs synthesized delegate tools"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #4868 — `build_session_agent_inner` must resolve the iteration cap
+// from the target `AgentDefinition`'s `effective_max_iterations()`, not the
+// global `config.agent.max_tool_iterations` default. These tests drive
+// `build_session_agent_inner` directly with a hand-picked `target_def`
+// (`pub(crate)` for exactly this purpose), independent of the process-global
+// `AgentDefinitionRegistry` singleton's init-once state.
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn test_config(tmp: &tempfile::TempDir) -> crate::openhuman::config::Config {
+    let config = crate::openhuman::config::Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        ..crate::openhuman::config::Config::default()
+    };
+    std::fs::create_dir_all(&config.workspace_dir).unwrap();
+    config
+}
+
+/// Look up a real built-in `AgentDefinition` by id — loaded fresh from the
+/// bundled TOML files, entirely independent of the global registry
+/// singleton (so tests can't be poisoned by another test's
+/// `AgentDefinitionRegistry::init_global*` call, and can't poison later ones).
+fn builtin_def(id: &str) -> crate::openhuman::agent::harness::definition::AgentDefinition {
+    crate::openhuman::agent_registry::agents::load_builtins()
+        .unwrap()
+        .into_iter()
+        .find(|def| def.id == id)
+        .unwrap_or_else(|| panic!("builtin agent definition not found: {id}"))
+}
+
+#[tokio::test]
+async fn build_session_agent_applies_extended_policy_definition_cap() {
+    use crate::openhuman::agent::harness::session::types::Agent;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    assert_eq!(
+        config.agent.max_tool_iterations, 10,
+        "precondition: global default must be 10 for this test to distinguish the two"
+    );
+
+    // `code_executor` declares `iteration_policy = "extended"` with
+    // `max_iterations = 10` in its agent.toml, so its effective cap is
+    // `EXTENDED_MAX_TOOL_ITERATIONS` (50) — not the raw `max_iterations`.
+    let def = builtin_def("code_executor");
+    assert_eq!(def.effective_max_iterations(), 50);
+
+    let agent = Agent::build_session_agent_inner(
+        &config,
+        "code_executor",
+        Some(&def),
+        None,
+        None,
+        false,
+        None,
+    )
+    .expect("build_session_agent_inner should succeed for a valid extended-policy definition");
+
+    assert_eq!(
+        agent.agent_config().max_tool_iterations,
+        50,
+        "extended-policy agent must carry its definition's effective cap (50), not the global \
+         default (10)"
+    );
+}
+
+#[tokio::test]
+async fn build_session_agent_applies_strict_cap_below_global_default() {
+    use crate::openhuman::agent::harness::session::types::Agent;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    assert_eq!(config.agent.max_tool_iterations, 10);
+
+    // `archivist` is strict-policy with a declared `max_iterations = 3` —
+    // well below the global default of 10. The definition cap must still
+    // win (lowering the runtime cap), not just raise it.
+    let def = builtin_def("archivist");
+    assert_eq!(def.effective_max_iterations(), 3);
+
+    let agent =
+        Agent::build_session_agent_inner(&config, "archivist", Some(&def), None, None, false, None)
+            .expect("build_session_agent_inner should succeed for a valid strict-low definition");
+
+    assert_eq!(
+        agent.agent_config().max_tool_iterations,
+        3,
+        "strict-policy agent below the global default must still get its own (lower) cap"
+    );
+}
+
+#[tokio::test]
+async fn build_session_agent_falls_back_to_global_default_when_no_definition() {
+    use crate::openhuman::agent::harness::session::types::Agent;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    assert_eq!(config.agent.max_tool_iterations, 10);
+
+    // No `target_def` at all (e.g. registry not yet initialised, or a
+    // legacy caller that never resolved one) — must fall back to the
+    // unmodified global `config.agent.max_tool_iterations`.
+    let agent =
+        Agent::build_session_agent_inner(&config, "orchestrator", None, None, None, false, None)
+            .expect("build_session_agent_inner should succeed with no definition");
+
+    assert_eq!(
+        agent.agent_config().max_tool_iterations,
+        10,
+        "with no definition, the global config default must be used unchanged"
+    );
+}

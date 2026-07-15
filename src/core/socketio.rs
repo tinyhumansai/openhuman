@@ -1078,6 +1078,30 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     let _ = io_memory_sync.emit("flow:run_progress", &payload);
                     let _ = io_memory_sync.emit("flow_run_progress", &payload);
                 }
+                // A saved flow's definition changed (create/update/delete/
+                // enable). Broadcast so an open Workflows list/canvas refetches
+                // — most importantly, so an agent `save_workflow` becomes
+                // visible in a canvas the user has open (audit F6). Best-effort;
+                // the UI's refetch-on-focus is the backstop.
+                crate::core::event_bus::DomainEvent::FlowChanged {
+                    flow_id,
+                    kind,
+                    actor,
+                } => {
+                    let payload = serde_json::json!({
+                        "flow_id": flow_id,
+                        "kind": kind,
+                        "actor": actor,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast flow_changed flow_id={} kind={} actor={}",
+                        flow_id,
+                        kind,
+                        actor
+                    );
+                    let _ = io_memory_sync.emit("flow:changed", &payload);
+                    let _ = io_memory_sync.emit("flow_changed", &payload);
+                }
                 // A Workflow-origin tool call parked in the `ApprovalGate`
                 // (flow-approval-surface, PR2/PR3). Broadcast — not
                 // room-scoped like `ApprovalRequested`'s `approval_request`

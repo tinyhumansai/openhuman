@@ -24,6 +24,7 @@ import {
   pickNode,
   type SimLink,
   type SimNode,
+  type SimTuning,
   ZOOM_MAX,
   ZOOM_MIN,
 } from './memoryGraphLayout';
@@ -42,6 +43,8 @@ export interface PixiGraphOptions {
   fitToBounds?: boolean;
   /** Draw an always-on text label under each node (off by default). */
   showLabels?: boolean;
+  /** Optional force-simulation tuning (defaults preserve the standard layout). */
+  tuning?: SimTuning;
 }
 
 export interface PixiGraphHandle {
@@ -91,7 +94,7 @@ export async function mountPixiGraph(
   const recenter = () => world.position.set(app.screen.width / 2, app.screen.height / 2);
   recenter();
 
-  const sim = createSimulation(opts.simNodes, opts.links);
+  const sim = createSimulation(opts.simNodes, opts.links, opts.tuning);
   sim.alpha(1);
 
   let dark = opts.dark;

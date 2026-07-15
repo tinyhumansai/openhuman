@@ -71,7 +71,7 @@ pub(crate) fn is_luhn_valid(raw: &str) -> bool {
         }
         sum += v;
     }
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Validate that a dotted-quad match is a real IPv4 address (each octet 0–255).

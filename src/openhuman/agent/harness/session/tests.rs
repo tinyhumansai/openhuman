@@ -1309,3 +1309,62 @@ fn hide_tools_seeds_allowlist_when_no_filter_present() {
         "an absent hidden name is a harmless no-op; visible = {visible:?}"
     );
 }
+
+// ── Issue #4868 — `set_max_tool_iterations` post-construction override ─────
+
+/// `set_max_tool_iterations` directly overrides the runtime cap, independent
+/// of whatever the builder resolved it to.
+#[test]
+fn set_max_tool_iterations_overrides_the_builder_resolved_cap() {
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    let before = agent.agent_config().max_tool_iterations;
+
+    agent.set_max_tool_iterations(200);
+
+    assert_eq!(agent.agent_config().max_tool_iterations, 200);
+    assert_ne!(
+        200, before,
+        "sanity: the override must actually change the cap for this assertion to mean anything"
+    );
+}
+
+/// Regression for issue #4868's `skill_runtime`/`task_dispatcher` callers:
+/// both build the agent via `Agent::from_config_for_agent` (which now stamps
+/// the resolved agent definition's own `effective_max_iterations()` — 15 for
+/// `orchestrator`), then need a much larger budget (200) for a full
+/// workflow/autonomous-task run. `set_max_tool_iterations` must win over
+/// whatever the session builder resolved, so the post-construction override
+/// actually sticks instead of being silently re-clobbered.
+#[test]
+fn set_max_tool_iterations_survives_after_definition_backed_construction() {
+    use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let mut config = crate::openhuman::config::Config {
+        workspace_dir: workspace.path().to_path_buf(),
+        action_dir: workspace.path().to_path_buf(),
+        ..crate::openhuman::config::Config::default()
+    };
+    config.http_request.allowed_domains = vec!["*".to_string()];
+
+    let mut agent =
+        Agent::from_config_for_agent(&config, "orchestrator").expect("build orchestrator agent");
+    assert_eq!(
+        agent.agent_config().max_tool_iterations,
+        15,
+        "precondition: the orchestrator definition's own cap (15) is applied by the builder"
+    );
+
+    // Mirrors `skill_runtime::run_machinery`/`task_dispatcher::executor`:
+    // apply the much larger workflow/task-run budget AFTER construction.
+    const WORKFLOW_RUN_MAX_ITERATIONS: usize = 200;
+    agent.set_max_tool_iterations(WORKFLOW_RUN_MAX_ITERATIONS);
+
+    assert_eq!(
+        agent.agent_config().max_tool_iterations,
+        WORKFLOW_RUN_MAX_ITERATIONS,
+        "post-construction override must win over the definition-resolved cap"
+    );
+}

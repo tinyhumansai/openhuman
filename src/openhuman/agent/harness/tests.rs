@@ -5,10 +5,9 @@ use super::parse::{
     parse_tool_calls, parse_tool_calls_from_json_value, tools_to_openai_format,
 };
 use crate::openhuman::inference::provider::traits::ProviderCapabilities;
-use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, Provider};
-use crate::openhuman::tools::{self, Tool};
+use crate::openhuman::inference::provider::{ChatRequest, ChatResponse, Provider};
+use crate::openhuman::tools;
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 

@@ -72,11 +72,55 @@ pub fn install(
     policy
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only, **thread-scoped** [`PrivacyMode`] override. When set it wins
+    /// over the process-global policy in [`current_privacy_mode`].
+    ///
+    /// The egress-enforcement gate (privacy epic S7, #4441) reads
+    /// [`current_privacy_mode`] on every integration / network / composio /
+    /// embedding call. The process-global live policy is shared across the whole
+    /// test binary, so a test that installed `LocalOnly` into it would flake any
+    /// *other* parallel test whose tool happens to read the mode during that
+    /// window. This thread-local lets a single test exercise the gate under a
+    /// specific mode WITHOUT mutating the shared global — `#[tokio::test]` runs on
+    /// a current-thread runtime, so the tool's inline read observes the override
+    /// on the same thread while sibling tests on their own threads are unaffected.
+    static TEST_PRIVACY_MODE: std::cell::Cell<Option<PrivacyMode>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// RAII guard that restores the previous thread-local privacy override on drop.
+#[cfg(test)]
+pub(crate) struct TestPrivacyGuard(Option<PrivacyMode>);
+
+#[cfg(test)]
+impl Drop for TestPrivacyGuard {
+    fn drop(&mut self) {
+        TEST_PRIVACY_MODE.with(|c| c.set(self.0));
+    }
+}
+
+/// Override [`current_privacy_mode`] for the current thread until the returned
+/// guard drops. Test-only; needs no `TEST_ENV_LOCK` because it never touches the
+/// process-global policy.
+#[cfg(test)]
+pub(crate) fn test_privacy_scope(mode: PrivacyMode) -> TestPrivacyGuard {
+    let prev = TEST_PRIVACY_MODE.with(|c| c.replace(Some(mode)));
+    TestPrivacyGuard(prev)
+}
+
 /// The current live Privacy Mode, if a policy has been [`install`]ed. Falls back
 /// to [`PrivacyMode::Standard`] when no policy is installed (e.g. a CLI
 /// invocation that never started a session runtime) — i.e. no egress
 /// restriction by default.
 pub fn current_privacy_mode() -> PrivacyMode {
+    // Test-only per-thread override (see `TEST_PRIVACY_MODE`) wins so a test can
+    // drive the egress gate without mutating the shared process-global policy.
+    #[cfg(test)]
+    if let Some(mode) = TEST_PRIVACY_MODE.with(|c| c.get()) {
+        return mode;
+    }
     current().map(|p| p.privacy_mode).unwrap_or_default()
 }
 
@@ -366,6 +410,13 @@ mod tests {
             PrivacyMode::LocalOnly,
             "privacy mode must survive an autonomy-only reload"
         );
+
+        // Restore Standard before releasing the lock. The live policy is
+        // process-global; since S7 (#4441) the egress-enforcement gate reads
+        // `current_privacy_mode()` on every integration/network/composio/
+        // embedding call, so leaving LocalOnly installed here would block sibling
+        // mock-backend tests (which do not take TEST_ENV_LOCK) with a policy error.
+        reload_privacy(PrivacyMode::Standard).expect("restore Standard");
     }
 
     #[test]

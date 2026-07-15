@@ -165,7 +165,16 @@ interface ComposioConnectModalProps {
   onClose: () => void;
 }
 
-const POLL_INTERVAL_MS = 4_000;
+// Confirmation is purely poll-based: Composio has no deep-link callback and,
+// in direct mode, its v3 link endpoint returns no stable connection id, so we
+// must re-list connections and match by toolkit. To make the "Connected" flip
+// feel fast without hammering the backend, the cadence starts short and backs
+// off toward a cap, and a window focus / tab-visible event (the user switching
+// back from the browser after authorizing — a near-perfect "just finished"
+// signal) pokes an immediate re-poll and resets the cadence to fast.
+const POLL_INTERVAL_START_MS = 1_500;
+const POLL_INTERVAL_MAX_MS = 4_000;
+const POLL_BACKOFF_FACTOR = 1.5;
 const POLL_TIMEOUT_MS = 5 * 60 * 1_000;
 
 export default function ComposioConnectModal({
@@ -179,8 +188,11 @@ export default function ComposioConnectModal({
   const modalRef = useRef<HTMLDivElement>(null);
   const pollTimerRef = useRef<number | null>(null);
   const pollDeadlineRef = useRef<number>(0);
+  const pollIntervalRef = useRef<number>(POLL_INTERVAL_START_MS);
   const isPollingRef = useRef<boolean>(false);
   const inFlightRef = useRef<boolean>(false);
+  // Set while polling to fire an immediate re-poll (e.g. on window focus).
+  const pokePollRef = useRef<() => void>(() => {});
   const connectInFlightRef = useRef<boolean>(false);
   const [connectInFlight, setConnectInFlight] = useState(false);
 
@@ -246,6 +258,7 @@ export default function ComposioConnectModal({
 
   const stopPolling = useCallback(() => {
     isPollingRef.current = false;
+    pokePollRef.current = () => {};
     if (pollTimerRef.current != null) {
       window.clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
@@ -259,10 +272,16 @@ export default function ComposioConnectModal({
     stopPolling();
     isPollingRef.current = true;
     pollDeadlineRef.current = Date.now() + POLL_TIMEOUT_MS;
+    pollIntervalRef.current = POLL_INTERVAL_START_MS;
 
     const scheduleNext = () => {
       if (!isPollingRef.current) return;
-      pollTimerRef.current = window.setTimeout(() => void tick(), POLL_INTERVAL_MS);
+      pollTimerRef.current = window.setTimeout(() => void tick(), pollIntervalRef.current);
+      // Back off toward the cap so a long wait doesn't hammer the backend.
+      pollIntervalRef.current = Math.min(
+        POLL_INTERVAL_MAX_MS,
+        Math.round(pollIntervalRef.current * POLL_BACKOFF_FACTOR)
+      );
     };
 
     const tick = async () => {
@@ -320,10 +339,42 @@ export default function ComposioConnectModal({
       scheduleNext();
     };
 
+    // Poke an immediate re-poll (used when the window regains focus). Cancels
+    // the pending scheduled tick, resets the cadence to fast so the next few
+    // rounds are quick, and fires now. The in-flight guard inside `tick`
+    // prevents overlap if a round is already running.
+    pokePollRef.current = () => {
+      if (!isPollingRef.current || inFlightRef.current) return;
+      if (Date.now() > pollDeadlineRef.current) return;
+      if (pollTimerRef.current != null) {
+        window.clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      pollIntervalRef.current = POLL_INTERVAL_START_MS;
+      void tick();
+    };
+
     // Fire once immediately, then recurse via setTimeout once the previous
     // tick resolves. Avoids overlapping async ticks entirely.
     void tick();
   }, [onChanged, stopPolling, t, toolkit.slug]);
+
+  // When the user returns to the app after authorizing in the browser, the
+  // window regains focus / the tab becomes visible — poll immediately instead
+  // of waiting for the next scheduled tick, so the "Connected" flip feels
+  // instant. No-op unless a poll is currently active.
+  useEffect(() => {
+    const poke = () => pokePollRef.current();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') poke();
+    };
+    window.addEventListener('focus', poke);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', poke);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
 
   // If the modal opens while an OAuth handoff is already in flight
   // (status = PENDING/INITIATED/…), resume polling instead of asking

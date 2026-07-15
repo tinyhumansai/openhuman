@@ -379,11 +379,11 @@ impl SubagentPayloadSummarizer {
                 self.record_success();
                 let summary_bytes = summary.len();
                 let original_bytes = raw.len();
-                let reduction_pct = if original_bytes == 0 {
-                    0
-                } else {
-                    100usize.saturating_sub(summary_bytes.saturating_mul(100) / original_bytes)
-                };
+                let used_pct = summary_bytes
+                    .saturating_mul(100)
+                    .checked_div(original_bytes)
+                    .unwrap_or(0);
+                let reduction_pct = 100usize.saturating_sub(used_pct);
                 info!(
                     tool = tool_name,
                     original_bytes = original_bytes,

@@ -38,7 +38,7 @@ describe('Rewards page', () => {
     coreStateMock.mockReturnValue({ snapshot: { sessionToken: 'header.payload.local' } });
 
     render(
-      <MemoryRouter initialEntries={['/rewards']}>
+      <MemoryRouter initialEntries={['/rewards?view=main']}>
         <Rewards />
       </MemoryRouter>
     );
@@ -93,7 +93,7 @@ describe('Rewards page', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/?view=main']}>
         <Rewards />
       </MemoryRouter>
     );
@@ -112,7 +112,7 @@ describe('Rewards page', () => {
     rewardsApi.getMyRewards.mockRejectedValueOnce({ error: 'Backend offline' });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/?view=main']}>
         <Rewards />
       </MemoryRouter>
     );
@@ -169,7 +169,7 @@ describe('Rewards page', () => {
       });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/?view=main']}>
         <Rewards />
       </MemoryRouter>
     );
@@ -216,7 +216,7 @@ describe('Rewards page', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/?view=main']}>
         <Rewards />
       </MemoryRouter>
     );
@@ -256,7 +256,7 @@ describe('Rewards page', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/?view=main']}>
         <Rewards />
       </MemoryRouter>
     );
@@ -295,7 +295,7 @@ describe('Rewards page', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/?view=main']}>
         <Rewards />
       </MemoryRouter>
     );
@@ -372,7 +372,7 @@ describe('Rewards page', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/?view=main']}>
         <Rewards />
       </MemoryRouter>
     );
@@ -420,7 +420,7 @@ describe('Rewards page', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/?view=main']}>
         <Rewards />
       </MemoryRouter>
     );

@@ -7,11 +7,11 @@ use super::types::{
     SandboxPolicy, SandboxStatus, ELEVATED_TOOLS,
 };
 use crate::openhuman::agent::harness::definition::SandboxMode;
+use crate::openhuman::agent::platform_shell;
 use crate::openhuman::config::RuntimeConfig;
 use crate::openhuman::cwd_jail::{self, Jail, NoopBackend};
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 /// Safe environment variables forwarded into sandboxed execution.
@@ -162,8 +162,10 @@ async fn execute_unsandboxed(
     extra_env: &HashMap<String, String>,
     timeout: Duration,
 ) -> anyhow::Result<SandboxExecResult> {
-    let mut cmd = tokio::process::Command::new("sh");
-    cmd.arg("-c").arg(command);
+    // Shell selection routed through `platform_shell` so this path picks
+    // `cmd.exe /C` on Windows instead of the non-existent `sh` binary
+    // (#4705 — Windows Shell tool spawn-failed at ~30ms).
+    let mut cmd = platform_shell::build_tokio_command(command);
     cmd.current_dir(working_dir);
     cmd.env_clear();
     for var in SANDBOX_ENV_PASSTHROUGH {
@@ -216,14 +218,11 @@ async fn execute_local_jail(
 
     let stdout_file = policy.workspace_root.join(".sandbox_stdout");
     let stderr_file = policy.workspace_root.join(".sandbox_stderr");
-    let wrapped = format!(
-        "{{ {command} ; }} > '{}' 2> '{}'",
-        stdout_file.display(),
-        stderr_file.display()
-    );
-
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c").arg(&wrapped);
+    // Platform-aware output-capture wrap: `{ … ; } > … 2> …` on sh/bash,
+    // trailing `> … 2> …` on cmd.exe (no brace grouping). Shell binary is
+    // picked by `platform_shell` so this path is Windows-safe (#4705).
+    let wrapped = platform_shell::wrap_with_output_redirection(command, &stdout_file, &stderr_file);
+    let mut cmd = platform_shell::build_std_command(&wrapped);
     cmd.current_dir(working_dir);
     cmd.env_clear();
     for var in SANDBOX_ENV_PASSTHROUGH {
@@ -423,6 +422,12 @@ mod tests {
         assert_eq!(handle.status, SandboxStatus::Ready);
     }
 
+    // The `/tmp` path and Unix builtins (`false`) are Unix-only, so these
+    // integration-style tests are gated to Unix. A cross-platform
+    // `execute_unsandboxed_echo_runs_on_every_os` below exercises the same
+    // code path on Windows CI (#4705) — that is the primary regression
+    // guard for the `sh` → platform-aware shell fix.
+    #[cfg(unix)]
     #[tokio::test]
     async fn execute_unsandboxed_echo() {
         let result = execute_unsandboxed(
@@ -438,6 +443,7 @@ mod tests {
         assert!(!result.timed_out);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn execute_unsandboxed_failure() {
         let result = execute_unsandboxed(
@@ -451,6 +457,38 @@ mod tests {
         assert_ne!(result.exit_code, 0);
     }
 
+    /// #4705 regression — every OS. `execute_unsandboxed` used to
+    /// `Command::new("sh")`, which fails at `CreateProcessW` on Windows
+    /// in ~30ms because `sh` is not in PATH. `echo hello` and `exit 1`
+    /// are shell builtins on both `cmd.exe` and `sh`/`bash`, so this
+    /// exercises the real code path on Windows CI as well as Unix.
+    #[tokio::test]
+    async fn execute_unsandboxed_echo_runs_on_every_os() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let result = execute_unsandboxed(
+            "echo hello",
+            tempdir.path(),
+            &HashMap::new(),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert!(result.stdout.contains("hello"));
+        assert!(!result.timed_out);
+
+        let failing = execute_unsandboxed(
+            "exit 1",
+            tempdir.path(),
+            &HashMap::new(),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+        assert_ne!(failing.exit_code, 0);
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn execute_in_sandbox_none_backend() {
         let policy = resolve_sandbox_policy(
@@ -469,6 +507,32 @@ mod tests {
         .await
         .unwrap();
         assert!(result.success());
+        assert!(result.stdout.contains("sandbox-test"));
+    }
+
+    /// #4705 regression — `execute_in_sandbox` with the `None` backend
+    /// now delegates to `execute_unsandboxed`, which used to fail on
+    /// Windows with a ~30ms `sh`-not-found spawn error. Cross-platform
+    /// so both Unix and Windows CI catch a shell-selection regression.
+    #[tokio::test]
+    async fn execute_in_sandbox_none_backend_runs_on_every_os() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let policy = resolve_sandbox_policy(
+            SandboxMode::None,
+            tempdir.path(),
+            &RuntimeConfig::default(),
+            false,
+        );
+        let result = execute_in_sandbox(
+            &policy,
+            "echo sandbox-test",
+            tempdir.path(),
+            HashMap::new(),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+        assert!(result.success(), "stderr: {}", result.stderr);
         assert!(result.stdout.contains("sandbox-test"));
     }
 

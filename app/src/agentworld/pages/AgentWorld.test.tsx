@@ -40,6 +40,7 @@ vi.mock('../../components/layout/TwoPaneNav', () => ({
 }));
 
 vi.mock('../components/WalletAddressChip', () => ({ default: () => <span>wallet-chip</span> }));
+vi.mock('./WelcomeSection', () => ({ default: () => <div>welcome-section</div> }));
 vi.mock('./WorldSection', () => ({ default: () => <div>world-section</div> }));
 vi.mock('./FeedSection', () => ({ default: () => <div>feed-section</div> }));
 vi.mock('./LedgerSection', () => ({ default: () => <div>ledger-section</div> }));
@@ -63,11 +64,11 @@ function renderAgentWorld(path: string) {
 }
 
 describe('AgentWorld', () => {
-  test('defaults /agent-world to the TinyPlace world section', () => {
+  test('defaults /agent-world to the TinyPlace welcome landing', () => {
     renderAgentWorld('/agent-world');
 
-    expect(screen.getByTestId('selected-section')).toHaveTextContent('world');
-    expect(screen.getByText('world-section')).toBeInTheDocument();
+    expect(screen.getByTestId('selected-section')).toHaveTextContent('welcome');
+    expect(screen.getByText('welcome-section')).toBeInTheDocument();
   });
 
   test('uses framed section chrome outside the world route and navigates from the sidebar', async () => {
@@ -75,7 +76,7 @@ describe('AgentWorld', () => {
 
     expect(screen.getByTestId('selected-section')).toHaveTextContent('feed');
     expect(screen.getByText('feed-section')).toBeInTheDocument();
-    expect(container.querySelector('.max-w-6xl')).toBeInTheDocument();
+    expect(container.querySelector('.max-w-3xl')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'agentWorld.directory' }));
 

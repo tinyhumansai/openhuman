@@ -47,15 +47,16 @@ function renderRow(overrides: Partial<FlowListRowProps> = {}) {
 }
 
 describe('FlowListRow', () => {
-  it('renders the flow name and an Enabled badge when enabled', () => {
+  it('renders the flow name and reflects enabled state on the toggle', () => {
     renderRow();
     expect(screen.getByText('Daily digest')).toBeInTheDocument();
-    expect(screen.getByTestId('flow-status-flow-1')).toHaveTextContent('Enabled');
+    // The toggle is a SettingsSwitch (role=switch); state is conveyed via aria-checked.
+    expect(screen.getByTestId('flow-toggle-flow-1')).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('renders a Paused badge when disabled', () => {
+  it('reflects paused state on the toggle when disabled', () => {
     renderRow({ flow: makeFlow({ enabled: false }) });
-    expect(screen.getByTestId('flow-status-flow-1')).toHaveTextContent('Paused');
+    expect(screen.getByTestId('flow-toggle-flow-1')).toHaveAttribute('aria-checked', 'false');
   });
 
   it('shows "Never run" when the flow has no last_run_at', () => {
@@ -100,11 +101,12 @@ describe('FlowListRow', () => {
     expect(onRun).toHaveBeenCalledWith(makeFlow());
   });
 
-  it('renders a "View runs" control and calls onViewRuns with the flow when clicked', () => {
+  it('routes "View runs" through the overflow menu and calls onViewRuns when clicked', () => {
     const { onViewRuns } = renderRow();
-    const viewRunsButton = screen.getByTestId('flow-view-runs-flow-1');
-    expect(viewRunsButton).toHaveTextContent('View runs');
-    fireEvent.click(viewRunsButton);
+    // View runs is a secondary action now — behind the "⋯" menu.
+    expect(screen.queryByTestId('flow-view-runs-flow-1')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('flow-menu-flow-1'));
+    fireEvent.click(screen.getByTestId('flow-view-runs-flow-1'));
     expect(onViewRuns).toHaveBeenCalledWith(makeFlow());
   });
 
@@ -116,10 +118,11 @@ describe('FlowListRow', () => {
     expect(onView).toHaveBeenCalledWith(makeFlow());
   });
 
-  it('shows the running label and disables Run while busy', () => {
+  it('labels Run as running and disables it while busy', () => {
     renderRow({ busy: 'run' });
     const runButton = screen.getByTestId('flow-run-flow-1');
-    expect(runButton).toHaveTextContent('Running…');
+    // Run is an icon button — the running state is on the aria-label, not text.
+    expect(runButton).toHaveAttribute('aria-label', 'Running…');
     expect(runButton).toBeDisabled();
   });
 
@@ -128,8 +131,8 @@ describe('FlowListRow', () => {
     expect(screen.getByTestId('flow-toggle-flow-1')).toBeDisabled();
   });
 
-  it('routes Export / Duplicate / Delete through the overflow menu', () => {
-    const { onExport, onDuplicate, onDelete } = renderRow();
+  it('routes Export / Duplicate through the overflow menu', () => {
+    const { onExport, onDuplicate } = renderRow();
     // The secondary actions live behind the "⋯" menu, not the flat button row.
     expect(screen.queryByTestId('flow-export-flow-1')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('flow-menu-flow-1'));
@@ -142,9 +145,18 @@ describe('FlowListRow', () => {
     fireEvent.click(screen.getByTestId('flow-menu-flow-1'));
     fireEvent.click(screen.getByTestId('flow-duplicate-flow-1'));
     expect(onDuplicate).toHaveBeenCalledWith(makeFlow());
+  });
 
+  it('routes Delete through the overflow menu', () => {
+    const { onDelete } = renderRow();
+    // Delete is a destructive secondary action now — behind the "⋯" menu, not
+    // a standalone icon button in the flat row.
+    expect(screen.queryByTestId('flow-delete-flow-1')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('flow-menu-flow-1'));
-    fireEvent.click(screen.getByTestId('flow-delete-flow-1'));
+
+    const deleteItem = screen.getByTestId('flow-delete-flow-1');
+    expect(deleteItem).toHaveTextContent('Delete');
+    fireEvent.click(deleteItem);
     expect(onDelete).toHaveBeenCalledWith(makeFlow());
   });
 });

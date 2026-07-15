@@ -166,16 +166,15 @@ fn walk(v: &Value, peer_hint: Option<&str>, out: &mut Harvest, depth: u32) {
                 walk(vv, peer_hint, out, depth + 1);
             }
         }
-        Value::String(s) => {
-            // Some tweb stores persist state as JSON-encoded strings.
-            // Recurse when the shape looks plausibly JSON.
+        Value::String(s)
             if s.len() > 20
                 && (s.starts_with('{') || s.starts_with('['))
-                && (s.ends_with('}') || s.ends_with(']'))
-            {
-                if let Ok(inner) = serde_json::from_str::<Value>(s) {
-                    walk(&inner, peer_hint, out, depth + 1);
-                }
+                && (s.ends_with('}') || s.ends_with(']')) =>
+        {
+            // Some tweb stores persist state as JSON-encoded strings.
+            // Recurse when the shape looks plausibly JSON.
+            if let Ok(inner) = serde_json::from_str::<Value>(s) {
+                walk(&inner, peer_hint, out, depth + 1);
             }
         }
         _ => {}

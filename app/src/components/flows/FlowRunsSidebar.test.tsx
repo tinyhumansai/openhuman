@@ -21,6 +21,9 @@ import FlowRunsSidebar from './FlowRunsSidebar';
 const listFlowRuns = vi.hoisted(() => vi.fn());
 vi.mock('../../services/api/flowsApi', () => ({ listFlowRuns }));
 
+const fetchPendingApprovals = vi.hoisted(() => vi.fn());
+vi.mock('../../services/api/approvalApi', () => ({ fetchPendingApprovals }));
+
 // Capture the props handed to the drawer so "Fix with agent" can be invoked
 // directly without standing up the drawer's own run-polling machinery
 // (mirrors `FlowApprovalCard.test.tsx`'s stub pattern).
@@ -97,6 +100,7 @@ describe('FlowRunsSidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     inspectorDrawerProps.current = null;
+    fetchPendingApprovals.mockResolvedValue([]);
   });
 
   it('lists runs and opens the inspector drawer for the clicked run', async () => {
@@ -178,5 +182,34 @@ describe('FlowRunsSidebar', () => {
     renderSidebar();
 
     expect(await screen.findByTestId('flow-runs-sidebar-empty')).toBeInTheDocument();
+  });
+
+  it('shows "Awaiting approval" for a running run halted at an approval gate', async () => {
+    listFlowRuns.mockResolvedValue([makeRun({ status: 'running' })]);
+    fetchPendingApprovals.mockResolvedValue([
+      {
+        request_id: 'req-1',
+        tool_name: 'SLACK_SEND_MESSAGE',
+        action_summary: 'Send Slack message',
+        args_redacted: {},
+        session_id: 'session-1',
+        created_at: '2026-07-13T18:23:00Z',
+        expires_at: null,
+        source_context: { kind: 'flow', flow_id: 'flow-1', run_id: 'run-1' },
+      },
+    ]);
+    renderSidebar();
+
+    const runRow = await screen.findByTestId('flow-runs-sidebar-run-run-1');
+    await waitFor(() => expect(runRow).toHaveTextContent('Awaiting approval'));
+  });
+
+  it('leaves a running run without a matching approval labeled "Running"', async () => {
+    listFlowRuns.mockResolvedValue([makeRun({ status: 'running' })]);
+    fetchPendingApprovals.mockResolvedValue([]);
+    renderSidebar();
+
+    const runRow = await screen.findByTestId('flow-runs-sidebar-run-run-1');
+    await waitFor(() => expect(runRow).toHaveTextContent('Running'));
   });
 });

@@ -194,9 +194,11 @@ impl ComposioClient {
         // Egress spine (privacy epic S2, #4436): a Composio tool call ships the
         // (already-normalized) arguments to the third-party provider — disclose
         // the transfer before the round-trip. S4 will add an approval arm here.
-        crate::openhuman::security::egress::emit_external_transfer(
-            crate::openhuman::security::egress::EgressDescriptor::composio(tool),
-        );
+        let egress = crate::openhuman::security::egress::EgressDescriptor::composio(tool);
+        // Local-only enforcement (privacy epic S7, #4441): refuse the external
+        // tool call under LocalOnly BEFORE disclosing or sending it.
+        crate::openhuman::security::egress::enforce_egress(&egress)?;
+        crate::openhuman::security::egress::emit_external_transfer(egress);
         // PR #1827 routes all execute-side argument normalization
         // (including the bare-date → RFC 3339 fix #1802 brought to
         // `normalize_calendar_query_args` on `main`) through the
@@ -237,9 +239,11 @@ impl ComposioClient {
         // Egress spine (privacy epic S2, #4436): see `execute_tool`. This is the
         // caller-owns-retry entry point (e.g. `auth_retry`), disjoint from
         // `execute_tool`, so each logical tool call emits exactly once.
-        crate::openhuman::security::egress::emit_external_transfer(
-            crate::openhuman::security::egress::EgressDescriptor::composio(tool),
-        );
+        let egress = crate::openhuman::security::egress::EgressDescriptor::composio(tool);
+        // Local-only enforcement (privacy epic S7, #4441): same gate as
+        // `execute_tool` — this disjoint entry point must block too.
+        crate::openhuman::security::egress::enforce_egress(&egress)?;
+        crate::openhuman::security::egress::emit_external_transfer(egress);
         let arguments = super::execute_prepare::prepare_execute_arguments(tool, arguments)
             .map_err(anyhow::Error::msg)?;
         tracing::debug!(tool = %tool, "[composio] execute_tool_once (no built-in retry)");

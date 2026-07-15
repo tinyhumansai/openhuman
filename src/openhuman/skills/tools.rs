@@ -402,14 +402,17 @@ impl WorkflowCreateTool {
 #[async_trait]
 impl Tool for WorkflowCreateTool {
     fn name(&self) -> &str {
-        "create_workflow"
+        // Renamed from `create_workflow` (audit F8): "workflow" now
+        // unambiguously means a Flows automation — this scaffolds a SKILL.md
+        // *skill*. The flows domain owns `create_workflow`.
+        "create_skill"
     }
 
     fn description(&self) -> &str {
-        "Scaffold a new workflow (SKILL.md, plus skill.toml when inputs are \
-         declared). Requires `name` and `description`; optional `scope` \
-         (user|project), `tags`, `allowed_tools`, and `inputs`. Use when the \
-         user wants to capture a repeatable procedure as a packaged workflow."
+        "Scaffold a new SKILL.md skill (a packaged, repeatable procedure), plus skill.toml when \
+         inputs are declared. Requires `name` and `description`; optional `scope` (user|project), \
+         `tags`, `allowed_tools`, and `inputs`. NOTE: this creates a *skill*, not a Flows \
+         automation workflow — use create_workflow for that."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -436,9 +439,9 @@ impl Tool for WorkflowCreateTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][skills] create invoked");
         let params: CreateWorkflowParams = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("create_workflow: invalid params: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("create_skill: invalid params: {e}"))?;
         let skill = create_workflow(&self.workspace_dir, params)
-            .map_err(|e| anyhow::anyhow!("create_workflow: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("create_skill: {e}"))?;
         Ok(ToolResult::success(serde_json::to_string(&skill)?))
     }
 }
