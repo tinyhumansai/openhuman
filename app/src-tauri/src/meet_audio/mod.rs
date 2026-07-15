@@ -2,12 +2,8 @@
 //!
 //! ## Pieces
 //!
-//! - [`listen_capture`] — taps the embedded Meet webview's audio output
-//!   via the per-browser `CefAudioHandler` exposed by our vendored
-//!   `tauri-runtime-cef::audio` extension, downsamples to 16 kHz mono
-//!   PCM16LE, batches into ~100 ms chunks, and posts them to core via
-//!   `openhuman.meet_agent_push_listen_pcm`. Zero OS-level audio
-//!   permission needed: we read frames straight out of the renderer.
+//! - [`caption_listener`] — drains Meet's built-in captions through CDP
+//!   and forwards speaker-attributed lines to core.
 //!
 //! - [`speak_pump`] — drains synthesized PCM the brain enqueued (via
 //!   `openhuman.meet_agent_poll_speech`) and writes it into the
@@ -19,15 +15,12 @@
 //!
 //! [`start`] is invoked once the meet-call window has been built (in
 //! `meet_call::meet_call_open_window`). It opens the core session,
-//! registers the audio handler keyed by the call's URL, and spawns the
-//! poll-speech loop. [`stop`] runs from the window-destroyed handler:
-//! it drops the audio handler registration (which silences capture
-//! immediately), stops the speak pump, and tells core to close the
-//! session and report counters.
+//! starts the caption listener and poll-speech loop. [`stop`] runs from
+//! the window-destroyed handler: it stops both tasks and tells core to
+//! close the session and report counters.
 
 pub mod caption_listener;
 pub mod inject;
-pub mod listen_capture;
 pub mod speak_pump;
 
 use std::collections::HashMap;
@@ -54,14 +47,8 @@ impl MeetAudioState {
 /// teardown synchronously — no async drop needed because the caption
 /// listener and speak pump both shut down on signal/drop.
 ///
-/// The legacy CEF-audio `listen_capture::ListenSession` is kept as an
-/// optional field so the pre-register flow still has somewhere to
-/// hand the registration off if a future build re-enables it. In the
-/// caption-driven path it stays `None`.
 pub struct MeetAudioSession {
-    pub request_id: String,
     _captions: caption_listener::CaptionListener,
-    _legacy_listen: Option<listen_capture::ListenSession>,
     _speak: speak_pump::SpeakPump,
 }
 
@@ -229,9 +216,7 @@ pub async fn start<R: Runtime>(
         state.inner.lock().unwrap().insert(
             request_id.clone(),
             MeetAudioSession {
-                request_id: request_id.clone(),
                 _captions: captions,
-                _legacy_listen: None,
                 _speak: speak,
             },
         );
@@ -353,11 +338,8 @@ pub(crate) async fn rpc_call(
 
 /// No-op caption listener used when CDP attach failed at session
 /// start. Lets the rest of the lifecycle hold a uniform value.
-fn caption_listener_disabled(request_id: String) -> caption_listener::CaptionListener {
-    caption_listener::CaptionListener {
-        request_id,
-        _shutdown_tx: None,
-    }
+fn caption_listener_disabled(_request_id: String) -> caption_listener::CaptionListener {
+    caption_listener::CaptionListener { _shutdown_tx: None }
 }
 
 /// Trim a string for logging without panicking on multi-byte chars.

@@ -4174,6 +4174,8 @@ const messages: TranslationMap = {
   'flows.copilot.removed': '{count} removidos',
   'flows.copilot.noChanges': 'Esta proposta não altera nenhum nó.',
   'flows.copilot.accept': 'Aplicar ao rascunho',
+  'flows.copilot.acceptAndSave': 'Aceitar e salvar',
+  'flows.copilot.saving': 'Salvando…',
   'flows.copilot.reject': 'Descartar',
   'flows.copilot.previewHint': 'Revisando um rascunho proposto: nada foi salvo ainda.',
   'flows.copilot.repairDisplay': 'Uma execução falhou; analise-a e proponha uma correção.',

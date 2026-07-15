@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.61.2"
+version = "0.61.4"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -228,7 +228,7 @@ tinyagents = { path = "../../vendor/tinyagents" }
 # TinyAgents so integration work can test crate changes against OpenHuman before
 # publishing.
 tinyflows = { path = "../../vendor/tinyflows" }
-tinycortex = { path = "../../vendor/tinycortex", features = ["git-diff"] }
+tinycortex = { path = "../../vendor/tinycortex" }
 tinyjuice = { path = "../../vendor/tinyjuice" }
 tinychannels = { path = "../../vendor/tinychannels" }
 tinyplace = { path = "../../vendor/tinyplace/sdk/rust" }

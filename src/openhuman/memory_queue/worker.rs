@@ -1047,12 +1047,11 @@ mod tests {
             job.available_at_ms > Utc::now().timestamp_millis(),
             "deferred job should be rescheduled into the future"
         );
+        let defer_reason = job.last_error.as_deref().unwrap_or("");
         assert!(
-            job.last_error
-                .as_deref()
-                .unwrap_or("")
-                .contains("re-embed backfill"),
-            "defer reason should be recorded for visibility"
+            defer_reason.contains("re-embed backfill")
+                || defer_reason.contains("llm concurrency gate busy"),
+            "defer reason should identify the backfill or the shared gate: {defer_reason:?}"
         );
         assert_eq!(count_by_status(&cfg, JobStatus::Ready).unwrap(), 1);
     }

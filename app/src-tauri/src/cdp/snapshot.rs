@@ -33,35 +33,6 @@ struct CaptureSnapshot {
 struct DocumentSnap {
     #[serde(default)]
     nodes: NodeTreeSnap,
-    #[serde(default)]
-    layout: LayoutSnap,
-}
-
-/// Subset of `documents[i].layout` we care about. Each layout node
-/// references a DOM node by index and carries its `[x, y, w, h]` bounds
-/// in CSS pixels. Only populated when `includeDOMRects: true` is passed
-/// to `DOMSnapshot.captureSnapshot`.
-#[derive(Deserialize, Debug, Default)]
-struct LayoutSnap {
-    #[serde(rename = "nodeIndex", default)]
-    node_index: Vec<i32>,
-    #[serde(default)]
-    bounds: Vec<Vec<f64>>,
-}
-
-/// Element bounding rect in CSS pixels relative to the viewport.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Rect {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
-impl Rect {
-    pub fn center(self) -> (f64, f64) {
-        (self.x + self.width / 2.0, self.y + self.height / 2.0)
-    }
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -82,46 +53,38 @@ pub struct Snapshot {
     strings: Vec<String>,
     nodes: NodeTreeSnap,
     children: Vec<Vec<usize>>,
-    /// `rects[node_idx]` is `Some(Rect)` when layout info was requested
-    /// AND the node has a layout box (text + element nodes do; pure
-    /// metadata like `<head>` doesn't). `None` otherwise.
-    rects: Vec<Option<Rect>>,
 }
 
 impl Snapshot {
     /// Run `DOMSnapshot.captureSnapshot` on an attached session and return
-    /// the parsed main-document tree. Iframes are ignored — none of the
-    /// migrated providers render chat lists inside iframes.
+    /// one parsed tree containing the main document and any iframe documents.
     pub async fn capture(cdp: &mut CdpConn, session: &str) -> Result<Self, String> {
-        Self::capture_inner(cdp, session, false).await
-    }
-
-    /// Same as [`capture`] but also requests element bounding rects.
-    /// Use when the caller needs to drive `Input.dispatchMouseEvent` —
-    /// pulling rects on every snapshot adds protocol overhead, so the
-    /// cheap path stays cheap.
-    pub async fn capture_with_rects(cdp: &mut CdpConn, session: &str) -> Result<Self, String> {
-        Self::capture_inner(cdp, session, true).await
-    }
-
-    async fn capture_inner(
-        cdp: &mut CdpConn,
-        session: &str,
-        with_rects: bool,
-    ) -> Result<Self, String> {
+        log::debug!("[cdp::snapshot] capture start session={session}");
         let raw = cdp
             .call(
                 "DOMSnapshot.captureSnapshot",
-                json!({
-                    "computedStyles": [],
-                    "includePaintOrder": false,
-                    "includeDOMRects": with_rects,
-                }),
+                capture_request(),
                 Some(session),
             )
-            .await?;
-        let snap: CaptureSnapshot =
-            serde_json::from_value(raw).map_err(|e| format!("decode DOMSnapshot: {e}"))?;
+            .await
+            .map_err(|error| {
+                log::warn!("[cdp::snapshot] capture call failed session={session} error={error}");
+                error
+            })?;
+        log::debug!("[cdp::snapshot] capture call complete session={session}");
+        let snap: CaptureSnapshot = serde_json::from_value(raw).map_err(|error| {
+            log::warn!("[cdp::snapshot] decode failed session={session} error={error}");
+            format!("decode DOMSnapshot: {error}")
+        })?;
+        let snapshot = Self::from_capture(snap);
+        log::debug!(
+            "[cdp::snapshot] decode complete session={session} nodes={}",
+            snapshot.len()
+        );
+        Ok(snapshot)
+    }
+
+    fn from_capture(snap: CaptureSnapshot) -> Self {
         let strings = snap.strings;
         // Merge every document (main frame + all iframes) into a single
         // flat node array. CDP returns each frame as its own document
@@ -138,12 +101,9 @@ impl Snapshot {
         let mut merged_node_name: Vec<i32> = Vec::new();
         let mut merged_node_value: Vec<i32> = Vec::new();
         let mut merged_attributes: Vec<Vec<i32>> = Vec::new();
-        let mut merged_layout_node_index: Vec<i32> = Vec::new();
-        let mut merged_layout_bounds: Vec<Vec<f64>> = Vec::new();
         for document in snap.documents {
             let doc_offset = merged_node_type.len() as i32;
             let doc_nodes = document.nodes;
-            let doc_count = doc_nodes.node_type.len();
             for &p in &doc_nodes.parent_index {
                 merged_parent_index.push(if p < 0 { -1 } else { p + doc_offset });
             }
@@ -162,12 +122,6 @@ impl Snapshot {
             while merged_attributes.len() < merged_node_type.len() {
                 merged_attributes.push(Vec::new());
             }
-            // Per-document layout indices need the same offset.
-            for &li in &document.layout.node_index {
-                merged_layout_node_index.push(if li < 0 { -1 } else { li + doc_offset });
-            }
-            merged_layout_bounds.extend(document.layout.bounds);
-            let _ = doc_count;
         }
         let nodes = NodeTreeSnap {
             parent_index: merged_parent_index,
@@ -176,10 +130,6 @@ impl Snapshot {
             node_value: merged_node_value,
             attributes: merged_attributes,
         };
-        let layout = LayoutSnap {
-            node_index: merged_layout_node_index,
-            bounds: merged_layout_bounds,
-        };
         let count = nodes.node_type.len();
         let mut children: Vec<Vec<usize>> = vec![Vec::new(); count];
         for (i, &p) in nodes.parent_index.iter().enumerate() {
@@ -187,34 +137,11 @@ impl Snapshot {
                 children[p as usize].push(i);
             }
         }
-        let mut rects: Vec<Option<Rect>> = vec![None; count];
-        if with_rects {
-            for (layout_i, &node_i) in layout.node_index.iter().enumerate() {
-                if node_i < 0 {
-                    continue;
-                }
-                let node_i = node_i as usize;
-                if node_i >= count {
-                    continue;
-                }
-                let bounds = match layout.bounds.get(layout_i) {
-                    Some(b) if b.len() >= 4 => b,
-                    _ => continue,
-                };
-                rects[node_i] = Some(Rect {
-                    x: bounds[0],
-                    y: bounds[1],
-                    width: bounds[2],
-                    height: bounds[3],
-                });
-            }
-        }
-        Ok(Self {
+        Self {
             strings,
             nodes,
             children,
-            rects,
-        })
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -266,13 +193,6 @@ impl Snapshot {
 
     pub fn children(&self, idx: usize) -> &[usize] {
         self.children.get(idx).map(|v| v.as_slice()).unwrap_or(&[])
-    }
-
-    /// Layout rect for `idx`. `None` when the snapshot was captured
-    /// without `includeDOMRects` OR the node has no layout box (e.g.
-    /// `<head>`, comment nodes, `display:none` elements).
-    pub fn rect(&self, idx: usize) -> Option<Rect> {
-        self.rects.get(idx).copied().flatten()
     }
 
     /// Depth-first pre-order walk of every descendant of `root` (including
@@ -336,6 +256,14 @@ impl Snapshot {
     }
 }
 
+fn capture_request() -> serde_json::Value {
+    json!({
+        "computedStyles": [],
+        "includePaintOrder": false,
+        "includeDOMRects": false,
+    })
+}
+
 fn collapse_ws(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut last_space = true;
@@ -356,6 +284,51 @@ fn collapse_ws(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_request_disables_dom_rects() {
+        let request = capture_request();
+        assert_eq!(request["includeDOMRects"], false);
+        assert_eq!(request["includePaintOrder"], false);
+        assert_eq!(request["computedStyles"], json!([]));
+    }
+
+    #[test]
+    fn from_capture_offsets_documents_and_builds_child_adjacency_without_layout() {
+        let capture: CaptureSnapshot = serde_json::from_value(json!({
+            "strings": ["DIV", "first", "SPAN", "second"],
+            "documents": [
+                {
+                    "nodes": {
+                        "parentIndex": [-1, 0],
+                        "nodeType": [1, 3],
+                        "nodeName": [0, -1],
+                        "nodeValue": [-1, 1]
+                    }
+                },
+                {
+                    "nodes": {
+                        "parentIndex": [-1, 0],
+                        "nodeType": [1, 3],
+                        "nodeName": [2, -1],
+                        "nodeValue": [-1, 3]
+                    }
+                }
+            ]
+        }))
+        .expect("snapshot fixture should decode without layout data");
+
+        let snapshot = Snapshot::from_capture(capture);
+
+        assert_eq!(snapshot.len(), 4);
+        assert_eq!(snapshot.children(0), &[1]);
+        assert_eq!(snapshot.children(2), &[3]);
+        assert!(snapshot.children(1).is_empty());
+        assert_eq!(snapshot.tag(0), "DIV");
+        assert_eq!(snapshot.tag(2), "SPAN");
+        assert_eq!(snapshot.text_content(0), "first");
+        assert_eq!(snapshot.text_content(2), "second");
+    }
 
     #[test]
     fn collapse_ws_collapses_and_trims() {

@@ -23,10 +23,9 @@
 //! - `<invoke tool=…>` XML attribute form — the parser does not parse attributes;
 //!   only the tag body (JSON) is used.
 
-use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::inference::provider::traits::ProviderCapabilities;
 use crate::openhuman::inference::provider::Provider;
-use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, UsageInfo};
+use crate::openhuman::inference::provider::{ChatRequest, ChatResponse};
 use crate::openhuman::tool_timeout::parse_tool_timeout_secs;
 use crate::openhuman::tools::{Tool, ToolResult};
 use async_trait::async_trait;

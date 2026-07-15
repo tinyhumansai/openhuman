@@ -15,7 +15,7 @@ use crate::openhuman::agent::harness::session::Agent;
 
 /// One rolling-history entry handed to the LLM.
 #[derive(Debug, Clone)]
-pub(super) struct ConversationTurn {
+pub(crate) struct ConversationTurn {
     pub role: &'static str,
     pub content: String,
 }

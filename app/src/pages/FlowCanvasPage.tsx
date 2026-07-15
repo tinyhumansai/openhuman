@@ -418,6 +418,95 @@ function FlowEditor({
   // it survives any number of accept/reject/preview remounts.
   const persistedGraphRef = useRef<WorkflowGraph>(graph);
 
+  // Persist the live graph. A saved flow updates in place via `flows_update`; a
+  // draft is created via `flows_create` (the single persistence gate — an
+  // agent's `propose_workflow` never reaches this RPC), then we replace into
+  // the new flow's canonical `/flows/:id` canvas so further saves update it.
+  // Rejections propagate so the canvas surfaces the failure inline (and leaves
+  // the draft dirty).
+  //
+  // Issue B21: `flows_update` re-validates/normalizes the graph server-side
+  // (schema migration, id defaults, port normalization, etc.) before
+  // persisting, so the canonical saved shape can differ from what the client
+  // sent. Re-sync the canvas draft from the RESPONSE (not just the just-sent
+  // `next`) and bump `canvasVersion` so the editable canvas re-seeds from the
+  // canonical persisted graph immediately — matching what a navigate-away-
+  // and-back remount would show, without requiring one.
+  //
+  // Declared ahead of `handleAcceptProposal` (below), which calls it directly
+  // to persist an accepted proposal immediately.
+  const handleSave = useCallback(
+    async (next: WorkflowGraph, overrideName?: string, overrideRequireApproval?: boolean) => {
+      // `overrideName` covers the copilot-Accept call site: it calls
+      // `setName(proposal.name)` and `handleSave(...)` in the same handler,
+      // but `name` in THIS closure is still the pre-update value — React
+      // state updates don't land until the next render. Falling back to the
+      // (possibly stale) `name` keeps the normal manual-Save call site
+      // (which never passes an override) unaffected.
+      const effectiveName = overrideName ?? name;
+      // Same stale-closure concern for `requireApproval`: an accepted
+      // proposal carries its own approval policy (`WorkflowProposal.
+      // requireApproval`), which must win over the currently-loaded canvas
+      // policy — otherwise Accept would silently keep the old flow's policy
+      // instead of the one the agent proposed. A plain manual Save never
+      // passes an override, so `requireApproval` (the loaded flow's current
+      // policy) is unaffected.
+      const effectiveRequireApproval = overrideRequireApproval ?? requireApproval;
+      if (isDraft) {
+        log(
+          'save: creating draft name=%s nodes=%d edges=%d requireApproval=%s',
+          effectiveName,
+          next.nodes.length,
+          next.edges.length,
+          effectiveRequireApproval
+        );
+        const created = await createFlow(effectiveName, next, effectiveRequireApproval);
+        log('save: draft persisted as flow id=%s', created.id);
+        navigate(`/flows/${created.id}`, { replace: true });
+        return;
+      }
+      // Only include `name` / `requireApproval` in the update payload when
+      // they actually diverge from what's already persisted (a manual
+      // rename already persisted `name` via `commitRename`; a copilot-
+      // adopted placeholder name or proposal-driven policy has not) — keeps
+      // the update metadata-safe and avoids needless writes.
+      const nameChanged = effectiveName !== persistedNameRef.current;
+      const requireApprovalChanged = overrideRequireApproval !== undefined;
+      log(
+        'save: flow id=%s nodes=%d edges=%d nameChanged=%s requireApprovalChanged=%s',
+        flowId,
+        next.nodes.length,
+        next.edges.length,
+        nameChanged,
+        requireApprovalChanged
+      );
+      const updated = await updateFlow(flowId, {
+        graph: next,
+        ...(nameChanged ? { name: effectiveName } : {}),
+        ...(requireApprovalChanged ? { requireApproval: effectiveRequireApproval } : {}),
+      });
+      const persisted = updated.graph as WorkflowGraph;
+      persistedGraphRef.current = persisted;
+      persistedNameRef.current = updated.name;
+      setDraftGraph(persisted);
+      if (updated.name !== name) {
+        // Re-sync BOTH title states from the response — leaving `titleDraft`
+        // stale would show the pre-save value in the input and could
+        // resubmit it verbatim on a later blur.
+        setName(updated.name);
+        setTitleDraft(updated.name);
+      }
+      setCanvasVersion(v => v + 1);
+      log(
+        'save: flow id=%s persisted — canvas re-synced from response nodes=%d edges=%d',
+        flowId,
+        persisted.nodes.length,
+        persisted.edges.length
+      );
+    },
+    [isDraft, flowId, name, requireApproval, navigate]
+  );
+
   const handleGraphChange = useCallback(
     (next: WorkflowGraph) => {
       // Freeze the draft while a proposal is under review — the preview graph
@@ -444,18 +533,28 @@ function FlowEditor({
     [draftGraph]
   );
 
+  // Accept now REVIEWS + SAVES in one step: the canvas copilot's own inline
+  // proposal card previously only applied the proposal to the local
+  // `draftGraph` and left persistence to a separate header Save click the
+  // user rarely noticed — the proposal would look "accepted" while nothing
+  // was actually saved (confirmed live: a flow persisted as empty
+  // trigger-only after the user said "looks good"/"save it" and the agent
+  // had no further action to take). Accept now immediately persists the
+  // just-applied graph via `handleSave`, matching what a manual Save click
+  // right after Accept would have done. A failed save is non-fatal: the
+  // proposal stays applied to the (now dirty) draft and the header Save
+  // button remains the manual retry — we never crash or revert the draft.
   const handleAcceptProposal = useCallback(
-    (proposal: WorkflowProposal) => {
+    async (proposal: WorkflowProposal) => {
       log('copilot proposal accepted');
-      setDraftGraph(proposal.graph as WorkflowGraph);
+      const proposedGraph = proposal.graph as WorkflowGraph;
+      setDraftGraph(proposedGraph);
       setPreview(null);
       setCanvasVersion(v => v + 1);
 
       // Adopt the proposal's name into the flow title, but ONLY while the
       // title is still the generic placeholder — never clobber a user-chosen
-      // or description-derived meaningful name. This does not persist by
-      // itself (matching the "accept doesn't persist" invariant below) — it
-      // rides into the next Save via `name`/`handleSave`.
+      // or description-derived meaningful name.
       //
       // Check the VISIBLE `titleDraft`, not the committed `name` — `name`
       // only updates on blur/Enter via `commitRename`, so if the user is
@@ -466,6 +565,11 @@ function FlowEditor({
       // entirely while `renaming` is true — an in-flight `commitRename`
       // persist must not race with a local proposal-driven rename.
       const proposedName = proposal.name?.trim();
+      // `handleSave` closes over `name`, which — even after `setName` below —
+      // won't reflect the adopted name until the NEXT render (stale-closure
+      // pitfall). Pass it through explicitly as an override instead of
+      // relying on `name` to have updated in time.
+      let overrideName: string | undefined;
       if (
         proposedName &&
         !renaming &&
@@ -478,9 +582,28 @@ function FlowEditor({
         );
         setName(proposedName);
         setTitleDraft(proposedName);
+        overrideName = proposedName;
+      }
+
+      // Persist immediately — this is the actual fix. Do NOT route through
+      // `canvasRef.current?.save()`: the canvas is mid-remount (the
+      // `canvasVersion` bump above) so the ref's imperative handle is stale;
+      // call `handleSave` directly with the known-good proposed graph.
+      try {
+        await handleSave(proposedGraph, overrideName, proposal.requireApproval);
+        log('copilot proposal accepted: persisted');
+      } catch (err) {
+        log('copilot proposal accepted: save failed err=%o', err);
+        // Rethrow: the draft above is already applied unconditionally, so no
+        // data is lost by rethrowing. This lets the caller — the copilot
+        // panel's own `accept` handler — see the failure and skip
+        // `clearProposal()`, keeping the proposal card visible for retry
+        // instead of silently vanishing while nothing was actually saved.
+        // `acceptSaving` there still resets via its own `finally`.
+        throw err;
       }
     },
-    [titleDraft, renaming, t, isDraft]
+    [titleDraft, renaming, t, isDraft, handleSave]
   );
 
   const handleRejectProposal = useCallback(() => {
@@ -533,69 +656,6 @@ function FlowEditor({
     // re-fire the repair turn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [initialCopilotSeed]
-  );
-
-  // Persist the live graph. A saved flow updates in place via `flows_update`; a
-  // draft is created via `flows_create` (the single persistence gate — an
-  // agent's `propose_workflow` never reaches this RPC), then we replace into
-  // the new flow's canonical `/flows/:id` canvas so further saves update it.
-  // Rejections propagate so the canvas surfaces the failure inline (and leaves
-  // the draft dirty).
-  //
-  // Issue B21: `flows_update` re-validates/normalizes the graph server-side
-  // (schema migration, id defaults, port normalization, etc.) before
-  // persisting, so the canonical saved shape can differ from what the client
-  // sent. Re-sync the canvas draft from the RESPONSE (not just the just-sent
-  // `next`) and bump `canvasVersion` so the editable canvas re-seeds from the
-  // canonical persisted graph immediately — matching what a navigate-away-
-  // and-back remount would show, without requiring one.
-  const handleSave = useCallback(
-    async (next: WorkflowGraph) => {
-      if (isDraft) {
-        log(
-          'save: creating draft name=%s nodes=%d edges=%d',
-          name,
-          next.nodes.length,
-          next.edges.length
-        );
-        const created = await createFlow(name, next, requireApproval);
-        log('save: draft persisted as flow id=%s', created.id);
-        navigate(`/flows/${created.id}`, { replace: true });
-        return;
-      }
-      // Only include `name` in the update payload when it actually diverges
-      // from the last-known-persisted baseline (a manual rename already
-      // persisted it via `commitRename`; a copilot-adopted placeholder name
-      // has not) — keeps the update metadata-safe and avoids needless renames.
-      const nameChanged = name !== persistedNameRef.current;
-      log(
-        'save: flow id=%s nodes=%d edges=%d nameChanged=%s',
-        flowId,
-        next.nodes.length,
-        next.edges.length,
-        nameChanged
-      );
-      const updated = await updateFlow(flowId, { graph: next, ...(nameChanged ? { name } : {}) });
-      const persisted = updated.graph as WorkflowGraph;
-      persistedGraphRef.current = persisted;
-      persistedNameRef.current = updated.name;
-      setDraftGraph(persisted);
-      if (updated.name !== name) {
-        // Re-sync BOTH title states from the response — leaving `titleDraft`
-        // stale would show the pre-save value in the input and could
-        // resubmit it verbatim on a later blur.
-        setName(updated.name);
-        setTitleDraft(updated.name);
-      }
-      setCanvasVersion(v => v + 1);
-      log(
-        'save: flow id=%s persisted — canvas re-synced from response nodes=%d edges=%d',
-        flowId,
-        persisted.nodes.length,
-        persisted.edges.length
-      );
-    },
-    [isDraft, flowId, name, requireApproval, navigate]
   );
 
   // Warn on hard tab close / reload while there are unsaved edits.

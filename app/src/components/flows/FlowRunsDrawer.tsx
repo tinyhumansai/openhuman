@@ -29,6 +29,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useFlowRunsLiveRefresh } from '../../hooks/useFlowRunsLiveRefresh';
+import {
+  resolveDisplayStatus,
+  useRunsPendingApprovalSet,
+} from '../../hooks/useRunsPendingApprovalSet';
 import { useT } from '../../lib/i18n/I18nContext';
 import { type FlowRun, listFlowRuns } from '../../services/api/flowsApi';
 import {
@@ -142,6 +146,7 @@ export function FlowRunsDrawer({ flowId, flowName, onClose, onFixWithAgent }: Pr
   }, [flowId]);
 
   useFlowRunsLiveRefresh(runs, refetch);
+  const pendingRunIds = useRunsPendingApprovalSet(runs);
 
   useEscapeKey(
     () => {
@@ -213,6 +218,7 @@ export function FlowRunsDrawer({ flowId, flowName, onClose, onFixWithAgent }: Pr
               <ul className="space-y-2" data-testid="flow-runs-list">
                 {runs.map(run => {
                   const startedAt = formatTimestamp(run.started_at);
+                  const displayStatus = resolveDisplayStatus(run, pendingRunIds);
                   return (
                     <li key={run.id}>
                       <button
@@ -222,12 +228,12 @@ export function FlowRunsDrawer({ flowId, flowName, onClose, onFixWithAgent }: Pr
                         className="flex w-full items-center gap-2 rounded-lg border border-line bg-surface-muted px-3 py-2 text-left text-xs hover:bg-surface-hover">
                         <span
                           data-testid={`flow-run-row-dot-${run.id}`}
-                          className={`h-2 w-2 shrink-0 rounded-full ${FLOW_RUN_STATUS_DOT[run.status]}`}
+                          className={`h-2 w-2 shrink-0 rounded-full ${FLOW_RUN_STATUS_DOT[displayStatus]}`}
                           aria-hidden
                         />
                         <span
-                          className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 font-medium ${FLOW_RUN_STATUS_ACCENT[run.status]}`}>
-                          {t(FLOW_RUN_STATUS_KEY[run.status])}
+                          className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 font-medium ${FLOW_RUN_STATUS_ACCENT[displayStatus]}`}>
+                          {t(FLOW_RUN_STATUS_KEY[displayStatus])}
                         </span>
                         {startedAt && (
                           <span className="truncate text-content-muted">{startedAt}</span>

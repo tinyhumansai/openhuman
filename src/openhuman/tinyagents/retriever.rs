@@ -207,7 +207,7 @@ pub(crate) fn build_retriever(provider: Arc<dyn EmbeddingProvider>) -> Retriever
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use tinyagents::harness::events::{EventListener, EventRecord, RecordingListener};
+    use tinyagents::harness::events::{EventListener, EventRecord};
 
     use crate::openhuman::memory::{MemoryCategory, MemoryEntry, NamespaceSummary};
 

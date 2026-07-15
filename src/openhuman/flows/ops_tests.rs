@@ -2306,7 +2306,7 @@ async fn validate_tool_contracts_rejects_a_hallucinated_slug() {
             { "id": "t", "kind": "trigger", "name": "Manual" },
             { "id": "post", "kind": "tool_call", "name": "Post",
               "config": { "slug": "SLACK_POST_MESSAGE_TO_CHANNEL",
-                "args": { "channel": "#general", "text": "hi" } } }
+                "args": { "channel": "#general", "markdown_text": "hi" } } }
         ],
         "edges": [ { "from_node": "t", "to_node": "post" } ]
     }));

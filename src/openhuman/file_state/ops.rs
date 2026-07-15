@@ -1,6 +1,6 @@
 //! Operational API for the file state coordinator.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime};
 use tokio::sync::{Mutex, OwnedMutexGuard};
@@ -117,10 +117,10 @@ pub fn check_stale_read(agent_id: &str, resolved_path: &PathBuf) -> Option<Strin
 
 /// Check whether `agent_id`'s last read of `resolved_path` was partial.
 /// Returns an error message when partial, `None` when safe.
-pub fn check_partial_read(agent_id: &str, resolved_path: &PathBuf) -> Option<String> {
+pub fn check_partial_read(agent_id: &str, resolved_path: &Path) -> Option<String> {
     let coord = try_global()?;
     let reads = coord.reads.read();
-    let read_key = (agent_id.to_string(), resolved_path.clone());
+    let read_key = (agent_id.to_string(), resolved_path.to_path_buf());
     let read_stamp = reads.get(&read_key)?;
     if read_stamp.partial {
         let display_path = resolved_path.display();
@@ -138,12 +138,12 @@ pub fn check_partial_read(agent_id: &str, resolved_path: &PathBuf) -> Option<Str
 /// Acquire an async lock on `resolved_path` for a read-modify-write
 /// section. Returns an `OwnedMutexGuard` that releases when dropped.
 /// Returns `None` when the coordinator is disabled.
-pub async fn acquire_path_lock(resolved_path: &PathBuf) -> Option<OwnedMutexGuard<()>> {
+pub async fn acquire_path_lock(resolved_path: &Path) -> Option<OwnedMutexGuard<()>> {
     let coord = try_global()?;
     let mutex = {
         let mut locks = coord.path_locks.write();
         locks
-            .entry(resolved_path.clone())
+            .entry(resolved_path.to_path_buf())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     };

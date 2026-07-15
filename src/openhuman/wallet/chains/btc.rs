@@ -167,7 +167,7 @@ fn select_utxos(
     fee_sats: u64,
 ) -> Result<(Vec<EsploraUtxo>, u64), String> {
     let mut sorted = utxos.to_vec();
-    sorted.sort_by(|a, b| b.value.cmp(&a.value));
+    sorted.sort_by_key(|item| std::cmp::Reverse(item.value));
     let target = amount_sats
         .checked_add(fee_sats)
         .ok_or_else(|| "amount + fee overflow".to_string())?;

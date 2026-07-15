@@ -485,12 +485,6 @@ fn mock_upstream_router() -> Router {
 
         let checkout_url = "http://127.0.0.1/mock-checkout";
         let session_id = "cs_mock_abc";
-        if checkout_url.is_empty() || session_id.is_empty() {
-            return Err(error_json(
-                StatusCode::BAD_REQUEST,
-                "missing checkoutUrl or sessionId",
-            ));
-        }
 
         Ok(Json(json!({
             "success": true,
@@ -501,9 +495,6 @@ fn mock_upstream_router() -> Router {
     async fn stripe_portal(headers: HeaderMap) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
         require_bearer(&headers, BILLING_TOKEN)?;
         let portal_url = "http://127.0.0.1/mock-portal";
-        if portal_url.is_empty() {
-            return Err(error_json(StatusCode::BAD_REQUEST, "missing portalUrl"));
-        }
 
         Ok(Json(json!({
             "success": true,
@@ -1141,7 +1132,7 @@ async fn json_rpc_config_update_browser_settings_persists_backend() {
 
     let updated = post_json_rpc(
         &rpc_base,
-        4124_1,
+        41_241,
         "openhuman.config_update_browser_settings",
         json!({
             "enabled": true,
@@ -1167,7 +1158,7 @@ async fn json_rpc_config_update_browser_settings_persists_backend() {
         "browser backend should persist in update response: {updated_snapshot}"
     );
 
-    let get = post_json_rpc(&rpc_base, 4124_2, "openhuman.config_get", json!({})).await;
+    let get = post_json_rpc(&rpc_base, 41_242, "openhuman.config_get", json!({})).await;
     let get_result = assert_no_jsonrpc_error(&get, "config_get");
     let snapshot = peel_logs_envelope(get_result);
     assert_eq!(
@@ -1180,7 +1171,7 @@ async fn json_rpc_config_update_browser_settings_persists_backend() {
 
     let invalid = post_json_rpc(
         &rpc_base,
-        4124_3,
+        41_243,
         "openhuman.config_update_browser_settings",
         json!({
             "backend": "netscape"
@@ -1201,7 +1192,7 @@ async fn json_rpc_tokenjuice_detect_and_cache_stats() {
     // detect: a JSON array of objects classifies as `json`.
     let detect = post_json_rpc(
         &rpc_base,
-        1860_1,
+        18_601,
         "openhuman.tokenjuice_detect",
         json!({ "content": r#"[{"a":1,"b":2},{"a":3,"b":4}]"# }),
     )
@@ -1215,7 +1206,7 @@ async fn json_rpc_tokenjuice_detect_and_cache_stats() {
     // cache_stats: returns numeric occupancy fields.
     let stats = post_json_rpc(
         &rpc_base,
-        1860_2,
+        18_602,
         "openhuman.tokenjuice_cache_stats",
         json!({}),
     )
@@ -1240,7 +1231,7 @@ async fn json_rpc_tokenjuice_settings_and_savings() {
     // CCR token threshold (default 500) and the router master switch.
     let get = post_json_rpc(
         &rpc_base,
-        1861_1,
+        18_611,
         "openhuman.tokenjuice_settings_get",
         json!({}),
     )
@@ -1261,7 +1252,7 @@ async fn json_rpc_tokenjuice_settings_and_savings() {
     // settings_update: flip the CCR token threshold and confirm it round-trips.
     let updated = post_json_rpc(
         &rpc_base,
-        1861_2,
+        18_612,
         "openhuman.tokenjuice_settings_update",
         json!({ "patch": { "ccr_min_tokens": 750 } }),
     )
@@ -1278,7 +1269,7 @@ async fn json_rpc_tokenjuice_settings_and_savings() {
     // savings_stats: returns the aggregate shape (total + attribution model + cache).
     let savings = post_json_rpc(
         &rpc_base,
-        1861_3,
+        18_613,
         "openhuman.tokenjuice_savings_stats",
         json!({}),
     )
@@ -1295,7 +1286,7 @@ async fn json_rpc_tokenjuice_settings_and_savings() {
     // savings_reset: zeroes the totals.
     let reset = post_json_rpc(
         &rpc_base,
-        1861_4,
+        18_614,
         "openhuman.tokenjuice_savings_reset",
         json!({}),
     )
@@ -1312,7 +1303,7 @@ async fn json_rpc_tool_registry_lists_and_gets_entries() {
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");
 
-    let list = post_json_rpc(&rpc_base, 1848_1, "openhuman.tool_registry_list", json!({})).await;
+    let list = post_json_rpc(&rpc_base, 18_481, "openhuman.tool_registry_list", json!({})).await;
     let list_result = assert_no_jsonrpc_error(&list, "tool_registry_list");
     let tools = list_result
         .get("tools")
@@ -1359,7 +1350,7 @@ async fn json_rpc_tool_registry_lists_and_gets_entries() {
 
     let get = post_json_rpc(
         &rpc_base,
-        1848_2,
+        18_482,
         "openhuman.tool_registry_get",
         json!({ "tool_id": "tools.web_search" }),
     )
@@ -1381,7 +1372,7 @@ async fn json_rpc_tool_registry_lists_and_gets_entries() {
 
     let missing = post_json_rpc(
         &rpc_base,
-        1848_3,
+        18_483,
         "openhuman.tool_registry_get",
         json!({ "tool_id": "missing.tool" }),
     )
@@ -1405,7 +1396,7 @@ async fn json_rpc_monitor_list_and_read_surface() {
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");
 
-    let list = post_json_rpc(&rpc_base, 3371_1, "openhuman.monitor_list", json!({})).await;
+    let list = post_json_rpc(&rpc_base, 33_711, "openhuman.monitor_list", json!({})).await;
     let list_result = assert_no_jsonrpc_error(&list, "monitor_list");
     let monitors = list_result
         .get("monitors")
@@ -1418,7 +1409,7 @@ async fn json_rpc_monitor_list_and_read_surface() {
 
     let missing = post_json_rpc(
         &rpc_base,
-        3371_2,
+        33_712,
         "openhuman.monitor_read",
         json!({ "monitor_id": "mon_missing" }),
     )
@@ -1447,7 +1438,7 @@ async fn json_rpc_harness_init_status_returns_snapshot_envelope() {
     // attempt real Python/Node/spaCy downloads).
     let resp = post_json_rpc(
         &rpc_base,
-        4471_1,
+        44_711,
         "openhuman.harness_init_status",
         json!({}),
     )
@@ -1500,7 +1491,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let list = post_json_rpc(
         &rpc_base,
-        2862_1,
+        28_621,
         "openhuman.agent_registry_list",
         json!({ "include_disabled": true }),
     )
@@ -1525,7 +1516,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let definitions = post_json_rpc(
         &rpc_base,
-        2862_1_1,
+        286_211,
         "openhuman.agent_list_definitions",
         json!({}),
     )
@@ -1560,7 +1551,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let missing = post_json_rpc(
         &rpc_base,
-        2862_10,
+        286_210,
         "openhuman.agent_registry_get",
         json!({ "id": "does_not_exist" }),
     )
@@ -1572,7 +1563,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let update_default = post_json_rpc(
         &rpc_base,
-        2862_11,
+        286_211,
         "openhuman.agent_registry_update",
         json!({
             "id": "researcher",
@@ -1604,7 +1595,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let update_missing = post_json_rpc(
         &rpc_base,
-        2862_12,
+        286_212,
         "openhuman.agent_registry_update",
         json!({ "id": "missing_agent", "enabled": false }),
     )
@@ -1622,7 +1613,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let disabled = post_json_rpc(
         &rpc_base,
-        2862_2,
+        28_622,
         "openhuman.agent_registry_set_enabled",
         json!({ "id": "code_executor", "enabled": false }),
     )
@@ -1645,7 +1636,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let visible = post_json_rpc(
         &rpc_base,
-        2862_3,
+        28_623,
         "openhuman.agent_registry_list",
         json!({}),
     )
@@ -1664,7 +1655,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let all_after_disable = post_json_rpc(
         &rpc_base,
-        2862_13,
+        286_213,
         "openhuman.agent_registry_list",
         json!({ "include_disabled": true }),
     )
@@ -1689,7 +1680,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let reenabled = post_json_rpc(
         &rpc_base,
-        2862_14,
+        286_214,
         "openhuman.agent_registry_set_enabled",
         json!({ "id": "code_executor", "enabled": true }),
     )
@@ -1704,7 +1695,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let disabled_orchestrator = post_json_rpc(
         &rpc_base,
-        2862_31,
+        286_231,
         "openhuman.agent_registry_set_enabled",
         json!({ "id": "orchestrator", "enabled": false }),
     )
@@ -1724,7 +1715,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let update_orchestrator_disabled = post_json_rpc(
         &rpc_base,
-        2862_32,
+        286_232,
         "openhuman.agent_registry_update",
         json!({ "id": "orchestrator", "enabled": false }),
     )
@@ -1744,7 +1735,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let created = post_json_rpc(
         &rpc_base,
-        2862_4,
+        28_624,
         "openhuman.agent_registry_create_custom",
         json!({
             "id": "custom_writer",
@@ -1780,7 +1771,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let get_custom = post_json_rpc(
         &rpc_base,
-        2862_5,
+        28_625,
         "openhuman.agent_registry_get",
         json!({ "id": "custom_writer" }),
     )
@@ -1797,7 +1788,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let updated_custom = post_json_rpc(
         &rpc_base,
-        2862_15,
+        286_215,
         "openhuman.agent_registry_update",
         json!({
             "id": "custom_writer",
@@ -1838,7 +1829,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let reenabled_custom = post_json_rpc(
         &rpc_base,
-        2862_16,
+        286_216,
         "openhuman.agent_registry_set_enabled",
         json!({ "id": "custom_writer", "enabled": true }),
     )
@@ -1853,7 +1844,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let full_upsert = post_json_rpc(
         &rpc_base,
-        2862_17,
+        286_217,
         "openhuman.agent_registry_upsert_custom",
         json!({
             "agent": {
@@ -1901,7 +1892,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let visible_after_custom_disable = post_json_rpc(
         &rpc_base,
-        2862_18,
+        286_218,
         "openhuman.agent_registry_list",
         json!({}),
     )
@@ -1922,7 +1913,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let default_collision = post_json_rpc(
         &rpc_base,
-        2862_6,
+        28_626,
         "openhuman.agent_registry_create_custom",
         json!({
             "id": "orchestrator",
@@ -1946,7 +1937,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let removed_reviewer = post_json_rpc(
         &rpc_base,
-        2862_19,
+        286_219,
         "openhuman.agent_registry_remove",
         json!({ "id": "custom_reviewer" }),
     )
@@ -1960,7 +1951,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let removed_custom = post_json_rpc(
         &rpc_base,
-        2862_7,
+        28_627,
         "openhuman.agent_registry_remove",
         json!({ "id": "custom_writer" }),
     )
@@ -1976,7 +1967,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let removed_missing = post_json_rpc(
         &rpc_base,
-        2862_20,
+        286_220,
         "openhuman.agent_registry_remove",
         json!({ "id": "missing_agent" }),
     )
@@ -1990,7 +1981,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let reset_default = post_json_rpc(
         &rpc_base,
-        2862_21,
+        286_221,
         "openhuman.agent_registry_remove",
         json!({ "id": "researcher" }),
     )
@@ -2004,7 +1995,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let reset_code_executor = post_json_rpc(
         &rpc_base,
-        2862_22,
+        286_222,
         "openhuman.agent_registry_remove",
         json!({ "id": "code_executor" }),
     )
@@ -2021,7 +2012,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
 
     let code_executor = post_json_rpc(
         &rpc_base,
-        2862_23,
+        286_223,
         "openhuman.agent_registry_get",
         json!({ "id": "code_executor" }),
     )
@@ -2038,7 +2029,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
     // a {name, description} pair whose name is a valid tool_allowlist value.
     let available_tools = post_json_rpc(
         &rpc_base,
-        2862_24,
+        286_224,
         "openhuman.agent_registry_available_tools",
         json!({}),
     )
@@ -2201,12 +2192,11 @@ async fn json_rpc_protocol_auth_and_agent_hello_inner() {
         Some(thread_id)
     );
     assert!(
-        sse_event
+        !sse_event
             .get("full_response")
             .and_then(Value::as_str)
             .unwrap_or_default()
-            .len()
-            > 0,
+            .is_empty(),
         "expected non-empty chat_done response payload: {sse_event}"
     );
 
@@ -3011,7 +3001,7 @@ async fn json_rpc_thread_goal_lifecycle() {
     // Pull the `{ goal }` payload out of either response shape: a bare
     // `{ goal }` (get) or the `{ result: { goal }, logs }` CLI envelope
     // (mutations).
-    fn goal_of<'a>(result: &'a Value) -> Option<&'a Value> {
+    fn goal_of(result: &Value) -> Option<&Value> {
         let envelope = result.get("result").unwrap_or(result);
         envelope.get("goal").filter(|g| !g.is_null())
     }
@@ -5535,9 +5525,9 @@ async fn json_rpc_web_chat_custom_chat_provider_with_auth_none_omits_auth_header
     )
     .await;
     assert_no_jsonrpc_error(&update, "update_model_settings");
-    let cfg = post_json_rpc(&rpc_base, 6102_1, "openhuman.config_get", json!({})).await;
+    let cfg = post_json_rpc(&rpc_base, 61_021, "openhuman.config_get", json!({})).await;
     let cfg_outer = assert_no_jsonrpc_error(&cfg, "config_get auth-none");
-    let cfg_payload = cfg_outer.get("result").unwrap_or(&cfg_outer);
+    let cfg_payload = cfg_outer.get("result").unwrap_or(cfg_outer);
     let config = cfg_payload.get("config").unwrap_or(cfg_payload);
     assert_eq!(
         config.get("chat_provider").and_then(Value::as_str),
@@ -6079,7 +6069,7 @@ async fn json_rpc_app_state_update_local_state_round_trips_into_snapshot() {
     )
     .await;
     let update_result = assert_no_jsonrpc_error(&update, "app_state_update_local_state");
-    let updated_state = update_result.get("result").unwrap_or(&update_result);
+    let updated_state = update_result.get("result").unwrap_or(update_result);
     assert_eq!(
         updated_state.get("encryptionKey").and_then(Value::as_str),
         Some("secret-key")
@@ -6087,7 +6077,7 @@ async fn json_rpc_app_state_update_local_state_round_trips_into_snapshot() {
 
     let snapshot = post_json_rpc(&rpc_base, 10042, "openhuman.app_state_snapshot", json!({})).await;
     let snapshot_result = assert_no_jsonrpc_error(&snapshot, "app_state_snapshot after update");
-    let body = snapshot_result.get("result").unwrap_or(&snapshot_result);
+    let body = snapshot_result.get("result").unwrap_or(snapshot_result);
     let local_state = body
         .get("localState")
         .and_then(Value::as_object)
@@ -6275,7 +6265,7 @@ async fn json_rpc_wallet_execution_surface_round_trips() {
     )
     .await;
     let body = assert_no_jsonrpc_error(&assets, "wallet_supported_assets");
-    let result = body.get("result").unwrap_or(&body);
+    let result = body.get("result").unwrap_or(body);
     let list = result.as_array().expect("supported_assets array");
     // Pin the actual expected multi-chain catalog (not just a lower bound) so a
     // regression that silently drops a network is caught.
@@ -6320,7 +6310,7 @@ async fn json_rpc_wallet_execution_surface_round_trips() {
     // chain_status: every chain is configured, so the provider row is ready.
     let cs = post_json_rpc(&rpc_base, 2003, "openhuman.wallet_chain_status", json!({})).await;
     let body = assert_no_jsonrpc_error(&cs, "wallet_chain_status");
-    let result = body.get("result").unwrap_or(&body);
+    let result = body.get("result").unwrap_or(body);
     let rows = result.as_array().expect("chain_status array");
     // 6 EVM rows (one per L2 / mainnet, incl. BNB Chain) + 3 non-EVM chains.
     assert_eq!(rows.len(), 9);
@@ -6335,7 +6325,7 @@ async fn json_rpc_wallet_execution_surface_round_trips() {
     // BTC + Solana + Tron = 6.
     let balances = post_json_rpc(&rpc_base, 2004, "openhuman.wallet_balances", json!({})).await;
     let body = assert_no_jsonrpc_error(&balances, "wallet_balances");
-    let result = body.get("result").unwrap_or(&body);
+    let result = body.get("result").unwrap_or(body);
     let rows = result.as_array().expect("balances array");
     assert_eq!(rows.len(), 6);
     assert_eq!(
@@ -6369,7 +6359,7 @@ async fn json_rpc_wallet_execution_surface_round_trips() {
     )
     .await;
     let body = assert_no_jsonrpc_error(&prep, "wallet_prepare_transfer");
-    let result = body.get("result").unwrap_or(&body);
+    let result = body.get("result").unwrap_or(body);
     let quote_id = result
         .get("quoteId")
         .and_then(Value::as_str)
@@ -6406,7 +6396,7 @@ async fn json_rpc_wallet_execution_surface_round_trips() {
     )
     .await;
     let body = assert_no_jsonrpc_error(&exec, "wallet_execute_prepared");
-    let result = body.get("result").unwrap_or(&body);
+    let result = body.get("result").unwrap_or(body);
     assert_eq!(
         result.get("status").and_then(Value::as_str),
         Some("broadcasted"),
@@ -6482,7 +6472,7 @@ async fn json_rpc_wallet_tx_reads_and_web3_gates_round_trip() {
     )
     .await;
     let body = assert_no_jsonrpc_error(&status, "wallet_tx_status");
-    let result = body.get("result").unwrap_or(&body);
+    let result = body.get("result").unwrap_or(body);
     assert_eq!(
         result.get("state").and_then(Value::as_str),
         Some("confirmed")
@@ -6497,7 +6487,7 @@ async fn json_rpc_wallet_tx_reads_and_web3_gates_round_trip() {
     )
     .await;
     let body = assert_no_jsonrpc_error(&receipt, "wallet_tx_receipt");
-    let result = body.get("result").unwrap_or(&body);
+    let result = body.get("result").unwrap_or(body);
     assert_eq!(result.get("success").and_then(Value::as_bool), Some(true));
     assert_eq!(result.get("gasUsed").and_then(Value::as_str), Some("21000"));
 
@@ -6510,7 +6500,7 @@ async fn json_rpc_wallet_tx_reads_and_web3_gates_round_trip() {
     )
     .await;
     let body = assert_no_jsonrpc_error(&lookup, "wallet_lookup_tx");
-    let result = body.get("result").unwrap_or(&body);
+    let result = body.get("result").unwrap_or(body);
     assert_eq!(result.get("found").and_then(Value::as_bool), Some(true));
 
     // web3_bridge rejects same-chain requests. This gate runs *before* any
@@ -7110,7 +7100,7 @@ async fn json_rpc_wallet_tron_prepare_execute_round_trips() {
     );
     assert_eq!(
         exec_result.get("transactionHash").and_then(Value::as_str),
-        Some(format!("{}", "cd".repeat(32)).as_str()),
+        Some("cd".repeat(32).to_string().as_str()),
     );
     // Native TRX must go through createtransaction, NOT triggersmartcontract.
     let create_hits = *tron_mock.state.create_hits.lock().unwrap();
@@ -12158,8 +12148,7 @@ async fn json_rpc_task_sources_crud_and_status() {
 mod task_sources_stub {
     use async_trait::async_trait;
     use openhuman_core::openhuman::memory_sync::composio::providers::{
-        ComposioProvider, NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome,
-        SyncReason, TaskFetchFilter,
+        ComposioProvider, NormalizedTask, ProviderContext, ProviderUserProfile, TaskFetchFilter,
     };
 
     pub struct StubGithubProvider {
@@ -13785,7 +13774,7 @@ async fn json_rpc_memory_sync_settings_roundtrip_interval_and_manual() {
     )
     .await;
     let initial_outer = assert_no_jsonrpc_error(&initial, "get_memory_sync_settings initial");
-    let initial_result = initial_outer.get("result").unwrap_or(&initial_outer);
+    let initial_result = initial_outer.get("result").unwrap_or(initial_outer);
     assert!(
         initial_result.get("sync_interval_secs").map(Value::is_null) == Some(true),
         "default stored value should be null, envelope: {initial_outer}"
@@ -13810,7 +13799,7 @@ async fn json_rpc_memory_sync_settings_roundtrip_interval_and_manual() {
     )
     .await;
     let update_outer = assert_no_jsonrpc_error(&update, "update_memory_sync_settings 4h");
-    let update_result = update_outer.get("result").unwrap_or(&update_outer);
+    let update_result = update_outer.get("result").unwrap_or(update_outer);
     assert_eq!(
         update_result
             .get("sync_interval_secs")
@@ -13832,7 +13821,7 @@ async fn json_rpc_memory_sync_settings_roundtrip_interval_and_manual() {
     )
     .await;
     let after_outer = assert_no_jsonrpc_error(&after, "get_memory_sync_settings after 4h");
-    let after_result = after_outer.get("result").unwrap_or(&after_outer);
+    let after_result = after_outer.get("result").unwrap_or(after_outer);
     assert_eq!(
         after_result
             .get("sync_interval_secs")
@@ -13850,7 +13839,7 @@ async fn json_rpc_memory_sync_settings_roundtrip_interval_and_manual() {
     )
     .await;
     let manual_outer = assert_no_jsonrpc_error(&manual, "update_memory_sync_settings manual");
-    let manual_result = manual_outer.get("result").unwrap_or(&manual_outer);
+    let manual_result = manual_outer.get("result").unwrap_or(manual_outer);
     assert_eq!(
         manual_result.get("is_manual").and_then(Value::as_bool),
         Some(true),
@@ -13866,7 +13855,7 @@ async fn json_rpc_memory_sync_settings_roundtrip_interval_and_manual() {
     )
     .await;
     let manual_get_outer = assert_no_jsonrpc_error(&manual_get, "get_memory_sync_settings manual");
-    let manual_get_result = manual_get_outer.get("result").unwrap_or(&manual_get_outer);
+    let manual_get_result = manual_get_outer.get("result").unwrap_or(manual_get_outer);
     assert_eq!(
         manual_get_result.get("is_manual").and_then(Value::as_bool),
         Some(true),
@@ -13918,7 +13907,7 @@ async fn json_rpc_memory_sync_settings_env_override_is_reflected() {
     )
     .await;
     let outer = assert_no_jsonrpc_error(&resp, "get_memory_sync_settings env-override");
-    let result = outer.get("result").unwrap_or(&outer);
+    let result = outer.get("result").unwrap_or(outer);
     assert_eq!(
         result.get("sync_interval_secs").and_then(Value::as_u64),
         Some(28_800),
@@ -14517,7 +14506,7 @@ async fn json_rpc_workflow_run_engine_executes_builtin_to_completion_inner() {
     // Authenticate so the child agents' provider has a backend session.
     let store = post_json_rpc(
         &rpc_base,
-        37_500_1,
+        375_001,
         "openhuman.auth_store_session",
         json!({ "token": "e2e-test-jwt", "user_id": "e2e-user" }),
     )
@@ -14527,7 +14516,7 @@ async fn json_rpc_workflow_run_engine_executes_builtin_to_completion_inner() {
     // Sanity: the builtin definition is listed.
     let defs = post_json_rpc(
         &rpc_base,
-        37_500_2,
+        375_002,
         "openhuman.workflow_run_list_definitions",
         json!({}),
     )
@@ -14548,7 +14537,7 @@ async fn json_rpc_workflow_run_engine_executes_builtin_to_completion_inner() {
     // `modelOverride` pin → every phase hits the mock chat-completions route.
     let start = post_json_rpc(
         &rpc_base,
-        37_500_3,
+        375_003,
         "openhuman.workflow_run_start",
         json!({
             "definitionId": definition_id,
@@ -14662,7 +14651,7 @@ async fn json_rpc_agent_team_live_member_run_roundtrip_inner() {
     // Authenticate so the spawned workers' provider has a backend session.
     let store = post_json_rpc(
         &rpc_base,
-        38_000_1,
+        380_001,
         "openhuman.auth_store_session",
         json!({ "token": "e2e-test-jwt", "user_id": "e2e-user" }),
     )
@@ -14672,7 +14661,7 @@ async fn json_rpc_agent_team_live_member_run_roundtrip_inner() {
     // Lead creates a team with two named teammates.
     let created = post_json_rpc(
         &rpc_base,
-        38_000_2,
+        380_002,
         "openhuman.agent_team_create",
         json!({
             "leadAgentId": "lead",
@@ -14709,7 +14698,7 @@ async fn json_rpc_agent_team_live_member_run_roundtrip_inner() {
     // Task A (no deps) owned by alice; Task B depends on A, owned by bob.
     let assign_a = post_json_rpc(
         &rpc_base,
-        38_000_3,
+        380_003,
         "openhuman.agent_team_assign_task",
         json!({ "teamId": team_id, "title": "Task A", "ownerMemberId": alice_id, "dependsOn": [] }),
     )
@@ -14722,7 +14711,7 @@ async fn json_rpc_agent_team_live_member_run_roundtrip_inner() {
         .to_string();
     let assign_b = post_json_rpc(
         &rpc_base,
-        38_000_4,
+        380_004,
         "openhuman.agent_team_assign_task",
         json!({ "teamId": team_id, "title": "Task B", "ownerMemberId": bob_id, "dependsOn": [task_a_id.clone()] }),
     )
@@ -14737,7 +14726,7 @@ async fn json_rpc_agent_team_live_member_run_roundtrip_inner() {
     // Lead messages a named teammate (fromMemberId omitted → lead origin).
     let msg = post_json_rpc(
         &rpc_base,
-        38_000_5,
+        380_005,
         "openhuman.agent_team_message_member",
         json!({ "teamId": team_id, "toMemberId": alice_id, "content": "please start Task A" }),
     )
@@ -14747,7 +14736,7 @@ async fn json_rpc_agent_team_live_member_run_roundtrip_inner() {
     // Start alice live on Task A → kind "started".
     let start_a = post_json_rpc(
         &rpc_base,
-        38_000_6,
+        380_006,
         "openhuman.agent_team_start_member",
         json!({ "teamId": team_id, "memberId": alice_id, "taskId": task_a_id, "modelOverride": "e2e-mock-model" }),
     )
@@ -14770,7 +14759,7 @@ async fn json_rpc_agent_team_live_member_run_roundtrip_inner() {
     // With A done, start bob live on Task B.
     let start_b = post_json_rpc(
         &rpc_base,
-        38_000_7,
+        380_007,
         "openhuman.agent_team_start_member",
         json!({ "teamId": team_id, "memberId": bob_id, "taskId": task_b_id, "modelOverride": "e2e-mock-model" }),
     )
@@ -14792,7 +14781,7 @@ async fn json_rpc_agent_team_live_member_run_roundtrip_inner() {
     // lead message is in the team timeline.
     let got = post_json_rpc(
         &rpc_base,
-        38_000_8,
+        380_008,
         "openhuman.agent_team_get",
         json!({ "teamId": team_id }),
     )
@@ -14833,7 +14822,7 @@ async fn json_rpc_agent_team_live_member_run_roundtrip_inner() {
 
     let messages = post_json_rpc(
         &rpc_base,
-        38_000_9,
+        380_009,
         "openhuman.agent_team_list_messages",
         json!({ "teamId": team_id }),
     )

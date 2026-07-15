@@ -454,6 +454,12 @@ describe('FlowCanvasPage copilot proposal name adoption', () => {
     listFlowConnections.mockReset();
     validateFlow.mockResolvedValue({ valid: true, errors: [], warnings: [] });
     listFlowConnections.mockResolvedValue([]);
+    // Accept now persists immediately (review + save in one step, see
+    // `handleAcceptProposal`) — default every test to a successful save so
+    // tests that only care about the title/name adoption aren't tripped up
+    // by an unmocked (`undefined`-resolving) `updateFlow`/`createFlow`.
+    updateFlow.mockResolvedValue(makeFlow());
+    createFlow.mockResolvedValue(makeFlow({ id: 'created-id' }));
   });
 
   function renderEditor(id = 'test-id') {
@@ -467,47 +473,51 @@ describe('FlowCanvasPage copilot proposal name adoption', () => {
     );
   }
 
+  // `handleAcceptProposal` is async (it awaits the persist call) — drive it
+  // through `act(async () => …)` so React flushes every state update the
+  // resulting save produces before the test asserts on them.
+  function acceptProposal(proposal: WorkflowProposal = makeProposal()) {
+    return act(async () => {
+      await (copilotPanelProps.current?.onAccept as (p: WorkflowProposal) => Promise<void>)(
+        proposal
+      );
+    });
+  }
+
   it('adopts the proposal name when the title is the generic placeholder', async () => {
     getFlow.mockResolvedValue(makeFlow({ name: 'New workflow' }));
+    updateFlow.mockResolvedValue(makeFlow({ name: 'Standup reminder' }));
     renderEditor();
     await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
     expect(screen.getByTestId('flow-canvas-title')).toHaveValue('New workflow');
 
-    act(() => {
-      (copilotPanelProps.current?.onAccept as (p: WorkflowProposal) => void)(makeProposal());
-    });
+    await acceptProposal();
 
-    await waitFor(() =>
-      expect(screen.getByTestId('flow-canvas-title')).toHaveValue('Standup reminder')
-    );
+    expect(screen.getByTestId('flow-canvas-title')).toHaveValue('Standup reminder');
   });
 
   it('adopts the proposal name when the title is blank', async () => {
     getFlow.mockResolvedValue(makeFlow({ name: '' }));
+    updateFlow.mockResolvedValue(makeFlow({ name: 'Standup reminder' }));
     renderEditor();
     await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
 
-    act(() => {
-      (copilotPanelProps.current?.onAccept as (p: WorkflowProposal) => void)(makeProposal());
-    });
+    await acceptProposal();
 
-    await waitFor(() =>
-      expect(screen.getByTestId('flow-canvas-title')).toHaveValue('Standup reminder')
-    );
+    expect(screen.getByTestId('flow-canvas-title')).toHaveValue('Standup reminder');
   });
 
   it('does not clobber a user-set title when accepting a proposal', async () => {
     getFlow.mockResolvedValue(makeFlow({ name: 'My flow' }));
+    // The name is unchanged by this accept, so the accept-triggered save's
+    // response echoes it back unchanged too — matching a real server, which
+    // only touches `name` when it's part of the update payload.
+    updateFlow.mockResolvedValue(makeFlow({ name: 'My flow' }));
     renderEditor();
     await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
 
-    act(() => {
-      (copilotPanelProps.current?.onAccept as (p: WorkflowProposal) => void)(makeProposal());
-    });
+    await acceptProposal();
 
-    // Give any (incorrect) state update a chance to flush, then assert the
-    // title is unchanged.
-    await Promise.resolve();
     expect(screen.getByTestId('flow-canvas-title')).toHaveValue('My flow');
   });
 
@@ -518,6 +528,9 @@ describe('FlowCanvasPage copilot proposal name adoption', () => {
   // VISIBLE `titleDraft`, or it clobbers in-progress typing.
   it('does not clobber an in-progress (uncommitted) title edit when accepting a proposal', async () => {
     getFlow.mockResolvedValue(makeFlow({ name: 'New workflow' }));
+    // The uncommitted edit never reaches `name`, so the accept-triggered
+    // save's payload/response name is unchanged from the loaded flow.
+    updateFlow.mockResolvedValue(makeFlow({ name: 'New workflow' }));
     renderEditor();
     await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
 
@@ -527,67 +540,53 @@ describe('FlowCanvasPage copilot proposal name adoption', () => {
     });
     expect(screen.getByTestId('flow-canvas-title')).toHaveValue('My in-progress title');
 
-    act(() => {
-      (copilotPanelProps.current?.onAccept as (p: WorkflowProposal) => void)(makeProposal());
-    });
+    await acceptProposal();
 
-    await Promise.resolve();
     expect(screen.getByTestId('flow-canvas-title')).toHaveValue('My in-progress title');
   });
 
-  it('includes the adopted name in the flows_update payload on Save (persisted flow)', async () => {
+  it('Accept on an existing flow fires updateFlow(flowId, { graph, name }) immediately, with no separate Save click', async () => {
     getFlow.mockResolvedValue(makeFlow({ name: 'New workflow' }));
     updateFlow.mockResolvedValue(makeFlow({ name: 'Standup reminder' }));
     renderEditor();
     await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
 
-    act(() => {
-      (copilotPanelProps.current?.onAccept as (p: WorkflowProposal) => void)(makeProposal());
-    });
-    await waitFor(() =>
-      expect(screen.getByTestId('flow-canvas-title')).toHaveValue('Standup reminder')
-    );
+    await acceptProposal();
 
-    fireEvent.click(screen.getByTestId('flow-editor-save'));
-    fireEvent.click(screen.getByTestId('flow-action-confirm-accept'));
-
-    await waitFor(() => expect(updateFlow).toHaveBeenCalledTimes(1));
+    expect(updateFlow).toHaveBeenCalledTimes(1);
     const [calledId, update] = updateFlow.mock.calls[0];
     expect(calledId).toBe('test-id');
     expect(update.name).toBe('Standup reminder');
     expect(update.graph).toBeDefined();
+    // The accept-triggered save re-syncs the canvas from the response and
+    // clears the dirty baseline — no lingering "Unsaved changes" badge, and
+    // no manual Save click was fired to get here.
+    expect(screen.queryByTestId('flow-editor-dirty')).not.toBeInTheDocument();
   });
 
   // Regression (CodeRabbit on #4886): accepting a proposal that changes only
   // the top-level `name` (graph unchanged) previously left the editor's dirty
   // state false — since the graph-only diff saw no change — so Save stayed
-  // disabled and the adopted title could never be persisted.
-  it('marks the editor dirty when an accepted proposal changes only the name', async () => {
+  // disabled and the adopted title could never be persisted. Accept now saves
+  // immediately regardless of dirty tracking, so this asserts the
+  // accept-triggered save still fires — and carries the adopted name — even
+  // when the graph itself didn't change.
+  it('persists a name-only accepted proposal (graph unchanged) via the accept-triggered save', async () => {
     const flow = makeFlow({ name: 'New workflow' });
     getFlow.mockResolvedValue(flow);
+    updateFlow.mockResolvedValue(makeFlow({ name: 'Standup reminder' }));
     renderEditor();
     await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
 
     // Clean on load.
     expect(screen.queryByTestId('flow-editor-dirty')).not.toBeInTheDocument();
 
-    act(() => {
-      (copilotPanelProps.current?.onAccept as (p: WorkflowProposal) => void)(
-        makeProposal({ name: 'Standup reminder', graph: flow.graph })
-      );
-    });
+    await acceptProposal(makeProposal({ name: 'Standup reminder', graph: flow.graph }));
 
     await waitFor(() =>
       expect(screen.getByTestId('flow-canvas-title')).toHaveValue('Standup reminder')
     );
-    // Graph is byte-identical to the persisted baseline — only the name
-    // changed — but the editor must still report dirty so Save is enabled.
-    await waitFor(() => expect(screen.getByTestId('flow-editor-dirty')).toBeInTheDocument());
-
-    fireEvent.click(screen.getByTestId('flow-editor-save'));
-    fireEvent.click(screen.getByTestId('flow-action-confirm-accept'));
-
-    await waitFor(() => expect(updateFlow).toHaveBeenCalledTimes(1));
+    expect(updateFlow).toHaveBeenCalledTimes(1);
     const [, update] = updateFlow.mock.calls[0];
     expect(update.name).toBe('Standup reminder');
   });
@@ -596,30 +595,35 @@ describe('FlowCanvasPage copilot proposal name adoption', () => {
   // differs from what was submitted (server-side normalization), the title
   // input must re-sync to the persisted value too — not just the committed
   // `name` — or the stale draft can be resubmitted verbatim on a later blur.
-  it('re-syncs titleDraft from the persisted response name on Save', async () => {
+  // Covers F2: `handleSave` re-syncing both `name` and `titleDraft` from the
+  // server response name.
+  it('re-syncs titleDraft from the persisted response name on the accept-triggered save', async () => {
     getFlow.mockResolvedValue(makeFlow({ name: 'New workflow' }));
     updateFlow.mockResolvedValue(makeFlow({ name: 'Standup Reminder (normalized)' }));
     renderEditor();
     await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
 
-    act(() => {
-      (copilotPanelProps.current?.onAccept as (p: WorkflowProposal) => void)(makeProposal());
-    });
-    await waitFor(() =>
-      expect(screen.getByTestId('flow-canvas-title')).toHaveValue('Standup reminder')
-    );
+    await acceptProposal();
 
-    fireEvent.click(screen.getByTestId('flow-editor-save'));
-    fireEvent.click(screen.getByTestId('flow-action-confirm-accept'));
-
-    await waitFor(() => expect(updateFlow).toHaveBeenCalledTimes(1));
+    // The visible input (`titleDraft`) must reflect the server-normalized
+    // name, not just the committed `name` — otherwise a later blur would
+    // resubmit the stale, pre-normalization value.
     await waitFor(() =>
       expect(screen.getByTestId('flow-canvas-title')).toHaveValue('Standup Reminder (normalized)')
     );
+    expect(updateFlow).toHaveBeenCalledTimes(1);
   });
 
-  it('passes the adopted name to createFlow on Save (draft flow)', async () => {
+  // Regression for the CodeRabbit finding: the accepted PROPOSAL's own
+  // `requireApproval` policy must reach `createFlow`, not the draft route's
+  // pre-existing value — otherwise Accept would silently keep the old canvas
+  // policy instead of the one the agent proposed. Route state deliberately
+  // uses the OPPOSITE value from the proposal so a test that reads the
+  // route's value (the pre-fix bug) fails loudly instead of passing by
+  // coincidence.
+  it('Accept on a draft canvas fires createFlow(name, graph, requireApproval) using the PROPOSAL policy and navigates to /flows/<id>', async () => {
     createFlow.mockResolvedValue(makeFlow({ id: 'created-id', name: 'Standup reminder' }));
+    getFlow.mockResolvedValue(makeFlow({ id: 'created-id', name: 'Standup reminder' }));
     render(
       <MemoryRouter
         initialEntries={[
@@ -642,6 +646,9 @@ describe('FlowCanvasPage copilot proposal name adoption', () => {
                 ],
                 edges: [],
               },
+              // Route (pre-existing draft) policy is FALSE — the opposite of
+              // the proposal below — so the assertion can't pass by both
+              // values coincidentally matching.
               requireApproval: false,
             },
           },
@@ -655,20 +662,92 @@ describe('FlowCanvasPage copilot proposal name adoption', () => {
     await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
     expect(screen.getByTestId('flow-canvas-title')).toHaveValue('New workflow');
 
-    act(() => {
-      (copilotPanelProps.current?.onAccept as (p: WorkflowProposal) => void)(makeProposal());
-    });
-    await waitFor(() =>
-      expect(screen.getByTestId('flow-canvas-title')).toHaveValue('Standup reminder')
-    );
+    // Proposal policy is TRUE — must be what reaches `createFlow`.
+    await acceptProposal(makeProposal({ requireApproval: true }));
 
-    fireEvent.click(screen.getByTestId('flow-editor-save'));
-    fireEvent.click(screen.getByTestId('flow-action-confirm-accept'));
-
-    await waitFor(() => expect(createFlow).toHaveBeenCalledTimes(1));
-    const [name] = createFlow.mock.calls[0];
+    expect(createFlow).toHaveBeenCalledTimes(1);
+    const [name, graph, requireApproval] = createFlow.mock.calls[0];
     expect(name).toBe('Standup reminder');
+    expect(graph).toBeDefined();
+    expect(requireApproval).toBe(true);
     expect(updateFlow).not.toHaveBeenCalled();
+
+    // `handleSave`'s draft-create path replaces into the new flow's canonical
+    // route — Accept alone drives that navigation, matching what a manual
+    // Save click right after Accept used to require.
+    await waitFor(() => expect(getFlow).toHaveBeenCalledWith('created-id'));
+  });
+
+  it('Accept on a saved flow fires updateFlow with the PROPOSAL requireApproval policy', async () => {
+    // The loaded flow's persisted policy is FALSE; the accepted proposal's
+    // is TRUE — the update payload must carry the proposal's value, not
+    // silently keep the flow's current one.
+    getFlow.mockResolvedValue(makeFlow({ require_approval: false }));
+    updateFlow.mockResolvedValue(makeFlow({ require_approval: true }));
+    renderEditor();
+    await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+
+    await acceptProposal(makeProposal({ requireApproval: true }));
+
+    expect(updateFlow).toHaveBeenCalledTimes(1);
+    expect(updateFlow).toHaveBeenCalledWith(
+      'test-id',
+      expect.objectContaining({ requireApproval: true })
+    );
+  });
+
+  // Regression test for the review finding (F1, HIGH): `handleAcceptProposal`
+  // used to swallow a failed accept-triggered save (log + no rethrow), so
+  // `onAccept` always resolved — the copilot panel's `clearProposal()` always
+  // ran, and the proposal card silently vanished on a real save failure with
+  // no way to retry (its own catch branch was dead code). This test fails
+  // without the rethrow (the promise resolves instead of rejecting) and
+  // passes with it.
+  it('rethrows an accept-triggered save failure so the caller can leave the proposal visible for retry', async () => {
+    getFlow.mockResolvedValue(makeFlow({ name: 'My flow' }));
+    updateFlow.mockRejectedValue(new Error('network unreachable'));
+    renderEditor();
+    await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+    expect(screen.queryByTestId('flow-editor-dirty')).not.toBeInTheDocument();
+
+    // Catch INSIDE `act()` (rather than via `expect(...).rejects`, which lets
+    // the rejection escape the `act()` scope unhandled) so React still
+    // flushes the synchronous draft/preview updates `handleAcceptProposal`
+    // makes before the failed `await handleSave(...)` — otherwise the
+    // assertions below would race an incomplete render.
+    let caughtErr: unknown;
+    await act(async () => {
+      try {
+        await (copilotPanelProps.current?.onAccept as (p: WorkflowProposal) => Promise<void>)(
+          makeProposal()
+        );
+      } catch (err) {
+        caughtErr = err;
+      }
+    });
+
+    // This is the fix under test: without the rethrow, `caughtErr` stays
+    // `undefined` and this assertion fails.
+    expect(caughtErr).toBeInstanceOf(Error);
+    expect((caughtErr as Error).message).toBe('network unreachable');
+
+    // The draft is already applied before `handleSave` is even attempted, so
+    // rethrowing loses no data: the proposal's graph is still on the canvas
+    // (2 nodes: the original trigger + the proposal's agent node), dirty,
+    // with the header Save button enabled as the manual retry — matching
+    // what `WorkflowCopilotPanel`'s own catch branch (which skips
+    // `clearProposal()` on rejection) relies on to keep the card visible.
+    //
+    // These three assertions land on state derived from the REMOUNTED canvas
+    // (`handleAcceptProposal` bumps `canvasVersion`, which changes the
+    // `<FlowCanvas key=...>` and forces a fresh child mount) — its own
+    // mount-time effects (`onDirtyChange`/`onSaveMetaChange`) can settle on a
+    // later microtask/effect flush than the outer `act()` above guarantees,
+    // so poll via `waitFor` instead of asserting immediately (this was
+    // observed to occasionally race in CI).
+    await waitFor(() => expect(screen.getAllByTestId('flow-node')).toHaveLength(2));
+    await waitFor(() => expect(screen.getByTestId('flow-editor-dirty')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('flow-editor-save')).not.toBeDisabled());
   });
 });
 

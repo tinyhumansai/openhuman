@@ -148,8 +148,9 @@ pub fn prune_legacy_default_workflows(workspace_dir: &Path) {
 /// `run_workflow`) returned "unknown workflow" for anything created via the UI.
 ///
 /// Per dir: `skill.toml` (id / `when_to_use` / `[[inputs]]` / `[github]`)
-/// + the `SKILL.md` body as the inline system prompt; or, when there's no
-/// `skill.toml`, a synthesized SKILL.md-only definition so a bare workflow is
+/// + the `SKILL.md` body as the inline system prompt.
+///
+/// Without `skill.toml`, a synthesized SKILL.md-only definition means a bare workflow is
 /// still runnable. A bad `skill.toml` falls back to the SKILL.md-only form.
 pub fn load_workflows(workspace_dir: &Path) -> Vec<WorkflowDefinition> {
     // Prune any legacy bundled skills an older build left behind so discover's
