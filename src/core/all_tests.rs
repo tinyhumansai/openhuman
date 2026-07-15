@@ -253,6 +253,7 @@ fn schema_for_rpc_method_finds_security_policy_info() {
 }
 
 #[test]
+#[cfg(feature = "mcp")]
 fn schema_for_rpc_method_finds_internal_mcp_audit_list() {
     let schema = schema_for_rpc_method("openhuman.mcp_audit_list");
     assert!(
@@ -864,5 +865,59 @@ fn group_mapping_smoke() {
     assert_eq!(group_for_namespace("wallet"), Some(DomainGroup::Web3));
     assert_eq!(group_for_namespace("meet"), Some(DomainGroup::Meet));
     // Internal-only registry is grouped too (mcp_audit → Mcp).
+    // Compiled out with the `mcp` feature: `group_for_namespace` reads the LIVE
+    // registry, and the gate unregisters the mcp_audit controller entirely.
+    #[cfg(feature = "mcp")]
     assert_eq!(group_for_namespace("mcp_audit"), Some(DomainGroup::Mcp));
+}
+
+// --- `mcp` compile-time gate (#4799) ------------------------------------
+
+/// With the `mcp` feature ON (the default / shipped desktop build), both MCP
+/// namespaces are registered: `mcp_clients` (the dynamic Smithery registry,
+/// agent-facing) and `mcp_audit` (the write-audit log, internal-only).
+///
+/// Paired with `mcp_namespaces_absent_when_gate_off` below so the gate is
+/// pinned in BOTH directions — an assert that only ever runs in one build
+/// configuration cannot prove a gate works.
+#[test]
+#[cfg(feature = "mcp")]
+fn mcp_namespaces_registered_when_gate_on() {
+    assert_eq!(
+        group_for_namespace("mcp_clients"),
+        Some(DomainGroup::Mcp),
+        "with `mcp` compiled in, the dynamic registry's `mcp_clients` \
+         namespace must be registered"
+    );
+    assert_eq!(
+        group_for_namespace("mcp_audit"),
+        Some(DomainGroup::Mcp),
+        "with `mcp` compiled in, the internal `mcp_audit` namespace must be \
+         registered"
+    );
+}
+
+/// With the `mcp` feature OFF, both MCP namespaces are gone from the live
+/// registry — every `openhuman.mcp_clients_*` / `openhuman.mcp_audit_*` method
+/// is an unknown method over `/rpc` and absent from `/schema`.
+///
+/// This is the compile-time analogue of the runtime `DomainSet::mcp` filter:
+/// `DomainSet` can hide these namespaces at runtime, this feature removes the
+/// code that backs them altogether. Note the stubs make this work with NO
+/// `#[cfg]` in `src/core/all.rs` — the aggregators simply return empty vecs.
+#[test]
+#[cfg(not(feature = "mcp"))]
+fn mcp_namespaces_absent_when_gate_off() {
+    assert_eq!(
+        group_for_namespace("mcp_clients"),
+        None,
+        "with `mcp` compiled out, the `mcp_clients` namespace must not be \
+         registered — the stub aggregator returns an empty vec"
+    );
+    assert_eq!(
+        group_for_namespace("mcp_audit"),
+        None,
+        "with `mcp` compiled out, the internal `mcp_audit` namespace must not \
+         be registered — the stub aggregator returns an empty vec"
+    );
 }
