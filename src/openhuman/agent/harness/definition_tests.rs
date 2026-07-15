@@ -376,6 +376,8 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
         ("tools_agent", 50),
         ("flow_discovery", 50),
         ("workflow_builder", 50),
+        // Compiled out with the `skills` gate — see `openhuman::skills::stub`.
+        #[cfg(feature = "skills")]
         ("skill_executor", 50),
         ("tinyplace_agent", 50),
         ("subconscious", 30),
@@ -404,6 +406,8 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
         ("vision_agent", 6),
         // Unchanged.
         ("presentation_agent", 10),
+        // Compiled out with the `skills` gate — see `openhuman::skills::stub`.
+        #[cfg(feature = "skills")]
         ("skill_setup", 10),
     ];
 
