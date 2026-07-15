@@ -23,6 +23,9 @@ import { FlowRunsDrawer } from './FlowRunsDrawer';
 const listFlowRuns = vi.hoisted(() => vi.fn());
 vi.mock('../../services/api/flowsApi', () => ({ listFlowRuns }));
 
+const fetchPendingApprovals = vi.hoisted(() => vi.fn());
+vi.mock('../../services/api/approvalApi', () => ({ fetchPendingApprovals }));
+
 const FlowRunInspectorDrawer = vi.hoisted(() => vi.fn());
 vi.mock('./FlowRunInspectorDrawer', () => ({
   FLOW_RUN_STATUS_ACCENT: {
@@ -87,6 +90,7 @@ function renderDrawer(flowId: string | null, onClose: () => void, flowName?: str
 describe('FlowRunsDrawer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    fetchPendingApprovals.mockResolvedValue([]);
   });
 
   it('renders null when flowId is null', () => {
@@ -121,6 +125,41 @@ describe('FlowRunsDrawer', () => {
 
     const row = await screen.findByTestId('flow-run-row-run-1');
     expect(row).toHaveTextContent('Completed with warnings');
+  });
+
+  it('shows "Awaiting approval" for a running run halted at a matching flow approval gate', async () => {
+    listFlowRuns.mockResolvedValue([makeRun({ id: 'run-1', status: 'running' })]);
+    fetchPendingApprovals.mockResolvedValue([
+      {
+        request_id: 'req-1',
+        tool_name: 'SLACK_SEND_MESSAGE',
+        action_summary: 'Send Slack message',
+        args_redacted: {},
+        session_id: 'session-1',
+        created_at: '2026-01-01T00:00:00Z',
+        expires_at: null,
+        source_context: { kind: 'flow', flow_id: 'flow-1', run_id: 'run-1' },
+      },
+    ]);
+    renderDrawer('flow-1', vi.fn());
+
+    const row = await screen.findByTestId('flow-run-row-run-1');
+    await waitFor(() => expect(row).toHaveTextContent('Awaiting approval'));
+    expect(screen.getByTestId('flow-run-row-dot-run-1').className.includes('dot-pending')).toBe(
+      true
+    );
+  });
+
+  it('leaves a running run without a matching flow approval labeled "Running"', async () => {
+    listFlowRuns.mockResolvedValue([makeRun({ id: 'run-1', status: 'running' })]);
+    fetchPendingApprovals.mockResolvedValue([]);
+    renderDrawer('flow-1', vi.fn());
+
+    const row = await screen.findByTestId('flow-run-row-run-1');
+    await waitFor(() => expect(row).toHaveTextContent('Running'));
+    expect(screen.getByTestId('flow-run-row-dot-run-1').className.includes('dot-running')).toBe(
+      true
+    );
   });
 
   it('falls back to a generic title when no flowName is given', async () => {

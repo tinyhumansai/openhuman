@@ -1192,10 +1192,10 @@ impl Tool for PolymarketTool {
         // rejected by the CLOB. Credential derivation is similarly
         // single-flight (see ensure_clob_credentials OnceCell). Reads remain
         // concurrency-safe.
-        match args.get("action").and_then(Value::as_str) {
-            Some("place_order") | Some("cancel_order") => false,
-            _ => true,
-        }
+        !matches!(
+            args.get("action").and_then(Value::as_str),
+            Some("place_order") | Some("cancel_order")
+        )
     }
 
     async fn execute(&self, args: Value) -> Result<ToolResult> {

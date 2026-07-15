@@ -18,6 +18,3 @@ pub(crate) fn recover_corrupt_db(config: &Config) -> Result<bool> {
     log::warn!("[memory:chunks] checking corrupt database recovery");
     tinycortex::memory::chunks::recover_corrupt_db(&engine_config(config))
 }
-
-#[cfg(test)]
-pub(crate) use tinycortex::memory::chunks::{is_transient_cold_start, try_cleanup_stale_files};

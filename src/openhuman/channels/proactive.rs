@@ -112,10 +112,13 @@ impl ProactiveMessageSubscriber {
 /// unit tests — so [`set_runtime_active_channel`] is a no-op there and never
 /// leaks across the parallel test suite. The choice is also persisted to
 /// `config.channels_config.active_channel`, which seeds the handle on next start.
-static ACTIVE_CHANNEL_HANDLE: std::sync::OnceLock<RwLock<Option<Arc<RwLock<Option<String>>>>>> =
+type ActiveChannelHandle = Arc<RwLock<Option<String>>>;
+type ActiveChannelHandleSlot = RwLock<Option<ActiveChannelHandle>>;
+
+static ACTIVE_CHANNEL_HANDLE: std::sync::OnceLock<ActiveChannelHandleSlot> =
     std::sync::OnceLock::new();
 
-fn active_channel_handle_slot() -> &'static RwLock<Option<Arc<RwLock<Option<String>>>>> {
+fn active_channel_handle_slot() -> &'static ActiveChannelHandleSlot {
     ACTIVE_CHANNEL_HANDLE.get_or_init(|| RwLock::new(None))
 }
 

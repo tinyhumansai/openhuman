@@ -491,7 +491,7 @@ impl Agent {
             )?;
         let supports_native = resolved_chat_model
             .profile()
-            .map_or(true, |profile| profile.tool_calling);
+            .is_none_or(|profile| profile.tool_calling);
         log::info!(
             "[session-builder] agent_id={} provider_role={} resolved_model={} supports_native_tools={}",
             agent_id,

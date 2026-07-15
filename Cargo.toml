@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.61.2"
+version = "0.61.4"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -399,6 +399,19 @@ e2e-test-support = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
+
+# These project-wide shape/documentation lints describe intentional public APIs
+# and long-standing module docs. Keep them explicitly baselined so `-D warnings`
+# can make every other Clippy and rustc diagnostic a hard failure.
+[lints.clippy]
+borrowed_box = "allow"
+doc_overindented_list_items = "allow"
+field_reassign_with_default = "allow"
+large_enum_variant = "allow"
+result_large_err = "allow"
+should_implement_trait = "allow"
+too_many_arguments = "allow"
+while_let_loop = "allow"
 
 # Fix whisper-rs-sys CRT mismatch on Windows MSVC (LNK2038).
 # Upstream cmake build defaults to /MD but Rust uses /MT.

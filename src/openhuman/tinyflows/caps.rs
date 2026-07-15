@@ -591,6 +591,7 @@ impl LlmProvider for OpenHumanLlm {
 ///    the node builds a real session agent
 ///    ([`Agent::from_config_for_agent`](crate::openhuman::agent::Agent::from_config_for_agent)
 ///    + `set_agent_definition_name`) and drives one full turn via
+///
 ///    [`Agent::run_single`](crate::openhuman::agent::Agent::run_single) — the
 ///    complete tool loop. The definition's `ToolScope` / `sandbox_mode` /
 ///    `max_iterations` govern the turn, so an agent node gains its curated

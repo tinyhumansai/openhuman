@@ -9,6 +9,7 @@ pub use tinyagents::harness::embeddings::{
     DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL,
 };
 
+#[derive(Default)]
 pub struct OllamaEmbedding {
     inner: OllamaEmbeddingModel,
 }
@@ -30,14 +31,6 @@ impl OllamaEmbedding {
 
     pub fn model(&self) -> &str {
         self.inner.model()
-    }
-}
-
-impl Default for OllamaEmbedding {
-    fn default() -> Self {
-        Self {
-            inner: OllamaEmbeddingModel::default(),
-        }
     }
 }
 
