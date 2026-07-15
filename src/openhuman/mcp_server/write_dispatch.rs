@@ -142,11 +142,11 @@ pub(super) async fn dispatch_write_tool(
 fn audit_write(config: &Config, record: NewMcpWriteRecord) {
     let config = config.clone();
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        let _ = handle.spawn_blocking(move || {
+        std::mem::drop(handle.spawn_blocking(move || {
             if let Err(err) = mcp_audit::record_write(&config, record) {
                 log::warn!("[mcp_server] mcp write audit insert failed: {err}");
             }
-        });
+        }));
     } else {
         let _ = std::thread::spawn(move || {
             if let Err(err) = mcp_audit::record_write(&config, record) {
@@ -203,7 +203,7 @@ pub(super) fn audit_write_rejection_without_config(
     let args_summary = summarize_write_args(&tool_name, audit_arguments);
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
-            let _ = handle.spawn(async move {
+            std::mem::drop(handle.spawn(async move {
                 match config_rpc::load_config_with_timeout().await {
                     Ok(config) => audit_write(
                         &config,
@@ -223,7 +223,7 @@ pub(super) fn audit_write_rejection_without_config(
                         err
                     ),
                 }
-            });
+            }));
         }
         Err(err) => log::warn!(
             "[mcp_server] write rejection audit skipped tool={} runtime unavailable error={}",

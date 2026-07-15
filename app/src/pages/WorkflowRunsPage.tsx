@@ -13,6 +13,10 @@ import { useNavigate } from 'react-router-dom';
 import PanelPage from '../components/layout/PanelPage';
 import { CenteredLoadingState, ErrorBanner } from '../components/ui/LoadingState';
 import { useFlowRunsLiveRefresh } from '../hooks/useFlowRunsLiveRefresh';
+import {
+  resolveDisplayStatus,
+  useRunsPendingApprovalSet,
+} from '../hooks/useRunsPendingApprovalSet';
 import { useT } from '../lib/i18n/I18nContext';
 import {
   type Flow,
@@ -77,6 +81,7 @@ export default function WorkflowRunsPage() {
   }, []);
 
   useFlowRunsLiveRefresh(runs, refetchRuns);
+  const pendingRunIds = useRunsPendingApprovalSet(runs);
 
   const statusLabel = (status: FlowRunStatus) =>
     t(`flows.allRuns.status.${status}`, status.replace(/_/g, ' '));
@@ -101,31 +106,34 @@ export default function WorkflowRunsPage() {
           <ul
             className="divide-y divide-line rounded-xl border border-line"
             data-testid="workflow-runs-list">
-            {runs.map(run => (
-              <li key={run.id}>
-                <button
-                  type="button"
-                  data-testid={`workflow-run-${run.id}`}
-                  onClick={() => navigate(`/flows/${run.flow_id}`)}
-                  className="flex w-full items-center gap-3 p-3 text-left hover:bg-surface-hover">
-                  <span
-                    className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_CLASS[run.status]}`}>
-                    {statusLabel(run.status)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-content">
-                    {flowNames[run.flow_id] ?? t('flows.allRuns.unknownWorkflow')}
-                  </span>
-                  <span className="flex-shrink-0 text-[11px] text-content-faint">
-                    {new Date(run.started_at).toLocaleString()}
-                  </span>
-                </button>
-                {run.error && (
-                  <p className="px-3 pb-2 text-[11px] text-coral-600 dark:text-coral-300">
-                    {run.error}
-                  </p>
-                )}
-              </li>
-            ))}
+            {runs.map(run => {
+              const displayStatus = resolveDisplayStatus(run, pendingRunIds);
+              return (
+                <li key={run.id}>
+                  <button
+                    type="button"
+                    data-testid={`workflow-run-${run.id}`}
+                    onClick={() => navigate(`/flows/${run.flow_id}`)}
+                    className="flex w-full items-center gap-3 p-3 text-left hover:bg-surface-hover">
+                    <span
+                      className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_CLASS[displayStatus]}`}>
+                      {statusLabel(displayStatus)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-content">
+                      {flowNames[run.flow_id] ?? t('flows.allRuns.unknownWorkflow')}
+                    </span>
+                    <span className="flex-shrink-0 text-[11px] text-content-faint">
+                      {new Date(run.started_at).toLocaleString()}
+                    </span>
+                  </button>
+                  {run.error && (
+                    <p className="px-3 pb-2 text-[11px] text-coral-600 dark:text-coral-300">
+                      {run.error}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

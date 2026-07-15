@@ -409,7 +409,7 @@ fn snapshot_agent_definitions(
         .collect()
 }
 
-pub(crate) fn prepare_spawn_parallel_tasks_from_defs(
+pub(super) fn prepare_spawn_parallel_tasks_from_defs(
     tasks: Vec<ParallelAgentTask>,
     definitions: &HashMap<String, AgentDefinition>,
     parent: &ParentExecutionContext,

@@ -323,8 +323,8 @@ async fn main() -> Result<()> {
         enum Outcome {
             Ok,
             Ratelimit,
-            OtherFail(String),
-            Transport(String),
+            OtherFail,
+            Transport,
         }
         let mut outcomes: Vec<(u32, std::time::Duration, Outcome)> = Vec::with_capacity(n as usize);
         let probe_started = Instant::now();
@@ -342,7 +342,10 @@ async fn main() -> Result<()> {
             .await;
             let dt = t0.elapsed();
             let outcome = match resp {
-                Err(e) => Outcome::Transport(format!("{e:#}")),
+                Err(e) => {
+                    log::warn!("[probe-ratelimit] transport error on call {i}: {e:#}");
+                    Outcome::Transport
+                }
                 Ok(r) if r.successful => Outcome::Ok,
                 Ok(r) => {
                     let err = r.error.as_deref().unwrap_or("provider failure");
@@ -356,7 +359,11 @@ async fn main() -> Result<()> {
                         );
                         Outcome::Ratelimit
                     } else {
-                        Outcome::OtherFail(err.to_string())
+                        log::warn!(
+                            "[probe-ratelimit] provider failure on call {i}: {}",
+                            sanitize_probe_error(err)
+                        );
+                        Outcome::OtherFail
                     }
                 }
             };
@@ -379,11 +386,11 @@ async fn main() -> Result<()> {
             .count();
         let other = outcomes
             .iter()
-            .filter(|(_, _, o)| matches!(o, Outcome::OtherFail(_)))
+            .filter(|(_, _, o)| matches!(o, Outcome::OtherFail))
             .count();
         let transport = outcomes
             .iter()
-            .filter(|(_, _, o)| matches!(o, Outcome::Transport(_)))
+            .filter(|(_, _, o)| matches!(o, Outcome::Transport))
             .count();
         let avg_ms = if !outcomes.is_empty() {
             outcomes.iter().map(|(_, d, _)| d.as_millis()).sum::<u128>() / outcomes.len() as u128
@@ -566,5 +573,29 @@ fn component_status(endpoint: &Option<String>, model: &Option<String>) -> String
             format!("on/{}", m.trim())
         }
         _ => "off".to_string(),
+    }
+}
+
+fn sanitize_probe_error(error: &str) -> String {
+    let single_line = error.split_whitespace().collect::<Vec<_>>().join(" ");
+    openhuman_core::openhuman::inference::provider::ops::sanitize_api_error(&single_line)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_probe_error;
+
+    #[test]
+    fn probe_error_summary_is_single_line_bounded_and_secret_safe() {
+        let raw = format!(
+            "provider failed\nwith xoxb-secret-token {}",
+            "x".repeat(300)
+        );
+        let summary = sanitize_probe_error(&raw);
+
+        assert!(!summary.contains('\n'));
+        assert!(!summary.contains("xoxb-secret-token"));
+        assert!(summary.contains("[REDACTED]"));
+        assert!(summary.chars().count() <= 203);
     }
 }

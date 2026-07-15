@@ -35,16 +35,16 @@ pub struct ExtractedMessage {
     pub ts: String,
 }
 
-/// Main entry: walks every record in the dump and returns
-/// `(messages, user_id → display_name, channel_id → name, workspace_name)`.
-pub fn harvest(
-    dump: &IdbDump,
-) -> (
+type HarvestResult = (
     Vec<ExtractedMessage>,
     HashMap<String, String>,
     HashMap<String, String>,
     Option<String>,
-) {
+);
+
+/// Main entry: walks every record in the dump and returns
+/// `(messages, user_id → display_name, channel_id → name, workspace_name)`.
+pub fn harvest(dump: &IdbDump) -> HarvestResult {
     let mut messages: Vec<ExtractedMessage> = Vec::new();
     let mut users: HashMap<String, String> = HashMap::new();
     let mut channels: HashMap<String, String> = HashMap::new();
@@ -173,15 +173,13 @@ fn walk(
                                 .or_insert_with(|| n.to_string());
                         }
                     }
-                    'T' => {
-                        if workspace.is_none() {
-                            if let Some(n) = map
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .filter(|s| !s.is_empty())
-                            {
-                                *workspace = Some(n.to_string());
-                            }
+                    'T' if workspace.is_none() => {
+                        if let Some(n) = map
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                        {
+                            *workspace = Some(n.to_string());
                         }
                     }
                     _ => {}
@@ -222,24 +220,23 @@ fn walk(
                 );
             }
         }
-        Value::String(s) => {
-            // Redux-persist default: values are JSON-encoded strings. If
-            // this string is plausibly JSON, parse and recurse.
+        Value::String(s)
             if s.len() > 20
                 && (s.starts_with('{') || s.starts_with('['))
-                && (s.ends_with('}') || s.ends_with(']'))
-            {
-                if let Ok(inner) = serde_json::from_str::<Value>(s) {
-                    walk(
-                        &inner,
-                        channel_hint,
-                        messages,
-                        users,
-                        channels,
-                        workspace,
-                        depth + 1,
-                    );
-                }
+                && (s.ends_with('}') || s.ends_with(']')) =>
+        {
+            // Redux-persist default: values are JSON-encoded strings. If
+            // this string is plausibly JSON, parse and recurse.
+            if let Ok(inner) = serde_json::from_str::<Value>(s) {
+                walk(
+                    &inner,
+                    channel_hint,
+                    messages,
+                    users,
+                    channels,
+                    workspace,
+                    depth + 1,
+                );
             }
         }
         _ => {}
