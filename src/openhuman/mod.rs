@@ -52,6 +52,7 @@ pub mod embeddings;
 pub mod encryption;
 pub mod file_state;
 pub mod file_storage;
+#[cfg(feature = "flows")]
 pub mod flows;
 pub mod harness_init;
 pub mod health;
@@ -98,6 +99,7 @@ pub mod provider_surfaces;
 pub mod recall_calendar;
 pub mod redirect_links;
 pub mod referral;
+#[cfg(feature = "flows")]
 pub mod rhai_workflows;
 pub mod routing;
 pub mod runtime_node;
@@ -127,6 +129,7 @@ pub mod thread_goals;
 pub mod threads;
 pub mod tinyagents;
 pub mod tinycortex;
+#[cfg(feature = "flows")]
 pub mod tinyflows;
 pub mod tinyplace;
 pub mod tls;
