@@ -584,7 +584,6 @@ fn adapter_inventory_registers_model_tools_and_middleware() {
 
     // Capability profile (issue #4249, Phase 2): derived from the wrapped
     // provider plus the runner-threaded token limits.
-    use tinyagents::harness::model::ChatModel;
     let registered = assembled
         .harness
         .models()

@@ -9,6 +9,4 @@
 pub(crate) mod ops;
 mod schemas;
 
-pub(crate) use schemas::{
-    all_agent_replay_controller_schemas, all_agent_replay_registered_controllers,
-};
+pub(crate) use schemas::all_agent_replay_registered_controllers;

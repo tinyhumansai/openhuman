@@ -48,7 +48,6 @@ const SPEAKING_STATE_EVENT: &str = "meet-video:speaking-state";
 /// RAII handle. Drop to stop the pump task. The shutdown channel
 /// causes the spawned loop to exit on the next select tick.
 pub struct SpeakPump {
-    pub request_id: String,
     _shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
@@ -130,7 +129,6 @@ pub fn start<R: Runtime>(
     });
 
     SpeakPump {
-        request_id,
         _shutdown_tx: Some(shutdown_tx),
     }
 }
@@ -277,11 +275,8 @@ fn next_speaking_state(
 /// No-op pump used when bridge install failed at session start. Keeps
 /// the rest of the session lifecycle uniform — `MeetAudioSession` can
 /// still hold a `SpeakPump` regardless of speak-path readiness.
-pub fn start_disabled(request_id: String) -> SpeakPump {
-    SpeakPump {
-        request_id,
-        _shutdown_tx: None,
-    }
+pub fn start_disabled(_request_id: String) -> SpeakPump {
+    SpeakPump { _shutdown_tx: None }
 }
 
 /// Run a single pump tick. Returns `true` when the tick actually

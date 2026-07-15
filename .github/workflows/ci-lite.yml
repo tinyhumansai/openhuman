@@ -338,6 +338,7 @@ jobs:
         with:
           workspaces: |
             . -> target
+            app/src-tauri -> target
           cache-on-failure: true
           # shared-key (not key) so the cache name is stable and not suffixed
           # with the job id. Swatinem caches the full target/, which is why we
@@ -349,7 +350,23 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy (core crate)
-        run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman
+        if: needs.changes.outputs['rust-core'] == 'true'
+        run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman -- -D warnings
+
+      - name: Cache CEF binary distribution
+        if: needs.changes.outputs['rust-tauri'] == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/Library/Caches/tauri-cef
+            ~/.cache/tauri-cef
+          key: cef-x86_64-unknown-linux-gnu-v2-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-x86_64-unknown-linux-gnu-v2-
+
+      - name: Run clippy (Tauri shell)
+        if: needs.changes.outputs['rust-tauri'] == 'true'
+        run: bash scripts/ci-cancel-aware.sh cargo clippy --manifest-path app/src-tauri/Cargo.toml -- -D warnings
 
   # Feature-gate smoke: proves the core still compiles with a domain gate turned
   # OFF. The disabled build is the ONLY thing that catches stub-facade signature
