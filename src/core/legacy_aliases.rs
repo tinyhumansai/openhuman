@@ -349,6 +349,33 @@ mod tests {
             .collect()
     }
 
+    /// Whether `method`'s controller is compiled out of THIS build by a
+    /// default-ON Cargo feature gate.
+    ///
+    /// The frontend RPC catalog and the alias table below are both **data**:
+    /// they are authored against the full (shipped desktop) surface and cannot
+    /// be `#[cfg]`'d per Rust feature — the frontend is built independently of
+    /// the core's feature set, and the shipped app always enables `mcp`. So in
+    /// a slim build they legitimately still name methods whose controllers no
+    /// longer exist. The drift checks below must therefore ignore exactly those
+    /// namespaces, and keep asserting on everything else — otherwise the whole
+    /// drift signal is lost in slim builds (or, worse, someone "fixes" the
+    /// failure by deleting live frontend methods from the catalog).
+    ///
+    /// Mirrors how the agent loader tolerates the orchestrator TOML's dangling
+    /// `mcp_agent` subagent id (#4799).
+    #[cfg(feature = "mcp")]
+    fn is_compiled_out_method(_method: &str) -> bool {
+        false
+    }
+
+    #[cfg(not(feature = "mcp"))]
+    fn is_compiled_out_method(method: &str) -> bool {
+        // `mcp` feature OFF ⇒ the `mcp_clients` (dynamic registry) and
+        // `mcp_audit` (write log) controllers are unregistered.
+        method.starts_with("openhuman.mcp_clients_") || method.starts_with("openhuman.mcp_audit_")
+    }
+
     #[test]
     fn quoted_value_extracts_single_quoted_string() {
         assert_eq!(quoted_value(": 'hello'"), "hello");
@@ -607,6 +634,7 @@ mod tests {
         let missing: Vec<_> = core_methods
             .values()
             .filter(|method| !registered.contains(*method))
+            .filter(|method| !is_compiled_out_method(method))
             .cloned()
             .collect();
 
@@ -638,6 +666,7 @@ mod tests {
         let missing: Vec<_> = legacy_aliases()
             .iter()
             .filter(|(_, canonical)| !registered.contains(*canonical))
+            .filter(|(_, canonical)| !is_compiled_out_method(canonical))
             .map(|(legacy, canonical)| format!("{legacy} -> {canonical}"))
             .collect();
 

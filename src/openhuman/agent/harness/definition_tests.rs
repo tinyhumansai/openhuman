@@ -367,6 +367,10 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
         ("code_executor", 50),
         ("context_scout", 50),
         ("integrations_agent", 50),
+        // `mcp_agent` is compiled out with the `mcp` feature (#4799).
+        // `mcp_setup` is NOT — only its five tools are gated, so the agent
+        // definition still loads in both builds.
+        #[cfg(feature = "mcp")]
         ("mcp_agent", 50),
         ("mcp_setup", 50),
         ("planner", 50),
