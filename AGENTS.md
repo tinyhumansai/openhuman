@@ -233,10 +233,23 @@ GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml \
 | Feature | Default | Gates | Drops deps |
 | ------- | ------- | ----- | ---------- |
 | `voice` | ON | `openhuman::voice` + `openhuman::audio_toolkit` domains — STT/TTS providers, dictation server, always-on listening, podcast audio + email | `hound`, `lettre` |
+| `meet` | ON | `openhuman::meet` (join-URL validation) + `openhuman::meet_agent` (live STT/LLM/TTS loop) + `openhuman::agent_meetings` (backend-delegated Meet bot over Socket.IO) | none — see note |
 
 **Facade pattern (pathfinder for the other gates).** `pub mod voice;` is **always compiled** as a facade: the real submodules are `#[cfg(feature = "voice")]`, and a `#[cfg(not(feature = "voice"))] mod stub;` (`src/openhuman/voice/stub.rs`) re-exposes the same public surface that always-on / other-gated callers use (`server`, `dictation_listener`, `streaming`, `reply_speech`, `cloud_transcribe`, `cli`, `create_stt_provider`, `effective_stt_provider`, `publish_ptt_transcript_committed`) with no-op / `None` / disabled-error bodies. Callers therefore do **not** need per-call `#[cfg]`. When voice is off: the voice/audio controllers are unregistered (unknown-method over `/rpc`, absent from `/schema`), the `audio_generate_podcast` agent tools are absent, and `openhuman voice` returns a "voice disabled" error. Stub signatures must match the real ones exactly — the disabled build (`--no-default-features --features tokenjuice-treesitter`) is the **only** thing that catches drift, so run it before pushing any change to the voice surface.
 
 **Scope note:** the `voice` gate does **not** drop `whisper-rs` / `llama` / `cpal`. Those live in the inference domain (`src/openhuman/inference/local/service/whisper_engine.rs`; `cpal` is shared with accessibility) and await a separate future `inference` gate. The issue-level DoD line claiming whisper is dropped is superseded by this scope correction.
+
+**`meet` gate (#4800)** — uses all three module patterns, one per domain, chosen by the rule *"does always-compiled code reach a non-registration symbol in here?"*:
+
+- **`meet` → leaf-gate.** `#[cfg(feature = "meet")] pub mod meet;` outright. Its only outside reference is the registration site in `src/core/all.rs`, so no facade is needed (same shape as `audio_toolkit`).
+- **`meet_agent` → facade + carve-out, no stub file.** Every submodule is gated **except `wav`** (below). Nothing outside the Meet domain calls the gated submodules.
+- **`agent_meetings` → facade + stub.** Three always-compiled call sites reach in — the heartbeat planner (`calendar::handle_calendar_meeting_candidate`) and two subscriber registrations (`core::jsonrpc`, `channels::runtime::startup`) — so `src/openhuman/agent_meetings/stub.rs` supplies no-op equivalents and those callers need no `#[cfg]`.
+
+**No deps to shed (do not re-litigate).** Unlike `voice`, this gate drops **zero** dependencies — the Meet domains have no exclusive crates. `meet_agent::wav` is a hand-rolled 79-line RIFF writer with no `use` statements, written precisely so Meet never needed `hound` (which `voice` already owns and sheds). The dependency shed was pre-paid; this gate's value is compile-time surface and binary size, not the dep tree.
+
+**⚠ The `wav` carve-out is load-bearing.** `meet_agent::wav::pack_pcm16le_mono_wav` is called by `desktop_companion::pipeline::stt`, which is `DomainGroup::Platform` and compiled in **every** build. `pub mod wav;` must stay **ungated** so that call site keeps its real implementation — it costs nothing, since `wav.rs` is dependency-free. If someone gates it, the `--no-default-features` build fails loudly at `desktop_companion`; that failure is correct. Do **not** "fix" it by stubbing `pack_pcm16le_mono_wav` — that trades a compile error for green CI while silently corrupting desktop-companion STT (the STT backend would receive a malformed WAV). Revert the cfg instead.
+
+**Both-ways tests.** `src/core/all_tests.rs` pins the gate in both directions (`meet_controllers_registered_when_feature_on` / `meet_controllers_absent_when_feature_off`). The negative half is the one that proves the gate removes anything. Note CI's smoke lane runs `cargo check` only and never compiles test code, so a disabled-build **test** break is invisible to it — run `cargo test --lib --no-default-features --features tokenjuice-treesitter core::all::tests` locally after touching any gated surface.
 
 ### Event bus (`src/core/event_bus/`)
 
