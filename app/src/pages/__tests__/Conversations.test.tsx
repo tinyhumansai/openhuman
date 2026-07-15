@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AgentProfile } from '../../types/agentProfile';
 import {
   formatThreadLoadError,
   isComposerInteractionBlocked,
   isImeCompositionKeyEvent,
   sortAgentProfiles,
 } from '../../features/conversations/Conversations';
+import type { AgentProfile } from '../../types/agentProfile';
 
 describe('isComposerInteractionBlocked', () => {
   it('blocks composer interaction while the selected thread is actively running', () => {

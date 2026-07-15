@@ -4,9 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentProfile } from '../../../types/agentProfile';
 import { AgentProfileSelector } from './AgentProfileSelector';
 
-vi.mock('../../../lib/i18n/I18nContext', () => ({
-  useT: () => ({ t: (key: string) => key }),
-}));
+vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (key: string) => key }) }));
 
 const customProfile: AgentProfile = {
   id: 'research',
@@ -41,8 +39,20 @@ describe('AgentProfileSelector', () => {
     render(
       <AgentProfileSelector
         profiles={[
-          { id: 'default', name: 'Default', builtIn: true, description: '', agentId: 'orchestrator' },
-          { id: 'reasoning', name: 'Reasoning', builtIn: true, description: '', agentId: 'orchestrator' },
+          {
+            id: 'default',
+            name: 'Default',
+            builtIn: true,
+            description: '',
+            agentId: 'orchestrator',
+          },
+          {
+            id: 'reasoning',
+            name: 'Reasoning',
+            builtIn: true,
+            description: '',
+            agentId: 'orchestrator',
+          },
         ]}
         selectedProfileId="default"
         locale="en"
