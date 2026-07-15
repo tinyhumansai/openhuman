@@ -4014,6 +4014,8 @@ const messages: TranslationMap = {
   'flows.copilot.removed': 'أُزيل {count}',
   'flows.copilot.noChanges': 'هذا الاقتراح لا يغيّر أي عقدة.',
   'flows.copilot.accept': 'تطبيق على المسودة',
+  'flows.copilot.acceptAndSave': 'قبول وحفظ',
+  'flows.copilot.saving': 'جارٍ الحفظ…',
   'flows.copilot.reject': 'تجاهل',
   'flows.copilot.previewHint': 'جارٍ مراجعة مسودة مقترحة: لم يُحفظ شيء بعد.',
   'flows.copilot.repairDisplay': 'فشل تشغيل؛ راجعه واقترح إصلاحًا.',

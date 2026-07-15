@@ -50,13 +50,13 @@ describe('FlowListRow', () => {
   it('renders the flow name and reflects enabled state on the toggle', () => {
     renderRow();
     expect(screen.getByText('Daily digest')).toBeInTheDocument();
-    // The toggle is an icon button; state is conveyed via aria-pressed, not text.
-    expect(screen.getByTestId('flow-toggle-flow-1')).toHaveAttribute('aria-pressed', 'true');
+    // The toggle is a SettingsSwitch (role=switch); state is conveyed via aria-checked.
+    expect(screen.getByTestId('flow-toggle-flow-1')).toHaveAttribute('aria-checked', 'true');
   });
 
   it('reflects paused state on the toggle when disabled', () => {
     renderRow({ flow: makeFlow({ enabled: false }) });
-    expect(screen.getByTestId('flow-toggle-flow-1')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('flow-toggle-flow-1')).toHaveAttribute('aria-checked', 'false');
   });
 
   it('shows "Never run" when the flow has no last_run_at', () => {
@@ -147,9 +147,16 @@ describe('FlowListRow', () => {
     expect(onDuplicate).toHaveBeenCalledWith(makeFlow());
   });
 
-  it('deletes via the direct Delete icon (not the menu)', () => {
+  it('routes Delete through the overflow menu', () => {
     const { onDelete } = renderRow();
-    fireEvent.click(screen.getByTestId('flow-delete-flow-1'));
+    // Delete is a destructive secondary action now — behind the "⋯" menu, not
+    // a standalone icon button in the flat row.
+    expect(screen.queryByTestId('flow-delete-flow-1')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('flow-menu-flow-1'));
+
+    const deleteItem = screen.getByTestId('flow-delete-flow-1');
+    expect(deleteItem).toHaveTextContent('Delete');
+    fireEvent.click(deleteItem);
     expect(onDelete).toHaveBeenCalledWith(makeFlow());
   });
 });

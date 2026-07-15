@@ -4114,6 +4114,8 @@ const messages: TranslationMap = {
   'flows.copilot.removed': '{count}টি সরানো হয়েছে',
   'flows.copilot.noChanges': 'এই প্রস্তাব কোনো নোড পরিবর্তন করে না।',
   'flows.copilot.accept': 'খসড়ায় প্রয়োগ করুন',
+  'flows.copilot.acceptAndSave': 'গ্রহণ ও সংরক্ষণ করুন',
+  'flows.copilot.saving': 'সংরক্ষণ করা হচ্ছে…',
   'flows.copilot.reject': 'বাতিল করুন',
   'flows.copilot.previewHint':
     'একটি প্রস্তাবিত খসড়া পর্যালোচনা হচ্ছে: এখনও কিছু সংরক্ষণ করা হয়নি।',

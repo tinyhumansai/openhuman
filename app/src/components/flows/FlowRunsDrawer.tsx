@@ -8,10 +8,11 @@
  * to-close + Escape-to-close via `useEscapeKey`) so it renders as a fixed
  * overlay regardless of where the parent mounts it.
  *
- * Data is a one-shot fetch via `listFlowRuns` — no polling here. The run
- * inspector already polls a single run's live status via `useFlowRunPoller`;
- * polling the whole list here would duplicate that logic for no benefit
- * (the list only needs to be fresh when the drawer opens).
+ * Data loads via `listFlowRuns` on open, then stays live via
+ * {@link useFlowRunsLiveRefresh} while any run in the list is still active —
+ * so a run stuck on "Running" here updates without the user having to close
+ * and reopen the drawer. The run inspector separately polls a single run's
+ * live status via `useFlowRunPoller`; that's unrelated to this list refresh.
  *
  * Clicking a run sets `selectedRunId` and renders the existing
  * `FlowRunInspectorDrawer` stacked on top: both are `fixed inset-0 z-50`
@@ -24,9 +25,10 @@
  * single Escape press closes only the topmost overlay (the inspector) first.
  */
 import debug from 'debug';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { useFlowRunsLiveRefresh } from '../../hooks/useFlowRunsLiveRefresh';
 import { useT } from '../../lib/i18n/I18nContext';
 import { type FlowRun, listFlowRuns } from '../../services/api/flowsApi';
 import {
@@ -72,8 +74,15 @@ export function FlowRunsDrawer({ flowId, flowName, onClose, onFixWithAgent }: Pr
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // Tracks the flowId this drawer instance is *currently* showing, so an
+  // in-flight `refetch()` started for a previous flow (see below) can detect
+  // it's stale once the drawer flips to a new flowId and bail instead of
+  // clobbering the new flow's already-loaded runs.
+  const currentFlowIdRef = useRef(flowId);
 
   useEffect(() => {
+    currentFlowIdRef.current = flowId;
+
     // Reset for the new target so a previous flow's runs/error can't linger
     // under a different flowId while the new fetch is in flight.
     setSelectedRunId(null);
@@ -108,6 +117,31 @@ export function FlowRunsDrawer({ flowId, flowName, onClose, onFixWithAgent }: Pr
       cancelled = true;
     };
   }, [flowId]);
+
+  // Background refresh for the live-update hook below — deliberately doesn't
+  // touch `loading`/`error` so a poll tick or progress event never flashes
+  // the loading state or clobbers a real load error with a transient one.
+  // Guards against a stale response: if the drawer flips from flow A to flow
+  // B while an A refetch is still in flight, the late A response must not
+  // overwrite B's already-loaded runs (mirrors the `cancelled` guard on the
+  // main load effect above).
+  const refetch = useCallback(() => {
+    if (!flowId) return;
+    const requestFlowId = flowId;
+    listFlowRuns(requestFlowId)
+      .then(result => {
+        if (currentFlowIdRef.current !== requestFlowId) return;
+        setRuns(result);
+        log('refetched runs: flowId=%s count=%d', requestFlowId, result.length);
+      })
+      .catch(err => {
+        if (currentFlowIdRef.current !== requestFlowId) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        log('refetch failed: flowId=%s err=%s', requestFlowId, msg);
+      });
+  }, [flowId]);
+
+  useFlowRunsLiveRefresh(runs, refetch);
 
   useEscapeKey(
     () => {

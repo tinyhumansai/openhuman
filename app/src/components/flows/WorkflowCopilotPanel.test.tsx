@@ -301,8 +301,8 @@ describe('WorkflowCopilotPanel', () => {
     expect(screen.getByTestId('workflow-copilot-removed')).toBeInTheDocument();
   });
 
-  it('Accept applies to the draft and clears the proposal (never persists)', () => {
-    const onAccept = vi.fn();
+  it('Accept calls onAccept (host applies + saves) and clears the proposal once it resolves', async () => {
+    const onAccept = vi.fn().mockResolvedValue(undefined);
     hookState.proposal = proposalWith(['a', 'c']);
     render(
       <WorkflowCopilotPanel
@@ -315,7 +315,94 @@ describe('WorkflowCopilotPanel', () => {
     );
     fireEvent.click(screen.getByTestId('workflow-copilot-accept'));
     expect(onAccept).toHaveBeenCalledWith(hookState.proposal);
-    expect(hookState.clearProposal).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(hookState.clearProposal).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows the saving label and disables Accept while the host save is in flight', async () => {
+    // Deferred promise so the test controls exactly when the host's save
+    // (`onAccept`) resolves, to observe the in-between "saving" state.
+    let resolveSave!: () => void;
+    const savePromise = new Promise<void>(resolve => {
+      resolveSave = resolve;
+    });
+    const onAccept = vi.fn().mockReturnValue(savePromise);
+    hookState.proposal = proposalWith(['a', 'c']);
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={onAccept}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('workflow-copilot-accept'));
+    await waitFor(() =>
+      expect(screen.getByTestId('workflow-copilot-accept')).toHaveTextContent(
+        'flows.copilot.saving'
+      )
+    );
+    expect(screen.getByTestId('workflow-copilot-accept')).toBeDisabled();
+    expect(hookState.clearProposal).not.toHaveBeenCalled();
+
+    resolveSave();
+    await waitFor(() => expect(hookState.clearProposal).toHaveBeenCalledTimes(1));
+  });
+
+  it('leaves the proposal visible for retry when the host save rejects', async () => {
+    const onAccept = vi.fn().mockRejectedValue(new Error('save failed'));
+    hookState.proposal = proposalWith(['a', 'c']);
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={onAccept}
+        onReject={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('workflow-copilot-accept'));
+    await waitFor(() => expect(onAccept).toHaveBeenCalledTimes(1));
+    // The button re-enables once the rejected save settles, and the proposal
+    // was never cleared — the card stays up so the user can retry.
+    await waitFor(() => expect(screen.getByTestId('workflow-copilot-accept')).not.toBeDisabled());
+    expect(hookState.clearProposal).not.toHaveBeenCalled();
+  });
+
+  it('disables Reject while an Accept save is in flight, so it cannot race the persisted save', async () => {
+    // Regression for the CodeRabbit finding: Reject must not stay clickable
+    // while `onAccept`'s save is still pending, otherwise the user's cancel
+    // can be silently overridden by the earlier Accept's save landing after.
+    let resolveSave!: () => void;
+    const savePromise = new Promise<void>(resolve => {
+      resolveSave = resolve;
+    });
+    const onAccept = vi.fn().mockReturnValue(savePromise);
+    const onReject = vi.fn();
+    hookState.proposal = proposalWith(['a', 'c']);
+    render(
+      <WorkflowCopilotPanel
+        graph={baseGraph}
+        onProposal={vi.fn()}
+        onAccept={onAccept}
+        onReject={onReject}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('workflow-copilot-accept'));
+    await waitFor(() => expect(screen.getByTestId('workflow-copilot-reject')).toBeDisabled());
+
+    // A click while disabled is a no-op in jsdom/RTL — Reject must not fire.
+    fireEvent.click(screen.getByTestId('workflow-copilot-reject'));
+    expect(onReject).not.toHaveBeenCalled();
+    expect(hookState.clearProposal).not.toHaveBeenCalled();
+
+    resolveSave();
+    await waitFor(() => expect(hookState.clearProposal).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId('workflow-copilot-reject')).not.toBeDisabled();
   });
 
   it('Reject discards the proposal without applying it', () => {

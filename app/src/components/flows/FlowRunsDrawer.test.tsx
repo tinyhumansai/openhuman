@@ -12,7 +12,7 @@
  * `FlowRunInspectorDrawer.test.tsx`) so this suite only exercises the
  * run-history list + the nesting contract between the two drawers.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -206,5 +206,81 @@ describe('FlowRunsDrawer', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('discards a stale background refetch after the drawer flips to a different flow (race guard)', async () => {
+    // Regression test for a codex review finding on this PR: the live-refresh
+    // `refetch` in FlowRunsDrawer didn't guard against a response landing
+    // after the drawer had already switched to a different flowId, so a slow
+    // flow-A refetch could clobber flow-B's already-rendered runs.
+    vi.useFakeTimers();
+    try {
+      let flowACalls = 0;
+      let resolveStaleA: ((runs: FlowRun[]) => void) | undefined;
+      listFlowRuns.mockImplementation((flowId: string) => {
+        if (flowId === 'flow-a') {
+          flowACalls += 1;
+          if (flowACalls === 1) {
+            // Initial load: one active run so the live-refresh poll subscribes.
+            return Promise.resolve([
+              makeRun({ id: 'run-a', flow_id: 'flow-a', status: 'running' }),
+            ]);
+          }
+          // The poll-triggered refetch — stays pending until resolved below,
+          // simulating a slow response that outlives the flow switch.
+          return new Promise<FlowRun[]>(resolve => {
+            resolveStaleA = resolve;
+          });
+        }
+        if (flowId === 'flow-b') {
+          return Promise.resolve([
+            makeRun({ id: 'run-b', flow_id: 'flow-b', status: 'completed' }),
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const { rerender } = render(
+        <Provider store={store}>
+          <FlowRunsDrawer flowId="flow-a" onClose={vi.fn()} />
+        </Provider>
+      );
+
+      // Flush the initial load's already-resolved promise.
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId('flow-run-row-run-a')).toBeInTheDocument();
+
+      // Trigger the live-refresh poll fallback — issues the second, hanging
+      // listFlowRuns('flow-a') call.
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+      });
+      expect(flowACalls).toBe(2);
+
+      // Flip the drawer to a different flow while that refetch is still in flight.
+      rerender(
+        <Provider store={store}>
+          <FlowRunsDrawer flowId="flow-b" onClose={vi.fn()} />
+        </Provider>
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId('flow-run-row-run-b')).toBeInTheDocument();
+
+      // Now let the stale flow-a response land.
+      await act(async () => {
+        resolveStaleA?.([makeRun({ id: 'run-a-late', flow_id: 'flow-a', status: 'completed' })]);
+        await Promise.resolve();
+      });
+
+      // Flow-b's runs must be unaffected by the late flow-a response.
+      expect(screen.getByTestId('flow-run-row-run-b')).toBeInTheDocument();
+      expect(screen.queryByTestId('flow-run-row-run-a-late')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
