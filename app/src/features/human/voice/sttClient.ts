@@ -5,17 +5,50 @@ import { callCoreRpc } from '../../../services/coreRpcClient';
 const sttLog = debug('human:stt');
 
 /**
- * Surfaced when the core answers `unknown method` for a `voice_*` RPC — i.e.
- * the core was compiled without the `voice` feature, so the domain is absent
- * from the binary entirely (#4901).
+ * Stable identifier for "the core has no voice domain compiled in" (#4901).
+ *
+ * Callers must branch on this code rather than on the message text: the message
+ * is untranslated developer/log copy, and the UI is responsible for rendering
+ * translated copy via `useT()` (see `MicComposer`'s `mic.voiceNotCompiled`).
+ */
+export const VOICE_NOT_COMPILED_CODE = 'voice_not_compiled';
+
+/**
+ * Thrown when the core answers `unknown method` for a `voice_*` RPC — i.e. the
+ * core was compiled without the `voice` feature, so the domain is absent from
+ * the binary entirely (#4901).
+ *
+ * The `message` is English on purpose: it is what reaches debug logs and Sentry.
+ * User-facing copy is resolved from `code` at the UI boundary.
  *
  * Keep the `unavailable in this build` substring: `MicComposer`'s
  * `PERMANENT_ERROR_PATTERNS` matches on it to skip the retry/backoff loop,
  * which can never succeed for a compile-time gate.
  */
-const VOICE_NOT_COMPILED_MESSAGE =
-  'Voice transcription is unavailable in this build — the voice module was not compiled into the app. ' +
-  'Update OpenHuman to the latest version; restarting will not help.';
+export class VoiceNotCompiledError extends Error {
+  readonly code = VOICE_NOT_COMPILED_CODE;
+
+  constructor() {
+    super(
+      'Voice transcription is unavailable in this build — the voice module was not compiled into the app. ' +
+        'Update OpenHuman to the latest version; restarting will not help.'
+    );
+    this.name = 'VoiceNotCompiledError';
+  }
+}
+
+/**
+ * Duck-typed on `code` rather than `instanceof`: the error crosses async +
+ * retry boundaries, and structured-clone/serialization paths can strip the
+ * prototype while preserving own properties.
+ */
+export function isVoiceNotCompiledError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: unknown }).code === VOICE_NOT_COMPILED_CODE
+  );
+}
 
 export interface CloudTranscribeOptions {
   /** Override the backend STT model id. Default is whatever the backend
@@ -86,7 +119,7 @@ export async function transcribeCloud(
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('unknown method')) {
       sttLog('[voice-stt] transcribe rpc: voice domain absent from core build: %s', msg);
-      throw new Error(VOICE_NOT_COMPILED_MESSAGE);
+      throw new VoiceNotCompiledError();
     }
     sttLog('transcribe rpc failed (passthrough): %O', err);
     throw err;
@@ -162,7 +195,7 @@ export async function transcribeWithFactory(
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('unknown method')) {
       sttLog('[voice-stt] dispatch: voice domain absent from core build: %s', msg);
-      throw new Error(VOICE_NOT_COMPILED_MESSAGE);
+      throw new VoiceNotCompiledError();
     }
     sttLog('[voice-stt] dispatch failed (passthrough): %O', err);
     throw err;

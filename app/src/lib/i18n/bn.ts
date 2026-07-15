@@ -3238,6 +3238,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'অডিও স্পষ্টভাবে বোঝা যায়নি: আবার চেষ্টা করুন',
   'mic.failedToStopRecording': 'রেকর্ডিং বন্ধ করতে ব্যর্থ: {message}',
   'mic.transcriptionFailed': 'ট্রান্সক্রিপশন ব্যর্থ: {message}',
+  'mic.voiceNotCompiled':
+    'অ্যাপের এই সংস্করণে ভয়েস ট্রান্সক্রিপশন অন্তর্ভুক্ত নেই। এটি চালু করতে OpenHuman আপডেট করুন।',
   'reflections.kind.retrospective': 'পূর্বদর্শন',
   'reflections.kind.derivedFact': 'ডেরাইভড ফ্যাক্ট',
   'reflections.kind.moodInsight': 'মুড ইনসাইট',

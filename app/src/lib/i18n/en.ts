@@ -3629,6 +3629,8 @@ const en: TranslationMap = {
   'mic.lowConfidenceResult': 'Could not understand the audio clearly: please try again',
   'mic.failedToStopRecording': 'Failed to stop recording: {message}',
   'mic.transcriptionFailed': 'Transcription failed: {message}',
+  'mic.voiceNotCompiled':
+    'Voice transcription is not included in this version of the app. Update OpenHuman to enable it.',
 
   // Reflections: kind labels
   'reflections.kind.retrospective': 'Retrospective',

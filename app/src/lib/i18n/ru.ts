@@ -3264,6 +3264,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'Не удалось чётко распознать аудио: попробуйте ещё раз',
   'mic.failedToStopRecording': 'Не удалось остановить запись: {message}',
   'mic.transcriptionFailed': 'Ошибка транскрипции: {message}',
+  'mic.voiceNotCompiled':
+    'Расшифровка речи не включена в эту версию приложения. Обновите OpenHuman, чтобы включить её.',
   'reflections.kind.retrospective': 'Ретроспектива',
   'reflections.kind.derivedFact': 'Выведенный факт',
   'reflections.kind.moodInsight': 'Инсайт о настроении',

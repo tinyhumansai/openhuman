@@ -3291,6 +3291,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'Não foi possível entender o áudio com clareza: tente novamente',
   'mic.failedToStopRecording': 'Falha ao parar a gravação: {message}',
   'mic.transcriptionFailed': 'Falha na transcrição: {message}',
+  'mic.voiceNotCompiled':
+    'A transcrição de voz não está incluída nesta versão do aplicativo. Atualize o OpenHuman para ativá-la.',
   'reflections.kind.retrospective': 'Retrospectiva',
   'reflections.kind.derivedFact': 'Fato Derivado',
   'reflections.kind.moodInsight': 'Insight de Humor',

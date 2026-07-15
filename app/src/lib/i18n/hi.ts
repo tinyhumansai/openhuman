@@ -3236,6 +3236,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'ऑडियो स्पष्ट रूप से समझ नहीं आया: कृपया पुनः प्रयास करें',
   'mic.failedToStopRecording': 'रिकॉर्डिंग रोकने में दिक्कत: {message}',
   'mic.transcriptionFailed': 'ट्रांसक्रिप्शन विफल: {message}',
+  'mic.voiceNotCompiled':
+    'इस ऐप संस्करण में वॉइस ट्रांसक्रिप्शन शामिल नहीं है। इसे चालू करने के लिए OpenHuman को अपडेट करें।',
   'reflections.kind.retrospective': 'रेट्रोस्पेक्टिव',
   'reflections.kind.derivedFact': 'डिराइव्ड फैक्ट',
   'reflections.kind.moodInsight': 'मूड इनसाइट',

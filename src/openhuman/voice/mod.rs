@@ -23,6 +23,12 @@
 //! (`cargo check --no-default-features --features "<all-but-voice>"`): any
 //! signature drift fails that build.
 
+// Ungated — part of the always-compiled facade (see the module docs above): it
+// reports which side of the gate this binary landed on, so it must exist in
+// both states.
+pub mod compile_status;
+pub use compile_status::VOICE_COMPILED_IN;
+
 #[cfg(feature = "voice")]
 pub mod always_on;
 #[cfg(feature = "voice")]
@@ -91,17 +97,6 @@ pub use types::{VoiceSpeechResult, VoiceStatus, VoiceTtsResult};
 pub(crate) fn cloud_transcribe_default_model() -> &'static str {
     "whisper-v1"
 }
-
-/// Whether the real voice domain was compiled into this binary.
-///
-/// Part of the always-compiled facade so downstream crates can assert the gate
-/// resolved the way they need. Cargo features are per-crate and invisible to
-/// dependents' `#[cfg]`, so a consumer that *requires* voice (the desktop shell)
-/// has no other way to detect that it silently got the stubbed build — which is
-/// exactly how #4901 shipped: the shell's `default-features = false` dropped the
-/// default-ON `voice` feature, unregistering every `openhuman.voice_*`
-/// controller.
-pub const VOICE_COMPILED_IN: bool = cfg!(feature = "voice");
 
 // ---------------------------------------------------------------------------
 // Disabled facade — compiled only when the `voice` feature is OFF.

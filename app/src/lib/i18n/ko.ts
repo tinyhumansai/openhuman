@@ -3201,6 +3201,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': '오디오를 명확하게 이해할 수 없습니다: 다시 시도해 주세요',
   'mic.failedToStopRecording': '녹음을 중지하지 못했습니다: {message}',
   'mic.transcriptionFailed': '전사에 실패했습니다: {message}',
+  'mic.voiceNotCompiled':
+    '이 버전의 앱에는 음성 받아쓰기가 포함되어 있지 않습니다. OpenHuman을 업데이트하면 사용할 수 있습니다.',
   'reflections.kind.retrospective': '회고',
   'reflections.kind.derivedFact': '파생된 사실',
   'reflections.kind.moodInsight': '기분 인사이트',

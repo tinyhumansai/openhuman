@@ -3065,6 +3065,7 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': '无法清楚地理解音频：请重试',
   'mic.failedToStopRecording': '停止录音失败: {message}',
   'mic.transcriptionFailed': '转录失败: {message}',
+  'mic.voiceNotCompiled': '此版本的应用未包含语音转文字功能。请更新 OpenHuman 后再使用。',
   'reflections.kind.retrospective': '回顾',
   'reflections.kind.derivedFact': '派生事实',
   'reflections.kind.moodInsight': '情绪洞察',

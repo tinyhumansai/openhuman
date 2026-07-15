@@ -3163,6 +3163,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'تعذّر فهم الصوت بوضوح: يرجى المحاولة مرة أخرى',
   'mic.failedToStopRecording': 'فشل إيقاف التسجيل: {message}',
   'mic.transcriptionFailed': 'فشل النسخ: {message}',
+  'mic.voiceNotCompiled':
+    'خاصية تحويل الصوت إلى نص غير متوفرة في هذا الإصدار من التطبيق. حدّث OpenHuman لتفعيلها.',
   'reflections.kind.retrospective': 'مراجعة',
   'reflections.kind.derivedFact': 'حقيقة مستنتجة',
   'reflections.kind.moodInsight': 'رؤية المزاج',

@@ -3248,6 +3248,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'Tidak dapat memahami audio dengan jelas: silakan coba lagi',
   'mic.failedToStopRecording': 'Gagal menghentikan perekaman: {message}',
   'mic.transcriptionFailed': 'Transkripsi gagal: {message}',
+  'mic.voiceNotCompiled':
+    'Transkripsi suara tidak tersedia di versi aplikasi ini. Perbarui OpenHuman untuk mengaktifkannya.',
   'reflections.kind.retrospective': 'Retrospektif',
   'reflections.kind.derivedFact': 'Fakta Turunan',
   'reflections.kind.moodInsight': 'Wawasan Suasana Hati',
