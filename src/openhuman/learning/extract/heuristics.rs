@@ -413,8 +413,6 @@ mod heuristics_tests {
     #[test]
     fn length_ratio_emits_compressed_when_user_msgs_shrink() {
         let session = fresh_session_id();
-        let buf = Buffer::new(1024);
-
         // First 15 turns: high ratio (user talks a lot).
         let now = now_secs();
         for i in 0..15 {

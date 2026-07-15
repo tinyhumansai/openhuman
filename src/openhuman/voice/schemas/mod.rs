@@ -23,9 +23,8 @@ use helpers::{
 };
 #[cfg(test)]
 use params::{
-    OverlaySttNotifyParams, OverlaySttState, ReplySynthesizeParams, SetProvidersParams,
-    SttDispatchParams, TranscribeBytesParams, TranscribeParams, TtsDispatchParams, TtsParams,
-    VoiceListModelsParams, VoiceProviderCredUpdate, VoiceTestProviderParams,
+    SetProvidersParams, SttDispatchParams, TranscribeBytesParams, TranscribeParams,
+    TtsDispatchParams, TtsParams, VoiceListModelsParams, VoiceTestProviderParams,
     VoiceUpdateProviderSettingsParams,
 };
 

@@ -496,6 +496,7 @@ impl AgentBuilder {
             last_memory_context: None,
             last_turn_citations: Vec::new(),
             last_turn_usage_totals: None,
+            last_turn_hit_cap: false,
             history: Vec::new(),
             post_turn_hooks: self.post_turn_hooks,
             learning_enabled: self.learning_enabled,

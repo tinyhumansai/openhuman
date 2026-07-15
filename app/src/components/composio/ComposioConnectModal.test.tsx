@@ -743,3 +743,39 @@ describe('ComposioConnectModal — connection-failed copy (issue #3759)', () => 
     expect(screen.queryByText(/\{status\}/)).not.toBeInTheDocument();
   });
 });
+
+describe('ComposioConnectModal — focus-triggered re-poll', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('polls immediately on window focus so the connected flip does not wait for the timer', async () => {
+    // Resume-polling path: a PENDING connection starts the poller on mount.
+    // The first poll still sees PENDING; then the connection goes ACTIVE and
+    // the user returns to the app (window focus). The focus poke must fire an
+    // immediate re-poll and flip to "connected" without waiting for the next
+    // scheduled tick.
+    vi.mocked(composioApi.listConnections)
+      .mockResolvedValueOnce({ connections: [{ id: 'ca_1', toolkit: 'gmail', status: 'PENDING' }] })
+      .mockResolvedValue({ connections: [{ id: 'ca_1', toolkit: 'gmail', status: 'ACTIVE' }] });
+
+    render(
+      <ComposioConnectModal
+        toolkit={mockToolkit}
+        connections={[{ id: 'ca_1', toolkit: 'gmail', status: 'PENDING' }]}
+        onClose={() => {}}
+      />
+    );
+
+    // First poll resolved to PENDING — still waiting, not connected yet.
+    await waitFor(() => {
+      expect(composioApi.listConnections).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByText(/Gmail is connected/)).not.toBeInTheDocument();
+
+    // User switches back from the browser → immediate re-poll → ACTIVE.
+    fireEvent(window, new Event('focus'));
+
+    expect(await screen.findByText(/Gmail is connected/)).toBeInTheDocument();
+  });
+});

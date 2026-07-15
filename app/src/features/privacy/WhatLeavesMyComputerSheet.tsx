@@ -42,7 +42,7 @@ const WhatLeavesMyComputerSheet = ({ open, onClose }: WhatLeavesMyComputerSheetP
         role="dialog"
         aria-modal="true"
         aria-labelledby="what-leaves-title"
-        className="relative w-full max-w-lg bg-neutral-0 rounded-2xl shadow-large border border-line p-6 animate-fade-up outline-none">
+        className="relative w-full max-w-lg bg-surface rounded-2xl shadow-large border border-line p-6 animate-fade-up outline-none">
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
             <h2 id="what-leaves-title" className="font-title text-2xl text-content leading-tight">

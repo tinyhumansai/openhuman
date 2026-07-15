@@ -18,7 +18,6 @@ pub struct CdpTarget {
     pub id: String,
     pub kind: String,
     pub url: String,
-    pub title: String,
 }
 
 /// Parse the response of a `Target.getTargets` CDP call into a list of
@@ -35,11 +34,6 @@ pub fn parse_targets(v: &Value) -> Vec<CdpTarget> {
                         kind: t.get("type")?.as_str()?.to_string(),
                         url: t
                             .get("url")
-                            .and_then(|u| u.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        title: t
-                            .get("title")
                             .and_then(|u| u.as_str())
                             .unwrap_or("")
                             .to_string(),

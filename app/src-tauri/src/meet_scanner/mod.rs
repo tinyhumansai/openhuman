@@ -35,7 +35,7 @@
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 
 use crate::cdp::{self, CdpConn};
 

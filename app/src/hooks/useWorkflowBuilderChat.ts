@@ -97,6 +97,16 @@ export interface UseWorkflowBuilderChat {
   /** The latest proposal the agent returned on this thread, or `null`. */
   proposal: WorkflowProposal | null;
   /**
+   * `true` when the most recently settled turn paused because it hit the
+   * agent's tool-call budget with no proposal yet (B34) — the caller should
+   * render a "Continue building" affordance instead of treating
+   * `displayMessages`' latest agent bubble (the raw "Done so far / Next
+   * steps" checkpoint) as a normal reply or a clarifying question. Reset to
+   * `false` at the start of every new `send()` call, so it only ever
+   * reflects the most recent turn.
+   */
+  capped: boolean;
+  /**
    * The dedicated thread's FULL transcript (user + agent turns, including
    * between-tool narration bubbles), so a caller that needs the complete
    * history (e.g. persistence/rehydration) can still get it. Empty until the
@@ -164,6 +174,7 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
   const [threadId, setThreadId] = useState<string | null>(seedThreadId ?? null);
   const [localSending, setLocalSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [capped, setCapped] = useState(false);
   // Tracks a thread id this hook created itself via `send()`'s `createNewThread`
   // call — as opposed to one that arrived from `seedThreadId` because a caller
   // (e.g. `WorkflowCopilotPanel`) reports every `threadId` change back up via
@@ -295,6 +306,10 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
       }
       setLocalSending(true);
       setError(null);
+      // A fresh turn supersedes any prior cap-hit signal, same as the
+      // proposal-clearing dispatch below — `capped` must only ever reflect
+      // this turn, not a stale one.
+      setCapped(false);
       let targetThreadId = threadId;
       let proposed = false;
       try {
@@ -344,6 +359,12 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
         } else if (result.error) {
           setError(result.error);
         }
+        // (B34) Surface the cap-hit signal so the panel can render a
+        // "Continue building" card instead of the raw checkpoint text as a
+        // normal reply. Scoped to `!result.proposal` server-side already
+        // (`ops.rs`'s `capped` field), but re-checked here too — a proposal
+        // means there's nothing left to "continue".
+        setCapped(result.capped && !result.proposal);
         // Note: no local fallback append for `result.assistantText` here (B26).
         // `ChatRuntimeProvider.onDone` is the SINGLE authoritative path that
         // persists the assistant's reply on the turn's `chat_done` event — the
@@ -392,6 +413,7 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
     threadId,
     sending,
     proposal,
+    capped,
     messages,
     displayMessages,
     toolTimeline,

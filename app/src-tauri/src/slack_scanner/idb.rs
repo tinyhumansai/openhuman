@@ -283,7 +283,7 @@ async fn serialize_values(
                 chunk.len()
             ));
         }
-        for ((idx, _), val) in chunk.iter().zip(serialised.into_iter()) {
+        for ((idx, _), val) in chunk.iter().zip(serialised) {
             result[*idx] = val;
         }
     }

@@ -342,3 +342,99 @@ fn tier_display_matches_as_str() {
     assert_eq!(AgentTier::Reasoning.to_string(), "reasoning");
     assert_eq!(AgentTier::Worker.to_string(), "worker");
 }
+
+// ── Issue #4868 audit snapshot ──────────────────────────────────────────────
+//
+// The systemic fix in `build_session_agent_inner` makes every direct-
+// invocation call site (flows_build, flows_discover, agent-node runtime,
+// cron, MCP server, …) honor each agent's own `effective_max_iterations()`
+// instead of the global `config.agent.max_tool_iterations` default (10).
+// That changes the *runtime* iteration cap for every agent in the registry —
+// some go up (extended policy), some go down (declared max_iterations < 10),
+// most stay the same. This test pins the exact expected cap for every
+// built-in agent so an accidental `agent.toml` edit (or a new agent landing
+// with an unreviewed cap) shows up as a diff here rather than silently
+// changing runtime behavior. See PLAN/PR #4868 for the full before/after
+// audit table this list mirrors.
+#[test]
+fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
+    let defs = crate::openhuman::agent_registry::agents::load_builtins()
+        .expect("built-in agent TOML must always parse");
+
+    let expected: &[(&str, usize)] = &[
+        // Extended policy (or high `max_iterations`) -> effective cap raised.
+        ("orchestrator", 15),
+        ("code_executor", 50),
+        ("context_scout", 50),
+        ("integrations_agent", 50),
+        ("mcp_agent", 50),
+        ("mcp_setup", 50),
+        ("planner", 50),
+        ("researcher", 50),
+        ("skill_creator", 50),
+        ("task_manager_agent", 50),
+        ("tools_agent", 50),
+        ("flow_discovery", 50),
+        ("workflow_builder", 50),
+        ("skill_executor", 50),
+        ("tinyplace_agent", 50),
+        ("subconscious", 30),
+        // Strict policy, declared `max_iterations` below the old global
+        // default (10) -> effective cap lowered.
+        ("agent_memory", 6),
+        ("account_admin_agent", 8),
+        ("archivist", 3),
+        ("critic", 5),
+        ("crypto_agent", 8),
+        ("desktop_control_agent", 8),
+        ("goals_agent", 5),
+        ("help", 6),
+        ("image_agent", 8),
+        ("markets_agent", 8),
+        ("morning_briefing", 8),
+        ("profile_memory_agent", 8),
+        ("scheduler_agent", 8),
+        ("screen_awareness_agent", 8),
+        ("settings_agent", 8),
+        ("summarizer", 1),
+        ("tool_maker", 2),
+        ("trigger_reactor", 6),
+        ("trigger_triage", 2),
+        ("video_agent", 8),
+        ("vision_agent", 6),
+        // Unchanged.
+        ("presentation_agent", 10),
+        ("skill_setup", 10),
+    ];
+
+    for (id, expected_cap) in expected {
+        let def = defs
+            .iter()
+            .find(|d| d.id == *id)
+            .unwrap_or_else(|| panic!("missing built-in agent definition: {id}"));
+        assert_eq!(
+            def.effective_max_iterations(),
+            *expected_cap,
+            "agent '{id}' effective_max_iterations() mismatch — expected {expected_cap}, got {} \
+             (max_iterations={}, iteration_policy={:?}). If this agent's cap was intentionally \
+             changed, update this snapshot; otherwise an agent.toml edit just silently changed \
+             its runtime iteration budget.",
+            def.effective_max_iterations(),
+            def.max_iterations,
+            def.iteration_policy,
+        );
+    }
+
+    // Exhaustiveness: every built-in id must appear in the expected list
+    // above (and vice versa) so a newly-added agent can't slip in with an
+    // unreviewed cap.
+    let mut expected_ids: Vec<&str> = expected.iter().map(|(id, _)| *id).collect();
+    expected_ids.sort_unstable();
+    let mut actual_ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
+    actual_ids.sort_unstable();
+    assert_eq!(
+        actual_ids, expected_ids,
+        "the set of built-in agent ids changed — add/remove the new agent from this audit \
+         snapshot's `expected` list with a deliberate effective_max_iterations() entry"
+    );
+}

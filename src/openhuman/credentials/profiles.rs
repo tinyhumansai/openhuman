@@ -70,6 +70,16 @@ const LOCK_TIMEOUT_MS: u64 = STALE_LOCK_AGE_MS + 5_000;
 const PERSIST_RETRY_ATTEMPTS: u32 = 6;
 const PERSIST_RETRY_BASE_MS: u64 = 100;
 
+type EncryptedProfileFields = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthProfileKind {
@@ -921,18 +931,7 @@ impl AuthProfilesStore {
     }
 
     /// Encrypt a profile's secret fields for JSON storage (keychain-unavailable path).
-    fn encrypt_for_json(
-        &self,
-        profile: &AuthProfile,
-    ) -> Result<(
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    )> {
+    fn encrypt_for_json(&self, profile: &AuthProfile) -> Result<EncryptedProfileFields> {
         let (access_token, refresh_token, id_token, expires_at, token_type, scope) =
             match (&profile.kind, &profile.token_set) {
                 (AuthProfileKind::OAuth, Some(token_set)) => (

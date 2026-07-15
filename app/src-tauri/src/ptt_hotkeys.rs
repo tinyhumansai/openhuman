@@ -14,8 +14,6 @@ pub(crate) enum PttError {
     EmptyShortcut,
     ModifierOnlyShortcut,
     ConflictsWithDictation(String),
-    UnsupportedOnWayland,
-    RegistrationFailed(String),
 }
 
 impl std::fmt::Display for PttError {
@@ -28,13 +26,6 @@ impl std::fmt::Display for PttError {
             ),
             PttError::ConflictsWithDictation(s) => {
                 write!(f, "ptt shortcut '{s}' conflicts with the dictation hotkey")
-            }
-            PttError::UnsupportedOnWayland => write!(
-                f,
-                "global shortcuts are not supported in this Wayland session — switch to X11 or use in-app dictation"
-            ),
-            PttError::RegistrationFailed(s) => {
-                write!(f, "failed to register ptt shortcut: {s}")
             }
         }
     }

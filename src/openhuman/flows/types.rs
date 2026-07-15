@@ -6,6 +6,7 @@
 //! struct is the OpenHuman-side record around it.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tinyflows::model::WorkflowGraph;
 
 /// How a flow run was started. Stamped onto the run's Langfuse trace as a
@@ -40,22 +41,60 @@ impl FlowRunTrigger {
 /// structural errors and non-fatal warnings (e.g. "this trigger kind never
 /// fires automatically yet") to an authoring surface *before* a flow is saved.
 ///
-/// A graph is `valid` when it passes `tinyflows::validate::validate` after
-/// migration; `errors` carries the single structural error when it does not.
-/// `warnings` is orthogonal to validity — a `valid` graph can still carry
-/// warnings (it saves and enables fine, it just won't behave as an author
-/// might expect), and an invalid graph reports no warnings (there's nothing to
-/// warn about a graph that won't compile).
+/// A graph is `valid` when it passes `tinyflows::validate::validate_all` after
+/// migration; `errors` carries **every** structural error when it does not (a
+/// pre-validation failure — unparseable JSON or an unmigrateable schema — is
+/// still a single entry). `warnings` is orthogonal to validity — a `valid`
+/// graph can still carry warnings (it saves and enables fine, it just won't
+/// behave as an author might expect), and an invalid graph reports no warnings
+/// (there's nothing to warn about a graph that won't compile).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct FlowValidation {
     /// True when the graph is structurally valid (migrates + validates).
     pub valid: bool,
-    /// Structural validation errors (empty when `valid`). Today at most one —
-    /// `tinyflows::validate::validate` returns the first error it hits.
+    /// Human-readable structural validation errors (empty when `valid`). As of
+    /// the multi-error work this carries **all** independent structural
+    /// problems in one pass — an author fixing five costs one validate call,
+    /// not five round-trips. See [`FlowValidation::error_details`] for the
+    /// machine-readable, per-node form.
     pub errors: Vec<String>,
+    /// Structured, machine-readable counterpart to [`FlowValidation::errors`]:
+    /// one entry per structural error, carrying a stable `code`, the anchoring
+    /// `node_id` when node-specific, and the human `message`. Additive and
+    /// `#[serde(default)]` so existing clients that only read `errors` are
+    /// unaffected; agent tools and richer UIs consume this to attach errors to
+    /// the right node and switch on `code`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub error_details: Vec<FlowValidationError>,
     /// Non-fatal warnings: the graph is accepted, but something about it is
     /// worth flagging (e.g. an unfired trigger kind). Never blocks save/enable.
     pub warnings: Vec<String>,
+}
+
+/// A single structural validation error in machine-readable form — the
+/// structured counterpart to a [`FlowValidation::errors`] string.
+///
+/// Mirrors `tinyflows::error::ValidationError` (via its `code()` / `node_id()`
+/// accessors) so a host surface can attach the error to a specific node and
+/// switch on a stable `code` rather than parsing the `message`. `field` is
+/// reserved for future config-level errors that can name the offending config
+/// key; it is `None` for today's graph/edge-level checks.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct FlowValidationError {
+    /// Stable, machine-readable identifier for the error kind (e.g.
+    /// `missing_trigger`, `unknown_node`, `invalid_condition_routing`).
+    pub code: String,
+    /// Human-readable description — identical to the matching
+    /// [`FlowValidation::errors`] string.
+    pub message: String,
+    /// The node id this error is anchored to, when node-specific; `None` for
+    /// graph-wide errors (missing trigger, schema-too-new, multiple triggers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    /// The offending config field, when the error is config-key-specific.
+    /// Reserved for future use; `None` today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
 }
 
 /// The result of importing a workflow definition (native tinyflows JSON or an
@@ -78,6 +117,84 @@ pub struct FlowImport {
     /// Non-fatal import warnings surfaced next to the draft. Empty for a clean
     /// native import; an n8n import populates it with any approximations made.
     pub warnings: Vec<String>,
+}
+
+/// A snapshot of a flow's graph captured just before an update overwrote it —
+/// the safety rail behind `flows_rollback` / `get_flow_history` (audit F6).
+///
+/// Rows live in the `flow_revisions` table, capped (e.g. last 20 per flow).
+/// `graph` is the prior graph as raw JSON so a snapshot never fails to load
+/// even if the schema later evolves.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FlowRevision {
+    /// Stable revision id (UUID).
+    pub id: String,
+    /// The flow this snapshot belongs to.
+    pub flow_id: String,
+    /// The flow's graph at the time this revision was captured (raw JSON).
+    pub graph: Value,
+    /// The flow's name at capture time.
+    pub name: String,
+    /// The flow's `require_approval` at capture time.
+    pub require_approval: bool,
+    /// RFC3339 time the snapshot was captured (i.e. when it was superseded).
+    pub created_at: String,
+}
+
+/// Where a [`FlowDraft`] came from — carried through so the UI can label a
+/// draft and the agent can reason about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DraftOrigin {
+    /// Created from a chat/copilot build turn.
+    Chat,
+    /// Created from the canvas (e.g. "new workflow", or an accepted proposal).
+    Canvas,
+    /// Created from an import (native tinyflows JSON or an n8n export).
+    Import,
+}
+
+impl DraftOrigin {
+    /// The serde wire discriminator, for logging.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Canvas => "canvas",
+            Self::Import => "import",
+        }
+    }
+}
+
+/// A durable, core-managed **draft** of a workflow graph — the shared working
+/// copy the agent tools and the canvas both read/write across turns and reloads
+/// (audit F5).
+///
+/// Stored as a plain JSON file on disk (`{workspace_dir}/flows/drafts/<id>.json`),
+/// not in SQLite — trivially inspectable and deletable, no schema/migration.
+/// A draft is **never live**: promoting it (`flows_draft_promote`) runs the
+/// existing `flows_create`/`flows_update` gates (same forced `require_approval`
+/// floor, same human-in-the-loop) and removes the file. `graph` is a raw JSON
+/// value (not a typed `WorkflowGraph`) because a work-in-progress draft is
+/// explicitly allowed to be incomplete or not-yet-valid.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FlowDraft {
+    /// Stable draft id (UUID). Distinct from any `flow_id`.
+    pub id: String,
+    /// The saved flow this draft edits, if any. `None` for a from-scratch draft
+    /// (promote → `flows_create`); `Some` for an edit of an existing flow
+    /// (promote → `flows_update`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow_id: Option<String>,
+    /// Human-readable name carried into the flow on promote.
+    pub name: String,
+    /// The work-in-progress graph as raw JSON (may be incomplete/invalid).
+    pub graph: Value,
+    /// Where the draft originated.
+    pub origin: DraftOrigin,
+    /// RFC3339 creation time.
+    pub created_at: String,
+    /// RFC3339 last-update time.
+    pub updated_at: String,
 }
 
 /// A saved automation workflow: a `tinyflows` graph plus OpenHuman-side

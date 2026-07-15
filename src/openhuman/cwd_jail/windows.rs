@@ -113,11 +113,19 @@ impl JailBackend for AppContainerBackend {
     }
 
     fn is_available(&self) -> bool {
-        // AppContainer is available on Windows 8+ and Server 2012+.
-        // We could probe `CreateAppContainerProfile`'s availability via
-        // GetProcAddress, but treating the target_os = "windows" cfg as
-        // good enough — supported Windows versions are all 10+.
-        true
+        // AppContainer is *reachable* on every supported Windows (8+ / Server
+        // 2012+), but the spawn path in `spawn_in_container` can't yet return
+        // a `std::process::Child` — after `CreateProcessW` succeeds it must
+        // reply `Err(io::ErrorKind::Unsupported)` (see the TODO / `Unsupported`
+        // return at the end of `spawn_in_container`). Reporting the backend as
+        // available anyway strands the successfully-spawned process on the
+        // caller side: `execute_local_jail` bubbles the `Err` up as a spawn
+        // failure and never `wait`s on the running `cmd.exe`, so it
+        // orphan-runs against the redirected stdout/stderr files. Report
+        // unavailable until `Child` bridging lands so `pick_backend()` /
+        // `execute_local_jail` route through `NoopBackend`, which returns a
+        // real waitable `Child`. (PR #4723 review — #4705.)
+        false
     }
 
     fn spawn(&self, jail: &Jail, cmd: Command) -> io::Result<Child> {
@@ -583,5 +591,23 @@ mod tests {
         // Per the in-function comment: truncate to 60 then prefix.
         assert!(s.len() <= 70);
         assert!(s.starts_with("openhuman."));
+    }
+
+    /// PR #4723 review — `AppContainerBackend::is_available()` must
+    /// stay `false` until the spawn path can return a
+    /// `std::process::Child`. Reporting available strands a
+    /// successfully-spawned `cmd.exe` process because `spawn_in_container`
+    /// currently answers `Err(Unsupported)` after `CreateProcessW`, and
+    /// callers (e.g. `execute_local_jail`) drop the child on the floor.
+    /// Flip back to `true` in the same commit that lands the
+    /// `OwnedHandle -> Child` bridge.
+    #[test]
+    fn appcontainer_backend_reports_unavailable_until_child_bridge_lands() {
+        assert!(
+            !AppContainerBackend::new().is_available(),
+            "AppContainer must report unavailable while its spawn path \
+             cannot yield a waitable std::process::Child — see #4705 / \
+             PR #4723 for the orphan-spawn hazard"
+        );
     }
 }

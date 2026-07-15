@@ -76,10 +76,10 @@ pub fn get_or_create_tree(config: &Config, kind: TreeKind, scope: &str) -> Resul
 /// Matches both the anyhow-wrapped rusqlite error text and the raw SQLite
 /// error codes in case the wrapping chain is shorter.
 pub fn is_unique_violation(err: &anyhow::Error) -> bool {
-    if let Some(rusqlite_err) = err.downcast_ref::<rusqlite::Error>() {
-        if let rusqlite::Error::SqliteFailure(sqlite_err, _) = rusqlite_err {
-            return sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation;
-        }
+    if let Some(rusqlite::Error::SqliteFailure(sqlite_err, _)) =
+        err.downcast_ref::<rusqlite::Error>()
+    {
+        return sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation;
     }
     // Fallback for chained/wrapped errors: scan the rendered message.
     let msg = format!("{err:#}");

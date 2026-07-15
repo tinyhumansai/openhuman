@@ -144,7 +144,7 @@ async fn walk_dir(
                 size: if is_dir { 0 } else { meta.len() },
                 is_dir,
             });
-            if is_dir && depth + 1 <= max_depth {
+            if is_dir && depth < max_depth {
                 stack.push((path, depth + 1));
             }
         }
@@ -168,7 +168,7 @@ pub async fn list_workspace_files(
     Ok(RpcOutcome::single_log(
         ListResult {
             root: root.display().to_string(),
-            entries: entries.iter().cloned().collect(),
+            entries: entries.to_vec(),
             truncated,
         },
         format!(

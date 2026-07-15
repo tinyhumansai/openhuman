@@ -465,13 +465,6 @@ impl ScannerRegistry {
     pub fn new() -> Self {
         Self
     }
-    pub fn ensure_scanner<R: tauri::Runtime>(
-        self: std::sync::Arc<Self>,
-        _app: tauri::AppHandle<R>,
-        _account_id: String,
-    ) {
-    }
-
     pub fn shutdown(&self) {}
 }
 

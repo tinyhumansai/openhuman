@@ -131,8 +131,9 @@ describe('FlowsPage', () => {
     fireEvent.click(screen.getByTestId('flow-toggle-flow-1'));
 
     expect(setFlowEnabled).toHaveBeenCalledWith('flow-1', false);
+    // The toggle is a SettingsSwitch (role=switch) now; state is conveyed via aria-checked.
     await waitFor(() =>
-      expect(screen.getByTestId('flow-status-flow-1')).toHaveTextContent('Paused')
+      expect(screen.getByTestId('flow-toggle-flow-1')).toHaveAttribute('aria-checked', 'false')
     );
   });
 
@@ -167,7 +168,9 @@ describe('FlowsPage', () => {
     listFlowRuns.mockResolvedValue([]);
     renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
-    await waitFor(() => expect(screen.getByTestId('flow-view-runs-flow-1')).toBeInTheDocument());
+    // "View runs" is a secondary action behind the row's overflow menu now.
+    await waitFor(() => expect(screen.getByTestId('flow-menu-flow-1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('flow-menu-flow-1'));
     fireEvent.click(screen.getByTestId('flow-view-runs-flow-1'));
 
     expect(await screen.findByTestId('flow-runs-drawer')).toBeInTheDocument();
@@ -220,15 +223,16 @@ describe('FlowsPage', () => {
     expect(screen.getByTestId('new-workflow-modal')).toBeInTheDocument();
   });
 
-  it('always shows the in-place prompt bar and the chooser no longer duplicates it', async () => {
+  it('no longer shows the in-place copilot composer on the list page', async () => {
     listFlows.mockResolvedValue([makeFlow()]);
     renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
-    // The prompt bar is the single "describe a workflow" entry point.
-    expect(await screen.findByTestId('workflow-prompt-bar')).toBeInTheDocument();
+    // The list-page composer was removed — building now happens in the canvas.
+    await screen.findByTestId('flows-new-workflow');
+    expect(screen.queryByTestId('workflow-prompt-bar')).not.toBeInTheDocument();
 
-    // The chooser modal offers scratch + template only — no redundant describe.
-    fireEvent.click(await screen.findByTestId('flows-new-workflow'));
+    // The chooser modal offers scratch + template only — no describe.
+    fireEvent.click(screen.getByTestId('flows-new-workflow'));
     expect(screen.getByTestId('new-workflow-scratch')).toBeInTheDocument();
     expect(screen.queryByTestId('new-workflow-describe')).not.toBeInTheDocument();
   });
@@ -271,6 +275,8 @@ describe('FlowsPage', () => {
     deleteFlow.mockResolvedValue('flow-1');
     renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
 
+    // Delete now lives behind the row's "⋯" overflow menu, alongside
+    // Export/Duplicate, rather than a standalone icon button.
     fireEvent.click(await screen.findByTestId('flow-menu-flow-1'));
     fireEvent.click(await screen.findByTestId('flow-delete-flow-1'));
 

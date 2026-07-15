@@ -15,7 +15,9 @@
 //! `checkpoints.db` (see `src/openhuman/tinyflows/mod.rs::open_flow_checkpointer`).
 
 use crate::openhuman::config::Config;
-use crate::openhuman::flows::types::{FlowRun, FlowRunStep, FlowSuggestion, SuggestionStatus};
+use crate::openhuman::flows::types::{
+    FlowRevision, FlowRun, FlowRunStep, FlowSuggestion, SuggestionStatus,
+};
 use crate::openhuman::flows::Flow;
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -93,7 +95,18 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
             source_run_id          TEXT
          );
          CREATE INDEX IF NOT EXISTS idx_flow_suggestions_status ON flow_suggestions(status);
-         CREATE INDEX IF NOT EXISTS idx_flow_suggestions_created_at ON flow_suggestions(created_at);",
+         CREATE INDEX IF NOT EXISTS idx_flow_suggestions_created_at ON flow_suggestions(created_at);
+
+         CREATE TABLE IF NOT EXISTS flow_revisions (
+            id               TEXT PRIMARY KEY,
+            flow_id          TEXT NOT NULL,
+            graph_json       TEXT NOT NULL,
+            name             TEXT NOT NULL,
+            require_approval INTEGER NOT NULL DEFAULT 0,
+            created_at       TEXT NOT NULL,
+            FOREIGN KEY (flow_id) REFERENCES flow_definitions(id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS idx_flow_revisions_flow_id ON flow_revisions(flow_id, created_at);",
     )
     .context("Failed to initialize flows schema")?;
 
@@ -324,38 +337,194 @@ pub fn set_enabled(config: &Config, id: &str, enabled: bool) -> Result<Flow> {
     get_flow(config, id)?.ok_or_else(|| anyhow::anyhow!("flow '{id}' not found after update"))
 }
 
-/// Replaces a flow's name/graph/`require_approval` (re-validated by the
-/// caller before this is invoked) in place, bumping `updated_at`.
+/// How many revision snapshots to retain per flow (audit F6). Older ones are
+/// pruned on each new capture.
+const MAX_REVISIONS_PER_FLOW: usize = 20;
+
+/// Failure modes of [`update_flow_graph`] that the caller must distinguish:
+/// a genuine not-found, an optimistic-concurrency conflict (carrying the
+/// current server flow so the UI can diff/reload), or a store error.
+#[derive(Debug)]
+pub enum FlowUpdateError {
+    /// No flow with that id exists.
+    NotFound,
+    /// The flow changed since `expected_updated_at` was observed — the write
+    /// was refused to avoid clobbering. Carries the current server flow.
+    Conflict(Box<Flow>),
+    /// An underlying store failure.
+    Store(anyhow::Error),
+}
+
+impl std::fmt::Display for FlowUpdateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "flow not found"),
+            Self::Conflict(_) => write!(f, "flow changed since it was loaded"),
+            Self::Store(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// Replaces a flow's name/graph/`require_approval` (re-validated by the caller
+/// before this is invoked) in place, bumping `updated_at`, capturing the prior
+/// graph as a revision, and enforcing optimistic concurrency.
+///
+/// When `expected_updated_at` is `Some`, the write is refused with
+/// [`FlowUpdateError::Conflict`] (carrying the current server flow) if the
+/// flow's `updated_at` no longer matches — so an agent save and a concurrent
+/// canvas save can't silently clobber each other. `None` keeps the prior
+/// last-write-wins behaviour for callers that don't track a version.
+///
+/// `enabled_override`, when `Some`, forces the persisted `enabled` flag to
+/// that value in the *same* guarded `UPDATE` as the graph/name/
+/// `require_approval` write — used by `ops::flows_update`'s B29 Rule 1
+/// analogue (auto-disarming a flow whose trigger just changed from manual to
+/// automatic) so the disarm can never race a concurrent read/write of
+/// `enabled` (a separate `set_enabled` call after this one would leave a
+/// TOCTOU window). `None` leaves `enabled` untouched, matching the previous
+/// behaviour for every other caller.
 pub fn update_flow_graph(
     config: &Config,
     id: &str,
     name: String,
     graph: tinyflows::model::WorkflowGraph,
     require_approval: bool,
-) -> Result<Flow> {
-    let graph_json = serde_json::to_string(&graph).context("Failed to serialize graph")?;
+    enabled_override: Option<bool>,
+    expected_updated_at: Option<&str>,
+) -> std::result::Result<Flow, FlowUpdateError> {
+    let current = get_flow(config, id)
+        .map_err(FlowUpdateError::Store)?
+        .ok_or(FlowUpdateError::NotFound)?;
+
+    // Optimistic-concurrency check: refuse if the flow moved on since the
+    // caller observed `expected_updated_at`.
+    if let Some(expected) = expected_updated_at {
+        if current.updated_at != expected {
+            return Err(FlowUpdateError::Conflict(Box::new(current)));
+        }
+    }
+
+    let graph_json = serde_json::to_string(&graph)
+        .context("Failed to serialize graph")
+        .map_err(FlowUpdateError::Store)?;
+    let prior_graph_json =
+        serde_json::to_string(&current.graph).unwrap_or_else(|_| "null".to_string());
     let now = Utc::now().to_rfc3339();
-    // Targeted UPDATE of only the editable columns, so a concurrent
-    // `set_enabled` / `record_run` isn't clobbered by writing back a stale
-    // `enabled` / `last_run_at` / `last_status` from a read-modify-write.
-    let changed = with_connection(config, |conn| {
+    let new_enabled = enabled_override.unwrap_or(current.enabled);
+
+    with_connection(config, |conn| {
+        // Guarded UPDATE keyed on the observed updated_at (race-safe even
+        // without an explicit expected version) — a concurrent writer that
+        // moved updated_at makes this match 0 rows. Targeted columns only, so a
+        // concurrent set_enabled/record_run isn't clobbered (unless this call
+        // itself carries an `enabled_override`, in which case `enabled` is
+        // one of the targeted columns by design).
+        let changed = conn
+            .execute(
+                "UPDATE flow_definitions SET name = ?1, graph_json = ?2, updated_at = ?3, \
+                 require_approval = ?4, enabled = ?5 WHERE id = ?6 AND updated_at = ?7",
+                params![
+                    name,
+                    graph_json,
+                    now,
+                    if require_approval { 1 } else { 0 },
+                    if new_enabled { 1 } else { 0 },
+                    id,
+                    current.updated_at,
+                ],
+            )
+            .context("Failed to update flow")?;
+        if changed == 0 {
+            // Someone raced us between the read and the write.
+            anyhow::bail!("__conflict__");
+        }
+        // Capture the prior graph as a revision, then prune to the cap.
+        let rev_id = Uuid::new_v4().to_string();
         conn.execute(
-            "UPDATE flow_definitions SET name = ?1, graph_json = ?2, updated_at = ?3, \
-             require_approval = ?4 WHERE id = ?5",
+            "INSERT INTO flow_revisions (id, flow_id, graph_json, name, require_approval, \
+             created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
-                name,
-                graph_json,
+                rev_id,
+                id,
+                prior_graph_json,
+                current.name,
+                if current.require_approval { 1 } else { 0 },
                 now,
-                if require_approval { 1 } else { 0 },
-                id
             ],
         )
-        .context("Failed to update flow")
+        .context("Failed to record flow revision")?;
+        conn.execute(
+            "DELETE FROM flow_revisions WHERE flow_id = ?1 AND id NOT IN (\
+                SELECT id FROM flow_revisions WHERE flow_id = ?1 \
+                ORDER BY created_at DESC, id DESC LIMIT ?2)",
+            params![id, MAX_REVISIONS_PER_FLOW as i64],
+        )
+        .context("Failed to prune flow revisions")?;
+        Ok(())
+    })
+    .map_err(|e| {
+        if e.to_string().contains("__conflict__") {
+            // Re-read to hand back the current state.
+            match get_flow(config, id) {
+                Ok(Some(f)) => FlowUpdateError::Conflict(Box::new(f)),
+                Ok(None) => FlowUpdateError::NotFound,
+                Err(e) => FlowUpdateError::Store(e),
+            }
+        } else {
+            FlowUpdateError::Store(e)
+        }
     })?;
-    if changed == 0 {
-        anyhow::bail!("flow '{id}' not found");
-    }
-    get_flow(config, id)?.ok_or_else(|| anyhow::anyhow!("flow '{id}' not found"))
+
+    get_flow(config, id)
+        .map_err(FlowUpdateError::Store)?
+        .ok_or(FlowUpdateError::NotFound)
+}
+
+/// Lists a flow's revision snapshots, newest first, up to `limit`.
+pub fn list_revisions(config: &Config, flow_id: &str, limit: usize) -> Result<Vec<FlowRevision>> {
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, flow_id, graph_json, name, require_approval, created_at \
+             FROM flow_revisions WHERE flow_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![flow_id, limit as i64], map_revision_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    })
+}
+
+/// Fetches one revision by id (scoped to `flow_id`), or `None`.
+pub fn revision_by_id(
+    config: &Config,
+    flow_id: &str,
+    revision_id: &str,
+) -> Result<Option<FlowRevision>> {
+    with_connection(config, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, flow_id, graph_json, name, require_approval, created_at \
+             FROM flow_revisions WHERE flow_id = ?1 AND id = ?2",
+        )?;
+        let mut rows = stmt.query_map(params![flow_id, revision_id], map_revision_row)?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    })
+}
+
+fn map_revision_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FlowRevision> {
+    let graph_str: String = row.get(2)?;
+    let graph: serde_json::Value =
+        serde_json::from_str(&graph_str).unwrap_or(serde_json::Value::Null);
+    Ok(FlowRevision {
+        id: row.get(0)?,
+        flow_id: row.get(1)?,
+        graph,
+        name: row.get(3)?,
+        require_approval: row.get::<_, i64>(4)? != 0,
+        created_at: row.get(5)?,
+    })
 }
 
 /// Records the outcome of a `flows_run` invocation onto the flow's summary
@@ -673,6 +842,25 @@ pub fn list_flow_runs(config: &Config, flow_id: &str, limit: usize) -> Result<Ve
              ORDER BY started_at DESC, id DESC LIMIT ?2"
         ))?;
         let rows = stmt.query_map(params![flow_id, lim], map_flow_run_row)?;
+        let mut runs = Vec::new();
+        for row in rows {
+            runs.push(row?);
+        }
+        Ok(runs)
+    })
+}
+
+/// List the most recent runs across ALL flows, newest first (the "All runs"
+/// page). Uses the `idx_flow_runs_started_at` index for the ordering. Each
+/// [`FlowRun`] carries its own `flow_id`, so the UI can group/label by flow.
+pub fn list_all_flow_runs(config: &Config, limit: usize) -> Result<Vec<FlowRun>> {
+    with_connection(config, |conn| {
+        let lim = i64::try_from(limit.max(1)).context("Run history limit overflow")?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {FLOW_RUN_COLUMNS} FROM flow_runs \
+             ORDER BY started_at DESC, id DESC LIMIT ?1"
+        ))?;
+        let rows = stmt.query_map(params![lim], map_flow_run_row)?;
         let mut runs = Vec::new();
         for row in rows {
             runs.push(row?);

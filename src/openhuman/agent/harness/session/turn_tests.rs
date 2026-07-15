@@ -1,5 +1,4 @@
 use super::*;
-use crate::core::event_bus::{global, init_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::XmlToolDispatcher;
 use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
 use crate::openhuman::agent::tool_policy::{
@@ -8,8 +7,7 @@ use crate::openhuman::agent::tool_policy::{
 };
 use crate::openhuman::agent_memory::memory_loader::MemoryLoader;
 use crate::openhuman::inference::provider::{
-    ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ToolResultMessage,
-    UsageInfo,
+    ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, UsageInfo,
 };
 use crate::openhuman::memory::Memory;
 use crate::openhuman::tools::ToolResult;
@@ -20,7 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::Notify;
-use tokio::time::{sleep, timeout, Duration};
+use tokio::time::{timeout, Duration};
 
 struct DummyProvider;
 
@@ -1195,6 +1193,49 @@ async fn turn_final_answer_falls_back_to_deterministic_summary_when_reprompt_emp
         "no blank assistant turn should remain in history, got: {:?}",
         agent.history
     );
+}
+
+#[tokio::test]
+async fn summarize_turn_wrapup_rejects_prompt_tool_call_and_preserves_usage() {
+    let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![Ok(ChatResponse {
+            text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
+            tool_calls: vec![],
+            usage: Some(UsageInfo {
+                input_tokens: 13,
+                output_tokens: 5,
+                cached_input_tokens: 3,
+                charged_amount_usd: 0.07,
+                ..UsageInfo::default()
+            }),
+            reasoning_content: None,
+        })]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let agent = make_agent_with_builder(
+        provider,
+        vec![],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        crate::openhuman::config::AgentConfig::default(),
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    let (summary, usage) = agent
+        .summarize_turn_wrapup(&[], "test-model", 1, "write a wrap-up")
+        .await;
+
+    assert!(
+        summary.is_empty(),
+        "prompt-formatted tool calls must trigger the deterministic fallback"
+    );
+    let usage = usage.expect("rejected wrap-up must preserve provider usage");
+    assert_eq!(usage.input_tokens, 13);
+    assert_eq!(usage.output_tokens, 5);
+    assert_eq!(usage.cached_input_tokens, 3);
+    assert_eq!(usage.charged_amount_usd, 0.07);
 }
 
 #[tokio::test]

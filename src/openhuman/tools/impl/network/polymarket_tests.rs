@@ -446,6 +446,37 @@ async fn list_markets_happy_path() {
 }
 
 #[tokio::test]
+async fn blocked_under_local_only_privacy_mode() {
+    // Privacy epic S7 (#4441): every Polymarket request funnels through
+    // `send_with_retry`, which refuses under LocalOnly before any network — so
+    // this passes against an unreachable base URL (a leaked request would fail
+    // with a transport error, not the policy-blocked message).
+    let _mode = super::super::local_only_scope();
+    let tool = test_tool(
+        "https://gamma.example.com".into(),
+        "https://clob.example.com".into(),
+        15,
+    );
+
+    let result = tool
+        .execute(json!({ "action": "list_markets", "limit": 2, "offset": 0, "active": true }))
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert!(
+        result.output().contains("[policy-blocked]"),
+        "got: {}",
+        result.output()
+    );
+    assert!(
+        result.output().contains("Local-only"),
+        "got: {}",
+        result.output()
+    );
+}
+
+#[tokio::test]
 async fn get_market_by_id_happy_path() {
     let (gamma_base, _) = start_mock_server(route(
         "/markets/12345",
@@ -916,6 +947,95 @@ async fn place_order_happy_path_posts_signed_order() {
         .as_str()
         .map(|sig| sig.starts_with("0x") && sig.len() > 10)
         .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn credential_derivation_blocked_before_http_under_local_only() {
+    // Privacy epic S7 (#4441): with NO cached CLOB credentials, a signed action
+    // derives them via `clob_auth::derive_credentials`, which POSTs the wallet
+    // address + L1 EIP-712 signature to `/auth/api-key` directly on `self.http`
+    // — a path that does NOT funnel through the `send_with_retry` egress gate.
+    // The gate in `ensure_clob_credentials` must refuse under LocalOnly BEFORE
+    // that round-trip. We mock the auth (+ nonce/order) routes so any leaked
+    // request would be captured; the decisive assertion is that NONE were made.
+    use crate::openhuman::config::TEST_ENV_LOCK;
+
+    let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
+
+    let user = configure_wallet_for_place_order_test(tmp.path())
+        .await
+        .expect("wallet setup");
+
+    // If the gate leaked, the derive path would POST here first. A "leaked"
+    // credential body is served so a bypass would visibly proceed to /nonce +
+    // /order — making a regression loud rather than silently green.
+    let leaked_creds = r#"{"apiKey":"leaked","secret":"bGVha2Vk","passphrase":"leaked"}"#;
+    let mut routes = HashMap::new();
+    routes.insert(
+        "/auth/api-key".to_string(),
+        vec![MockResponse::body(200, leaked_creds)],
+    );
+    routes.insert(
+        "/auth/derive-api-key".to_string(),
+        vec![MockResponse::body(200, leaked_creds)],
+    );
+    routes.insert(
+        "/nonce".to_string(),
+        vec![MockResponse::body(200, r#"{"nonce":42}"#)],
+    );
+    routes.insert(
+        "/order".to_string(),
+        vec![MockResponse::body(200, r#"{"success":true}"#)],
+    );
+
+    let (clob_base, _calls, captured) = start_mock_server_with_capture(routes).await;
+    let config = PolymarketConfig {
+        enabled: true,
+        gamma_base_url: clob_base.clone(),
+        clob_base_url: clob_base,
+        timeout_secs: 15,
+        eoa_address: Some(user.clone()),
+        // NO derived_clob_credentials → the tool MUST derive, hitting the gate.
+        ..PolymarketConfig::default()
+    };
+    let tool = PolymarketTool::new(&config, test_security());
+
+    let _mode = super::super::local_only_scope();
+    let result = tool
+        .execute(json!({
+            "action": "place_order",
+            "user": user.clone(),
+            "side": "BUY",
+            "token_id": "1001",
+            "price": 0.5,
+            "size": 10.0,
+            "time_in_force": "GTC",
+            "approved": true
+        }))
+        .await
+        .unwrap();
+
+    assert!(
+        result.is_error,
+        "expected policy block, got: {}",
+        result.output()
+    );
+    assert!(
+        result.output().contains("[policy-blocked]") && result.output().contains("Local-only"),
+        "expected local-only policy block, got: {}",
+        result.output()
+    );
+
+    // Decisive: credential derivation was refused BEFORE any HTTP — the mock
+    // recorded zero requests, so nothing (wallet address / L1 signature) ever
+    // left the device.
+    let requests = captured.lock().unwrap().clone();
+    assert!(
+        requests.is_empty(),
+        "no request must reach transport under LocalOnly; observed: {requests:#?}"
+    );
 }
 
 #[tokio::test]

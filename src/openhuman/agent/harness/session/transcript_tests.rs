@@ -871,7 +871,7 @@ fn read_thread_usage_summary_sums_multiple_transcripts() {
     let raw = raw_session_dir(ws.path());
     std::fs::create_dir_all(&raw).unwrap();
 
-    let mut mk = |stem: &str, input: u64, cost: f64| {
+    let mk = |stem: &str, input: u64, cost: f64| {
         let mut meta = sample_meta();
         meta.thread_id = Some("thr-multi".into());
         meta.input_tokens = input;
@@ -928,7 +928,7 @@ fn read_thread_usage_summary_groups_subagents_by_archetype() {
     .unwrap();
 
     // Sub-agent transcripts (stems contain `__`): coder x2 + researcher x1.
-    let mut sub = |stem: &str, agent: &str, input: u64, output: u64| {
+    let sub = |stem: &str, agent: &str, input: u64, output: u64| {
         let mut m = sample_meta();
         m.thread_id = Some("thr-sub".into());
         m.agent_name = agent.into();

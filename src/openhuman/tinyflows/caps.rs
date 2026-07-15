@@ -591,6 +591,7 @@ impl LlmProvider for OpenHumanLlm {
 ///    the node builds a real session agent
 ///    ([`Agent::from_config_for_agent`](crate::openhuman::agent::Agent::from_config_for_agent)
 ///    + `set_agent_definition_name`) and drives one full turn via
+///
 ///    [`Agent::run_single`](crate::openhuman::agent::Agent::run_single) — the
 ///    complete tool loop. The definition's `ToolScope` / `sandbox_mode` /
 ///    `max_iterations` govern the turn, so an agent node gains its curated
@@ -654,6 +655,59 @@ pub(crate) fn route_for_agent_ref(agent_ref: &str) -> AgentRoute {
 /// provider/tool call must never wedge the flow run.
 pub(crate) fn clamp_run_timeout_secs(requested: Option<u64>) -> u64 {
     requested.map(|s| s.clamp(10, 600)).unwrap_or(240)
+}
+
+/// Issue #4868 — scale `base_timeout_secs` up for agents whose effective
+/// iteration cap exceeds the (until now, universal) global default of 10.
+///
+/// A `tools_agent`/`code_executor`/etc. node now legitimately runs up to 50
+/// iterations (`iteration_policy = "extended"`). At a worst case of
+/// ~10s/iteration that's ~500s, comfortably exceeding the 240s
+/// `clamp_run_timeout_secs` default — the node would be killed by timeout
+/// before it could use its own declared budget. Agents whose effective cap is
+/// still at or below the old global default (10) are unaffected and keep the
+/// unscaled `base_timeout_secs`. The scaled floor is capped at the existing
+/// 600s maximum `clamp_run_timeout_secs` already enforces, so this can only
+/// ever raise the effective timeout up to that ceiling, never past it.
+pub(crate) fn scale_timeout_for_iteration_cap(
+    base_timeout_secs: u64,
+    effective_iteration_cap: usize,
+) -> u64 {
+    if effective_iteration_cap > 10 {
+        let scaled = (effective_iteration_cap as u64).saturating_mul(12).min(600);
+        base_timeout_secs.max(scaled)
+    } else {
+        base_timeout_secs
+    }
+}
+
+/// Resolves the actual wall-clock timeout for one agent-node harness turn,
+/// combining [`clamp_run_timeout_secs`] and [`scale_timeout_for_iteration_cap`]
+/// per the post-merge Codex P2 finding on issue #4868's iteration-cap timeout
+/// scaling: **an explicit `timeout_secs` the flow author set on the node must
+/// never be scaled up.**
+///
+/// A node's `timeout_secs` can be an intentional fast-fail/SLA bound (e.g.
+/// `timeout_secs: 120` to bound a health-check-style agent call) — scaling
+/// that up to match a 50-iteration-cap agent would silently defeat the
+/// author's explicit choice. So the iteration-cap scaling only ever widens
+/// the *default* (no `timeout_secs` supplied) 240s bound; an explicit value is
+/// clamped to `10..=600` (as it always was) and returned as-is.
+///
+/// `requested_timeout_secs` is the raw `request["timeout_secs"]` (before
+/// clamping) so this function can distinguish "caller supplied a value" from
+/// "caller supplied nothing" — [`clamp_run_timeout_secs`] alone collapses that
+/// distinction into a plain `u64`.
+pub(crate) fn resolve_run_timeout_secs(
+    requested_timeout_secs: Option<u64>,
+    effective_iteration_cap: usize,
+) -> u64 {
+    let base_timeout_secs = clamp_run_timeout_secs(requested_timeout_secs);
+    if requested_timeout_secs.is_some() {
+        base_timeout_secs
+    } else {
+        scale_timeout_for_iteration_cap(base_timeout_secs, effective_iteration_cap)
+    }
 }
 
 /// Renders an agent-node completion `request` into the single user message
@@ -899,14 +953,33 @@ impl OpenHumanAgentRunner {
 
         let prompt = build_harness_run_prompt(&request);
 
+        let requested_timeout_secs = request.get("timeout_secs").and_then(Value::as_u64);
+        let base_timeout_secs = clamp_run_timeout_secs(requested_timeout_secs);
+
+        // Issue #4868 — the session builder now stamps `agent_ref`'s own
+        // `effective_max_iterations()` onto the agent (instead of the global
+        // default of 10), so `code_executor`/`tools_agent`/etc. can run up to
+        // 50 iterations here. Read the cap actually applied to `agent`
+        // (reflects the definition cap or the global fallback, whichever the
+        // builder resolved) and scale the DEFAULT timeout accordingly — see
+        // `scale_timeout_for_iteration_cap`.
+        //
+        // Post-merge Codex P2 finding: an EXPLICIT `timeout_secs` the node
+        // config supplied is a caller-chosen bound (e.g. a fast-fail/SLA of
+        // 120s) and must be honored as-is, never scaled up just because the
+        // agent's iteration cap is high — see `resolve_run_timeout_secs`.
+        let effective_iteration_cap = agent.agent_config().max_tool_iterations;
         let timeout_secs =
-            clamp_run_timeout_secs(request.get("timeout_secs").and_then(Value::as_u64));
+            resolve_run_timeout_secs(requested_timeout_secs, effective_iteration_cap);
 
         tracing::debug!(
             target: "flows",
             agent_ref,
             node_model = node_model.as_deref().unwrap_or("<definition-default>"),
             default_model = effective.default_model.as_deref().unwrap_or("<config-default>"),
+            effective_iteration_cap,
+            explicit_timeout_secs = requested_timeout_secs.is_some(),
+            base_timeout_secs,
             timeout_secs,
             prompt_len = prompt.len(),
             "[flows] agent_runner: dispatching full harness turn"
@@ -1123,6 +1196,71 @@ impl AgentRunner for SchemaAwareMockAgentRunner {
                      mirroring the vendored MockAgentRunner echo shape"
                 );
                 Ok(json!({ "agent": agent_ref, "request": request, "connection": conn }))
+            }
+        }
+    }
+}
+
+/// A **dry-run-only** [`LlmProvider`] mock that, unlike the vendored crate's
+/// `tinyflows::caps::mock::MockLlm`, respects an `agent` node's
+/// `config.output_parser.schema` when synthesizing its completion.
+///
+/// This closes the OTHER half of the same gap [`SchemaAwareMockAgentRunner`]
+/// closes. The vendored `agent` node only routes to an [`AgentRunner`] when the
+/// node carries a **non-empty `agent_ref`** AND the host wired an agent registry
+/// (`vendor/tinyflows/src/nodes/integration/agent.rs`, `run_turn`:
+/// `(Some(agent_ref), Some(runner)) => runner.run_agent(...)`); **every other
+/// case** — and builder-generated agent nodes carry NO `agent_ref` — falls back
+/// to `ctx.caps.llm.complete(cfg.clone(), conn)`. So in the sandbox those plain
+/// agent nodes never reach `SchemaAwareMockAgentRunner` at all: they hit the
+/// `llm` slot, which (with the vendored `MockLlm`) echoes
+/// `{ "completion": <config>, "connection": <conn> }`. The agent node's
+/// output-parser sub-port then validates that echo against the declared schema
+/// (`schema::parse_and_validate` — it validates the WHOLE completion value, not
+/// a `.text` field), no field matches, and it falls to a one-shot LLM auto-fix
+/// that the same `MockLlm` also can't satisfy — so the dry run errors with
+/// `output_parser: value failed schema validation after auto-fix: missing
+/// required property ...` even for a workflow a real run would execute cleanly.
+/// This false-failure burned many dry-run cycles for correctly-built graphs.
+///
+/// When `request` (the node config the node hands to `complete` — see the
+/// `_ => ctx.caps.llm.complete(cfg.clone(), conn)` arm above) carries a non-null
+/// `output_parser.schema`, this returns [`placeholder_for_schema`] DIRECTLY.
+/// The sub-port receives that already-schema-valid object as its `value`
+/// (`validate` returns no errors), so it returns `Ok` WITHOUT ever invoking the
+/// auto-fix LLM path — exactly the shape the vendored validator's
+/// `type`/`required`/`enum` checks accept, with no real model call. With no
+/// schema, it mirrors the vendored `MockLlm` echo shape byte-for-byte
+/// (`{ "completion": request, "connection": conn }`) so schema-less agent
+/// dry-run behavior — and downstream `=nodes.<agent>.item.json.completion...`
+/// bindings — stay identical to today.
+#[derive(Debug, Default, Clone)]
+pub struct SchemaAwareMockLlm;
+
+#[async_trait]
+impl LlmProvider for SchemaAwareMockLlm {
+    async fn complete(&self, request: Value, conn: Option<&str>) -> Result<Value> {
+        let schema = request
+            .get("output_parser")
+            .and_then(|parser| parser.get("schema"))
+            .filter(|schema| !schema.is_null());
+        match schema {
+            Some(schema) => {
+                let placeholder = placeholder_for_schema(schema);
+                tracing::debug!(
+                    target: "flows",
+                    "[flows] dry_run: schema-aware mock LLM synthesized a placeholder \
+                     matching output_parser.schema (plain agent node, no agent_ref)"
+                );
+                Ok(placeholder)
+            }
+            None => {
+                tracing::debug!(
+                    target: "flows",
+                    "[flows] dry_run: schema-aware mock LLM has no output_parser.schema — \
+                     mirroring the vendored MockLlm echo shape"
+                );
+                Ok(json!({ "completion": request, "connection": conn }))
             }
         }
     }
@@ -3506,6 +3644,62 @@ mod tests {
         assert_eq!(out["request"], request);
     }
 
+    // ── SchemaAwareMockLlm ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn schema_aware_mock_llm_mirrors_vendored_echo_without_a_schema() {
+        // No `output_parser.schema`: byte-identical to the vendored `MockLlm`
+        // so schema-less agent dry runs (which route to the `llm` slot, not the
+        // runner) keep today's `{ completion, connection }` shape.
+        let llm = SchemaAwareMockLlm;
+        let request = json!({ "prompt": "hi" });
+        let out = llm
+            .complete(request.clone(), Some("conn_1"))
+            .await
+            .expect("complete");
+        assert_eq!(out["completion"], request);
+        assert_eq!(out["connection"], "conn_1");
+
+        let without_conn = llm.complete(request, None).await.expect("complete");
+        assert!(without_conn["connection"].is_null());
+    }
+
+    #[tokio::test]
+    async fn schema_aware_mock_llm_synthesizes_a_schema_valid_completion() {
+        // A plain agent node (no `agent_ref`) hands its config to the `llm`
+        // slot; the returned object must pass the output-parser sub-port's
+        // validator directly (no auto-fix hop) for every declared type.
+        let llm = SchemaAwareMockLlm;
+        let request = json!({
+            "prompt": "extract",
+            "output_parser": { "schema": { "type": "object",
+                "required": ["email", "count", "active", "meta", "tags"],
+                "properties": {
+                    "email": { "type": "string" },
+                    "count": { "type": "integer" },
+                    "active": { "type": "boolean" },
+                    "meta": { "type": "object" },
+                    "tags": { "type": "array" }
+                } } }
+        });
+        let out = llm.complete(request, None).await.expect("complete");
+        assert_eq!(out["email"], "");
+        assert_eq!(out["count"], 0);
+        assert_eq!(out["active"], false);
+        assert_eq!(out["meta"], json!({}));
+        assert_eq!(out["tags"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn schema_aware_mock_llm_ignores_null_schema() {
+        // `output_parser: { schema: null }` is treated as "no schema" — the
+        // vendored echo shape, same as the runner's null-schema handling.
+        let llm = SchemaAwareMockLlm;
+        let request = json!({ "prompt": "hi", "output_parser": { "schema": null } });
+        let out = llm.complete(request.clone(), None).await.expect("complete");
+        assert_eq!(out["completion"], request);
+    }
+
     #[test]
     fn placeholder_for_schema_falls_back_to_type_without_properties() {
         assert_eq!(
@@ -4099,6 +4293,94 @@ mod tests {
     #[test]
     fn nested_harness_does_not_escalate_without_an_origin() {
         assert!(escalated_origin_for_nested_harness(None).is_none());
+    }
+
+    // ── Issue #4868 — agent-node iteration cap + timeout scaling ───────────
+
+    #[test]
+    fn scale_timeout_for_iteration_cap_leaves_default_cap_unscaled() {
+        // An agent whose effective cap is at or below the old global default
+        // (10) doesn't need extra wall-clock time.
+        assert_eq!(scale_timeout_for_iteration_cap(240, 10), 240);
+        assert_eq!(scale_timeout_for_iteration_cap(240, 3), 240);
+    }
+
+    #[test]
+    fn scale_timeout_for_iteration_cap_scales_extended_agents_up() {
+        // 50 iterations * 12s/iter = 600s, exactly the existing ceiling.
+        assert_eq!(scale_timeout_for_iteration_cap(240, 50), 600);
+    }
+
+    #[test]
+    fn scale_timeout_for_iteration_cap_never_lowers_an_explicit_request() {
+        // A caller-requested timeout higher than the scaled floor must win.
+        assert_eq!(scale_timeout_for_iteration_cap(600, 50), 600);
+    }
+
+    #[test]
+    fn scale_timeout_for_iteration_cap_caps_at_600_even_for_very_high_iteration_counts() {
+        assert_eq!(scale_timeout_for_iteration_cap(240, 200), 600);
+    }
+
+    /// Post-merge Codex P2 finding on issue #4868: an explicit `timeout_secs`
+    /// the node config supplied (a caller-chosen fast-fail/SLA bound) must be
+    /// honored as-is — never scaled up just because the agent's iteration cap
+    /// is high — while the absence of one still gets the iteration-cap
+    /// scaling so a 50-iteration agent isn't killed by the 240s default.
+    #[test]
+    fn resolve_run_timeout_secs_preserves_an_explicit_request_even_for_a_high_cap_agent() {
+        assert_eq!(resolve_run_timeout_secs(Some(120), 50), 120);
+    }
+
+    #[test]
+    fn resolve_run_timeout_secs_scales_the_default_up_for_a_high_cap_agent() {
+        // No explicit timeout_secs (None) -> default 240s, scaled by the
+        // 50-iteration cap to min(50*12, 600) = 600.
+        assert_eq!(resolve_run_timeout_secs(None, 50), 600);
+    }
+
+    #[test]
+    fn resolve_run_timeout_secs_leaves_low_cap_agents_unscaled_either_way() {
+        assert_eq!(resolve_run_timeout_secs(None, 10), 240);
+        assert_eq!(resolve_run_timeout_secs(Some(120), 10), 120);
+    }
+
+    /// Regression for issue #4868: the agent-node runtime path
+    /// (`OpenHumanAgentRunner::run_via_harness`) must build an `Agent` that
+    /// carries `agent_ref`'s definition's effective cap (50 for an
+    /// extended-policy agent), not the global `config.agent.max_tool_iterations`
+    /// default (10). This mirrors the exact build step `run_via_harness` takes
+    /// before dispatching the turn (so it doesn't require a live model
+    /// provider to exercise).
+    #[test]
+    fn agent_node_runtime_resolves_to_the_definitions_effective_iteration_cap() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = resolver_test_config(&tmp);
+        assert_eq!(config.agent.max_tool_iterations, 10);
+
+        crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global(
+            &config.workspace_dir,
+        )
+        .expect("agent registry init");
+        let def = crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global()
+            .expect("registry initialised")
+            .get("code_executor")
+            .expect("code_executor definition registered")
+            .clone();
+        let expected = def.effective_max_iterations();
+        assert_eq!(expected, 50);
+
+        let agent = crate::openhuman::agent::Agent::from_config_for_agent(&config, "code_executor")
+            .expect("build code_executor agent");
+        assert_eq!(agent.agent_config().max_tool_iterations, expected);
+
+        // And the timeout scaling this cap feeds into actually widens the
+        // default 240s bound for this node.
+        let base_timeout = clamp_run_timeout_secs(None);
+        assert_eq!(base_timeout, 240);
+        let scaled =
+            scale_timeout_for_iteration_cap(base_timeout, agent.agent_config().max_tool_iterations);
+        assert_eq!(scaled, 600);
     }
 
     // ── Phase 7: sub_workflow-by-id resolver ───────────────────────────────

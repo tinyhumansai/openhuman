@@ -48,6 +48,45 @@ async fn authorize_rejects_empty_toolkit() {
     );
 }
 
+/// Privacy epic S7 (#4441): under LocalOnly, both execute entry points refuse
+/// the external tool call before any HTTP round-trip. The inner client points at
+/// an unreachable address, so a passing test proves the gate short-circuits
+/// before the network (a leaked call would fail with a transport error, not the
+/// local-only message).
+#[tokio::test]
+async fn execute_tool_blocked_under_local_only() {
+    // Thread-scoped LocalOnly (see `live_policy::test_privacy_scope`) — never
+    // mutates the process-global policy, so it can't race sibling mock tests.
+    let _mode = crate::openhuman::security::live_policy::test_privacy_scope(
+        crate::openhuman::config::PrivacyMode::LocalOnly,
+    );
+    let inner = Arc::new(crate::openhuman::integrations::IntegrationClient::new(
+        "http://127.0.0.1:0".into(),
+        "test".into(),
+    ));
+    let client = ComposioClient::new(inner);
+
+    let err = client
+        .execute_tool("GITHUB_CREATE_ISSUE", None)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Local-only privacy mode is active"),
+        "execute_tool: unexpected error: {err}"
+    );
+    let err_once = client
+        .execute_tool_once("GITHUB_CREATE_ISSUE", None)
+        .await
+        .unwrap_err();
+    assert!(
+        err_once
+            .to_string()
+            .contains("Local-only privacy mode is active"),
+        "execute_tool_once: unexpected error: {err_once}"
+    );
+}
+
 /// `authorize()` must reject a non-object `extra_params` before making any HTTP call.
 #[tokio::test]
 async fn authorize_rejects_non_object_extra_params() {

@@ -386,6 +386,7 @@ impl OllamaShowResponse {
 /// (unknown):
 ///   * empty / absent capabilities (older Ollama, or an `/api/show` miss);
 ///   * a tag set we don't recognise (e.g. `["insert"]` only).
+///
 /// Callers treat `None` as "keep visible" — fail-open, never hide a model
 /// that might be usable for chat. Mirrors the non-rejecting `Unknown` arm of
 /// [`super::model_requirements::ContextEligibility`]. See Sentry TAURI-RUST-4P6.

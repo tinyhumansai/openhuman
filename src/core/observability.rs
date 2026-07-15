@@ -1698,6 +1698,27 @@ fn is_provider_user_state_message(lower: &str) -> bool {
         return true;
     }
 
+    // TAURI-RUST-K27 — the set-key sibling of X9. `composio_set_api_key`'s
+    // validate-before-store probe (added in #4318) rejects an obviously invalid
+    // BYO key *before* persisting it and returns its own user-facing prose,
+    // `COMPOSIO_INVALID_API_KEY_USER_MESSAGE` ("Invalid Composio API key. Re-enter
+    // a valid key in Settings > Connections > Composio."). That string carries
+    // neither the `[composio-direct]` prefix nor an `HTTP 401` token, and the word
+    // "Composio" splits the `invalid … api key` sequence — so the X9 arm above
+    // never claims it and the RPC-boundary `report_error` leaked as a Sentry error
+    // (473 events / 53 users, starting ~5 h after #4318 merged). Same user-state as
+    // X9: an invalid/revoked BYO key with zero client-side lever to make it valid;
+    // the Settings UI already surfaces the actionable re-entry copy. Anchor on the
+    // distinctive `COMPOSIO_INVALID_API_KEY_ANCHOR` phrase — it can only be produced
+    // by our own const (a genuine set-path defect renders a different `store_…
+    // failed` / `save config failed` body that still pages). Keyed off the shared
+    // anchor const (not a copied literal) and coupled to the typed source by
+    // `demotes_composio_set_key_invalid_key_rejection` so a reword that drops the
+    // phrase fails CI instead of silently re-opening the leak.
+    if lower.contains(crate::openhuman::composio::direct_auth::COMPOSIO_INVALID_API_KEY_ANCHOR) {
+        return true;
+    }
+
     // TAURI-RUST-34H — composio backend endpoint (e.g.
     // `/agent-integrations/composio/connections`) wraps an upstream
     // Cloudflare anti-bot challenge as `Backend returned 500 Internal
@@ -5637,6 +5658,60 @@ mod tests {
             Some(ExpectedErrorKind::ProviderUserState),
             "unrelated 401 (no [composio-direct] anchor) must NOT match the composio-direct arm"
         );
+    }
+
+    // ── TAURI-RUST-K27: composio set-key validation prose (sibling of X9) ──
+
+    #[test]
+    fn demotes_composio_set_key_invalid_key_rejection() {
+        // Drift coupler: assert the classifier demotes the EXACT const the
+        // `composio_set_api_key` validate-before-store probe returns. Keying
+        // off the shared const (not a copied literal) means any reword that
+        // drops the `"Invalid Composio API key"` anchor fails this test in CI
+        // instead of silently re-opening the TAURI-RUST-K27 leak.
+        assert_eq!(
+            expected_error_kind(
+                crate::openhuman::composio::direct_auth::COMPOSIO_INVALID_API_KEY_USER_MESSAGE
+            ),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "composio_set_api_key invalid-key rejection must demote to ProviderUserState"
+        );
+    }
+
+    #[test]
+    fn composio_set_key_anchor_is_substring_of_message() {
+        // Contract coupler: the classifier keys on the shared
+        // `COMPOSIO_INVALID_API_KEY_ANCHOR`; it is only correct if that anchor is a
+        // genuine lowercase substring of the message the probe returns. Assert the
+        // two consts stay in sync so neither can be reworded independently.
+        use crate::openhuman::composio::direct_auth::{
+            COMPOSIO_INVALID_API_KEY_ANCHOR, COMPOSIO_INVALID_API_KEY_USER_MESSAGE,
+        };
+        assert!(
+            COMPOSIO_INVALID_API_KEY_USER_MESSAGE
+                .to_lowercase()
+                .contains(COMPOSIO_INVALID_API_KEY_ANCHOR),
+            "the K27 anchor must be a lowercase substring of the user message"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_composio_set_key_store_failure_as_user_state() {
+        // Discrimination: a genuine defect on the set path — the key validated
+        // but persistence/config-save failed — renders a different body and
+        // MUST still page. The K27 arm keys on "invalid composio api key",
+        // which these do not contain, so they fall through to `None`.
+        let store_fail = "[composio-direct] store_composio_api_key failed: \
+                          keyring write denied (os error 5)";
+        let save_fail = "[composio-direct] save config failed: \
+                         config file is read-only";
+        for msg in [store_fail, save_fail] {
+            assert_eq!(
+                expected_error_kind(msg),
+                None,
+                "genuine composio set-path failure must still reach Sentry: {msg}"
+            );
+        }
     }
 
     #[test]

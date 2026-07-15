@@ -300,8 +300,13 @@ impl Agent {
     /// the subconscious LLM cited when it produced the spawning
     /// reflection (#623). Empty / `None` is the default for normal chat
     /// threads — the section is omitted entirely.
+    // `pub(crate)` (rather than private) so `builder_tests` can drive the
+    // definition-cap resolution logic (issue #4868) directly with a
+    // hand-picked `target_def`, independent of the process-global
+    // `AgentDefinitionRegistry` singleton's init-once state. Still not part
+    // of the crate's public API.
     #[allow(clippy::too_many_arguments)]
-    fn build_session_agent_inner(
+    pub(crate) fn build_session_agent_inner(
         config: &Config,
         agent_id: &str,
         target_def: Option<&crate::openhuman::agent::harness::definition::AgentDefinition>,
@@ -486,7 +491,7 @@ impl Agent {
             )?;
         let supports_native = resolved_chat_model
             .profile()
-            .map_or(true, |profile| profile.tool_calling);
+            .is_none_or(|profile| profile.tool_calling);
         log::info!(
             "[session-builder] agent_id={} provider_role={} resolved_model={} supports_native_tools={}",
             agent_id,
@@ -1133,6 +1138,31 @@ impl Agent {
         // a host provider. The
         // `agent_harness_e2e` mock now serves SSE for streaming, so the crate-native
         // streaming path is exercised end-to-end.
+        //
+        // Issue #4868 — resolve the per-agent iteration cap. When a named
+        // definition is present, its `effective_max_iterations()` (which honors
+        // `iteration_policy = "extended"` -> 50, and the declared `max_iterations`
+        // for strict agents) takes priority over the global
+        // `config.agent.max_tool_iterations` (default 10). This is the single
+        // shared resolution point that closes #4868 for every direct-invocation
+        // path: flows_build, flows_discover, agent-node runtime, cron, MCP
+        // server, etc. Falls back to the global default when there is no
+        // definition for this agent_id.
+        let mut effective_agent_config = config.agent.clone();
+        if let Some(def) = target_def {
+            let def_cap = def.effective_max_iterations();
+            log::info!(
+                "[agent::builder] applying definition iteration cap for agent_id={}: \
+                 definition.max_iterations={} iteration_policy={:?} -> effective={} \
+                 (was global default {})",
+                agent_id,
+                def.max_iterations,
+                def.iteration_policy,
+                def_cap,
+                config.agent.max_tool_iterations,
+            );
+            effective_agent_config.max_tool_iterations = def_cap;
+        }
         let mut builder = Agent::builder()
             .crate_native_provider(provider_role, std::sync::Arc::new(config.clone()))
             .tools(tools)
@@ -1156,7 +1186,7 @@ impl Agent {
                     ),
             ))
             .prompt_builder(prompt_builder)
-            .config(config.agent.clone())
+            .config(effective_agent_config)
             .context_config(config.context.clone())
             .model_name(model_name)
             .model_vision(model_vision)

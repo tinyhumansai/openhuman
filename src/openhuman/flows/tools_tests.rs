@@ -58,6 +58,9 @@ async fn valid_graph_returns_workflow_proposal_success() {
     assert_eq!(parsed["type"], "workflow_proposal");
     assert_eq!(parsed["name"], "Daily standup summary");
     assert_eq!(parsed["graph"]["nodes"].as_array().unwrap().len(), 3);
+    // A proposal is never a persisted flow — the payload must say so (WS2) so
+    // an agent can't misread it as a save confirmation.
+    assert_eq!(parsed["persisted"], false);
 }
 
 #[tokio::test]
@@ -318,4 +321,33 @@ async fn propose_workflow_rejects_unschemad_agent_binding() {
         output.contains("output_parser.schema"),
         "must name the missing schema as the fix: {output}"
     );
+}
+
+/// Docs-drift guard (F2): `propose_workflow`'s hand-written description and the
+/// typed node-kind contracts are two views of the SAME DSL, and they must not
+/// diverge. If a node kind is added/renamed or a required config field changes
+/// in `node_contracts.rs`, this fails until the tool description is updated to
+/// match — the "prose can never diverge from code" check the plan calls for.
+#[test]
+fn propose_workflow_description_matches_typed_node_contracts() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ProposeWorkflowTool::new(test_config(&tmp));
+    let desc = tool.description();
+    for contract in crate::openhuman::flows::all_node_kind_contracts() {
+        assert!(
+            desc.contains(&contract.kind),
+            "propose_workflow description is missing node kind `{}` — update it to match \
+             node_contracts.rs",
+            contract.kind
+        );
+        for field in contract.config_fields.iter().filter(|f| f.required) {
+            assert!(
+                desc.contains(&field.name),
+                "propose_workflow description is missing required field `config.{}` of node kind \
+                 `{}` — update it to match node_contracts.rs",
+                field.name,
+                contract.kind
+            );
+        }
+    }
 }

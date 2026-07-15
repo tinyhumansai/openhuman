@@ -57,6 +57,10 @@ pub fn spawn_stdio_process(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // Suppress the Windows conhost flash. This process is (re)spawned on every
+    // launch to run the runtime python server, so without CREATE_NO_WINDOW a
+    // CMD window blinks up each time the app starts (GH-4814).
+    crate::openhuman::inference::local::process_util::apply_no_window(&mut cmd);
 
     let child = cmd.spawn().with_context(|| {
         format!(
@@ -75,4 +79,34 @@ pub fn spawn_stdio_process(
     );
 
     Ok(child)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::runtime_python::bootstrap::PythonSource;
+
+    // `apply_no_window` is a no-op off Windows, but exercising the spawn path
+    // end-to-end keeps the GH-4814 CREATE_NO_WINDOW hook covered. `/bin/cat
+    // <file>` prints the file and exits, so it stands in for the python child.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn spawn_stdio_process_launches_child() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("payload.txt");
+        std::fs::write(&script, b"ok").expect("write payload");
+
+        let resolved = ResolvedPython {
+            bin_dir: PathBuf::from("/bin"),
+            python_bin: PathBuf::from("/bin/cat"),
+            version: "test".to_string(),
+            source: PythonSource::System,
+        };
+        let mut spec = PythonLaunchSpec::new(script);
+        spec.unbuffered = false; // `-u` is python-only; plain `cat <file>` here
+
+        let mut child = spawn_stdio_process(&resolved, &spec).expect("spawn cat");
+        let status = child.wait().await.expect("wait cat");
+        assert!(status.success());
+    }
 }

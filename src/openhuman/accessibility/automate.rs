@@ -664,7 +664,7 @@ impl AutomateBackend for RealBackend {
         // `summarization` keeps M1 free of Config-schema churn while still keeping
         // the chat model out of the loop.
         use tinyagents::harness::message::Message;
-        use tinyagents::harness::model::{ChatModel, ModelRequest};
+        use tinyagents::harness::model::ModelRequest;
         let model = crate::openhuman::inference::provider::create_chat_model(
             "summarization",
             &self.config,
