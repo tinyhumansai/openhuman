@@ -277,6 +277,7 @@ pub fn all_tools_with_runtime(
         // graph and returns a proposal summary — never creates/enables a
         // flow itself. Only the chat UI's WorkflowProposalCard "Save &
         // enable" action calls `flows_create`.
+        #[cfg(feature = "flows")]
         Box::new(ProposeWorkflowTool::new(config.clone())),
         // workflow-builder agent tool belt (Phase 5b). A deliberately narrow,
         // propose-or-read surface: revise a draft (validate-only), read saved
@@ -285,38 +286,53 @@ pub fn all_tools_with_runtime(
         // or enable a flow (only the user's own `flows_create` click does); the
         // read tools are `PermissionLevel::None`, and `dry_run_workflow` is
         // autonomy-tier gated + wired to deterministic mock capabilities.
+        #[cfg(feature = "flows")]
         Box::new(ReviseWorkflowTool::new(config.clone())),
         // Structured incremental edits (F1): apply a small ops[] list to a base
         // graph (saved flow or inline) instead of re-emitting the whole graph,
         // then validate + gate + return a proposal (same contract as revise).
         // Proposal-only — never persists.
+        #[cfg(feature = "flows")]
         Box::new(EditWorkflowTool::new(config.clone())),
         // Standalone validate (F3): run the SAME structural + hard-gate stack
         // the propose/save tools use, without emitting a proposal — a pure
         // check so the agent can self-verify a draft mid-build. Read-only.
+        #[cfg(feature = "flows")]
         Box::new(ValidateWorkflowTool::new(config.clone())),
         // Read a saved flow's revision history (F6) — prior graph snapshots the
         // agent can inspect / pick a rollback target from. Read-only.
+        #[cfg(feature = "flows")]
         Box::new(GetFlowHistoryTool::new(config.clone())),
         // Phase 4 self-debug loop (F4): find a failing run, resume a parked
         // run (approval-gated), or cancel a runaway one.
+        #[cfg(feature = "flows")]
         Box::new(ListFlowRunsTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(ResumeFlowRunTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(CancelFlowRunTool::new(config.clone())),
         // Gated create (F4/F12): create a NEW flow — born disabled, approval
         // gated — and duplicate an existing one (disabled copy) for
         // clone-then-edit. Behind the Phase 3 safety rails.
+        #[cfg(feature = "flows")]
         Box::new(CreateWorkflowTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(DuplicateFlowTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(ListFlowsTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(GetFlowTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(GetFlowRunTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(ListFlowConnectionsTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(SearchToolCatalogTool::new(config.clone())),
         // Full live contract (schemas, real required_args/output_fields,
         // primary_array_path) for one action slug found via
         // search_tool_catalog — the grounding step before WIRING a node's
         // args/downstream bindings (systemic tool-contract fix, Part 1).
+        #[cfg(feature = "flows")]
         Box::new(GetToolContractTool::new(config.clone())),
         // B12: ONE bounded, READ-ONLY, REAL Composio call to derive the real
         // primary_array_path/output_fields when the live listing publishes no
@@ -326,36 +342,45 @@ pub fn all_tools_with_runtime(
         // toolkits only — see builder_tools.rs's module doc for the carve-out
         // this makes in the workflow-builder agent's "no composio_execute"
         // invariant.
+        #[cfg(feature = "flows")]
         Box::new(GetToolOutputSampleTool::new(config.clone())),
         // Ground an `agent` node's `agent_ref` in real registered agent-kind ids
         // (researcher / code_executor / …) — the agent analogue of
         // search_tool_catalog. Read-only.
+        #[cfg(feature = "flows")]
         Box::new(ListAgentProfilesTool::new()),
         // Steer toolkit choice toward what's already connected + surface which
         // toolkits a flow still needs (Phase 5, item 19). Read-only.
+        #[cfg(feature = "flows")]
         Box::new(ListConnectableToolkitsTool::new(config.clone())),
         // Queryable DSL schema (F2): enumerate the 12 node kinds and fetch one
         // kind's full config-field/port/example/gotcha contract — the DSL
         // analogue of search_tool_catalog + get_tool_contract, so an agent need
         // not rely on prompt prose or memory for node config shapes. Read-only.
+        #[cfg(feature = "flows")]
         Box::new(ListNodeKindsTool::new()),
+        #[cfg(feature = "flows")]
         Box::new(GetNodeKindContractTool::new()),
+        #[cfg(feature = "flows")]
         Box::new(DryRunWorkflowTool::new(security.clone(), config.clone())),
         // Real end-to-end test run of a SAVED flow (Write / external-effect). The
         // workflow-builder prompt requires it to ask the user for confirmation
         // first, and the flow's own approval gate still pauses outbound nodes.
+        #[cfg(feature = "flows")]
         Box::new(RunFlowTool::new(config.clone())),
         // Persist a built graph onto an EXISTING saved flow (Write). Used only
         // when the USER explicitly asks the agent to save; the seeded build
         // turn from the Flows prompt bar is propose-only (see #4596) — Accept
         // + the canvas's own Save persist the graph. The tool itself can
         // never create a flow or change enabled/require_approval.
+        #[cfg(feature = "flows")]
         Box::new(SaveWorkflowTool::new(config.clone())),
         // Flow Scout discovery: the `flow_discovery` agent's terminal emit
         // sink. Read-only reasoning over the user's data ends by calling
         // `suggest_workflows`, which persists workflow ideas for the Flows page
         // "Suggested for you" section. `PermissionLevel::None`, no external
         // effect — writes only to the agent's own suggestions store.
+        #[cfg(feature = "flows")]
         Box::new(SuggestWorkflowsTool::new(config.clone())),
         // Wallet tools — expose wallet operations to the agent tool-call pipeline
         // so the crypto sub-agent can prepare transfers, check status, etc.
@@ -1069,12 +1094,15 @@ pub fn all_tools_with_runtime(
     // tiers only — dark on `readonly` (it can drive effectful tools/sub-agents)
     // and behind the `OPENHUMAN_RHAI_WORKFLOWS=0` kill switch. Every effectful inner call
     // still re-gates itself in the Rhai bridge, so this surface adds no new
-    // ungated capability.
+    // ungated capability. Gated with `flows` — the whole tool (and the `rhai`
+    // engine behind it, via `tinyagents/repl`) is absent from a slim build.
+    #[cfg(feature = "flows")]
     let rhai_workflows_enabled = std::env::var("OPENHUMAN_RHAI_WORKFLOWS")
         .or_else(|_| std::env::var("OPENHUMAN_RHAI"))
         .or_else(|_| std::env::var("OPENHUMAN_RLM"))
         .map(|v| v != "0")
         .unwrap_or(true);
+    #[cfg(feature = "flows")]
     if rhai_workflows_enabled
         && security.autonomy != crate::openhuman::security::policy::AutonomyLevel::ReadOnly
     {
@@ -1087,6 +1115,10 @@ pub fn all_tools_with_runtime(
             "[rhai_workflows] rhai_workflows tool not registered (readonly tier or OPENHUMAN_RHAI_WORKFLOWS=0)"
         );
     }
+    #[cfg(not(feature = "flows"))]
+    tracing::debug!(
+        "[rhai_workflows] rhai_workflows tool not registered — flows feature disabled at compile time"
+    );
 
     // DomainSet post-filter (#4796): drop tools whose DomainGroup is disabled
     // under the ambient CoreContext. With no active context, or under

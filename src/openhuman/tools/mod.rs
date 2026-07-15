@@ -26,8 +26,11 @@ pub use crate::openhuman::credentials::tools::*;
 pub use crate::openhuman::cron::tools::*;
 pub use crate::openhuman::dashboard::tools::*;
 pub use crate::openhuman::doctor::tools::*;
+#[cfg(feature = "flows")]
 pub use crate::openhuman::flows::builder_tools::*;
+#[cfg(feature = "flows")]
 pub use crate::openhuman::flows::discovery_tools::*;
+#[cfg(feature = "flows")]
 pub use crate::openhuman::flows::tools::*;
 pub use crate::openhuman::health::tools::*;
 pub use crate::openhuman::integrations::tools::*;
@@ -41,6 +44,7 @@ pub use crate::openhuman::monitor::tools::*;
 pub use crate::openhuman::orchestration::tools::*;
 pub use crate::openhuman::people::tools::*;
 pub use crate::openhuman::referral::tools::*;
+#[cfg(feature = "flows")]
 pub use crate::openhuman::rhai_workflows::tools::*;
 pub use crate::openhuman::screen_intelligence::tools::*;
 pub use crate::openhuman::search::tools::*;
