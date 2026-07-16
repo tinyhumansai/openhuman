@@ -2411,7 +2411,7 @@ describe('Conversations — agent task insights panel anchoring (#3717 Bug 2)', 
       store!.dispatch(
         setToolTimelineForThread({
           threadId: threadA.id,
-          entries: [{ id: 'a-1', name: 'web_fetch', round: 1, status: 'success' }],
+          entries: [{ id: 'a-1', name: 'web_fetch', round: 1, seq: 0, status: 'success' }],
         })
       );
     });
@@ -2435,7 +2435,7 @@ describe('Conversations — agent task insights panel anchoring (#3717 Bug 2)', 
       store!.dispatch(
         setToolTimelineForThread({
           threadId: threadB.id,
-          entries: [{ id: 'b-1', name: 'send_email', round: 1, status: 'success' }],
+          entries: [{ id: 'b-1', name: 'send_email', round: 1, seq: 0, status: 'success' }],
         })
       );
     });

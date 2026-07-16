@@ -393,6 +393,22 @@ impl Agent {
         std::mem::take(&mut self.last_turn_citations)
     }
 
+    /// Borrow the holistic token/cost/context totals for the latest completed
+    /// turn (parent + sub-agents) **without consuming them**. `None` until a
+    /// turn has run.
+    ///
+    /// This is the public, non-draining counterpart to
+    /// [`take_last_turn_usage_totals`](Self::take_last_turn_usage_totals): a
+    /// downstream crate embedding OpenHuman as a library (e.g. the OpenCompany
+    /// hosting platform's cost-metering hook) can read per-turn token and USD
+    /// totals after [`Agent::turn`](crate::openhuman::agent::Agent) returns,
+    /// while leaving the value in place for the web-channel drain path.
+    pub fn last_turn_usage(
+        &self,
+    ) -> Option<&crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage> {
+        self.last_turn_usage_totals.as_ref()
+    }
+
     /// Drain and return the holistic token/cost/context totals for the latest
     /// completed turn (parent + sub-agents). `None` until a turn has run.
     /// Consumed by web-channel delivery to populate the `chat_done` usage fields.
