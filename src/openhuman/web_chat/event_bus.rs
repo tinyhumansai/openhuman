@@ -121,7 +121,7 @@ struct EgressSurfaceSubscriber;
 #[async_trait]
 impl EventHandler for EgressSurfaceSubscriber {
     fn name(&self) -> &str {
-        "channels::web::egress_surface"
+        "web_chat::egress_surface"
     }
 
     fn domains(&self) -> Option<&[&str]> {
@@ -178,7 +178,7 @@ struct ArtifactSurfaceSubscriber;
 #[async_trait]
 impl EventHandler for ArtifactSurfaceSubscriber {
     fn name(&self) -> &str {
-        "channels::web::artifact_surface"
+        "web_chat::artifact_surface"
     }
 
     fn domains(&self) -> Option<&[&str]> {
@@ -326,7 +326,7 @@ struct ApprovalSurfaceSubscriber;
 #[async_trait]
 impl EventHandler for ApprovalSurfaceSubscriber {
     fn name(&self) -> &str {
-        "channels::web::approval_surface"
+        "web_chat::approval_surface"
     }
 
     fn domains(&self) -> Option<&[&str]> {
@@ -411,7 +411,7 @@ struct AutomationHaltSubscriber;
 #[async_trait]
 impl EventHandler for AutomationHaltSubscriber {
     fn name(&self) -> &str {
-        "channels::web::automation_halt"
+        "web_chat::automation_halt"
     }
 
     fn domains(&self) -> Option<&[&str]> {
