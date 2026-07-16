@@ -9,7 +9,6 @@ mod schemas;
 mod session;
 mod types;
 
-#[path = "../web_errors.rs"]
 mod web_errors;
 pub(crate) use web_errors::classify_inference_error;
 #[cfg(any(test, debug_assertions))]
@@ -140,5 +139,5 @@ pub mod test_support {
 pub(crate) use types::SessionCacheFingerprint;
 
 #[cfg(test)]
-#[path = "../web_tests.rs"]
+#[path = "web_tests.rs"]
 mod tests;
