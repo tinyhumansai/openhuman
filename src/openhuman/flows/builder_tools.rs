@@ -1515,9 +1515,13 @@ impl Tool for ListFlowConnectionsTool {
     fn description(&self) -> &str {
         "List the connection sources a flow node's `connection_ref` can attach to: \
          Composio connected accounts and named HTTP credentials. Read-only; \
-         returns ids + display labels + kind ONLY (never any secret). Use the \
-         `connection_ref` values verbatim on tool_call / http_request nodes so the \
-         generated flow carries valid connections."
+         returns ids + display labels + kind ONLY (never any secret). Each \
+         Composio entry also carries `platform_user_id` — the connected \
+         account's own member id (e.g. Slack `U123ABC`) — use it to wire a \
+         self-targeted action like 'DM me' to that account instead of a \
+         public channel. Use the `connection_ref` values verbatim on \
+         tool_call / http_request nodes so the generated flow carries valid \
+         connections."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -1536,19 +1540,7 @@ impl Tool for ListFlowConnectionsTool {
         tracing::debug!(target: "flows", "[flows] list_flow_connections: enumerating connection refs (read-only)");
         match ops::flows_list_connections(&self.config).await {
             Ok(outcome) => {
-                let conns: Vec<Value> = outcome
-                    .value
-                    .iter()
-                    .map(|c| {
-                        json!({
-                            "connection_ref": c.connection_ref,
-                            "kind": c.kind,
-                            "display": c.display,
-                            "toolkit": c.toolkit,
-                            "scheme": c.scheme,
-                        })
-                    })
-                    .collect();
+                let conns: Vec<Value> = outcome.value.iter().map(flow_connection_to_json).collect();
                 Ok(ToolResult::success(serde_json::to_string_pretty(
                     &json!({ "connections": conns }),
                 )?))
@@ -1558,6 +1550,23 @@ impl Tool for ListFlowConnectionsTool {
             ))),
         }
     }
+}
+
+/// Render one [`crate::openhuman::flows::types::FlowConnection`] as the
+/// picker JSON shape the agent reads — ids/display/kind/toolkit/scheme plus
+/// `platform_user_id` (the connected account's own member id, e.g. Slack
+/// `U123ABC`, or `null` when no identity has synced yet). Never secret
+/// material. A free function (rather than inline in `execute`) so the
+/// mapping is unit-testable without a live Composio backend.
+fn flow_connection_to_json(c: &crate::openhuman::flows::types::FlowConnection) -> Value {
+    json!({
+        "connection_ref": c.connection_ref,
+        "kind": c.kind,
+        "display": c.display,
+        "toolkit": c.toolkit,
+        "scheme": c.scheme,
+        "platform_user_id": c.platform_user_id,
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

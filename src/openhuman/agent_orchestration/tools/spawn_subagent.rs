@@ -863,7 +863,7 @@ fn render_worker_thread_result(
 ///
 /// Returns text the model reads literally; the orchestrator paraphrases
 /// it into a user-facing reply. Keep the *intent* stable across
-/// rewordings — the "Settings → Connections → {toolkit}" path is
+/// rewordings — the "Connections → {toolkit}" path is
 /// load-bearing for the UI navigation tests.
 pub(crate) fn describe_unconnected_state(toolkit: &str, status: Option<&str>) -> String {
     // Keep the original (trimmed) status separately so the
@@ -878,14 +878,14 @@ pub(crate) fn describe_unconnected_state(toolkit: &str, status: Option<&str>) ->
         Some("INITIATED") | Some("INITIALIZING") | Some("PENDING") => format!(
             "Integration '{toolkit}' has an OAuth flow in progress but it hasn't reached \
              ACTIVE yet. Do NOT retry this spawn. Tell the user the authorization is \
-             pending and ask them to finish the browser OAuth flow (Settings → \
-             Connections → '{toolkit}') before retrying. If they already closed the \
-             browser tab, they can restart the connection from the same Settings page."
+             pending and ask them to finish the browser OAuth flow (Connections → \
+             '{toolkit}') before retrying. If they already closed the \
+             browser tab, they can restart the connection from the same Connections page."
         ),
         Some("EXPIRED") => format!(
             "Integration '{toolkit}' is connected but the OAuth token has expired. \
              Do NOT retry this spawn. Tell the user the connection expired and ask \
-             them to reconnect '{toolkit}' at Settings → Connections → '{toolkit}' \
+             them to reconnect '{toolkit}' at Connections → '{toolkit}' \
              before retrying the original request."
         ),
         Some("FAILED") | Some("ERROR") => {
@@ -897,7 +897,7 @@ pub(crate) fn describe_unconnected_state(toolkit: &str, status: Option<&str>) ->
             format!(
                 "Integration '{toolkit}' has a previous OAuth attempt in a `{raw}` state. \
                  Do NOT retry this spawn. Tell the user the connection failed and ask them \
-                 to reconnect '{toolkit}' at Settings → Connections → '{toolkit}' before \
+                 to reconnect '{toolkit}' at Connections → '{toolkit}' before \
                  retrying the original request."
             )
         }
@@ -910,13 +910,13 @@ pub(crate) fn describe_unconnected_state(toolkit: &str, status: Option<&str>) ->
                 "Integration '{toolkit}' has a connection row but its status is `{raw}`, \
                  which is not yet usable. Do NOT retry this spawn. Tell the user the \
                  connection is in an unusable state and ask them to reconnect '{toolkit}' \
-                 at Settings → Connections → '{toolkit}'."
+                 at Connections → '{toolkit}'."
             )
         }
         _ => format!(
             "Integration '{toolkit}' is available but the user has not authorized it \
              yet. Do NOT retry this spawn. Tell the user the integration is available \
-             and ask them to authorize '{toolkit}' in Settings → Connections → \
+             and ask them to authorize '{toolkit}' in Connections → \
              '{toolkit}' before retrying the original request."
         ),
     }
@@ -1219,7 +1219,7 @@ mod tests {
             msg.contains("OAuth flow in progress"),
             "INITIATED must surface the in-progress wording: {msg}"
         );
-        assert!(msg.contains("Settings → Connections → 'gmail'"));
+        assert!(msg.contains("Connections → 'gmail'"));
         // The legacy "not authorized yet" copy must NOT leak into the
         // pending-OAuth branch — that was the user-perception bug
         // from #2365 (Settings UI showed Gmail connected, agent said
@@ -1246,6 +1246,8 @@ mod tests {
         let msg = describe_unconnected_state("gmail", Some("EXPIRED"));
         assert!(msg.contains("OAuth token has expired"));
         assert!(msg.contains("reconnect 'gmail'"));
+        assert!(msg.contains("Connections → 'gmail'"));
+        assert!(!msg.contains("Settings → Connections"));
         assert!(!msg.contains("OAuth flow in progress"));
     }
 
@@ -1259,6 +1261,8 @@ mod tests {
                 "{status} must be quoted verbatim, not collapsed to a single label: {msg}"
             );
             assert!(msg.contains("reconnect 'gmail'"));
+            assert!(msg.contains("Connections → 'gmail'"));
+            assert!(!msg.contains("Settings → Connections"));
         }
     }
 
@@ -1292,6 +1296,8 @@ mod tests {
                 msg.contains(&expected),
                 "unknown status `{raw}` must be quoted verbatim (not its uppercased form): {msg}"
             );
+            assert!(msg.contains("Connections → 'gmail'"));
+            assert!(!msg.contains("Settings → Connections"));
         }
     }
 
@@ -1323,7 +1329,7 @@ mod tests {
             msg.contains("has not authorized it yet"),
             "None must hit the legacy never-connected copy: {msg}"
         );
-        assert!(msg.contains("Settings → Connections → 'gmail'"));
+        assert!(msg.contains("Connections → 'gmail'"));
     }
 
     #[test]

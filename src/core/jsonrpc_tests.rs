@@ -857,7 +857,7 @@ fn is_session_expired_error_skips_discord_rewrap_for_2285() {
     // to avoid, plus the canonical post-rewrap message body, so
     // either-side drift fails loudly.
     let canonical_rewrap = "Discord API error: Discord list_guilds: bot token was rejected \
-         (upstream HTTP four-oh-one). Open Settings → Channels → Discord \
+         (upstream HTTP four-oh-one). Open Connections → Channels → Discord \
          and rotate / reconnect the bot token.";
     assert!(
         !is_session_expired_error(canonical_rewrap),
@@ -869,7 +869,7 @@ fn is_session_expired_error_skips_discord_rewrap_for_2285() {
     // future regression visible.
     let canonical_rewrap_403 =
         "Discord API error: Discord list_channels: bot token lacks required Discord permissions \
-         (upstream HTTP four-oh-three). Open Settings → Channels → Discord \
+         (upstream HTTP four-oh-three). Open Connections → Channels → Discord \
          and rotate / reconnect the bot token.";
     assert!(!is_session_expired_error(canonical_rewrap_403));
 }

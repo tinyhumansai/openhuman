@@ -118,6 +118,9 @@ impl ArchivistHook {
             tree_kind: TreeKind::Source,
             target_level: 0,
             token_budget: 2_000,
+            input_token_budget: tinycortex::memory::config::INPUT_TOKEN_BUDGET,
+            overhead_reserve_tokens: tinycortex::memory::config::SUMMARY_OVERHEAD_RESERVE_TOKENS,
+            ask: None,
         };
 
         let first = entries.first().map(|e| e.content.as_str()).unwrap_or("");

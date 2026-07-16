@@ -1029,3 +1029,200 @@ async fn chat_with_system_bail_omits_hint_when_fallbacks_configured_but_all_fail
         "expected dump to mention every model tried: {err}"
     );
 }
+
+// ── #4895: streaming rate-limit (429) Retry-After honoring + budget/message ──
+
+/// Streaming mock that fails with a configurable `StreamError::Provider` for the
+/// first `fail_until` stream creations, then yields a single `"hello"` chunk.
+/// Mirrors the real provider's one-item-per-stream shape so a retry that
+/// re-polled a dead stream would see `None` and give up.
+struct StreamingRateLimitMock {
+    stream_calls: Arc<AtomicUsize>,
+    fail_until: usize,
+    error: String,
+}
+
+#[async_trait]
+impl Provider for StreamingRateLimitMock {
+    async fn chat_with_system(
+        &self,
+        _system_prompt: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+    ) -> anyhow::Result<String> {
+        anyhow::bail!("unused")
+    }
+
+    async fn chat_with_history(
+        &self,
+        _messages: &[ChatMessage],
+        _model: &str,
+        _temperature: f64,
+    ) -> anyhow::Result<String> {
+        anyhow::bail!("unused")
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    fn stream_chat_with_system(
+        &self,
+        _system_prompt: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+        _options: StreamOptions,
+    ) -> futures_util::stream::BoxStream<'static, StreamResult<StreamChunk>> {
+        use futures_util::{stream, StreamExt};
+        let n = self.stream_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        let succeed = n > self.fail_until;
+        let error = self.error.clone();
+        stream::once(async move {
+            if succeed {
+                Ok(StreamChunk::delta("hello"))
+            } else {
+                Err(StreamError::Provider(error))
+            }
+        })
+        .boxed()
+    }
+}
+
+/// A transient streaming `429` carrying a `Retry-After` must be retried, must
+/// actually WAIT the server's requested window (not the old ~1.5 s fixed
+/// backoff), and then recover. Uses tokio's paused clock so the 5 s wait is
+/// virtual/instant yet asserted via virtual elapsed time.
+#[tokio::test(start_paused = true)]
+async fn streaming_rate_limit_honors_retry_after_and_recovers() {
+    use futures_util::StreamExt;
+
+    let stream_calls = Arc::new(AtomicUsize::new(0));
+    let provider = ReliableProvider::new(
+        vec![(
+            "openhuman".into(),
+            Box::new(StreamingRateLimitMock {
+                stream_calls: Arc::clone(&stream_calls),
+                fail_until: 1,
+                error: r#"OpenHuman API error (429 Too Many Requests): {"errorCode":"RATE_LIMITED","retryAfter":5}"#
+                    .to_string(),
+            }),
+        )],
+        2,
+        50,
+    );
+
+    let start = tokio::time::Instant::now();
+    let mut stream =
+        provider.stream_chat_with_system(None, "hi", "reasoning-v1", 0.0, StreamOptions::new(true));
+    let mut chunks = Vec::new();
+    while let Some(item) = stream.next().await {
+        if let Ok(chunk) = item {
+            chunks.push(chunk.delta);
+        }
+    }
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        chunks,
+        vec!["hello".to_string()],
+        "a transient 429 with Retry-After must be retried and recover"
+    );
+    assert_eq!(
+        stream_calls.load(Ordering::SeqCst),
+        2,
+        "one rate-limited attempt + one successful retry"
+    );
+    assert!(
+        elapsed >= Duration::from_secs(5),
+        "must wait the server's 5s Retry-After before retrying, waited {elapsed:?}"
+    );
+}
+
+/// A plan/quota `429` (retries can't fix it) must fail fast — a single stream
+/// creation, no retries — and surface a clear rate-limit message.
+#[tokio::test]
+async fn streaming_plan_rate_limit_fails_fast_with_clear_message() {
+    use futures_util::StreamExt;
+
+    let stream_calls = Arc::new(AtomicUsize::new(0));
+    let provider = ReliableProvider::new(
+        vec![(
+            "openhuman".into(),
+            Box::new(StreamingRateLimitMock {
+                stream_calls: Arc::clone(&stream_calls),
+                fail_until: 100, // always fail
+                error: r#"OpenHuman API error (429 Too Many Requests): {"code":1311,"message":"the current account plan does not include glm-5"}"#
+                    .to_string(),
+            }),
+        )],
+        3,
+        50,
+    );
+
+    let mut stream =
+        provider.stream_chat_with_system(None, "hi", "reasoning-v1", 0.0, StreamOptions::new(true));
+    let mut terminal: Option<String> = None;
+    while let Some(item) = stream.next().await {
+        if let Err(StreamError::Provider(msg)) = item {
+            terminal = Some(msg);
+        }
+    }
+
+    assert_eq!(
+        stream_calls.load(Ordering::SeqCst),
+        1,
+        "a plan/quota 429 must fail fast without burning the retry budget"
+    );
+    let terminal = terminal.expect("stream must surface a terminal error");
+    assert!(
+        terminal.to_lowercase().contains("rate-limited"),
+        "plan 429 terminal must be a clear rate-limit message, got: {terminal}"
+    );
+}
+
+/// A persistently transient `429` must use the dedicated rate-limit retry budget
+/// (strictly more than the small configured `provider_retries`) before giving
+/// up with a clear terminal rate-limit message. `retryAfter:0` keeps the waits
+/// at the base backoff so the test stays fast.
+#[tokio::test(start_paused = true)]
+async fn streaming_transient_rate_limit_uses_dedicated_budget_then_clear_message() {
+    use futures_util::StreamExt;
+
+    let stream_calls = Arc::new(AtomicUsize::new(0));
+    let provider = ReliableProvider::new(
+        vec![(
+            "openhuman".into(),
+            Box::new(StreamingRateLimitMock {
+                stream_calls: Arc::clone(&stream_calls),
+                fail_until: 100, // always fail
+                error: r#"OpenHuman API error (429 Too Many Requests): {"errorCode":"RATE_LIMITED","retryAfter":0}"#
+                    .to_string(),
+            }),
+        )],
+        2, // configured retries; rate-limit floor is STREAM_RATE_LIMIT_MIN_RETRIES (3)
+        50,
+    );
+
+    let mut stream =
+        provider.stream_chat_with_system(None, "hi", "reasoning-v1", 0.0, StreamOptions::new(true));
+    let mut terminal: Option<String> = None;
+    while let Some(item) = stream.next().await {
+        if let Err(StreamError::Provider(msg)) = item {
+            terminal = Some(msg);
+        }
+    }
+
+    // 1 initial attempt + 3 rate-limit retries (dedicated budget > configured 2).
+    assert_eq!(
+        stream_calls.load(Ordering::SeqCst),
+        4,
+        "a transient 429 must use the dedicated rate-limit retry budget, not the smaller configured one"
+    );
+    let terminal = terminal.expect("stream must surface a terminal error");
+    assert!(
+        terminal.to_lowercase().contains("rate-limited"),
+        "an exhausted transient 429 must end with a clear rate-limit message, got: {terminal}"
+    );
+}

@@ -10,6 +10,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 import type { ChannelDefinition, ChannelType } from '../../types/channels';
 import { CloseIcon } from '../ui';
 import Button from '../ui/Button';
+import ChannelConnectHelp from './ChannelConnectHelp';
 import { renderChannelIcon } from './channelIcon';
 import CredentialChannelConfig from './CredentialChannelConfig';
 import DiscordConfig from './DiscordConfig';
@@ -21,9 +22,11 @@ interface ChannelSetupModalProps {
   onClose: () => void;
 }
 
-function ChannelConfigContent({ definition }: { definition: ChannelDefinition }) {
-  const { t } = useT();
-  const channelId = definition.id as ChannelType;
+function renderChannelConfig(
+  definition: ChannelDefinition,
+  channelId: ChannelType,
+  t: (key: string, fallback?: string) => string
+) {
   switch (channelId) {
     case 'telegram':
       return <TelegramConfig definition={definition} />;
@@ -45,6 +48,17 @@ function ChannelConfigContent({ definition }: { definition: ChannelDefinition })
         </p>
       );
   }
+}
+
+function ChannelConfigContent({ definition }: { definition: ChannelDefinition }) {
+  const { t } = useT();
+  const channelId = definition.id as ChannelType;
+  return (
+    <div className="space-y-3">
+      <ChannelConnectHelp channelId={channelId} />
+      {renderChannelConfig(definition, channelId, t)}
+    </div>
+  );
 }
 
 export default function ChannelSetupModal({ definition, onClose }: ChannelSetupModalProps) {

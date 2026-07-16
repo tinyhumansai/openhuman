@@ -79,8 +79,8 @@ impl GithubGateError {
         let body = match self {
             GithubGateError::ComposioGithubMissing => {
                 "GitHub preflight failed: no active Composio GitHub connection. \
-                 Connect via `composio_authorize github` (or Settings → \
-                 Integrations → GitHub) and re-run."
+                 Connect via `composio_authorize github` (or Connections → \
+                 OAuth → GitHub) and re-run."
                     .to_string()
             }
             GithubGateError::GitBinaryMissing(err) => format!(

@@ -201,6 +201,78 @@ export async function applyAllIn(): Promise<ApplyAllInResult> {
   return { sources: data.sources ?? [], sync_triggered: data.sync_triggered ?? 0 };
 }
 
+export interface CodingSessionSourceStatus {
+  kind: 'claude_code' | 'codex';
+  available: boolean;
+  session_files: number;
+  evidence_units: number;
+  invalid_files: number;
+  scan_truncated?: boolean;
+}
+
+export interface CodingSessionIngestResult {
+  mode: 'backfill' | 'incremental';
+  files_seen: number;
+  sessions_processed: number;
+  sessions_skipped: number;
+  sessions_failed: number;
+  evidence_units: number;
+  observations: number;
+  budget_hit: boolean;
+  pack_path?: string | null;
+}
+
+// Keep interactive imports below the core RPC client's bounded ten-minute
+// ceiling. Larger histories are intentionally processed in repeatable batches;
+// `budget_hit` tells the card to invite the user to continue.
+const CODING_SESSION_BATCH_MAX = 15;
+const CODING_SESSION_BASE_TIMEOUT_MS = 120_000;
+const CODING_SESSION_PER_SESSION_TIMEOUT_MS = 30_000;
+const CODING_SESSION_RPC_GRACE_MS = 15_000;
+
+export async function getCodingSessionStatus(): Promise<CodingSessionSourceStatus[]> {
+  log('coding_session_status: entry');
+  const resp = await callCoreRpc<{ sources: CodingSessionSourceStatus[] }>({
+    method: 'openhuman.memory_sources_coding_session_status',
+  });
+  const data = unwrap<{ sources: CodingSessionSourceStatus[] }>(resp);
+  log('coding_session_status: exit sources=%d', data.sources?.length ?? 0);
+  return data.sources ?? [];
+}
+
+export async function ingestCodingSessions(
+  backfill = false,
+  maxSessions = CODING_SESSION_BATCH_MAX
+): Promise<CodingSessionIngestResult> {
+  const boundedMaxSessions = Number.isFinite(maxSessions)
+    ? Math.min(Math.max(Math.trunc(maxSessions), 1), CODING_SESSION_BATCH_MAX)
+    : CODING_SESSION_BATCH_MAX;
+  const timeoutMs =
+    CODING_SESSION_BASE_TIMEOUT_MS +
+    boundedMaxSessions * CODING_SESSION_PER_SESSION_TIMEOUT_MS +
+    CODING_SESSION_RPC_GRACE_MS;
+  log(
+    'ingest_coding_sessions: entry backfill=%s max_sessions=%d requested=%d timeout_ms=%d',
+    backfill,
+    boundedMaxSessions,
+    maxSessions,
+    timeoutMs
+  );
+  const resp = await callCoreRpc<CodingSessionIngestResult>({
+    method: 'openhuman.memory_sources_ingest_coding_sessions',
+    params: { backfill, max_sessions: boundedMaxSessions },
+    timeoutMs,
+  });
+  const data = unwrap<CodingSessionIngestResult>(resp);
+  log(
+    'ingest_coding_sessions: exit processed=%d failed=%d budget_hit=%s',
+    data.sessions_processed,
+    data.sessions_failed,
+    data.budget_hit
+  );
+  return data;
+}
+
 /// i18n keys for each source kind's user-visible label. Resolve via
 /// `t(SOURCE_KIND_LABEL_KEYS[kind])` in components — keeping the keys
 /// as a constant lets the dialog kind-picker render the same labels

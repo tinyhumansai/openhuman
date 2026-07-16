@@ -7,6 +7,7 @@ import {
   saveArtifactViaDialog,
 } from '../../services/artifactDownloadService';
 import type { ArtifactSnapshot } from '../../store/chatRuntimeSlice';
+import { extensionFor } from './artifactExtension';
 
 /**
  * Inline chat card surfacing a single agent-generated artifact (#2779).
@@ -31,30 +32,6 @@ export interface ArtifactCardProps {
   artifact: ArtifactSnapshot;
   /** When provided, render a Retry button on the `failed` state. */
   onRetry?: (artifactId: string) => void;
-}
-
-/**
- * Extension hint for the Tauri download command. Falls back to a
- * lowercased kind slug when the title doesn't carry an explicit
- * extension (defensive — `create_artifact` sanitises the title +
- * extension separately, but a malformed title shouldn't crash the
- * card).
- */
-function extensionFor(kind: ArtifactSnapshot['kind'], title: string): string {
-  const dot = title.lastIndexOf('.');
-  if (dot > 0 && dot < title.length - 1) {
-    return title.slice(dot + 1).toLowerCase();
-  }
-  switch (kind) {
-    case 'presentation':
-      return 'pptx';
-    case 'document':
-      return 'pdf';
-    case 'image':
-      return 'png';
-    default:
-      return 'bin';
-  }
 }
 
 function KindIcon({ kind }: { kind: ArtifactSnapshot['kind'] }) {
