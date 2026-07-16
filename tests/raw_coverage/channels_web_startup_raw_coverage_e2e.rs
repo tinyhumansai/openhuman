@@ -10,7 +10,7 @@ use openhuman_core::openhuman::channels::start_channels;
 use openhuman_core::openhuman::channels::test_support::{
     lock_agent_handler, run_dispatch_harness, DispatchHarnessOptions, TestMemoryEntry,
 };
-use openhuman_core::openhuman::channels::web::{
+use openhuman_core::openhuman::web_chat::{
     all_web_channel_controller_schemas, all_web_channel_registered_controllers, channel_web_cancel,
     channel_web_chat, schemas, start_chat, subscribe_web_channel_events,
     test_support as web_test_support, ChatRequestMetadata,

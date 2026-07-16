@@ -1361,7 +1361,7 @@ encrypt = false
 /// same binary lose the bridge silently. This per-test helper avoids the issue by
 /// registering a fresh subscription on each test's own runtime.
 fn register_approval_bridge() -> Option<openhuman_core::core::event_bus::SubscriptionHandle> {
-    openhuman_core::openhuman::channels::providers::web::fresh_approval_surface_subscription()
+    openhuman_core::openhuman::web_chat::fresh_approval_surface_subscription()
 }
 
 /// Pre-create a file in the action_dir so file_write sees it as an existing

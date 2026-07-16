@@ -16,7 +16,7 @@
 //! These assertions pin that decision. `cancel_should_target` is a pure
 //! predicate, so this is a fast, deterministic unit test with no runtime setup.
 
-use openhuman_core::openhuman::channels::web::cancel_should_target;
+use openhuman_core::openhuman::web_chat::cancel_should_target;
 
 #[test]
 fn unscoped_cancel_always_targets_the_in_flight_turn() {
