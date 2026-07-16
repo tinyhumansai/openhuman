@@ -69,7 +69,7 @@ mod tests {
         assert_eq!(bytes.len(), v.len() * 4);
         assert_eq!(hex(&bytes), "0000803f000000c00000003f");
         // Round-trips exactly.
-        assert_eq!(bytes_to_vec(&bytes), v);
+        assert_eq!(bytes_to_vec(&bytes).expect("valid packed f32 bytes"), v);
     }
 
     /// P6 — vault paths sanitize IDs to cross-platform-safe filenames. Chunk IDs

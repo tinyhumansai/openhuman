@@ -55,6 +55,9 @@ pub use schema::{
     MODEL_SUMMARIZATION_V1, MODEL_VISION_V1, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED,
     SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
 };
+// Kept as a separate re-export (issue #4117) so the large alphabetized group
+// above stays byte-identical and rustfmt-stable.
+pub use schema::RequiredOutputContract;
 pub use schemas::{
     all_controller_schemas as all_config_controller_schemas,
     all_registered_controllers as all_config_registered_controllers,

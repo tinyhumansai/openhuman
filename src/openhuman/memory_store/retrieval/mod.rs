@@ -128,6 +128,7 @@ impl RetrievalFacade {
             since_ms: filters.since_ms,
             until_ms: filters.until_ms,
             limit: filters.limit,
+            offset: None,
             source_scope: None,
             exclude_dropped: false,
         };

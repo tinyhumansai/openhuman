@@ -359,11 +359,19 @@ pub fn all_tools_with_runtime(
         Box::new(SuggestWorkflowsTool::new(config.clone())),
         // Wallet tools — expose wallet operations to the agent tool-call pipeline
         // so the crypto sub-agent can prepare transfers, check status, etc.
+        // Gated with the `web3` feature (the wallet domain is compiled out when
+        // web3 is disabled; the concrete tool types live under `wallet::tools`).
+        #[cfg(feature = "web3")]
         Box::new(WalletStatusTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletChainStatusTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletPrepareTransferTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletTxStatusTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletTxReceiptTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletLookupTxTool::new()),
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
@@ -710,6 +718,15 @@ pub fn all_tools_with_runtime(
         security.clone(),
     )));
 
+    // Document generation (#4847, Problem 3). Native-Rust engine
+    // (docx-rs backed) — no managed runtime, no subprocess — emitting a
+    // real `.docx` through the same byte-agnostic artifact pipeline as
+    // the presentation tool. Always registered; same constructor shape.
+    tools.push(Box::new(DocumentTool::new(
+        root_config.workspace_dir.clone(),
+        security.clone(),
+    )));
+
     // Long-term goals list tools. Used primarily by the background
     // `goals_agent` (which filters to these via its `[tools] named`
     // allowlist); also available to the main agent for explicit edits.
@@ -792,7 +809,9 @@ pub fn all_tools_with_runtime(
 
     // x402 — dedicated tool for making paid HTTP requests to x402-enabled
     // APIs (Base USDC / Solana USDC). Handles the 402 challenge, EIP-3009
-    // or SPL payment signing, and ledger recording.
+    // or SPL payment signing, and ledger recording. Gated with the `web3`
+    // feature (the x402 domain is compiled out when web3 is disabled).
+    #[cfg(feature = "web3")]
     tools.push(Box::new(
         crate::openhuman::x402::tools::X402RequestTool::new(),
     ));

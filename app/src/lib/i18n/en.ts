@@ -44,7 +44,7 @@ const en: TranslationMap = {
   'orchPage.medulla.title': 'Medulla',
   'orchPage.medulla.tagline': "OpenHuman's orchestration model",
   'orchPage.medulla.body':
-    "Medulla is OpenHuman's custom-built LLM, engineered to orchestrate thousands of agents at once: with a 10-million-token context window and radically low-cost orchestration.",
+    "Medulla is OpenHuman's custom-built LLM, engineered to orchestrate thousands of agents at once, with a 10-million-token context window and radically low-cost orchestration.",
   'orchPage.medulla.featAgents': 'Thousands of agents',
   'orchPage.medulla.featContext': '10M-token context',
   'orchPage.medulla.featCost': 'Low-cost orchestration',
@@ -154,7 +154,7 @@ const en: TranslationMap = {
   'agentWorld.welcome.eyebrow': 'TinyPlace',
   'agentWorld.welcome.title': 'A world where your agents meet',
   'agentWorld.welcome.body':
-    'TinyPlace is the social layer for AI agents: yours can discover other agents, message them, take on bounties, and trade, all on your behalf. Step into the world and see what they get up to.',
+    'TinyPlace is the social layer for AI agents. Your agents can discover and message other agents, take on bounties, and trade on your behalf. Step into their world and see what they get up to.',
   'agentWorld.welcome.ctaWorld': 'Enter the world',
   'agentWorld.welcome.ctaFeed': 'Browse the feed',
   'agentWorld.welcome.ctaDirectory': 'Find agents',
@@ -720,7 +720,7 @@ const en: TranslationMap = {
   'routines.notRunYet': 'Not run yet',
   'routines.runNow': 'Run Now',
   'routines.running': 'Running…',
-  'routines.runNowTimedOut': 'Run timed out: please refresh and try again.',
+  'routines.runNowTimedOut': 'Run timed out. Please refresh and try again.',
   'routines.viewHistory': 'View history',
   'routines.loadingHistory': 'Loading…',
   'routines.noHistory': 'No run history yet.',
@@ -742,12 +742,13 @@ const en: TranslationMap = {
   'chat.typeMessage': 'How can I help you today?',
   'chat.send': 'Send message',
   'chat.stopGeneration': 'Stop generating',
+  'chat.stoppedByUser': 'Stopped',
   'chat.parallelBranchHint': 'Type a parallel branch: ⌘/Ctrl+Enter to send',
   'chat.followupHint':
     'Queue a follow-up: sent after this reply · ⌘/Ctrl+Enter for a parallel branch',
   'chat.queuedFollowups.label': 'Queued follow-ups',
   'chat.queuedFollowups.clear': 'Clear',
-  'chat.queuedFollowups.clearFailed': "Couldn't clear the queue: try again.",
+  'chat.queuedFollowups.clearFailed': "Couldn't clear the queue. Try again.",
   'chat.parallelBranchLabel': 'Parallel branch',
   'chat.thinking': 'Thinking...',
   'chat.noMessages': 'No messages yet',
@@ -844,7 +845,7 @@ const en: TranslationMap = {
   'connections.welcome.eyebrow': 'Connections',
   'connections.welcome.title': 'Everything you use, in one place',
   'connections.welcome.body':
-    'Connect your messaging apps, email, calendar, and tools so your agent can read context and take action across all of them: without copy-pasting between a dozen tabs. You stay in control of what it can touch.',
+    'Connect your messaging apps, email, calendar, and tools so your agent can read context and take action across all of them, without copy-pasting between a dozen tabs. You stay in control of what it can touch.',
   'connections.welcome.ctaChannel': 'Connect a channel',
   'connections.welcome.ctaApps': 'Connect apps',
   'connections.welcome.ctaSkills': 'Browse skills',
@@ -1098,7 +1099,7 @@ const en: TranslationMap = {
   'memoryTimeline.truncated': 'Showing the {shown} most recent of {total} months.',
   'graphCentrality.title': 'Knowledge Graph Centrality',
   'graphCentrality.intro':
-    'PageRank over your memory graph surfaces the load-bearing hubs: and the connector entities that link otherwise-separate clusters, which a raw frequency count cannot reveal.',
+    'PageRank over your memory graph surfaces the load-bearing hubs, and the connector entities that link otherwise-separate clusters, which a raw frequency count cannot reveal.',
   'graphCentrality.loading': 'Computing centrality…',
   'graphCentrality.errorPrefix': 'Could not load the graph:',
   'graphCentrality.retry': 'Retry',
@@ -1124,7 +1125,7 @@ const en: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': 'Entity Associations',
   'entityAssociations.intro':
-    'Entities that share many of the same connections are associated: even when no single fact links them directly. Jaccard similarity surfaces these hidden pairings.',
+    'Entities that share many of the same connections are associated, even when no single fact links them directly. Jaccard similarity surfaces these hidden pairings.',
   'entityAssociations.loading': 'Scoring associations…',
   'entityAssociations.errorPrefix': 'Could not load the graph:',
   'entityAssociations.retry': 'Retry',
@@ -1192,7 +1193,7 @@ const en: TranslationMap = {
 
   'graphCohesion.title': 'Graph Cohesion',
   'graphCohesion.intro':
-    "How tightly knit the neighbourhood is around each entity. Brokers: entities whose neighbours aren't linked to each other: are the single points holding otherwise-separate clusters together, which a frequency or PageRank sort cannot reveal.",
+    "This shows how tightly knit the neighbourhood is around each entity. Brokers (entities whose neighbours aren't linked to each other) are the single points holding otherwise-separate clusters together, which a frequency or PageRank sort cannot reveal.",
   'graphCohesion.loading': 'Computing cohesion…',
   'graphCohesion.errorPrefix': 'Could not load the graph:',
   'graphCohesion.retry': 'Retry',
@@ -1213,7 +1214,7 @@ const en: TranslationMap = {
   'graphCohesion.colLinks': 'Links',
   'graphCohesion.brokerBadge': 'broker',
   'graphCohesion.brokerTitle':
-    "Structural hole: this entity's neighbours aren't connected to each other: it's the sole link between them.",
+    "Structural hole: this entity's neighbours aren't connected to each other; it's the sole link between them.",
 
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
@@ -1293,7 +1294,7 @@ const en: TranslationMap = {
   'notifications.welcome.eyebrow': 'Notifications',
   'notifications.welcome.title': 'Only what actually needs you',
   'notifications.welcome.body':
-    'A calm, scored digest of what your agents did and what needs a decision: so the important things surface and the noise stays out of your way.',
+    'A calm, scored digest of what your agents did and what needs a decision, so the important things surface and the noise stays out of your way.',
   'notifications.welcome.ctaView': 'View alerts',
   'notifications.welcome.featsLabel': "What you'll see",
   'notifications.welcome.feat1Title': 'What needs you',
@@ -1314,7 +1315,7 @@ const en: TranslationMap = {
   'rewards.welcome.eyebrow': 'Rewards',
   'rewards.welcome.title': 'Get rewarded for showing up',
   'rewards.welcome.body':
-    'Earn points as you use OpenHuman and invite others, keep your streak alive, and redeem what you’ve earned: all tracked in one place.',
+    'Earn points as you use OpenHuman and invite others, keep your streak alive, and redeem what you’ve earned, all tracked in one place.',
   'rewards.welcome.ctaView': 'View rewards',
   'rewards.welcome.featsLabel': 'How it works',
   'rewards.welcome.feat1Title': 'Earn points',
@@ -1866,7 +1867,7 @@ const en: TranslationMap = {
   'settings.search.placeholderQuerit': 'Querit API key',
   'settings.search.allowedSitesLabel': 'Allowed websites',
   'settings.search.allowedSitesHint':
-    'Hosts the assistant may open and read: via web fetch and the browser tool: one per line, e.g. reuters.com. A host also covers its subdomains. Web search itself is not restricted by this list.',
+    'Enter one host per line, such as reuters.com. The assistant may open and read these hosts through web fetch and the browser tool. Each host also covers its subdomains. This list does not restrict web search.',
   'settings.search.allowedSitesAllOn':
     'The assistant can open any public website. Local and private addresses stay blocked.',
   'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
@@ -2996,7 +2997,7 @@ const en: TranslationMap = {
   'mic.unavailable': 'Microphone is not available',
   'mic.permissionDenied': 'Microphone permission denied',
   'mic.failedToStartRecorder': 'Failed to start recorder',
-  'mic.deviceUnavailable': 'Selected microphone is unavailable: try a different device.',
+  'mic.deviceUnavailable': 'Selected microphone is unavailable. Try a different device.',
   'mic.deviceInUse': 'Microphone is in use by another application.',
   'mic.error': 'Microphone error',
   'mic.transcribing': 'Transcribing...',
@@ -3131,7 +3132,7 @@ const en: TranslationMap = {
   'workspace.vaultNotRegisteredHelp':
     'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below: you only need to do this once. Then click View Vault again.',
   'workspace.obsidianNotFoundHelp':
-    "We couldn't find Obsidian on this device. Install it, or: if it's installed somewhere non-standard: set its config folder under Advanced.",
+    "We couldn't find Obsidian on this device. Install it. If it's installed in a non-standard location, set its config folder under Advanced.",
   'workspace.openAnyway': 'Open in Obsidian anyway',
   'workspace.installObsidian': 'Install Obsidian',
   'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
@@ -3626,9 +3627,11 @@ const en: TranslationMap = {
   // Mic: error messages
   'mic.noAudioCaptured': 'No audio captured',
   'mic.noSpeechDetected': 'No speech detected',
-  'mic.lowConfidenceResult': 'Could not understand the audio clearly: please try again',
+  'mic.lowConfidenceResult': 'Could not understand the audio clearly. Please try again.',
   'mic.failedToStopRecording': 'Failed to stop recording: {message}',
   'mic.transcriptionFailed': 'Transcription failed: {message}',
+  'mic.voiceNotCompiled':
+    'Voice transcription is not included in this version of the app. Update OpenHuman to enable it.',
 
   // Reflections: kind labels
   'reflections.kind.retrospective': 'Retrospective',
@@ -3709,7 +3712,7 @@ const en: TranslationMap = {
   'app.openhumanLink.discord.perk3': 'Share feedback directly with the team',
   'app.openhumanLink.discord.perk4': 'Community help and support',
   'app.openhumanLink.discordReport.intro':
-    'Sorry: something broke on our end. We try to log these automatically, but sharing the details on Discord helps us fix it faster.',
+    'Sorry, something broke on our end. We try to log these errors automatically, but sharing the details on Discord helps us fix them faster.',
   'app.openhumanLink.discordReport.openDiscord': 'Open Discord',
   'app.openhumanLink.done': 'Done',
   'app.openhumanLink.notifications.desktopOnly':
@@ -3802,7 +3805,7 @@ const en: TranslationMap = {
   'chat.approval.alwaysAllowHint': 'Stop asking for this tool: add it to your Always-allow list',
   'chat.approval.deciding': 'Working…',
   'chat.approval.deny': 'Deny',
-  'chat.approval.error': 'Could not record your decision: try again.',
+  'chat.approval.error': 'Could not record your decision. Try again.',
   'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
   'chat.approval.title': 'Approval needed',
   'chat.approval.tool': 'Tool:',
@@ -3819,7 +3822,7 @@ const en: TranslationMap = {
   'chat.flowApproval.approveAlwaysHint': 'Skip this checkpoint for future runs of this flow',
   'chat.flowApproval.deny': 'Deny',
   'chat.flowApproval.deciding': 'Working…',
-  'chat.flowApproval.error': 'Could not record your decision: try again.',
+  'chat.flowApproval.error': 'Could not record your decision. Try again.',
   'chat.flowProposal.title': 'Workflow proposal',
   'chat.flowProposal.subtitle': 'Review this automation before saving it.',
   'chat.flowProposal.triggerLabel': 'Trigger',
@@ -3875,6 +3878,15 @@ const en: TranslationMap = {
   'channels.telegram.remoteControlTitle': 'Remote control (Telegram)',
   'channels.telegram.remoteControlBody':
     'From an allowed Telegram chat, send /status, /sessions, /new, or /help. Model routing still uses /model and /models.',
+
+  // Connect help (in-app guidance so users do not have to ask the agent for the path)
+  'channels.connectHelp.title': 'How to connect',
+  'channels.connectHelp.discord':
+    'Pick a method below: link your account via OpenHuman, install the bot with OAuth, or paste your own bot token from the Discord developer portal.',
+  'channels.connectHelp.telegram':
+    'Pick a method below: message the managed OpenHuman bot to link it, or paste your own bot token from @BotFather.',
+  'channels.connectHelp.slackNote':
+    'Looking for Slack? Slack connects as an app under Connections → OAuth, not as a messaging channel here.',
 
   // Web
   'channels.web.displayName': 'Web',
@@ -4500,7 +4512,7 @@ const en: TranslationMap = {
   'tinyplaceOrchestration.identity.makeDiscoverable': 'Make discoverable',
   'tinyplaceOrchestration.identity.republish': 'Republish keys',
   'tinyplaceOrchestration.identity.publishing': 'Publishing…',
-  'tinyplaceOrchestration.identity.publishFailed': 'Publish failed: try again',
+  'tinyplaceOrchestration.identity.publishFailed': 'Publishing failed. Try again.',
   'tinyplaceOrchestration.identity.card': 'Directory card',
   'tinyplaceOrchestration.identity.key': 'Encryption key',
   'tinyplaceOrchestration.identity.published': 'Published',
@@ -4687,7 +4699,7 @@ const en: TranslationMap = {
   'flows.welcome.eyebrow': 'Workflows',
   'flows.welcome.title': 'Put the busywork on autopilot',
   'flows.welcome.body':
-    'Describe something you do over and over: triage, follow-ups, digests: and your agent turns it into a workflow it can run end to end, on a schedule or on demand.',
+    'Describe something you do over and over (triage, follow-ups, digests) and your agent turns it into a workflow it can run end to end, on a schedule or on demand.',
   'flows.welcome.ctaNew': 'New workflow',
   'flows.welcome.ctaBrowse': 'Browse workflows',
   'flows.welcome.featsLabel': 'What you can automate',
@@ -4808,7 +4820,7 @@ const en: TranslationMap = {
   'flows.copilot.saving': 'Saving…',
   'flows.copilot.reject': 'Dismiss',
   'flows.copilot.previewHint': 'Reviewing a proposed draft: nothing is saved yet.',
-  'flows.copilot.repairDisplay': 'A run failed: please look at it and propose a fix.',
+  'flows.copilot.repairDisplay': 'A run failed. Please review it and propose a fix.',
   'flows.copilot.tool.proposing': 'Proposing workflow…',
   'flows.copilot.tool.dryRunning': 'Dry-running workflow…',
   'flows.copilot.tool.saving': 'Saving workflow…',
@@ -5288,7 +5300,7 @@ const en: TranslationMap = {
   'settings.ai.claudeCode.enableToCheck': 'Enable Claude Code to check sign-in.',
   'settings.ai.claudeCode.usingApiKeyEnvDetail': 'Using ANTHROPIC_API_KEY from the environment.',
   'settings.ai.claudeCode.notFoundInstall':
-    'Claude Code CLI not found: install with: npm install -g @anthropic-ai/claude-code',
+    'Claude Code CLI not found. Install it with: npm install -g @anthropic-ai/claude-code',
   'settings.ai.claudeCode.unknownDetail':
     "Couldn't determine sign-in state. Your claude CLI may predate auth status: try Reconnect, then Recheck.",
   'settings.ai.claudeCode.notSignedIn': 'Not signed in.',
@@ -6145,7 +6157,7 @@ const en: TranslationMap = {
   'settings.agentAccess.accessMode': 'Access mode',
   'settings.agentAccess.tier.readonly.title': 'Read-only',
   'settings.agentAccess.tier.readonly.desc':
-    'Reads files and runs read-only commands to explore: but never writes, edits, or runs anything that changes state.',
+    'Reads files and runs read-only commands to explore, but never writes, edits, or runs anything that changes state.',
   'settings.agentAccess.tier.supervised.title': 'Ask before edit',
   'settings.agentAccess.tier.supervised.desc':
     'Creates new files freely, but asks for your approval before editing an existing file, running a command, reaching the network, or installing anything.',
@@ -6157,7 +6169,7 @@ const en: TranslationMap = {
     '⚠ Full access runs commands with your full account access and is not sandboxed. Only enable it when you trust the agent with this machine. Credential and system directories stay blocked, and destructive, network, and install actions still ask for approval.',
   'settings.agentAccess.confine.label': 'Confine to workspace',
   'settings.agentAccess.confine.desc':
-    'Restrict the agent to the workspace directory (plus any granted folders), whichever access mode is selected. When off, it can reach anywhere your user can: except the always-blocked credential and system directories.',
+    'Restrict the agent to the workspace directory (plus any granted folders), whichever access mode is selected. When off, it can reach anywhere your user can, except the always-blocked credential and system directories.',
   'settings.agentAccess.requireTaskPlanApproval.label': 'Require task plan approval',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Pause before an assigned agent executes an agent-authored task brief.',
@@ -6228,7 +6240,7 @@ const en: TranslationMap = {
     'Choose how much freedom the assistant has when it takes actions on your computer.',
   'settings.permissions.preset.readonly.title': "Look, don't touch",
   'settings.permissions.preset.readonly.desc':
-    'The assistant can read files and explore: but never write, edit, or run anything that changes state.',
+    'The assistant can read files and explore, but never write, edit, or run anything that changes state.',
   'settings.permissions.preset.supervised.title': 'Ask me first',
   'settings.permissions.preset.supervised.desc':
     'Can create new files freely, but always asks your approval before editing, running commands, or accessing the network.',
@@ -6366,7 +6378,7 @@ const en: TranslationMap = {
   'settings.appearance.modeSystem': 'Match system',
   'settings.appearance.modeSystemDesc': 'Follow your OS appearance setting.',
   'settings.appearance.helperText':
-    'Dark mode switches the entire app: chat, settings, panels: to a dim palette. "Match system" follows your OS appearance and updates live.',
+    'Dark mode switches the entire app (chat, settings, panels) to a dim palette. "Match system" follows your OS appearance and updates live.',
   'settings.appearance.fontSizeHeading': 'Font size',
   'settings.appearance.fontSizeAria': 'Font size',
   'settings.appearance.fontSizeSmall': 'Small',
@@ -6378,7 +6390,7 @@ const en: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'Extra large',
   'settings.appearance.fontSizeXLargeDesc': 'The largest text, for maximum readability.',
   'settings.appearance.fontSizeHelperText':
-    'Scales text across the whole app: chat, settings and panels: independently of your system font setting.',
+    'Scales text across the whole app (chat, settings and panels) independently of your system font setting.',
   'settings.appearance.fontSizeCustomLabel': 'Custom size',
   'settings.appearance.fontSizeCustomAria': 'Custom font size in pixels',
   'settings.appearance.fontSizeCustomSliderAria': 'Custom font size slider, in pixels',
@@ -6517,7 +6529,7 @@ const en: TranslationMap = {
     'Sensible default: good continuity without burning extra tokens on every run.',
   'settings.memoryWindow.balanced.label': 'Balanced',
   'settings.memoryWindow.description':
-    'How much remembered context OpenHuman injects into every new agent run. Larger windows feel more aware of past conversations but use more tokens: and cost more: on every run.',
+    'How much remembered context OpenHuman injects into every new agent run. Larger windows feel more aware of past conversations but use more tokens (and cost more) on every run.',
   'settings.memoryWindow.extended.badge': 'More context',
   'settings.memoryWindow.extended.hint':
     'More long-term memory injected into each run. Higher token cost per turn.',
@@ -7586,6 +7598,25 @@ const en: TranslationMap = {
     'Your AI provider has no API key set. Add one in provider settings to continue.',
   'userErrors.scope.chat': 'Chat',
   'userErrors.scope.cron': 'Scheduled job',
+  'memorySources.codingSessions.title': 'Coding-agent sessions',
+  'memorySources.codingSessions.description':
+    'Turn your Codex and Claude Code decisions and corrections into private persona memory.',
+  'memorySources.codingSessions.ingest': 'Ingest new sessions',
+  'memorySources.codingSessions.ingesting': 'Ingesting…',
+  'memorySources.codingSessions.claude': 'Claude Code',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '{files} sessions · {evidence} human turns',
+  'memorySources.codingSessions.notFound': 'No local history found',
+  'memorySources.codingSessions.scanning': 'Scanning local session history…',
+  'memorySources.codingSessions.truncated': 'Scan limited to the first 1,000 session files.',
+  'memorySources.codingSessions.complete': 'Coding sessions ingested',
+  'memorySources.codingSessions.completeMessage':
+    '{processed} sessions produced {observations} persona observations.',
+  'memorySources.codingSessions.partialFailure':
+    '{failed} sessions failed while {processed} were processed. Run ingestion again to retry them.',
+  'memorySources.codingSessions.moreRemaining':
+    'The session batch limit was reached. Run ingestion again to continue importing your history.',
+  'memorySources.codingSessions.failed': 'Coding-session ingestion failed',
 };
 
 export default en;

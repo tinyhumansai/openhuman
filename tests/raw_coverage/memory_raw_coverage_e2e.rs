@@ -270,6 +270,9 @@ fn memory_tree_types_and_fallback_summary_cover_budget_and_legacy_parse_paths() 
         tree_kind: openhuman_core::openhuman::memory_store::trees::types::TreeKind::Global,
         target_level: 2,
         token_budget: 128,
+        input_token_budget: tinycortex::memory::config::INPUT_TOKEN_BUDGET,
+        overhead_reserve_tokens: tinycortex::memory::config::SUMMARY_OVERHEAD_RESERVE_TOKENS,
+        ask: None,
     };
     assert_eq!(ctx.tree_id, "tree-coverage");
     assert_eq!(ctx.target_level, 2);

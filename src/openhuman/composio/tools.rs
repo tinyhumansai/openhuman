@@ -756,7 +756,7 @@ async fn connection_is_active(config: &Config, toolkit: &str) -> anyhow::Result<
 }
 
 /// Connect a Composio integration **inline in the chat** instead of
-/// sending the user off to Settings → Connections.
+/// sending the user off to Connections.
 ///
 /// Unlike [`ComposioAuthorizeTool`] (which hands the agent a raw
 /// `connectUrl` it is not allowed to paste), this tool raises an
@@ -786,7 +786,7 @@ impl Tool for ComposioConnectTool {
          Raises an approval card with a Connect button — the user authorizes in one \
          click without leaving the conversation, and this tool returns once the \
          connection is active (or the user declines). ALWAYS prefer this over telling \
-         the user to open Settings → Connections. Returns {toolkit, connected}."
+         the user to open Connections. Returns {toolkit, connected}."
     }
     fn parameters_schema(&self) -> Value {
         json!({
@@ -837,7 +837,7 @@ impl Tool for ComposioConnectTool {
         {
             return Ok(ToolResult::error(format!(
                 "[policy-denied] composio_connect needs an interactive chat turn. \
-                 Ask the user to connect '{toolkit}' in Settings → Connections."
+                 Ask the user to connect '{toolkit}' in Connections."
             )));
         }
 
@@ -898,7 +898,7 @@ impl Tool for ComposioConnectTool {
                 // can't complete it. Point the user to Settings instead.
                 return Ok(ToolResult::error(format!(
                     "composio_connect: direct Composio mode is active — connect '{toolkit}' \
-                     in Settings → Connections (your personal Composio account)."
+                     in Connections (your personal Composio account)."
                 )));
             }
             Err(e) => {
@@ -958,7 +958,7 @@ impl Tool for ComposioConnectTool {
                     "reason": format!(
                         "A Connect card for {toolkit} was raised but wasn't completed in time \
                          (no one authorized it). Tell the user to click Connect on the card, or \
-                         connect {toolkit} in Settings → Connections, then ask again once it's \
+                         connect {toolkit} in Connections, then ask again once it's \
                          done. Do not call composio_connect again until they confirm."
                     ),
                 }))?));

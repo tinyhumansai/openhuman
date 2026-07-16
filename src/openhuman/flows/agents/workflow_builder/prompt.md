@@ -107,7 +107,10 @@ rather than a general context recall), use `memory_hybrid_search` in its
 2. **Ground it in reality before you build:**
    - `list_flow_connections` → the exact `connection_ref` values available
      (Composio accounts + named HTTP creds). Put these verbatim on nodes that
-     act on a connected account. Never invent a connection.
+     act on a connected account. Never invent a connection. Each Composio
+     entry also carries `platform_user_id` — the connected account's own
+     member id on that platform (e.g. Slack `U123ABC`). See "to me" /
+     "message me" / "DM me" below for how to use it.
    - `search_tool_catalog { query, toolkit? }` → real Composio action
      **slugs** from the FULL LIVE catalog for ANY named app — connected or
      not, curated or not (curated matches come back `featured: true` and are
@@ -609,9 +612,17 @@ into exactly one bucket before you write the node:
 2. **INFERABLE** — the request implies the value even though nothing
    upstream produces it:
    - "to me" / "message me" / "DM me" → the user's OWN Slack/Discord/etc. DM
-     target, never a public channel. **Never default a personal request to
-     `#general`** — that's a different destination than the user asked for,
-     not a safe guess.
+     target, never a public channel.
+     **Never default a personal request to a public channel** like
+     `#general` or `#team-product` — that's a different destination than
+     the user asked for, not a safe guess. Check `list_flow_connections`:
+     the matching Composio connection carries `platform_user_id` — the
+     user's own member id on that platform (e.g. Slack `U123ABC`). Pass
+     that id verbatim as the `channel` arg on `SLACK_SEND_MESSAGE` (Slack
+     opens/reuses a DM automatically when `channel` is a user id, not a
+     `#channel` name) — no need to ask. Only if `platform_user_id` is null
+     for that connection, ask the user for their member id in ONE concise
+     question rather than guessing a channel.
    - Exactly one connected account for the toolkit the step needs → that
      account (`list_flow_connections` / `composio_list_connections` tell
      you this; don't ask "which Gmail?" when there's only one).

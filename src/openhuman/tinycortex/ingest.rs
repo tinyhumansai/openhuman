@@ -1,29 +1,48 @@
 //! Host adapters for tinycortex on-demand ingestion.
 
-use tinycortex::memory::ingest::TreeJobSink;
+use rusqlite::Transaction;
+use tinycortex::memory::ingest::{QueueJobSink, TreeJobSink};
 use tinycortex::memory::score::extract::{LlmEntityExtractor, LlmExtractorConfig};
 use tinycortex::memory::score::ScoringConfig;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_queue::{self, ExtractChunkPayload, NewJob};
 
-pub struct HostTreeJobSink {
-    config: Config,
-}
+#[derive(Default)]
+pub struct HostTreeJobSink;
 
 impl HostTreeJobSink {
-    pub fn new(config: Config) -> Self {
-        Self { config }
+    pub fn new() -> Self {
+        Self
     }
 }
 
 impl TreeJobSink for HostTreeJobSink {
-    fn enqueue_extract(&self, chunk_id: &str) -> anyhow::Result<()> {
-        let job = NewJob::extract_chunk(&ExtractChunkPayload {
-            chunk_id: chunk_id.into(),
-        })?;
-        memory_queue::enqueue(&self.config, &job)?;
-        Ok(())
+    fn enqueue_extract_tx(
+        &self,
+        tx: &Transaction<'_>,
+        chunk_id: &str,
+        default_max_attempts: u32,
+    ) -> anyhow::Result<bool> {
+        tracing::trace!(
+            chunk_id,
+            default_max_attempts,
+            "[memory:ingest] enqueue extract job in chunk transaction"
+        );
+        let enqueued = QueueJobSink
+            .enqueue_extract_tx(tx, chunk_id, default_max_attempts)
+            .inspect_err(|error| {
+                tracing::error!(
+                    chunk_id,
+                    error = %error,
+                    "[memory:ingest] enqueue extract job failed"
+                );
+            })?;
+        tracing::trace!(
+            chunk_id,
+            enqueued,
+            "[memory:ingest] enqueue extract job outcome (false = already queued)"
+        );
+        Ok(enqueued)
     }
 }
 
@@ -52,7 +71,7 @@ pub fn context(
 ) {
     (
         super::memory_config_from(config, config.workspace_dir.clone()),
-        HostTreeJobSink::new(config.clone()),
+        HostTreeJobSink::new(),
         scoring_config(config),
     )
 }

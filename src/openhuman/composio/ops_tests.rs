@@ -1017,6 +1017,10 @@ async fn composio_get_user_profile_via_mock_returns_provider_profile() {
             }),
         );
     let base = start_mock_backend(app).await;
+    // ProviderContext reloads the saved config and applies runtime env
+    // overlays. Pin the backend override to the mock so CI's BACKEND_URL
+    // cannot redirect this request to the hosted API.
+    let _backend_url_guard = EnvVarGuard::set("BACKEND_URL", &base);
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
     let _workspace_env_guard = WorkspaceEnvGuard::set(tmp.path());
@@ -1168,6 +1172,9 @@ async fn composio_sync_gmail_via_mock_stores_skill_document_and_updates_outcome(
             }),
         );
     let base = start_mock_backend(app).await;
+    // The provider action reloads config with env overlays before executing.
+    // Keep that reload on the mock even when the runner exports BACKEND_URL.
+    let _backend_url_guard = EnvVarGuard::set("BACKEND_URL", &base);
     let tmp = tempfile::tempdir().unwrap();
     let mut config = config_with_backend(&tmp, base);
     config.memory_tree.embedding_strict = false;

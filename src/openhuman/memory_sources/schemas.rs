@@ -135,6 +135,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("estimate_sync_cost"),
         schemas("monthly_cost_summary"),
         schemas("apply_all_in"),
+        schemas("coding_session_status"),
+        schemas("ingest_coding_sessions"),
     ]
 }
 
@@ -199,6 +201,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("apply_all_in"),
             handler: handle_apply_all_in,
+        },
+        RegisteredController {
+            schema: schemas("coding_session_status"),
+            handler: handle_coding_session_status,
+        },
+        RegisteredController {
+            schema: schemas("ingest_coding_sessions"),
+            handler: handle_ingest_coding_sessions,
         },
     ]
 }
@@ -586,6 +596,48 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "coding_session_status" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "coding_session_status",
+            description: "Discover local Codex and Claude Code session histories and report the human-authored evidence available for memory ingestion.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "sources",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("CodingSessionSourceStatus"))),
+                comment: "Discovery and evidence counts for each supported coding-agent session source.",
+                required: true,
+            }],
+        },
+        "ingest_coding_sessions" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "ingest_coding_sessions",
+            description: "Distill human-authored turns from local Codex and Claude Code sessions into the TinyCortex persona memory layer.",
+            inputs: vec![
+                FieldSchema {
+                    name: "backfill",
+                    ty: TypeSchema::Bool,
+                    comment: "When true, reprocess all discovered sessions; otherwise ingest only changed sessions.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "max_sessions",
+                    ty: TypeSchema::U64,
+                    comment: "Maximum session digests for this run (clamped to 1,000).",
+                    required: false,
+                },
+            ],
+            outputs: vec![
+                FieldSchema { name: "mode", ty: TypeSchema::String, comment: "Executed run mode.", required: true },
+                FieldSchema { name: "files_seen", ty: TypeSchema::U64, comment: "Discovered coding-session files.", required: true },
+                FieldSchema { name: "sessions_processed", ty: TypeSchema::U64, comment: "Coding sessions distilled successfully.", required: true },
+                FieldSchema { name: "sessions_skipped", ty: TypeSchema::U64, comment: "Unchanged sessions skipped during an incremental run.", required: true },
+                FieldSchema { name: "sessions_failed", ty: TypeSchema::U64, comment: "Sessions retained for retry after provider failure.", required: true },
+                FieldSchema { name: "evidence_units", ty: TypeSchema::U64, comment: "Human-authored evidence units extracted.", required: true },
+                FieldSchema { name: "observations", ty: TypeSchema::U64, comment: "Persona observations distilled.", required: true },
+                FieldSchema { name: "budget_hit", ty: TypeSchema::Bool, comment: "Whether the run stopped at its session/call budget.", required: true },
+                FieldSchema { name: "pack_path", ty: TypeSchema::Option(Box::new(TypeSchema::String)), comment: "Compiled persona pack path when written.", required: false },
+            ],
+        },
         other => panic!("unknown memory_sources schema function: {other}"),
     }
 }
@@ -675,6 +727,19 @@ fn handle_monthly_cost_summary(_params: Map<String, Value>) -> ControllerFuture 
 
 fn handle_apply_all_in(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { to_json(rpc::apply_all_in_rpc().await?) })
+}
+
+fn handle_coding_session_status(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(rpc::coding_session_status_rpc().await?) })
+}
+
+fn handle_ingest_coding_sessions(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<crate::openhuman::tinycortex::CodingSessionIngestRequest>(
+            Value::Object(params),
+        )?;
+        to_json(rpc::ingest_coding_sessions_rpc(req).await?)
+    })
 }
 
 fn parse_value<T: DeserializeOwned>(v: Value) -> Result<T, String> {

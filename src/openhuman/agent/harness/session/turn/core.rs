@@ -44,16 +44,249 @@ use std::hash::{Hash, Hasher};
 ///   persisted `content`, so `seed_resume_from_messages` can't drop it) — that
 ///   is still a brand-new conversation and should get super context; AND
 /// - `enabled` — the `context.super_context_enabled` config flag is on.
+/// - `user_message` — the request is not an obvious context-free greeting or
+///   simple local action. Super context is useful when prior memory, profile,
+///   integrations, or web facts can change the answer; it is counterproductive
+///   for "hi"/"ciao" and straightforward local filesystem commands, where an
+///   auto-run scout only adds tool noise before the orchestrator sees intent.
+/// - `native_tool_calling` — provider-aware guardrail for #4361. Local
+///   providers (Ollama / LM Studio / MLX / llama.cpp) force
+///   `native_tool_calling=false`, so the harness serializes the **entire tool +
+///   integration catalog as prose** into the system prompt (the
+///   `PFormatToolDispatcher` path, `should_send_tool_specs()==false`). A weak
+///   local model then over-selects from that text menu and mis-routes a
+///   greeting into `composio_list_connections` or a local folder op into the
+///   calendar path (the reported v0.58 regression). For these providers we only
+///   auto-run the scout when the user *explicitly* asks for prior context or a
+///   connected integration; otherwise the extra scout just enlarges the surface
+///   the model can trip over. Native-tool-calling providers keep the broader
+///   behavior — structured tool specs make spurious tool-routing far rarer.
 ///
 /// Pulled out as a pure function so the gate (in particular the resume and
 /// orchestrator guards) is unit-testable without a full agent turn harness.
-fn should_run_super_context(
+fn super_context_skip_reason(
+    user_message: &str,
+    native_tool_calling: bool,
+) -> Option<&'static str> {
+    let normalized = user_message
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(|c: char| c.is_ascii_punctuation())
+        .to_ascii_lowercase();
+
+    if normalized.is_empty() {
+        return Some("empty_message");
+    }
+
+    if matches!(
+        normalized.as_str(),
+        "hi" | "hello"
+            | "hey"
+            | "yo"
+            | "ciao"
+            | "hola"
+            | "bonjour"
+            | "thanks"
+            | "thank you"
+            | "ok"
+            | "okay"
+            | "good morning"
+            | "good afternoon"
+            | "good evening"
+            | "good night"
+    ) {
+        return Some("context_free_greeting");
+    }
+
+    let local_action_candidate = strip_local_folder_action_lead_in(&normalized);
+    let starts_like_local_folder_action = [
+        // English
+        "create a folder ",
+        "create folder ",
+        "make a folder ",
+        "make folder ",
+        "create a directory ",
+        "create directory ",
+        "make a directory ",
+        "make directory ",
+        "mkdir ",
+        // Italian (#4361 repro: "Crea una cartella sul Desktop e chiamala
+        // PROVA"). Gemma-class local models mis-route the Italian phrasing into
+        // Calendar/Connections exactly as they do the English one, so the same
+        // folder-op suppression must be language-aware for the reported locale.
+        "crea una cartella ",
+        "crea la cartella ",
+        "crea cartella ",
+        "creare una cartella ",
+        "creare cartella ",
+        "crea una directory ",
+        "crea directory ",
+        "fai una cartella ",
+        "fammi una cartella ",
+        "nuova cartella ",
+    ]
+    .iter()
+    .any(|prefix| local_action_candidate.starts_with(prefix));
+
+    if starts_like_local_folder_action {
+        let context_hints = [
+            "discussed",
+            "mentioned",
+            "previous",
+            "earlier",
+            "last time",
+            "email",
+            "gmail",
+            "calendar",
+            "slack",
+            "notion",
+            "github",
+            "drive",
+            // Italian cues, mirroring the Italian folder-op detection above so a
+            // folder request that *does* reference prior context or an
+            // integration still earns a scout (#4361).
+            "discusso",
+            "parlato",
+            "calendario",
+            "precedente",
+        ];
+        if !context_hints.iter().any(|hint| normalized.contains(hint)) {
+            return Some("simple_local_filesystem_action");
+        }
+    }
+
+    // Provider-aware guardrail (#4361). On providers without native tool calling
+    // the whole tool/integration catalog is injected as prose, so an unrequested
+    // first-turn scout is exactly what tips a small local model into spurious
+    // integration tool-calls. Suppress super context for these providers unless
+    // the prompt explicitly references prior context or a connected integration
+    // (e.g. "show my connections", "schedule a meeting tomorrow at 3"), where the
+    // scout genuinely helps. Native-tool-calling providers are unaffected.
+    if !native_tool_calling && !mentions_context_or_integration(&normalized) {
+        return Some("non_native_provider_no_explicit_intent");
+    }
+
+    None
+}
+
+/// True when a first-turn prompt explicitly references prior conversation
+/// context or a connected integration — the cases where a context scout earns
+/// its cost. Used to keep super context ON for these prompts even on local
+/// (non-native-tool-calling) providers, where it is otherwise suppressed to
+/// avoid tipping weak models into spurious integration tool-calls (#4361).
+///
+/// `normalized` must already be whitespace-collapsed, punctuation-trimmed, and
+/// lowercased by `super_context_skip_reason`.
+fn mentions_context_or_integration(normalized: &str) -> bool {
+    const INTENT_HINTS: [&str; 37] = [
+        // prior-conversation / memory cues
+        "discussed",
+        "mentioned",
+        "previous",
+        "earlier",
+        "last time",
+        "remember",
+        "we talked",
+        "you said",
+        "my profile",
+        // connection / integration cues
+        "connection",
+        "connections",
+        "integration",
+        "integrations",
+        "connected",
+        // calendar / scheduling
+        "calendar",
+        "schedule",
+        "meeting",
+        "reminder",
+        "remind me",
+        "event",
+        // mail
+        "email",
+        "gmail",
+        "inbox",
+        // common connected apps
+        "slack",
+        "notion",
+        "github",
+        "drive",
+        "linkedin",
+        "whatsapp",
+        "telegram",
+        // Italian cues (#4361) — keep super context ON for an explicit
+        // context/integration ask in the reported locale. "calendario"/"email"/
+        // "gmail" already match via substring, so only the non-overlapping stems
+        // are listed here. Additive only: these can never *cause* a skip.
+        "connessione",  // connection
+        "connessioni",  // connections
+        "integrazione", // integration
+        "riunione",     // meeting
+        "promemoria",   // reminder
+        "ricordami",    // remind me
+        "agenda",       // agenda / calendar
+    ];
+    INTENT_HINTS.iter().any(|hint| normalized.contains(hint))
+}
+
+fn strip_local_folder_action_lead_in(message: &str) -> &str {
+    let mut candidate = message;
+    for _ in 0..3 {
+        let trimmed = candidate.trim_start();
+        let next = [
+            // English
+            "can you please ",
+            "could you please ",
+            "would you please ",
+            "can you ",
+            "could you ",
+            "would you ",
+            "please ",
+            "hey ",
+            "hello ",
+            "hi ",
+            // Italian (#4361)
+            "puoi per favore ",
+            "potresti per favore ",
+            "puoi per piacere ",
+            "puoi ",
+            "potresti ",
+            "per favore ",
+            "per piacere ",
+            "ciao ",
+            "ehi ",
+        ]
+        .iter()
+        .find_map(|lead_in| trimmed.strip_prefix(lead_in));
+
+        match next {
+            Some(rest) => candidate = rest,
+            None => return trimmed,
+        }
+    }
+    candidate.trim_start()
+}
+
+fn super_context_base_gate(
     is_orchestrator: bool,
     first_turn: bool,
     has_prior_conversation: bool,
     enabled: bool,
 ) -> bool {
     is_orchestrator && first_turn && !has_prior_conversation && enabled
+}
+
+fn should_run_super_context(
+    is_orchestrator: bool,
+    first_turn: bool,
+    has_prior_conversation: bool,
+    enabled: bool,
+    native_tool_calling: bool,
+    user_message: &str,
+) -> bool {
+    super_context_base_gate(is_orchestrator, first_turn, has_prior_conversation, enabled)
+        && super_context_skip_reason(user_message, native_tool_calling).is_none()
 }
 
 // `parse_context_bundle_has_enough_context` moved to
@@ -97,6 +330,23 @@ fn tool_records_from_conversation(
         }
     }
     records
+}
+
+/// Rewrite the **trailing** assistant `Chat` message in `history` to `text`,
+/// keeping the persisted transcript and the next turn's KV-cache prefix
+/// consistent with a repaired required-output reply (issue #4117). Only the last
+/// row is touched — when the tail is not an assistant `Chat` (defensive; a clean
+/// finish, a cap checkpoint, and the #4093 close all end on one) a fresh
+/// assistant message is appended rather than mutating an older entry.
+fn replace_last_assistant_reply(history: &mut Vec<ConversationMessage>, text: &str) {
+    match history.last_mut() {
+        Some(ConversationMessage::Chat(chat)) if chat.role == "assistant" => {
+            chat.content = text.to_string();
+        }
+        _ => history.push(ConversationMessage::Chat(ChatMessage::assistant(
+            text.to_string(),
+        ))),
+    }
 }
 
 fn render_agent_context_status_note(sources: &[harness::AgentContextPreparedSource]) -> String {
@@ -631,6 +881,25 @@ impl Agent {
             .cached_transcript_messages
             .as_ref()
             .is_some_and(|msgs| msgs.iter().any(|m| m.role == "assistant"));
+        // `should_send_tool_specs()` is true only when the provider receives a
+        // structured tool schema (native tool calling). For local providers it
+        // is false — the whole tool/integration catalog is prose in the prompt,
+        // which is the surface a weak model mis-routes on (#4361).
+        let native_tool_calling = self.tool_dispatcher.should_send_tool_specs();
+        let skip_reason_for_logging = super_context_skip_reason(user_message, native_tool_calling);
+        let base_gate = super_context_base_gate(
+            self.agent_definition_id == "orchestrator",
+            first_turn,
+            has_prior_conversation,
+            self.context.super_context_enabled(),
+        );
+        if base_gate {
+            if let Some(reason) = skip_reason_for_logging {
+                log::info!(
+                    "[agent_loop] super_context skipped for context-free first turn reason={reason} native_tool_calling={native_tool_calling}"
+                );
+            }
+        }
         // The scout no longer runs here imperatively: super context is now a
         // before_model **graph node** (`SuperContextMiddleware`, installed via
         // `context_mw.super_context` below). It runs the read-only `context_scout`
@@ -643,6 +912,8 @@ impl Agent {
             first_turn,
             has_prior_conversation,
             self.context.super_context_enabled(),
+            native_tool_calling,
+            user_message,
         );
         if run_super_context {
             log::info!(
@@ -1119,6 +1390,42 @@ impl Agent {
         } else {
             outcome.text.clone()
         };
+
+        // Enforce the required structured-output contract (issue #4117) on the
+        // accepted reply — for ALL of the branches above (normal finish, cap
+        // checkpoint, #4093 synthesized close), since each delivers a reply
+        // downstream parsing depends on. When this agent must emit a JSON block
+        // every turn and the reply omitted it, validate-and-repair before the
+        // turn is accepted, reconciling with streaming (append-only when a live
+        // stream is attached, replace otherwise — see `enforce_required_output`).
+        // The trailing assistant message is rewritten to match, and the repair
+        // call's usage is folded into the turn accounting. `required_output`
+        // defaults to `None`, so existing agents are entirely unaffected.
+        let reply = if let Some(contract) = self.config.required_output.clone() {
+            match self
+                .enforce_required_output(
+                    &reply,
+                    &contract,
+                    effective_model,
+                    outcome.model_calls as u32 + 1,
+                )
+                .await
+            {
+                Some((repaired, repair_usage)) => {
+                    if let Some(u) = repair_usage {
+                        input_tokens += u.input_tokens;
+                        output_tokens += u.output_tokens;
+                        cached_input_tokens += u.cached_input_tokens;
+                        charged_amount_usd += u.charged_amount_usd;
+                    }
+                    replace_last_assistant_reply(&mut self.history, &repaired);
+                    repaired
+                }
+                None => reply,
+            }
+        } else {
+            reply
+        };
         self.trim_history();
 
         // Fold this turn's sub-agent spend into the cumulative meters and capture
@@ -1414,24 +1721,55 @@ impl Agent {
 
 #[cfg(test)]
 mod super_context_gate_tests {
-    use super::{render_agent_context_status_note, should_run_super_context};
+    use super::{
+        mentions_context_or_integration, render_agent_context_status_note,
+        should_run_super_context, super_context_skip_reason,
+    };
     use crate::openhuman::agent::harness::AgentContextPreparedSource;
+
+    // Provider-aware convenience: `native_tool_calling` (5th arg) is `true` for
+    // these tests unless a case is specifically exercising the local
+    // (non-native-tool-calling) provider path (#4361). Native providers keep the
+    // original #4361/#4403 gate semantics.
+    const NATIVE: bool = true;
+    const LOCAL: bool = false;
 
     #[test]
     fn runs_only_on_first_turn_of_a_new_orchestrator_thread_when_enabled() {
         // Orchestrator, new thread, first turn, flag on → run.
-        assert!(should_run_super_context(true, true, false, true));
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            NATIVE,
+            "find the project we discussed yesterday"
+        ));
     }
 
     #[test]
     fn skips_when_flag_disabled() {
-        assert!(!should_run_super_context(true, true, false, false));
+        assert!(!should_run_super_context(
+            true,
+            true,
+            false,
+            false,
+            NATIVE,
+            "find the project we discussed yesterday"
+        ));
     }
 
     #[test]
     fn skips_on_later_turns() {
         // history non-empty → not the first turn.
-        assert!(!should_run_super_context(true, false, false, true));
+        assert!(!should_run_super_context(
+            true,
+            false,
+            false,
+            true,
+            NATIVE,
+            "find the project we discussed yesterday"
+        ));
     }
 
     #[test]
@@ -1440,7 +1778,14 @@ mod super_context_gate_tests {
         // `first_turn` is true) but a seeded prefix that includes a prior
         // assistant reply. Super context must NOT re-fire on these existing
         // conversations.
-        assert!(!should_run_super_context(true, true, true, true));
+        assert!(!should_run_super_context(
+            true,
+            true,
+            true,
+            true,
+            NATIVE,
+            "find the project we discussed yesterday"
+        ));
     }
 
     #[test]
@@ -1449,7 +1794,14 @@ mod super_context_gate_tests {
         // persisted *user* row (no assistant reply), so `has_prior_conversation`
         // is false. That is still a brand-new conversation — super context
         // should run.
-        assert!(should_run_super_context(true, true, false, true));
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            NATIVE,
+            "[IMAGE: screenshot.png]\nwhat is this?"
+        ));
     }
 
     #[test]
@@ -1458,7 +1810,282 @@ mod super_context_gate_tests {
         // `run_single()` flows (goals enrichment, cron/task agents,
         // specialist sub-agents). Even on a fresh first turn with the flag on,
         // super context must only run for the user-facing orchestrator.
-        assert!(!should_run_super_context(false, true, false, true));
+        assert!(!should_run_super_context(
+            false,
+            true,
+            false,
+            true,
+            NATIVE,
+            "find the project we discussed yesterday"
+        ));
+    }
+
+    #[test]
+    fn skips_context_free_greeting() {
+        // #4361 case: a bare greeting must never trigger a scout — on any
+        // provider. "Ciao" is the exact prompt from the issue report.
+        for native in [NATIVE, LOCAL] {
+            assert!(!should_run_super_context(
+                true, true, false, true, native, "Ciao"
+            ));
+            assert!(!should_run_super_context(
+                true, true, false, true, native, "hello!"
+            ));
+            assert_eq!(
+                super_context_skip_reason("Ciao", native),
+                Some("context_free_greeting")
+            );
+        }
+    }
+
+    #[test]
+    fn skips_simple_local_folder_creation() {
+        // #4361 case: "create a folder on Desktop called test" must not browse
+        // Calendar/Connections — on any provider.
+        for native in [NATIVE, LOCAL] {
+            assert!(
+                !should_run_super_context(
+                    true,
+                    true,
+                    false,
+                    true,
+                    native,
+                    "Create a folder on Desktop called test"
+                ),
+                "expected skip for local folder creation (native={native})"
+            );
+            assert!(!should_run_super_context(
+                true,
+                true,
+                false,
+                true,
+                native,
+                "Create a folder on Desktop named PROVA"
+            ));
+        }
+    }
+
+    #[test]
+    fn skips_simple_local_folder_creation_with_polite_lead_in() {
+        for message in [
+            "Please create a folder on Desktop named PROVA",
+            "Can you make a directory named invoices",
+            "Hey please create folder screenshots",
+        ] {
+            assert!(
+                !should_run_super_context(true, true, false, true, NATIVE, message),
+                "expected super context to skip for {message:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_super_context_for_local_action_with_context_hint() {
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            NATIVE,
+            "Create a folder for the project we discussed yesterday"
+        ));
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            NATIVE,
+            "Please create a folder for the project we discussed yesterday"
+        ));
+    }
+
+    #[test]
+    fn skips_italian_local_folder_creation() {
+        // #4361 exact repro: the Italian folder op must be recognized as a
+        // simple local filesystem action and NOT trigger a Calendar/Connections
+        // scout — on any provider. This is the string from the issue report.
+        for native in [NATIVE, LOCAL] {
+            assert!(
+                !should_run_super_context(
+                    true,
+                    true,
+                    false,
+                    true,
+                    native,
+                    "Crea una cartella sul Desktop e chiamala PROVA"
+                ),
+                "expected skip for Italian folder creation (native={native})"
+            );
+            // The reason must be the language-agnostic filesystem classification,
+            // not the provider fallback — so it holds even for native providers.
+            assert_eq!(
+                super_context_skip_reason("Crea una cartella sul Desktop e chiamala PROVA", NATIVE),
+                Some("simple_local_filesystem_action")
+            );
+        }
+    }
+
+    #[test]
+    fn skips_italian_local_folder_creation_variants_and_polite_lead_ins() {
+        for message in [
+            "Crea una cartella chiamata PROVA",
+            "Crea cartella screenshots",
+            "Creare una cartella sul desktop",
+            "Fai una cartella per le fatture",
+            "Nuova cartella documenti",
+            "Puoi creare una cartella chiamata PROVA",
+            "Per favore crea una cartella sul Desktop",
+            "Ciao puoi creare una cartella chiamata test",
+        ] {
+            assert_eq!(
+                super_context_skip_reason(message, NATIVE),
+                Some("simple_local_filesystem_action"),
+                "expected filesystem skip for {message:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_super_context_for_italian_local_action_with_context_hint() {
+        // An Italian folder op that references prior context / an integration
+        // should still earn a scout — the filesystem shortcut must not swallow
+        // it. Verified on a native provider (local providers add the separate
+        // provider gate, exercised elsewhere).
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            NATIVE,
+            "Crea una cartella per il progetto di cui abbiamo parlato"
+        ));
+        assert_eq!(
+            super_context_skip_reason("Crea una cartella per la riunione in calendario", NATIVE),
+            None
+        );
+    }
+
+    // ── Provider-aware guardrail (#4361) ────────────────────────────────────
+    // On providers without native tool calling (Ollama / LM Studio / MLX /
+    // llama.cpp) the whole tool + integration catalog is injected as prose, so
+    // an unrequested first-turn scout is what tips weak models into spurious
+    // integration tool-calls. For these providers super context runs ONLY when
+    // the prompt explicitly references prior context or a connected integration.
+
+    #[test]
+    fn local_provider_skips_super_context_for_generic_prompt() {
+        // A generic first-turn ask with no context/integration cue: a native
+        // provider still scouts (broad behavior preserved), but a local provider
+        // suppresses it to keep the prose tool menu from mis-routing.
+        let msg = "write me a short poem about the sea";
+        assert!(should_run_super_context(
+            true, true, false, true, NATIVE, msg
+        ));
+        assert!(!should_run_super_context(
+            true, true, false, true, LOCAL, msg
+        ));
+        assert_eq!(
+            super_context_skip_reason(msg, LOCAL),
+            Some("non_native_provider_no_explicit_intent")
+        );
+        assert_eq!(super_context_skip_reason(msg, NATIVE), None);
+    }
+
+    #[test]
+    fn keeps_super_context_for_explicit_connection_intent() {
+        // #4361 case: "show my connections" is an explicit integration ask →
+        // super context is allowed on BOTH provider kinds.
+        let msg = "show my connections";
+        assert!(should_run_super_context(
+            true, true, false, true, NATIVE, msg
+        ));
+        assert!(should_run_super_context(
+            true, true, false, true, LOCAL, msg
+        ));
+        assert_eq!(super_context_skip_reason(msg, LOCAL), None);
+    }
+
+    #[test]
+    fn keeps_super_context_for_explicit_scheduling_intent() {
+        // #4361 case: "schedule a meeting tomorrow at 3" is an explicit
+        // integration ask → super context is allowed when integrations are
+        // enabled (the `enabled` flag), on BOTH provider kinds.
+        let msg = "schedule a meeting tomorrow at 3";
+        assert!(should_run_super_context(
+            true, true, false, true, NATIVE, msg
+        ));
+        assert!(should_run_super_context(
+            true, true, false, true, LOCAL, msg
+        ));
+        // Still gated by the config flag: disabled ⇒ no scout regardless.
+        assert!(!should_run_super_context(
+            true, true, false, false, LOCAL, msg
+        ));
+    }
+
+    #[test]
+    fn local_provider_keeps_super_context_for_explicit_italian_integration_intent() {
+        // Fix B, locale-aware: an explicit Italian integration ask must keep the
+        // scout ON even on a local (non-native-tool-calling) provider — the
+        // provider gate only suppresses *context-free* first turns. A generic
+        // Italian prompt with no cue is still suppressed on local providers.
+        for msg in [
+            "mostra le mie connessioni",    // show my connections
+            "fissa una riunione domani",    // schedule a meeting tomorrow
+            "aggiungilo al mio calendario", // add it to my calendar
+            "controlla la mia email",       // check my email
+        ] {
+            assert!(
+                should_run_super_context(true, true, false, true, LOCAL, msg),
+                "expected local provider to keep super context for {msg:?}"
+            );
+            assert_eq!(super_context_skip_reason(msg, LOCAL), None);
+        }
+
+        // A generic Italian ask (a poem) carries no integration cue → the local
+        // provider still suppresses it, while a native provider scouts.
+        let generic = "scrivimi una breve poesia sul mare";
+        assert!(should_run_super_context(
+            true, true, false, true, NATIVE, generic
+        ));
+        assert_eq!(
+            super_context_skip_reason(generic, LOCAL),
+            Some("non_native_provider_no_explicit_intent")
+        );
+    }
+
+    #[test]
+    fn mentions_context_or_integration_matches_expected_cues() {
+        for hit in [
+            "show my connections",
+            "schedule a meeting tomorrow at 3",
+            "check my gmail inbox",
+            "what did we discuss earlier",
+            "add it to my calendar",
+            "post this to slack",
+            // Italian cues (#4361)
+            "mostra le mie connessioni",
+            "fissa una riunione domani",
+            "aggiungilo al mio calendario",
+            "impostami un promemoria",
+            "controlla la mia email",
+        ] {
+            assert!(
+                mentions_context_or_integration(hit),
+                "expected context/integration cue in {hit:?}"
+            );
+        }
+        for miss in [
+            "write me a short poem about the sea",
+            "what is 2 plus 2",
+            "translate hola to english",
+            "scrivimi una breve poesia sul mare",
+        ] {
+            assert!(
+                !mentions_context_or_integration(miss),
+                "did not expect a cue in {miss:?}"
+            );
+        }
     }
 
     #[test]

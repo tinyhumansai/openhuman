@@ -139,6 +139,7 @@ pub async fn list_chunks_rpc(
         since_ms: req.since_ms,
         until_ms: req.until_ms,
         limit: req.limit,
+        offset: None,
         source_scope: None,
         exclude_dropped: false,
     };

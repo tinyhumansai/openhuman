@@ -537,7 +537,7 @@ impl HotkeyListenerKind {
 fn start_hotkey_listener(
     hotkey_str: &str,
     mode: hotkey::ActivationMode,
-    _server_cancel: &CancellationToken,
+    server_cancel: &CancellationToken,
 ) -> Result<
     (
         HotkeyListenerKind,
@@ -548,7 +548,7 @@ fn start_hotkey_listener(
     #[cfg(target_os = "macos")]
     {
         if hotkey_str.trim().eq_ignore_ascii_case("fn") {
-            return start_globe_hotkey_listener(mode, _server_cancel);
+            return start_globe_hotkey_listener(mode, server_cancel);
         }
         // rdev calls TSMGetInputSourceProperty off the main thread; macOS 26
         // enforces main-queue-only access and crashes the process. Only the
@@ -566,6 +566,10 @@ fn start_hotkey_listener(
     // Non-macOS: rdev-based listener for all keys.
     #[cfg(not(target_os = "macos"))]
     {
+        // `server_cancel` is only consumed by the macOS Swift-globe listener
+        // branch above; the rdev listener manages its own lifecycle, so bind it
+        // here to keep the shared signature warning-free on non-macOS.
+        let _ = server_cancel;
         let combo = hotkey::parse_hotkey(hotkey_str)?;
         let (handle, rx) = hotkey::start_listener(combo, mode)?;
         Ok((HotkeyListenerKind::Rdev(handle), rx))
