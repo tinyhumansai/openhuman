@@ -36,9 +36,25 @@ mod tests {
         assert_eq!(MemoryCategory::Core.to_string(), "core");
         assert_eq!(MemoryCategory::Daily.to_string(), "daily");
         assert_eq!(MemoryCategory::Conversation.to_string(), "conversation");
+        // TinyCortex renders `Custom(name)` with a `custom:` prefix so it stays
+        // distinct from the built-in variants and `Display`/`FromStr` are true
+        // inverses (see `memory_category_from_stored`).
         assert_eq!(
             MemoryCategory::Custom("project_notes".into()).to_string(),
-            "project_notes"
+            "custom:project_notes"
+        );
+    }
+
+    #[test]
+    fn memory_category_custom_wire_values_round_trip_and_accept_legacy_bare_values() {
+        let current: MemoryCategory = "custom:project_notes".parse().unwrap();
+        let legacy: MemoryCategory = "project_notes".parse().unwrap();
+
+        assert_eq!(current, MemoryCategory::Custom("project_notes".into()));
+        assert_eq!(legacy, MemoryCategory::Custom("project_notes".into()));
+        assert_eq!(
+            serde_json::to_string(&current).unwrap(),
+            "\"custom:project_notes\""
         );
     }
 

@@ -4,6 +4,8 @@ import { callCoreRpc } from './coreRpcClient';
 import {
   addMemorySource,
   applyAllIn,
+  getCodingSessionStatus,
+  ingestCodingSessions,
   listMemorySources,
   type MemorySourceEntry,
   removeMemorySource,
@@ -189,5 +191,48 @@ describe('memorySourcesService', () => {
     expect(entry.sync_depth_days).toBe(90);
     expect(entry.max_tokens_per_sync).toBe(100_000);
     expect(entry.max_cost_per_sync_usd).toBe(1.5);
+  });
+
+  it('discovers Codex and Claude Code session sources', async () => {
+    mockedCall.mockResolvedValue({
+      result: {
+        sources: [
+          { kind: 'codex', available: true, session_files: 2, evidence_units: 5, invalid_files: 0 },
+        ],
+      },
+      logs: [],
+    } as never);
+
+    const sources = await getCodingSessionStatus();
+
+    expect(mockedCall).toHaveBeenCalledWith({
+      method: 'openhuman.memory_sources_coding_session_status',
+    });
+    expect(sources[0]).toMatchObject({ kind: 'codex', evidence_units: 5 });
+  });
+
+  it('requests a timeout-aligned incremental coding-session batch', async () => {
+    mockedCall.mockResolvedValue({
+      result: {
+        mode: 'incremental',
+        files_seen: 2,
+        sessions_processed: 2,
+        sessions_skipped: 0,
+        sessions_failed: 0,
+        evidence_units: 5,
+        observations: 3,
+        budget_hit: false,
+      },
+      logs: [],
+    } as never);
+
+    const result = await ingestCodingSessions(false, 25);
+
+    expect(mockedCall).toHaveBeenCalledWith({
+      method: 'openhuman.memory_sources_ingest_coding_sessions',
+      params: { backfill: false, max_sessions: 15 },
+      timeoutMs: 585_000,
+    });
+    expect(result.sessions_processed).toBe(2);
   });
 });

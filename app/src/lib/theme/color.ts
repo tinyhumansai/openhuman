@@ -63,3 +63,17 @@ export function channelLuminance(channels: string): number {
   const lin = parts.map(c => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
   return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
 }
+
+/**
+ * WCAG contrast ratio between two channel triples, in `[1, 21]`. Symmetric in
+ * its arguments. AA wants ≥ 4.5:1 for body text and ≥ 3:1 for large text / UI.
+ * Used to warn on custom themes and to gate the built-in presets (see
+ * `presets.contrast.test.ts`).
+ */
+export function channelContrast(a: string, b: string): number {
+  const la = channelLuminance(a);
+  const lb = channelLuminance(b);
+  const hi = Math.max(la, lb);
+  const lo = Math.min(la, lb);
+  return (hi + 0.05) / (lo + 0.05);
+}

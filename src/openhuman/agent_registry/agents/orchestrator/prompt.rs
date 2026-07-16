@@ -13,6 +13,7 @@
 
 use crate::openhuman::context::prompt::{
     render_datetime, render_tools, render_user_files, ConnectedIntegration, PromptContext,
+    ToolCallFormat,
 };
 use crate::openhuman::skills::ops_types::Workflow;
 use crate::openhuman::tools::orchestrator_tools::sanitise_slug;
@@ -44,7 +45,7 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str("\n\n");
     }
 
-    let integrations = render_delegation_guide(ctx.connected_integrations);
+    let integrations = render_delegation_guide(ctx.connected_integrations, ctx.tool_call_format);
     if !integrations.trim().is_empty() {
         out.push_str(integrations.trim_end());
         out.push_str("\n\n");
@@ -230,7 +231,22 @@ fn format_connected_mcp_block(
 /// `sanitise_slug` function that `collect_orchestrator_tools` uses when
 /// synthesising the real tool objects, so the names in the prompt always
 /// match the names in the function-calling schema.
-fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
+///
+/// `tool_call_format` lets the guide adapt to the active provider. Providers
+/// with native structured tool-calling (`ToolCallFormat::Native`) get the
+/// historic guide unchanged. Text-protocol providers (`PFormat`/`Json`) — the
+/// dispatcher chosen for models that force `native_tool_calling = false`, i.e.
+/// local runtimes like Ollama / LM Studio / MLX / llama.cpp — additionally get
+/// an explicit "when NOT to delegate" carve-out. Weak local models over-select
+/// from the prose tool catalogue and the coercive "you MUST delegate" wording,
+/// spuriously routing greetings and local-filesystem actions into
+/// `delegate_to_integrations_agent` (issue #4361: "Ciao" → Connections,
+/// "create a folder on Desktop" → Calendar). The carve-out is additive: the
+/// always-delegate contract for genuine service requests is preserved.
+fn render_delegation_guide(
+    integrations: &[ConnectedIntegration],
+    tool_call_format: ToolCallFormat,
+) -> String {
     let connected: Vec<&ConnectedIntegration> =
         integrations.iter().filter(|ci| ci.connected).collect();
     tracing::debug!(
@@ -336,6 +352,36 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
          quoting any past capability claim. Never echo a stale \"I can't\" \
          without re-checking.\n\n",
     );
+
+    // Provider-aware guardrail (#4361). Native-tool-calling providers keep the
+    // guide byte-identical. Text-protocol providers (PFormat/Json) — the
+    // dispatcher used when a model forces `native_tool_calling = false`, i.e.
+    // local runtimes (Ollama / LM Studio / MLX / llama.cpp) — see the whole
+    // tool catalogue rendered as prose and are steered by the coercive "you
+    // MUST delegate" wording above. Weaker local models then route obviously
+    // non-integration requests (greetings, local folder/file actions) into
+    // `delegate_to_integrations_agent`, which surfaces "Viewing your
+    // Connections" / calendar mis-maps. Carve those cases out explicitly so a
+    // small model does not have to infer them from the coercive block alone.
+    if tool_call_format != ToolCallFormat::Native {
+        out.push_str(
+            "### When NOT to delegate\n\n\
+             Some requests are NOT integration work — handle them directly and do NOT call \
+             `delegate_to_integrations_agent`:\n\
+             - **Greetings and small talk** (\"hi\", \"hello\", \"ciao\", \"thanks\", \"how are \
+             you?\") — just reply.\n\
+             - **Local-machine actions**: creating, reading, writing, moving, or listing files \
+             and folders on this computer (e.g. \"create a folder on the Desktop\", \"make a \
+             directory\", \"save this to a file\") — use your local filesystem tools. A local \
+             folder/file request is NOT a Calendar, Drive, or any connected-service request.\n\n\
+             Delegate ONLY when the request clearly names or operates on one of the connected \
+             services listed above (its email, calendar, messages, documents, etc.). When a \
+             request mixes a local action with a connected service (\"save my latest email to a \
+             file on the Desktop\"), do the local part directly and delegate only the \
+             service part.\n\n",
+        );
+    }
+
     tracing::debug!(
         section_len = out.len(),
         "[delegation-guide] section emitted ({} bytes)",
@@ -684,6 +730,84 @@ mod tests {
         // Old verbose / per-toolkit forms must be gone.
         assert!(!body.contains("delegate_gmail"));
         assert!(!body.contains("spawn_subagent(agent_id=\"integrations_agent\""));
+    }
+
+    fn gmail_only() -> Vec<ConnectedIntegration> {
+        vec![ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email access.".into(),
+            tools: Vec::new(),
+            gated_tools: Vec::new(),
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        }]
+    }
+
+    // Regression for #4361: on local providers (`native_tool_calling = false`
+    // → PFormat/Json dispatcher) the whole tool catalogue is prose and weak
+    // models mis-route trivial requests through the integrations delegate
+    // ("Ciao" → Connections, "create a folder on Desktop" → Calendar). The
+    // delegation guide must add an explicit non-delegation carve-out for those
+    // text-protocol providers.
+    #[test]
+    fn delegation_guide_adds_local_guardrail_for_text_protocol() {
+        let integrations = gmail_only();
+        for format in [ToolCallFormat::PFormat, ToolCallFormat::Json] {
+            let guide = render_delegation_guide(&integrations, format);
+            assert!(
+                guide.contains("### When NOT to delegate"),
+                "text-protocol ({format:?}) guide must carve out non-integration work"
+            );
+            // The two reported failure modes are named explicitly.
+            assert!(
+                guide.contains("create a folder on the Desktop"),
+                "guardrail must keep local folder/file actions off delegation ({format:?})"
+            );
+            assert!(
+                guide.to_ascii_lowercase().contains("greetings"),
+                "guardrail must keep greetings off delegation ({format:?})"
+            );
+            // Additive: the always-delegate contract for real service requests
+            // is preserved — the guardrail narrows, it does not remove it.
+            assert!(
+                guide.contains(
+                    "Never claim you cannot access a connected service without first attempting delegation"
+                ),
+                "always-delegate contract must remain for genuine service asks ({format:?})"
+            );
+        }
+    }
+
+    // Native structured-tool-calling providers (cloud) keep the historic guide
+    // byte-for-byte: no over-delegation problem, so no carve-out.
+    #[test]
+    fn delegation_guide_omits_local_guardrail_for_native() {
+        let guide = render_delegation_guide(&gmail_only(), ToolCallFormat::Native);
+        assert!(guide.contains("## Connected Integrations"));
+        assert!(
+            !guide.contains("### When NOT to delegate"),
+            "native providers must keep the delegation guide unchanged"
+        );
+        assert!(guide.contains(
+            "Never claim you cannot access a connected service without first attempting delegation"
+        ));
+    }
+
+    // With no connected integrations the section is omitted for every format —
+    // the guardrail must never resurrect an otherwise-empty block.
+    #[test]
+    fn delegation_guide_empty_without_connections_for_all_formats() {
+        for format in [
+            ToolCallFormat::PFormat,
+            ToolCallFormat::Json,
+            ToolCallFormat::Native,
+        ] {
+            assert!(
+                render_delegation_guide(&[], format).is_empty(),
+                "empty connections must omit the section ({format:?})"
+            );
+        }
     }
 
     #[test]

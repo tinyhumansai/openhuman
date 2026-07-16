@@ -1423,6 +1423,9 @@ pub(crate) async fn validate_connection_refs(
             Ok(outcome) => Some(build_flow_connections(
                 outcome.value.connections,
                 Vec::new(),
+                // Identity isn't needed for this existence/toolkit-mismatch
+                // check — only `connection_ref` and `toolkit` are read.
+                &[],
             )),
             Err(e) => {
                 tracing::debug!(
@@ -2358,7 +2361,12 @@ pub async fn flows_list_connections(
             }
         };
 
-    let connections = build_flow_connections(composio_conns, http_creds);
+    // Connected-account identities (email/handle/platform user id), synced
+    // via each toolkit's whoami-style call (e.g. Slack `SLACK_TEST_AUTH`) on
+    // connection sync. Loaded once here so `build_flow_connections` can stay
+    // a pure, unit-testable matcher.
+    let identities = crate::openhuman::composio::providers::profile::load_connected_identities();
+    let connections = build_flow_connections(composio_conns, http_creds, &identities);
     tracing::debug!(
         total = connections.len(),
         "[flows] flows_list_connections: aggregated picker sources"
@@ -2374,11 +2382,36 @@ pub async fn flows_list_connections(
 /// secret-free [`FlowConnection`] picker list. Only ACTIVE Composio connections
 /// are surfaced — a pending/expired OAuth account cannot execute a tool, so it
 /// would be a dead pick. Pure (no I/O) so the aggregation shape is
-/// unit-testable without a live backend.
+/// unit-testable without a live backend; `identities` is loaded once by the
+/// caller and matched in here.
+///
+/// Each Composio connection is also matched against `identities` (keyed by
+/// `(toolkit, connection_id)`, both normalized the same way
+/// `enrich_connections_with_identity` in `composio::ops::connections` does)
+/// to attach `platform_user_id` — the connected account's own member id
+/// (e.g. Slack `U123ABC`). This is what lets the workflow builder wire a
+/// self-targeted action ("DM me") to the user's own account instead of
+/// guessing a public channel.
 fn build_flow_connections(
     composio: Vec<crate::openhuman::composio::ComposioConnection>,
     http: Vec<crate::openhuman::credentials::HttpCredentialSummary>,
+    identities: &[crate::openhuman::composio::providers::profile::ConnectedIdentity],
 ) -> Vec<FlowConnection> {
+    use crate::openhuman::composio::providers::profile::normalize_connection_identifier;
+
+    let identity_lookup: std::collections::HashMap<(String, String), &_> = identities
+        .iter()
+        .map(|id| {
+            (
+                (
+                    normalize_connection_identifier(&id.source),
+                    normalize_connection_identifier(&id.identifier),
+                ),
+                id,
+            )
+        })
+        .collect();
+
     let mut out = Vec::with_capacity(composio.len() + http.len());
     for conn in composio {
         if !conn.is_active() {
@@ -2391,6 +2424,19 @@ fn build_flow_connections(
             continue;
         }
         let toolkit = conn.normalized_toolkit();
+        let lookup_key = (
+            normalize_connection_identifier(&toolkit),
+            normalize_connection_identifier(&conn.id),
+        );
+        let platform_user_id = identity_lookup
+            .get(&lookup_key)
+            .and_then(|identity| identity.user_id.clone());
+        tracing::debug!(
+            toolkit = %toolkit,
+            connection_id = %conn.id,
+            has_platform_user_id = platform_user_id.is_some(),
+            "[flows] flows_list_connections: resolved platform_user_id for composio connection"
+        );
         out.push(FlowConnection {
             // Exactly the shape `tinyflows::caps::composio_connection_id` parses.
             connection_ref: format!("composio:{}:{}", toolkit, conn.id),
@@ -2398,6 +2444,7 @@ fn build_flow_connections(
             display: composio_connection_display(&toolkit, &conn),
             toolkit: Some(toolkit),
             scheme: None,
+            platform_user_id,
         });
     }
     for cred in http {
@@ -2408,6 +2455,7 @@ fn build_flow_connections(
             display: http_credential_display(&cred),
             toolkit: None,
             scheme: Some(cred.scheme),
+            platform_user_id: None,
         });
     }
     out

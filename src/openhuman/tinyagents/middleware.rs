@@ -2351,7 +2351,7 @@ fn user_actionable_escalation(tool: &str, error: &str) -> Option<String> {
         return None;
     }
     // Keep this narrow: some scope/permission failures legitimately tell the
-    // user to reconnect in Settings, but they are not missing connections.
+    // user to reconnect in Connections, but they are not missing connections.
     let missing_connection = lower.contains("[composio:error:composio_platform]")
         || lower.contains("not connected")
         || lower.contains("isn't connected")
@@ -2364,7 +2364,7 @@ fn user_actionable_escalation(tool: &str, error: &str) -> Option<String> {
     }
     Some(format!(
         "I can't continue without your input: the `{tool}` action needs a service that isn't \
-         connected. {}\n\nConnect it (Settings \u{2192} Connections), then tell me to retry — or \
+         connected. {}\n\nConnect it (Connections), then tell me to retry — or \
          tell me how you'd like to proceed instead.",
         crate::openhuman::util::truncate_with_ellipsis(error, 400),
     ))
@@ -4208,11 +4208,11 @@ mod tests {
         // A not-connected blocker → a user-directed ask with a concrete next step.
         let ask = user_actionable_escalation(
             "gmail_send",
-            "Gmail is not connected. Ask the user to connect 'gmail' in Settings → Connections.",
+            "Gmail is not connected. Ask the user to connect 'gmail' in Connections.",
         )
         .expect("a missing-connection failure is user-actionable");
         assert!(ask.contains("without your input"));
-        assert!(ask.contains("Settings"));
+        assert!(ask.contains("Connections"));
         assert!(ask.to_lowercase().contains("connect"));
         assert!(ask.contains("gmail_send"));
         // The original tool text is relayed so the user sees which service.
@@ -4225,7 +4225,7 @@ mod tests {
             "gmail_send",
             "[composio:error:insufficient_scope] `gmail_send` was rejected because the connected \
              gmail account is missing required permissions (insufficient authentication scopes). \
-             Reconnect the integration in Settings → Connections → gmail and grant the scopes \
+             Reconnect the integration in Connections → gmail and grant the scopes \
              requested during OAuth."
         )
         .is_none());
@@ -4233,7 +4233,7 @@ mod tests {
             "gmail_trigger",
             "[composio:error:trigger_permission] Couldn't enable this trigger: the connected \
              gmail account doesn't have permission to manage triggers. Reconnect gmail in \
-             Settings → Connections → gmail and grant the permissions requested during OAuth, \
+             Connections → gmail and grant the permissions requested during OAuth, \
              then try again."
         )
         .is_none());
@@ -4250,7 +4250,7 @@ mod tests {
         for _ in 0..3 {
             let mut r = failing_result(
                 "slack_post",
-                "Slack is not connected — connect it in Settings → Connections.",
+                "Slack is not connected — connect it in Connections.",
             );
             mw.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
         }
@@ -4260,7 +4260,7 @@ mod tests {
             .clone()
             .expect("halt records a summary");
         assert!(
-            summary.contains("without your input") && summary.contains("Settings"),
+            summary.contains("without your input") && summary.contains("Connections"),
             "the halt should ask the user to connect the service: {summary}"
         );
         assert!(
