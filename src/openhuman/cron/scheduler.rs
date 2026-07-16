@@ -515,6 +515,23 @@ async fn execute_job_with_retry(
     let mut local_unreachable = false;
 
     for attempt in 0..=retries {
+        // Re-check the kill switch before each RETRY (attempt 0 is already
+        // covered by the pre-loop guard above): a user who engages Emergency
+        // Stop during the backoff sleep must not have the next attempt execute.
+        // Same fail-closed denial as the pre-loop guard (#4255).
+        if attempt > 0 && crate::openhuman::emergency_stop::is_engaged_global() {
+            log::warn!(
+                "[cron] action=refused_retry_while_halted job_id={} job_type={:?} attempt={} — emergency stop engaged",
+                job.id.as_str(),
+                job.job_type,
+                attempt
+            );
+            return (
+                false,
+                "blocked by emergency stop: automation is halted — resume to run this job"
+                    .to_string(),
+            );
+        }
         let (success, output, agent_error) = match job.job_type {
             JobType::Shell => {
                 let (success, output) = run_job_command(config, security, job).await;

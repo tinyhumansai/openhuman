@@ -50,11 +50,16 @@ export function AutomationHaltedBanner() {
 
   if (!halted) return null;
 
+  // `sticky top-0 z-40` keeps the halt banner (and its Resume button) visible
+  // and reachable ABOVE the provider WebviewHost overlay (absolute inset-0 z-30,
+  // rendered as a sibling below); otherwise an active provider account fully
+  // covers the safety banner. Stays below the settings modal portal (z-50),
+  // matching the app's documented stacking convention.
   return (
     <div
       role="alert"
       data-analytics-id="automation-halted-banner"
-      className="flex items-center justify-between gap-3 px-4 py-2.5 bg-[var(--color-coral-50,#fdf2f2)] border-b border-[var(--color-coral-200,#f5c6c6)] text-[var(--color-coral-900,#7c2d2d)]">
+      className="sticky top-0 z-40 flex items-center justify-between gap-3 px-4 py-2.5 bg-[var(--color-coral-50,#fdf2f2)] border-b border-[var(--color-coral-200,#f5c6c6)] text-[var(--color-coral-900,#7c2d2d)]">
       <div className="flex items-center gap-2 min-w-0">
         <strong className="shrink-0 font-semibold">{t('safety.haltedTitle')}</strong>
         <span className="truncate text-sm text-[var(--color-coral-700,#b94040)]">
