@@ -1340,7 +1340,7 @@ mod tests {
 
     /// A matching web-chat origin for the chat context fixture. Tests
     /// exercising the parking flow scope BOTH task-locals — production
-    /// callers in `channels/providers/web` do the same.
+    /// callers in `web_chat` do the same.
     fn web_origin() -> AgentTurnOrigin {
         AgentTurnOrigin::WebChat {
             thread_id: "t-test".into(),

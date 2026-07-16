@@ -56,7 +56,7 @@ Consumers call `enforce_prompt_input` and treat any non-`Allow` action as a reje
 
 - `src/openhuman/agent/harness/session/runtime.rs` — gates agent session turns; emits `prompt_injection_blocked`.
 - `src/openhuman/agent/bus.rs` — screens inbound prompts on the agent event path.
-- `src/openhuman/channels/providers/web.rs` — screens chat payloads at the web channel ingress (`start_chat`).
+- `src/openhuman/web_chat/` — screens chat payloads at the web channel ingress (`start_chat`).
 - `src/openhuman/inference/local/ops.rs` — rejects injected prompts before local-AI runtime execution.
 - `src/openhuman/about_app/catalog.rs` — surfaces the `conversation.prompt_injection_guard` capability entry.
 - `src/core/observability.rs` — classifies `prompt_injection_blocked` error messages for telemetry (string-based, not a code dependency).

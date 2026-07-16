@@ -89,7 +89,7 @@ pub(crate) fn channel_has_approval_surface(channel: &str) -> bool {
 /// Otherwise return `false` so the caller can dispatch the message as a
 /// fresh turn (which intentionally cancels any parked approval — the
 /// user is redirecting). Mirrors the web channel intercept at
-/// `channels/providers/web.rs:493-525`.
+/// `web_chat/`.
 ///
 /// [`ApprovalGate::decide`]: crate::openhuman::approval::ApprovalGate::decide
 async fn try_route_approval_reply(msg: &traits::ChannelMessage) -> bool {
@@ -185,7 +185,7 @@ pub(crate) async fn process_channel_runtime_message(
     // history key, route it to `ApprovalGate::decide` and return — running
     // a fresh agent turn would cancel the parked tool call. Any other text
     // falls through to the normal dispatch (the user is redirecting). Mirrors
-    // the same intercept in `channels/providers/web.rs:493-525`.
+    // the same intercept in `web_chat/`.
     if channel_has_approval_surface(&msg.channel) && try_route_approval_reply(&msg).await {
         return;
     }

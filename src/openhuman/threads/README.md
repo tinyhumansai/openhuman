@@ -83,7 +83,7 @@ Wired into the registry from `src/core/all.rs` (controllers + schemas extended w
 
 - `src/core/all.rs` — registers the controllers/schemas into the JSON-RPC + CLI registry.
 - `src/core/jsonrpc.rs` — references threads (transport routing).
-- `src/openhuman/channels/providers/web.rs` — drives `TurnStateMirror` / turn-state store during chat turns; consumes `invalidate_thread_sessions`.
+- `src/openhuman/web_chat/` — drives `TurnStateMirror` / turn-state store during chat turns; consumes `invalidate_thread_sessions`.
 - `src/openhuman/startup/ops.rs` — invokes the welcome migration and/or turn-state startup handling.
 
 ## Notes / gotchas
