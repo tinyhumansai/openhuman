@@ -2343,6 +2343,12 @@ pub async fn bootstrap_core_runtime(
     // unguarded standalone/CLI/Docker core would park a plan review that never
     // reaches the UI and dies at the gate TTL. Idempotent (Once-guarded).
     crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
+    // Bridge emergency-stop halt/resume → the `automation_halt` broadcast on the
+    // same always-run boot path. `start_channels` (which also registers this)
+    // is skipped on a web-chat-only desktop with no listening integrations, so
+    // without this a halt/resume initiated from the CLI or another client would
+    // never reach the UI. Idempotent (Once-guarded). (#4255)
+    crate::openhuman::channels::providers::web::register_automation_halt_subscriber();
     // Egress-surface bridge (privacy epic S2, #4436) — registered
     // unconditionally alongside the approval surface so external-transfer
     // disclosures reach the UI even on cores that skip `start_channels` or run
@@ -2361,6 +2367,7 @@ pub async fn bootstrap_core_runtime(
         let session_id = format!("session-{}", uuid::Uuid::new_v4());
         let _ =
             crate::openhuman::approval::ApprovalGate::init_global(cfg.clone(), session_id.clone());
+        crate::openhuman::emergency_stop::EmergencyStop::init_global();
         log::info!(
             "[runtime] approval gate installed (on by default; set OPENHUMAN_APPROVAL_GATE=0 to disable, session_id={session_id}) — \
              Prompt-class external-effect tool calls park for approval in interactive chat turns"

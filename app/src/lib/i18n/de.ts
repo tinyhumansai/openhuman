@@ -7513,6 +7513,15 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': 'Seitenleiste',
   'flows.canvas.legendTab': 'Manuell',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'Notabschaltung',
+  'safety.stopFailed': 'Automatisierung konnte nicht gestoppt werden – bitte erneut versuchen.',
+  'safety.resume': 'Automatisierung fortsetzen',
+  'safety.resumeFailed':
+    'Fortsetzen fehlgeschlagen – Automatisierung ist weiterhin angehalten. Bitte erneut versuchen.',
+  'safety.haltedTitle': 'Automatisierung angehalten',
+  'safety.haltedBody':
+    'Alle Desktop-Automatisierungen sind gestoppt. Fortsetzen, wenn Sie bereit sind.',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'Datenschutzstatus',
   'privacy.status.external': 'Außerhalb des Geräts',

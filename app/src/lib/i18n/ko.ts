@@ -7210,6 +7210,13 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': '사이드 패널',
   'flows.canvas.legendTab': '수동',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': '긴급 정지',
+  'safety.stopFailed': '자동화를 중지할 수 없습니다. 다시 시도하세요.',
+  'safety.resume': '자동화 재개',
+  'safety.resumeFailed': '재개하지 못했습니다. 자동화가 여전히 중단된 상태입니다. 다시 시도하세요.',
+  'safety.haltedTitle': '자동화 중단됨',
+  'safety.haltedBody': '모든 데스크톱 자동화가 중지되었습니다. 준비가 되면 재개하세요.',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': '개인정보 상태',
   'privacy.status.external': '기기 외',

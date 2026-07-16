@@ -6,7 +6,10 @@
 
 use std::path::Path;
 
-use crate::openhuman::agent::harness::definition::{AgentDefinitionRegistry, PromptSource};
+use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
+// Only read by the `skills`-gated workflow-resolution branch below.
+#[cfg(feature = "skills")]
+use crate::openhuman::agent::harness::definition::PromptSource;
 use crate::openhuman::agent::harness::session::Agent;
 use crate::openhuman::agent::harness::subagent_runner::with_autonomous_iter_cap;
 use crate::openhuman::agent::task_board::TaskCardStatus;
@@ -69,6 +72,15 @@ pub(super) fn resolve_executor(workspace_dir: &Path, assigned: Option<&str>) -> 
     }
 
     // 2) Workflow (#2824): the same autonomous run, seeded with SKILL.md.
+    //
+    // `#[cfg]` rather than a stubbed `get_workflow`: the real one returns
+    // `Option<WorkflowDefinition>`, which flattens in `AgentDefinition` and is
+    // destructured just below — stubbing it would mean re-declaring that
+    // struct in the disabled facade (exactly the type duplication the skills
+    // carve-out exists to avoid). With the domain compiled out no handle can
+    // ever resolve to a skill, so falling through to (3) is the correct
+    // behaviour, not a degradation.
+    #[cfg(feature = "skills")]
     if let Some(skill) = crate::openhuman::skills::registry::get_workflow(workspace_dir, handle) {
         let guidelines = match &skill.definition.system_prompt {
             PromptSource::Inline(s) => truncate_chars(s, EXECUTOR_PREAMBLE_MAX_CHARS),

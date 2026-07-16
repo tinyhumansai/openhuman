@@ -101,6 +101,11 @@ pub fn all_tools_with_runtime(
     skill_allowlist: Option<&std::collections::HashSet<String>>,
     mcp_allowlist: Option<&[String]>,
 ) -> Vec<Box<dyn Tool>> {
+    // `skill_allowlist` scopes only the `skills`-gated tool registrations
+    // below, so it is genuinely unread when that feature is compiled out.
+    #[cfg(not(feature = "skills"))]
+    let _ = skill_allowlist;
+
     // Build a session-scoped managed Node.js bootstrap once, so ShellTool,
     // NodeExecTool, and NpmExecTool all share the same memoised resolution
     // state. Disabled when `node.enabled = false` — in that case shell skips
@@ -220,7 +225,9 @@ pub fn all_tools_with_runtime(
         // Both wrap `skill_runtime::spawn_workflow_run_background` +
         // `await_run_outcome` — the same spawn path `openhuman.skills_run`
         // JSON-RPC uses, so RPC and tool callers stay in sync.
+        #[cfg(feature = "skills")]
         Box::new(RunWorkflowTool::new().with_skill_allowlist(skill_allowlist.cloned())),
+        #[cfg(feature = "skills")]
         Box::new(AwaitWorkflowTool::new()),
         Box::new(CurrentTimeTool::new()),
         // Reversibility for native tool-output compaction (Stage 1a): when a
@@ -472,9 +479,11 @@ pub fn all_tools_with_runtime(
         // above, so it is not duplicated. Reads ship default-ON; the
         // create/install/uninstall mutators ship default-OFF via
         // `tools::user_filter` (install also fetches remote content).
+        #[cfg(feature = "skills")]
         Box::new(
             WorkflowListTool::new(config.clone()).with_skill_allowlist(skill_allowlist.cloned()),
         ),
+        #[cfg(feature = "skills")]
         Box::new(
             WorkflowDescribeTool::new(config.clone())
                 .with_skill_allowlist(skill_allowlist.cloned()),
@@ -482,22 +491,34 @@ pub fn all_tools_with_runtime(
         // Skill registry tools — browse/search/install from remote registries.
         // Browse and search are read-only (default-ON); install is a write
         // operation (fetches remote content and writes to disk).
+        #[cfg(feature = "skills")]
         Box::new(SkillRegistryBrowseTool),
+        #[cfg(feature = "skills")]
         Box::new(SkillRegistrySearchTool),
+        #[cfg(feature = "skills")]
         Box::new(SkillRegistryInstallTool::new(config.clone())),
+        #[cfg(feature = "skills")]
         Box::new(SkillRegistrySourcesTool),
+        #[cfg(feature = "skills")]
         Box::new(SkillRegistryUninstallTool),
         // Skill runtime probes — resolve the reusable Node/Python runtimes
         // that skill execution relies on before a script-backed skill runs.
+        #[cfg(feature = "skills")]
         Box::new(SkillRuntimeResolveRuntimesTool::new(config.clone())),
+        #[cfg(feature = "skills")]
         Box::new(
             WorkflowReadResourceTool::new(config.clone())
                 .with_skill_allowlist(skill_allowlist.cloned()),
         ),
+        #[cfg(feature = "skills")]
         Box::new(WorkflowRecentRunsTool::new(config.clone())),
+        #[cfg(feature = "skills")]
         Box::new(WorkflowReadRunLogTool::new(config.clone())),
+        #[cfg(feature = "skills")]
         Box::new(WorkflowCreateTool::new(config.clone())),
+        #[cfg(feature = "skills")]
         Box::new(WorkflowInstallFromUrlTool::new(config.clone())),
+        #[cfg(feature = "skills")]
         Box::new(WorkflowUninstallTool),
         // Threads (conversation) tools. Read/bounded-write ship default-ON;
         // the destructive thread_delete / thread_purge_all ship default-OFF

@@ -7295,6 +7295,13 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': 'साइड पैनल',
   'flows.canvas.legendTab': 'मैनुअल',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'आपातकालीन रोक',
+  'safety.stopFailed': 'स्वचालन रोका नहीं जा सका। पुनः प्रयास करें।',
+  'safety.resume': 'स्वचालन पुनः प्रारंभ करें',
+  'safety.resumeFailed': 'पुनः प्रारंभ नहीं हो सका। स्वचालन अभी भी रुका हुआ है। पुनः प्रयास करें।',
+  'safety.haltedTitle': 'स्वचालन रोका गया',
+  'safety.haltedBody': 'सभी डेस्कटॉप स्वचालन रोक दिया गया है। तैयार होने पर पुनः प्रारंभ करें।',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'गोपनीयता स्थिति',
   'privacy.status.external': 'डिवाइस के बाहर',

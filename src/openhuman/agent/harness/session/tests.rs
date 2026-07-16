@@ -485,7 +485,11 @@ fn skill_listener_closed_channel_nulls_rx_and_is_not_a_signal() {
     );
 }
 
+/// Exercises real SKILL.md discovery from disk, so it is meaningful only with
+/// the `skills` domain compiled in — the disabled facade's
+/// `load_workflow_metadata` always returns an empty catalog by design.
 #[test]
+#[cfg(feature = "skills")]
 fn refresh_workflows_picks_up_skill_installed_on_disk() {
     use crate::openhuman::skills::ops_types::{SKILL_MD, TRUST_MARKER};
 
@@ -551,7 +555,10 @@ fn refresh_workflows_picks_up_skill_installed_on_disk() {
     );
 }
 
+/// See [`refresh_workflows_picks_up_skill_installed_on_disk`] — same
+/// disk-discovery dependency, so same `skills` gate.
 #[test]
+#[cfg(feature = "skills")]
 fn refresh_workflows_retracts_skill_removed_from_disk() {
     use crate::openhuman::skills::ops_types::{SKILL_MD, TRUST_MARKER};
 

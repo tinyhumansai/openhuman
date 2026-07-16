@@ -665,6 +665,30 @@ jobs:
       - name: Run orchestration IP gate
         run: bash scripts/ci/orch-ip-gate.sh
 
+  feature-forwarding-gate:
+    name: Feature Forwarding Gate (shell forwards core defaults)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The shell sets `default-features = false` on `openhuman_core`, so it does
+      # NOT inherit the core's default gates — each must be forwarded by hand.
+      # When that list drifts, the domain is compiled out of the shipped app with
+      # no build error and no failing test: that is how #4901 (voice — 56 users,
+      # ~93k Sentry events) and #4918 (tokenjuice-treesitter — silent) shipped.
+      #
+      # Deliberately NOT filtered on `changes`: drift can be introduced by
+      # editing either manifest, so a path filter watching one would miss it, and
+      # a skipped job counts as a pass in the gate below. The check is a few
+      # seconds of pure Node with no dependencies.
+      - name: Verify the desktop shell forwards every default-ON core gate
+        run: node scripts/ci/check-feature-forwarding.mjs
+
   pester-install:
     name: PowerShell Install Test (Pester)
     needs: [changes]
@@ -731,6 +755,7 @@ jobs:
       - pester-install
       - tinycortex-tests
       - orch-ip-gate
+      - feature-forwarding-gate
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -749,6 +774,7 @@ jobs:
             ["PowerShell Install Test"]="${{ needs['pester-install'].result }}"
             ["TinyCortex Memory Tests"]="${{ needs['tinycortex-tests'].result }}"
             ["Orchestration IP Gate"]="${{ needs['orch-ip-gate'].result }}"
+            ["Feature Forwarding Gate"]="${{ needs['feature-forwarding-gate'].result }}"
           )
 
           failed=0

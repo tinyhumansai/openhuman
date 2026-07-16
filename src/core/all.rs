@@ -334,6 +334,12 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Security,
         crate::openhuman::approval::all_approval_registered_controllers(),
     );
+    // Emergency stop kill switch (#4255 — fail-closed halt for desktop automation)
+    push(
+        &mut controllers,
+        DomainGroup::Security,
+        crate::openhuman::emergency_stop::all_emergency_registered_controllers(),
+    );
     // Interactive plan-review gate — parks a live turn on a thread-scoped plan
     push(
         &mut controllers,

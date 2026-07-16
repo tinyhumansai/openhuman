@@ -7333,6 +7333,13 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': 'Panel samping',
   'flows.canvas.legendTab': 'Manual',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'Hentikan darurat',
+  'safety.stopFailed': 'Tidak dapat menghentikan otomasi. Coba lagi.',
+  'safety.resume': 'Lanjutkan otomasi',
+  'safety.resumeFailed': 'Tidak dapat melanjutkan. Otomasi masih dihentikan. Coba lagi.',
+  'safety.haltedTitle': 'Otomasi dihentikan',
+  'safety.haltedBody': 'Semua otomasi desktop dihentikan. Lanjutkan ketika Anda siap.',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'Status privasi',
   'privacy.status.external': 'Di luar perangkat',

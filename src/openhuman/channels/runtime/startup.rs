@@ -171,6 +171,11 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // ArtifactFailed) as `artifact_ready` / `artifact_failed` web-channel
     // events so the frontend ArtifactCard can render in chat (#2779).
     crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
+    // Bridge emergency-stop halt/resume (AutomationHalted / AutomationResumed)
+    // to the `automation_halt` web-channel socket event, broadcast to every
+    // client via the "system" room, so the frontend kill-switch UI updates
+    // globally (#4255).
+    crate::openhuman::channels::providers::web::register_automation_halt_subscriber();
     // Surface external-egress disclosure events (ExternalTransferPending) as
     // `external_transfer_pending` web-channel events so the frontend can show a
     // per-action "what leaves, to where, why" card (privacy epic S2, #4436).

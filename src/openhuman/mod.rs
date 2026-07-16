@@ -49,6 +49,7 @@ pub mod dev_paths;
 pub mod devices;
 pub mod doctor;
 pub mod embeddings;
+pub mod emergency_stop;
 pub mod encryption;
 pub mod file_state;
 pub mod file_storage;

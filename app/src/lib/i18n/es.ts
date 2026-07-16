@@ -7451,6 +7451,15 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': 'Panel lateral',
   'flows.canvas.legendTab': 'Manual',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'Parada de emergencia',
+  'safety.stopFailed': 'No se pudo detener la automatización: inténtalo de nuevo.',
+  'safety.resume': 'Reanudar automatización',
+  'safety.resumeFailed':
+    'No se pudo reanudar: la automatización sigue detenida. Inténtalo de nuevo.',
+  'safety.haltedTitle': 'Automatización detenida',
+  'safety.haltedBody':
+    'Toda la automatización de escritorio está detenida. Reanuda cuando estés listo.',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'Estado de privacidad',
   'privacy.status.external': 'Fuera del dispositivo',
