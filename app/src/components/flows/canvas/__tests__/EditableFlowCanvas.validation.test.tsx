@@ -100,7 +100,13 @@ describe('EditableFlowCanvas — validation + dirty state', () => {
     // The host header reads `hasErrors` off `onSaveMetaChange` to disable its
     // Save button; the canvas itself also refuses to fire `onSave` through
     // the imperative handle while hard errors exist, even though dirty.
-    expect(lastSaveMeta(onSaveMetaChange)).toMatchObject({ dirty: true, hasErrors: true });
+    // `hasErrors` reaches the host via a follow-up effect that can lag the
+    // error-banner render (see `onSaveMetaChange` in EditableFlowCanvas), so
+    // poll the reported meta rather than reading it once — under a loaded
+    // full-suite run the synchronous read can still see the pre-validation meta.
+    await waitFor(() =>
+      expect(lastSaveMeta(onSaveMetaChange)).toMatchObject({ dirty: true, hasErrors: true })
+    );
     act(() => ref.current?.save());
     expect(onSave).not.toHaveBeenCalled();
 

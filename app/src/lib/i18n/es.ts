@@ -133,7 +133,7 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': 'Flujos de trabajo',
   'flows.welcome.title': 'Pon el trabajo rutinario en piloto automático',
   'flows.welcome.body':
-    'Describe algo que haces una y otra vez: clasificación, seguimientos, resúmenes: y tu agente lo convierte en un flujo de trabajo que puede ejecutar de principio a fin, según un horario o cuando lo pidas.',
+    'Describe algo que haces una y otra vez (clasificación, seguimientos, resúmenes) y tu agente lo convierte en un flujo de trabajo que puede ejecutar de principio a fin, según un horario o cuando lo pidas.',
   'flows.welcome.ctaNew': 'Nuevo flujo de trabajo',
   'flows.welcome.ctaBrowse': 'Explorar flujos de trabajo',
   'flows.welcome.featsLabel': 'Lo que puedes automatizar',
@@ -966,6 +966,7 @@ const messages: TranslationMap = {
   'chat.typeMessage': '¿En qué puedo ayudarte hoy?',
   'chat.send': 'Enviar mensaje',
   'chat.stopGeneration': 'Detener generación',
+  'chat.stoppedByUser': 'Detenido',
   'chat.parallelBranchHint': 'Escribe una rama paralela: ⌘/Ctrl+Enter para enviar',
   'chat.followupHint':
     'Pon en cola un seguimiento: se envía tras esta respuesta · ⌘/Ctrl+Enter para una rama paralela',
@@ -1143,7 +1144,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': 'Asociaciones de entidades',
   'entityAssociations.intro':
-    'Las entidades que comparten muchas conexiones están asociadas: incluso cuando ningún hecho las vincula directamente. La similitud de Jaccard revela estos emparejamientos ocultos.',
+    'Las entidades que comparten muchas conexiones están asociadas, incluso cuando ningún hecho las vincula directamente. La similitud de Jaccard revela estos emparejamientos ocultos.',
   'entityAssociations.loading': 'Calculando asociaciones…',
   'entityAssociations.errorPrefix': 'No se pudo cargar el grafo:',
   'entityAssociations.retry': 'Reintentar',
@@ -1680,7 +1681,7 @@ const messages: TranslationMap = {
   'settings.search.placeholderQuerit': 'Querit clave API',
   'settings.search.allowedSitesLabel': 'Sitios web permitidos',
   'settings.search.allowedSitesHint':
-    'Hosts que el asistente puede abrir y leer: mediante recuperación web y la herramienta de navegador: uno por línea, p. ej. reuters.com. Un host también incluye sus subdominios. La búsqueda web en sí no está restringida por esta lista.',
+    'Hosts que el asistente puede abrir y leer (mediante recuperación web y la herramienta de navegador) uno por línea, p. ej. reuters.com. Un host también incluye sus subdominios. La búsqueda web en sí no está restringida por esta lista.',
   'settings.search.allowedSitesAllOn':
     'El asistente puede abrir cualquier sitio web público. Las direcciones locales y privadas permanecen bloqueadas.',
   'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
@@ -2897,7 +2898,7 @@ const messages: TranslationMap = {
   'workspace.vaultNotRegisteredHelp':
     'Obsidian solo abre las carpetas que hayas agregado como almacén. En Obsidian, elige «Abrir carpeta como almacén» y selecciona la carpeta de abajo; solo necesitas hacerlo una vez. Luego haz clic en Ver almacén de nuevo.',
   'workspace.obsidianNotFoundHelp':
-    'No encontramos Obsidian en este dispositivo. Instálalo, o: si está instalado en una ubicación no estándar: establece su carpeta de configuración en Avanzado.',
+    'No encontramos Obsidian en este dispositivo. Instálalo, o (si está instalado en una ubicación no estándar) establece su carpeta de configuración en Avanzado.',
   'workspace.openAnyway': 'Abrir en Obsidian de todos modos',
   'workspace.installObsidian': 'Instalar Obsidian',
   'workspace.obsidianAdvanced': '¿Obsidian instalado en otro lugar?',
@@ -3299,6 +3300,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'No se pudo entender el audio con claridad: intenta de nuevo',
   'mic.failedToStopRecording': 'No se pudo detener la grabación: {message}',
   'mic.transcriptionFailed': 'Transcripción fallida: {message}',
+  'mic.voiceNotCompiled':
+    'La transcripción de voz no está incluida en esta versión de la aplicación. Actualiza OpenHuman para activarla.',
   'reflections.kind.retrospective': 'Retrospectiva',
   'reflections.kind.derivedFact': 'Hecho derivado',
   'reflections.kind.moodInsight': 'Insight de ánimo',
@@ -3525,6 +3528,13 @@ const messages: TranslationMap = {
   'channels.telegram.remoteControlTitle': 'Control remoto (Telegram)',
   'channels.telegram.remoteControlBody':
     'Desde un chat Telegram permitido, envíe /status, /sessions, /new o /help. El enrutamiento de modelos todavía usa /model y /models.',
+  'channels.connectHelp.title': 'Cómo conectar',
+  'channels.connectHelp.discord':
+    'Elige un método abajo: vincula tu cuenta con OpenHuman, instala el bot con OAuth o pega tu propio token de bot del portal para desarrolladores de Discord.',
+  'channels.connectHelp.telegram':
+    'Elige un método abajo: escribe al bot gestionado de OpenHuman para vincularlo, o pega tu propio token de bot de @BotFather.',
+  'channels.connectHelp.slackNote':
+    '¿Buscas Slack? Slack se conecta como una app en Conexiones → OAuth, no como un canal de mensajería aquí.',
   'channels.web.displayName': 'Web',
   'channels.web.description': 'Chatea a través de la interfaz de usuario web incorporada.',
   'channels.web.authMode.managed_dm.description':
@@ -5786,7 +5796,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'Extra grande',
   'settings.appearance.fontSizeXLargeDesc': 'El texto más grande, para la máxima legibilidad.',
   'settings.appearance.fontSizeHelperText':
-    'Escala el texto en toda la app: chat, ajustes y paneles: independientemente de la configuración de fuente de tu sistema.',
+    'Escala el texto en toda la app (chat, ajustes y paneles) independientemente de la configuración de fuente de tu sistema.',
   'settings.appearance.fontSizeCustomLabel': 'Tamaño personalizado',
   'settings.appearance.fontSizeCustomAria': 'Tamaño de fuente personalizado en píxeles',
   'settings.appearance.fontSizeCustomSliderAria':
@@ -5927,7 +5937,7 @@ const messages: TranslationMap = {
     'Predeterminado sensato: buena continuidad sin quemar tokens extra en cada ejecución.',
   'settings.memoryWindow.balanced.label': 'Equilibrado',
   'settings.memoryWindow.description':
-    'Cuánto contexto recordado inyecta OpenHuman en cada nueva ejecución del agente. Ventanas más grandes parecen más conscientes de conversaciones pasadas, pero usan más tokens: y cuestan más: en cada ejecución.',
+    'Cuánto contexto recordado inyecta OpenHuman en cada nueva ejecución del agente. Ventanas más grandes parecen más conscientes de conversaciones pasadas, pero usan más tokens (y cuestan más) en cada ejecución.',
   'settings.memoryWindow.extended.badge': 'Más contexto',
   'settings.memoryWindow.extended.hint':
     'Más memoria a largo plazo inyectada en cada ejecución. Mayor coste de tokens por turno.',
@@ -6963,7 +6973,7 @@ const messages: TranslationMap = {
     'A medida que el asistente registra hechos conectados sobre usted, su estructura de agrupamiento aparecerá aquí.',
   'graphCohesion.errorPrefix': 'No se pudo cargar el grafo:',
   'graphCohesion.intro':
-    'Cuán estrechamente tejido está el vecindario de cada entidad. Los intermediarios: entidades cuyos vecinos no están conectados entre sí: son los puntos únicos que mantienen unidos grupos que de otro modo estarían separados, algo que un orden por frecuencia o PageRank no puede revelar.',
+    'Cuán estrechamente tejido está el vecindario de cada entidad. Los intermediarios (entidades cuyos vecinos no están conectados entre sí) son los puntos únicos que mantienen unidos grupos que de otro modo estarían separados, algo que un orden por frecuencia o PageRank no puede revelar.',
   'graphCohesion.loading': 'Calculando cohesión…',
   'graphCohesion.metricConnections': 'Conexiones',
   'graphCohesion.metricEntities': 'Entidades',
@@ -7418,6 +7428,26 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Eliminar',
   'flows.delete.deleting': 'Eliminando…',
   'flows.canvas.renameLabel': 'Cambiar el nombre del flujo de trabajo',
+  'memorySources.codingSessions.title': 'Sesiones de agentes de programación',
+  'memorySources.codingSessions.description':
+    'Convierte tus decisiones y correcciones de Codex y Claude Code en memoria privada de personalidad.',
+  'memorySources.codingSessions.ingest': 'Ingerir sesiones nuevas',
+  'memorySources.codingSessions.ingesting': 'Ingiriendo…',
+  'memorySources.codingSessions.claude': 'Historial de Claude Code',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '{files} sesiones · {evidence} intervenciones humanas',
+  'memorySources.codingSessions.notFound': 'No se encontró historial local',
+  'memorySources.codingSessions.scanning': 'Buscando historial local de sesiones…',
+  'memorySources.codingSessions.truncated':
+    'El análisis se limitó a los primeros 1000 archivos de sesión.',
+  'memorySources.codingSessions.complete': 'Sesiones de programación ingeridas',
+  'memorySources.codingSessions.completeMessage':
+    '{processed} sesiones produjeron {observations} observaciones de personalidad.',
+  'memorySources.codingSessions.partialFailure':
+    'Fallaron {failed} sesiones mientras se procesaron {processed}. Ejecuta la ingesta de nuevo para reintentarlas.',
+  'memorySources.codingSessions.moreRemaining':
+    'Se alcanzó el límite de sesiones del lote. Ejecuta la ingesta de nuevo para seguir importando tu historial.',
+  'memorySources.codingSessions.failed': 'Falló la ingesta de sesiones de programación',
   'flows.canvas.sidePanelToggle': 'Panel lateral',
   'flows.canvas.legendTab': 'Manual',
 

@@ -513,6 +513,7 @@ fn seed_source_summary(
         id: format!("tree:{summary_id}"),
         kind: TreeKind::Source,
         scope: scope.to_string(),
+        ask: None,
         root_id: Some(summary_id.to_string()),
         max_level: 1,
         status: TreeStatus::Active,

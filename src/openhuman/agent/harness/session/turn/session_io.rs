@@ -131,13 +131,11 @@ impl Agent {
         };
 
         let mut streamed_text = String::new();
-        let mut streamed_deltas = Vec::new();
         let mut completed = None;
         while let Some(item) = stream.next().await {
             match item {
                 ModelStreamItem::MessageDelta(delta) if !delta.text.is_empty() => {
                     streamed_text.push_str(&delta.text);
-                    streamed_deltas.push(delta.text);
                 }
                 ModelStreamItem::Completed(response) => completed = Some(response),
                 ModelStreamItem::Failed(error) => {
@@ -157,53 +155,322 @@ impl Agent {
         };
         let usage = crate::openhuman::tinyagents::model::usage_info_from_response(&response);
         let text = response.text();
-        let checkpoint = if !text.trim().is_empty() {
-            text
-        } else if response.tool_calls().is_empty() {
-            streamed_text.clone()
-        } else {
-            String::new()
+        // Tools are disabled for wrap-up calls, but text-protocol models can
+        // still ignore that instruction. Parse through the active dispatcher
+        // so XML/JSON and registry-backed P-Format calls are all rejected. The
+        // completed response and buffered deltas are checked independently:
+        // some providers only preserve one of those representations.
+        let parsed_call_count = |candidate: &str| {
+            self.tool_dispatcher
+                .parse_response(&ChatResponse {
+                    text: Some(candidate.to_string()),
+                    ..ChatResponse::default()
+                })
+                .1
+                .len()
         };
-        if !checkpoint.trim().is_empty() {
-            let mut provider_response = ChatResponse {
-                text: Some(checkpoint.clone()),
-                tool_calls: Vec::new(),
-                usage: None,
-                reasoning_content: None,
-            };
-            let (_, mut prompt_tool_calls) =
-                self.tool_dispatcher.parse_response(&provider_response);
-            if streamed_text != checkpoint {
-                provider_response.text = Some(streamed_text);
-                let (_, streamed_tool_calls) =
-                    self.tool_dispatcher.parse_response(&provider_response);
-                prompt_tool_calls.extend(streamed_tool_calls);
-            }
-            if !prompt_tool_calls.is_empty() {
-                tracing::warn!(
-                    parsed_tool_calls = prompt_tool_calls.len(),
-                    "[agent::session] wrap-up model returned a prompt-formatted tool call; using deterministic fallback"
-                );
-                return (String::new(), usage);
-            }
-            tracing::debug!(
-                checkpoint_chars = checkpoint.chars().count(),
-                buffered_deltas = streamed_deltas.len(),
+        let parsed_response_calls = parsed_call_count(&text);
+        let parsed_stream_calls = if streamed_text == text {
+            parsed_response_calls
+        } else {
+            parsed_call_count(&streamed_text)
+        };
+        let native_tool_calls = response.tool_calls().len();
+        let attempted_tool_call =
+            native_tool_calls > 0 || parsed_response_calls > 0 || parsed_stream_calls > 0;
+        let checkpoint = if attempted_tool_call {
+            tracing::warn!(
+                model = effective_model,
                 iteration = iteration_for_stream,
-                "[agent::session] wrap-up checkpoint validation passed"
+                native_tool_calls,
+                parsed_response_calls,
+                parsed_stream_calls,
+                "[agent::session] wrap-up attempted a tool call; using deterministic fallback"
             );
+            String::new()
+        } else if !text.trim().is_empty() {
+            tracing::debug!(
+                model = effective_model,
+                iteration = iteration_for_stream,
+                text_len = text.len(),
+                "[agent::session] wrap-up selected completed response text"
+            );
+            text
+        } else {
+            tracing::debug!(
+                model = effective_model,
+                iteration = iteration_for_stream,
+                text_len = streamed_text.len(),
+                "[agent::session] wrap-up selected buffered stream text"
+            );
+            streamed_text
+        };
+        // Hold wrap-up deltas until protocol validation completes. Otherwise a
+        // rejected XML/P-Format tool call briefly renders in chat even though
+        // the caller subsequently replaces it with a deterministic fallback.
+        if !checkpoint.is_empty() {
             if let Some(sink) = &self.on_progress {
-                for delta in streamed_deltas {
-                    let _ = sink
-                        .send(AgentProgress::TextDelta {
-                            delta,
-                            iteration: iteration_for_stream,
-                        })
-                        .await;
+                if let Err(error) = sink
+                    .send(AgentProgress::TextDelta {
+                        delta: checkpoint.clone(),
+                        iteration: iteration_for_stream,
+                    })
+                    .await
+                {
+                    tracing::debug!(
+                        model = effective_model,
+                        iteration = iteration_for_stream,
+                        error = %error,
+                        "[agent::session] wrap-up progress sink closed"
+                    );
                 }
             }
         }
+        tracing::debug!(
+            model = effective_model,
+            iteration = iteration_for_stream,
+            checkpoint_len = checkpoint.len(),
+            used_deterministic_fallback = attempted_tool_call,
+            "[agent::session] wrap-up checkpoint selection complete"
+        );
         (checkpoint, usage)
+    }
+
+    /// Enforce this agent's required structured-output contract on the turn's
+    /// final `reply` (issue #4117), reconciling with streaming.
+    ///
+    /// When the contract is active and `reply` already carries a well-formed
+    /// leading block, returns `None` (the caller keeps `reply` unchanged). When
+    /// the block is omitted/invalid, the turn is **repaired** so downstream
+    /// parsing/routing always receives one, and the repaired text is returned as
+    /// `Some((repaired_text, usage))` so the caller can fold the extra call's
+    /// usage into the turn accounting and rewrite the trailing assistant message.
+    ///
+    /// ## Streaming reconciliation (the #4387 / sanil-23 blocker)
+    ///
+    /// The original reply is streamed to the client as `TextDelta`s *before* this
+    /// runs (via the harness event bridge, keyed on `on_progress`). #4387
+    /// repaired with a `stream: None` re-prompt whose result then *replaced* the
+    /// already-streamed reply — so the client watched one answer stream in and
+    /// silently got a different one back. This implementation makes the repair
+    /// **append-only**, so the returned/persisted reply is always exactly the
+    /// concatenation of deltas the client saw — the live preview is a *prefix* of
+    /// the final message, never contradicted:
+    ///
+    /// * **Streamed case** (`on_progress` attached — interactive/user-visible):
+    ///   the corrective re-prompt runs *silently* (its raw output is never
+    ///   streamed, so a malformed attempt is never shown), then the chosen
+    ///   correction — the model's block if the concatenation validates, else a
+    ///   deterministic [`synthesize_block`] — is streamed as a continuation and
+    ///   appended after the original prose. Visible text == returned text, and
+    ///   the appended block is the first JSON value (prose isn't JSON), so the
+    ///   leading-position rule holds for the dominant omitted-block case.
+    /// * **Non-streamed case** (`on_progress` absent — background/cron/routing,
+    ///   the "non-user-visible" scope sanil-23 offered as the alternative): no
+    ///   client saw anything, so there is nothing to stay consistent with. The
+    ///   strict #4387 **replace** design applies — recover via re-prompt, else
+    ///   prepend a synthesized block to the prose — guaranteeing strict leading
+    ///   position.
+    ///
+    /// `iteration_for_stream` labels the streamed continuation so the UI groups
+    /// it with the turn's other deltas.
+    ///
+    /// [`synthesize_block`]: harness::required_output::synthesize_block
+    pub(in super::super) async fn enforce_required_output(
+        &self,
+        reply: &str,
+        contract: &crate::openhuman::config::RequiredOutputContract,
+        effective_model: &str,
+        iteration_for_stream: u32,
+    ) -> Option<(String, Option<UsageInfo>)> {
+        use harness::required_output as ro;
+
+        if ro::output_satisfies_contract(reply, contract) {
+            return None;
+        }
+        log::warn!(
+            "[agent_loop] required output block `{}` omitted from turn reply — repairing (streamed={})",
+            contract.block_key,
+            self.on_progress.is_some(),
+        );
+
+        // Corrective re-prompt (native tools disabled), seeded with the current
+        // history — which already carries the omitting assistant reply, so the
+        // model sees exactly what it left out. Run silently: we validate the
+        // result before deciding whether/what to show, so a malformed attempt is
+        // never streamed to the client.
+        let mut base = self.tool_dispatcher.to_provider_messages(&self.history);
+        base.push(ChatMessage::user(ro::repair_instruction(contract)));
+        let (repair_text, usage) = self
+            .reprompt_for_required_block(&base, effective_model)
+            .await;
+        let repair_text = repair_text.trim().to_string();
+
+        // Non-streamed (replace) path: nothing was shown, so the repaired reply
+        // can stand alone with a strictly-leading block.
+        if self.on_progress.is_none() {
+            if !repair_text.is_empty() && ro::output_satisfies_contract(&repair_text, contract) {
+                log::info!(
+                    "[agent_loop] required output block `{}` recovered via re-prompt (replace)",
+                    contract.block_key
+                );
+                return Some((repair_text, usage));
+            }
+            log::warn!(
+                "[agent_loop] required output block `{}` still missing after re-prompt — prepending a synthesized block",
+                contract.block_key
+            );
+            let synthesized = format!("{}\n\n{}", ro::synthesize_block(contract), reply);
+            return Some((synthesized, usage));
+        }
+
+        // Streamed (append) path: the original prose is already on the client, so
+        // never replace it — append a streamed correction and return the exact
+        // concatenation the client sees. Append ONLY the required block, not the
+        // whole re-prompt reply: `repair_instruction` asks the model to re-emit the
+        // block *and continue with its answer*, so appending the full reply would
+        // duplicate the already-streamed answer after the block (#4900). Prefer the
+        // model's own recovered block; fall back to a synthesized one otherwise.
+        let correction = match ro::find_required_block(&repair_text, contract) {
+            Some(block) => {
+                log::info!(
+                    "[agent_loop] required output block `{}` recovered via re-prompt (append)",
+                    contract.block_key
+                );
+                serde_json::to_string(&block).unwrap_or_else(|_| ro::synthesize_block(contract))
+            }
+            None => {
+                log::warn!(
+                    "[agent_loop] required output block `{}` still missing after re-prompt — appending a synthesized block",
+                    contract.block_key
+                );
+                ro::synthesize_block(contract)
+            }
+        };
+        // Stream only the correction as a continuation so the live preview stays
+        // a prefix of the final message (visible == returned).
+        let continuation = format!("\n\n{correction}");
+        self.stream_text_continuation(&continuation, iteration_for_stream)
+            .await;
+        let repaired = format!("{reply}{continuation}");
+        if !ro::output_satisfies_contract(&repaired, contract) {
+            // The only way to reach here is a reply that streamed a *non-conforming
+            // JSON object first*: append-only can't restore strict leading
+            // position without contradicting what the user already saw, so we
+            // accept the trailing valid block and keep stream consistency (the
+            // higher-priority invariant). Downstream still finds a conforming
+            // block via `extract_json_values`; only strict ordering is relaxed,
+            // and only for this pathological already-streamed case.
+            log::warn!(
+                "[agent_loop] required output block `{}` appended but not in leading position (streamed reply led with JSON) — accepting for stream consistency",
+                contract.block_key
+            );
+        }
+        Some((repaired, usage))
+    }
+
+    /// Ask the provider once for a reply that includes the required
+    /// structured-output block, with native tools **disabled** and **without**
+    /// forwarding any delta to the progress sink. Returns the parsed prose paired
+    /// with the call's usage (empty text + `None` usage when the call fails or
+    /// yields only tool-call markup).
+    ///
+    /// Unlike [`summarize_turn_wrapup`](Self::summarize_turn_wrapup) this is
+    /// deliberately silent: `enforce_required_output` validates the result before
+    /// deciding what (if anything) to stream, so a malformed repair attempt is
+    /// never shown to the client.
+    async fn reprompt_for_required_block(
+        &self,
+        base_messages: &[ChatMessage],
+        effective_model: &str,
+    ) -> (String, Option<UsageInfo>) {
+        let chat_model = match self
+            .turn_model_source
+            .build_summarizer(effective_model, self.temperature)
+        {
+            Ok(model) => model,
+            Err(error) => {
+                tracing::error!(
+                    error = %error,
+                    model = effective_model,
+                    "[agent::session] failed to build required-output re-prompt model"
+                );
+                return (String::new(), None);
+            }
+        };
+        let request = ModelRequest::new(
+            base_messages
+                .iter()
+                .map(crate::openhuman::tinyagents::chat_message_to_message)
+                .collect(),
+        )
+        .with_model(effective_model)
+        .with_temperature(self.temperature)
+        .with_max_tokens(AGENT_TURN_MAX_OUTPUT_TOKENS);
+        let mut stream = match chat_model.stream(&(), request).await {
+            Ok(stream) => stream,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    model = effective_model,
+                    "[agent::session] required-output re-prompt stream failed to start"
+                );
+                return (String::new(), None);
+            }
+        };
+
+        let mut streamed_text = String::new();
+        let mut completed = None;
+        while let Some(item) = stream.next().await {
+            match item {
+                // Buffer only — deliberately NOT forwarded to `on_progress`.
+                ModelStreamItem::MessageDelta(delta) if !delta.text.is_empty() => {
+                    streamed_text.push_str(&delta.text);
+                }
+                ModelStreamItem::Completed(response) => completed = Some(response),
+                ModelStreamItem::Failed(error) => {
+                    tracing::warn!(%error, "[agent::session] required-output re-prompt stream failed");
+                    return (String::new(), None);
+                }
+                ModelStreamItem::ProviderFailed(error) => {
+                    tracing::warn!(error = %error.message, "[agent::session] required-output re-prompt provider failed");
+                    return (String::new(), None);
+                }
+                _ => {}
+            }
+        }
+        let Some(response) = completed else {
+            tracing::warn!("[agent::session] required-output re-prompt ended without completion");
+            return (String::new(), None);
+        };
+        let usage = crate::openhuman::tinyagents::model::usage_info_from_response(&response);
+        let text = response.text();
+        let out = if !text.trim().is_empty() {
+            text
+        } else if response.tool_calls().is_empty() {
+            streamed_text
+        } else {
+            // Only tool-call markup was present — no usable prose.
+            String::new()
+        };
+        (out, usage)
+    }
+
+    /// Emit `text` to the progress sink as a `TextDelta` continuation so a
+    /// repaired required-output block appears in the UI appended after the
+    /// already-streamed reply (issue #4117). No-op when no sink is attached.
+    async fn stream_text_continuation(&self, text: &str, iteration: u32) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(sink) = &self.on_progress {
+            let _ = sink
+                .send(AgentProgress::TextDelta {
+                    delta: text.to_string(),
+                    iteration,
+                })
+                .await;
+        }
     }
 
     /// Persist the exact provider messages as a session transcript.

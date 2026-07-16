@@ -1030,10 +1030,32 @@ mod tests {
             .unwrap()
             .expect("enqueue backfill job");
 
-        let processed = run_once(&cfg).await.unwrap();
-        assert!(processed);
-
-        let job = get_job(&cfg, &id).unwrap().expect("job should still exist");
+        // The TinyCortex LLM gate is process-global, so a parallel libtest can
+        // briefly own its single permit. In that case `run_once` legitimately
+        // defers this row for 50 ms with `llm concurrency gate busy` before the
+        // re-embed handler is reached. Retry that transient gate deferral so
+        // this test continues to pin the handler's own defer/reschedule path.
+        let mut job = None;
+        for _ in 0..20 {
+            let processed = run_once(&cfg).await.unwrap();
+            assert!(processed);
+            let current = get_job(&cfg, &id).unwrap().expect("job should still exist");
+            if current
+                .last_error
+                .as_deref()
+                .is_some_and(|reason| reason.contains("re-embed backfill"))
+            {
+                job = Some(current);
+                break;
+            }
+            assert_eq!(
+                current.last_error.as_deref(),
+                Some("llm concurrency gate busy"),
+                "unexpected defer reason before re-embed handler"
+            );
+            tokio::time::sleep(Duration::from_millis(60)).await;
+        }
+        let job = job.expect("re-embed handler should run after transient gate contention");
         assert_eq!(job.kind, JobKind::ReembedBackfill);
         assert_eq!(job.status, JobStatus::Ready);
         assert_eq!(

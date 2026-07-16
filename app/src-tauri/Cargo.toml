@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.61.4"
+version = "0.61.5"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -137,11 +137,28 @@ cef = { version = "=146.4.1", default-features = false }
 # gates existed) means the embedded core does NOT inherit the root crate's
 # default gate set, so each default-ON gate must be forwarded explicitly to
 # keep the shipped desktop build byte-identical (AGENTS.md "Compile-time
-# domain gates"). `media` re-registers the `media_generate_*` agent tools
-# that #4804 moved behind `#[cfg(feature = "media")]`; it sheds no deps, so
-# this only restores the pre-gate desktop tool surface.
+# domain gates").
+#
+# This list is NOT optional polish — a gate missing here vanishes from the
+# shipped app silently, with no build error and no test failure:
+#
+# - `voice` — without it the `#[cfg(feature = "voice")]` controllers in
+#   `src/core/all.rs` are never registered, so the whole `openhuman.voice_*`
+#   namespace answers "unknown method" at runtime. This shipped broken from
+#   v0.58.19 to v0.61.x (#4901); the `VOICE_COMPILED_IN` const assert at the
+#   top of `src/lib.rs` now fails the build if it is dropped again.
+# - `media` — re-registers the `media_generate_*` agent tools that #4804 moved
+#   behind `#[cfg(feature = "media")]`; it sheds no deps, so this only restores
+#   the pre-gate desktop tool surface.
+# - `web3` — keeps the wallet/web3/x402 domains and their agent tools in the
+#   desktop build while allowing slim builds to omit the crypto-only deps.
+#
+# `tokenjuice-treesitter` is the remaining un-forwarded default — tracked in
+# #4918, deliberately not bundled here because dropping it may be intentional.
 openhuman_core = { path = "../..", package = "openhuman", default-features = false, features = [
     "media",
+    "voice",
+    "web3",
     "meet",
 ] }
 tinyjuice = { version = "0.2.1", default-features = false }

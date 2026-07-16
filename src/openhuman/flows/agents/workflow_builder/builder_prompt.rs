@@ -358,6 +358,24 @@ mod tests {
             "standing prompt must accurately teach that create_workflow exists and that \
              created flows are always born disabled (issue #6)"
         );
+
+        // Positive: self-DM resolution — the prompt must teach the builder to
+        // wire "DM me" onto the connection's own `platform_user_id`, not a
+        // public channel (the #general/#team-product fallback bug).
+        assert!(
+            STANDING_PROMPT.contains("platform_user_id"),
+            "standing prompt must teach that list_flow_connections surfaces \
+             platform_user_id for self-DM resolution"
+        );
+        assert!(
+            STANDING_PROMPT.contains("DM me"),
+            "standing prompt must keep the \"DM me\" self-target guidance"
+        );
+        assert!(
+            STANDING_PROMPT.contains("Never default a personal request to a public channel"),
+            "standing prompt must explicitly forbid falling back to a public \
+             channel (e.g. #general/#team-product) for a personal \"DM me\" request"
+        );
     }
 
     #[test]

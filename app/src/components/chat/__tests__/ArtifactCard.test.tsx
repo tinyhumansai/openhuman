@@ -130,7 +130,7 @@ describe('ArtifactCard', () => {
   });
 
   it.each([
-    ['document' as const, 'pdf'],
+    ['document' as const, 'docx'],
     ['image' as const, 'png'],
     ['other' as const, 'bin'],
     ['presentation' as const, 'pptx'],
