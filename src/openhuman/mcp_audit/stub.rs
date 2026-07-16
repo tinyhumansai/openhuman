@@ -17,6 +17,11 @@ use crate::openhuman::config::Config;
 
 use super::types::{McpWriteListQuery, McpWriteRecord, NewMcpWriteRecord};
 
+/// Error/log text shared by every disabled-path operation. Owned locally
+/// (mirroring the sibling `mcp_registry` / `mcp_server` stubs) so the module
+/// stays self-contained rather than importing a private const across modules.
+const DISABLED_MSG: &str = "mcp feature disabled at compile time";
+
 // ---------------------------------------------------------------------------
 // Controller registration (mirrors `schemas::all_internal_controllers`)
 // ---------------------------------------------------------------------------
