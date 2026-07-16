@@ -282,6 +282,134 @@ describe('WorkflowCopilotPanel', () => {
     expect(screen.queryByTestId('workflow-copilot-thinking')).not.toBeInTheDocument();
   });
 
+  // Regression coverage for the "copilot chat gets stuck" bug: the panel used
+  // to force-scroll to the bottom on every render of a streaming turn (an
+  // unconditional `scrollTo` effect keyed on messages/tool timeline/live
+  // text), which fought a user trying to scroll up to read. The panel now
+  // delegates to the shared `useStickToBottom` hook (same one the main chat
+  // surfaces use) — these tests exercise the REAL hook (not mocked) wired
+  // through the actual transcript container.
+  describe('transcript scroll pinning (#regression: chat gets stuck)', () => {
+    function scrollContainer() {
+      return screen.getByTestId('workflow-copilot-transcript');
+    }
+
+    // jsdom performs no real layout, so scroll metrics are inert unless
+    // defined explicitly — mirrors the approach in useStickToBottom.test.ts.
+    function mockScrollMetrics(
+      el: HTMLElement,
+      metrics: { scrollTop: number; scrollHeight: number; clientHeight: number }
+    ) {
+      Object.defineProperty(el, 'scrollHeight', {
+        configurable: true,
+        value: metrics.scrollHeight,
+      });
+      Object.defineProperty(el, 'clientHeight', {
+        configurable: true,
+        value: metrics.clientHeight,
+      });
+      Object.defineProperty(el, 'scrollTop', {
+        configurable: true,
+        writable: true,
+        value: metrics.scrollTop,
+      });
+    }
+
+    function renderPanel() {
+      return render(
+        <WorkflowCopilotPanel
+          graph={baseGraph}
+          onProposal={vi.fn()}
+          onAccept={vi.fn()}
+          onReject={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+    }
+
+    it('keeps the transcript container freely scrollable (overflow-y-auto)', () => {
+      renderPanel();
+      expect(scrollContainer()).toHaveClass('overflow-y-auto');
+    });
+
+    it('auto-scrolls to the bottom when a new message arrives while the user is pinned to the bottom', () => {
+      hookState.displayMessages = [{ id: 'm1', content: 'hi', sender: 'user' }];
+      const { rerender } = renderPanel();
+      const container = scrollContainer();
+
+      mockScrollMetrics(container, { scrollTop: 50, scrollHeight: 100, clientHeight: 50 });
+      rerender(
+        <WorkflowCopilotPanel
+          graph={baseGraph}
+          onProposal={vi.fn()}
+          onAccept={vi.fn()}
+          onReject={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+
+      // A new agent turn lands while the user never scrolled away.
+      hookState.displayMessages = [
+        ...hookState.displayMessages,
+        { id: 'm2', content: 'Done — proposed a Slack notification.', sender: 'agent' },
+      ];
+      mockScrollMetrics(container, { scrollTop: 50, scrollHeight: 300, clientHeight: 50 });
+      rerender(
+        <WorkflowCopilotPanel
+          graph={baseGraph}
+          onProposal={vi.fn()}
+          onAccept={vi.fn()}
+          onReject={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+
+      expect(container.scrollTop).toBe(300);
+    });
+
+    it('does NOT force-scroll the user back down once they have scrolled up to read history', () => {
+      hookState.displayMessages = [{ id: 'm1', content: 'hi', sender: 'user' }];
+      const { rerender } = renderPanel();
+      const container = scrollContainer();
+
+      mockScrollMetrics(container, { scrollTop: 50, scrollHeight: 100, clientHeight: 50 });
+      rerender(
+        <WorkflowCopilotPanel
+          graph={baseGraph}
+          onProposal={vi.fn()}
+          onAccept={vi.fn()}
+          onReject={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+
+      // The user scrolls up to read earlier context, well past the stick
+      // threshold (400 - 0 - 50 = 350px from the bottom).
+      mockScrollMetrics(container, { scrollTop: 0, scrollHeight: 400, clientHeight: 50 });
+      fireEvent.scroll(container);
+
+      // A new agent turn streams in regardless — this is exactly the bug:
+      // the old unconditional `scrollTo` effect would yank the reader back
+      // to the bottom here. The container must stay put.
+      hookState.displayMessages = [
+        ...hookState.displayMessages,
+        { id: 'm2', content: 'Still drafting…', sender: 'agent' },
+      ];
+      mockScrollMetrics(container, { scrollTop: 0, scrollHeight: 700, clientHeight: 50 });
+      rerender(
+        <WorkflowCopilotPanel
+          graph={baseGraph}
+          onProposal={vi.fn()}
+          onAccept={vi.fn()}
+          onReject={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+
+      expect(container.scrollTop).toBe(0);
+    });
+  });
+
   it('surfaces a new proposal to the host and shows the added/removed diff', () => {
     const onProposal = vi.fn();
     // proposed drops "b" and adds "c" vs. base [a, b].

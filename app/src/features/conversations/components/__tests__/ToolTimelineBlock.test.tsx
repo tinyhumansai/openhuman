@@ -299,11 +299,19 @@ describe('SubagentActivityBlock', () => {
 describe('ToolTimelineBlock — agentic task insights surface', () => {
   it('wraps rows in the "Agentic task insights" group and conveys run state on the name', () => {
     const entries: ToolTimelineEntry[] = [
-      { id: 'r', name: 'web_search', round: 1, status: 'running', argsBuffer: '{"query":"f1"}' },
+      {
+        id: 'r',
+        name: 'web_search',
+        round: 1,
+        seq: 0,
+        status: 'running',
+        argsBuffer: '{"query":"f1"}',
+      },
       {
         id: 'd',
         name: 'file_read',
         round: 1,
+        seq: 0,
         status: 'success',
         argsBuffer: '{"path":"/a/b.txt"}',
       },
@@ -324,6 +332,25 @@ describe('ToolTimelineBlock — agentic task insights surface', () => {
     expect(done.className).not.toContain('animate-pulse');
   });
 
+  it('renders rows in seq (issue) order, not array (arrival) order', () => {
+    // Simulates the out-of-order-arrival bug: a `tool_args_delta` for
+    // a later parallel call can land — and create its row — before an
+    // earlier call's own event, so the entries array ends up scrambled
+    // relative to the order the agent actually issued the calls. `seq` is
+    // the source of truth for display order; the array position is not.
+    const entries: ToolTimelineEntry[] = [
+      { id: 'third', name: 'run_code', round: 1, seq: 2, status: 'success' },
+      { id: 'first', name: 'web_search', round: 1, seq: 0, status: 'success' },
+      { id: 'second', name: 'file_read', round: 1, seq: 1, status: 'success' },
+    ];
+    renderInStore(<ToolTimelineBlock entries={entries} />);
+    const rows = screen.getAllByTestId('agent-timeline-row');
+    expect(rows).toHaveLength(3);
+    expect(rows[0].textContent).toContain('Searching the web');
+    expect(rows[1].textContent).toContain('Reading file');
+    expect(rows[2].textContent).toContain('Run Code');
+  });
+
   it('renders nothing for an empty timeline', () => {
     const { container } = renderInStore(<ToolTimelineBlock entries={[]} />);
     expect(container.querySelector('[data-testid="agent-task-insights"]')).toBeNull();
@@ -331,7 +358,7 @@ describe('ToolTimelineBlock — agentic task insights surface', () => {
 
   it('stays open while running and collapses once settled so a finished run does not dominate', () => {
     const running: ToolTimelineEntry[] = [
-      { id: 'r', name: 'web_search', round: 1, status: 'running' },
+      { id: 'r', name: 'web_search', round: 1, seq: 0, status: 'running' },
     ];
     const { rerender } = renderInStore(<ToolTimelineBlock entries={running} />);
     // In flight → the group is open so the live activity is visible.
@@ -340,7 +367,7 @@ describe('ToolTimelineBlock — agentic task insights surface', () => {
     // Settled (no running row) → collapsed by default; the rows stay in the DOM
     // one click away, but no longer flood the conversation.
     const settled: ToolTimelineEntry[] = [
-      { id: 'r', name: 'web_search', round: 1, status: 'success' },
+      { id: 'r', name: 'web_search', round: 1, seq: 0, status: 'success' },
     ];
     rerender(
       <Provider store={store}>
@@ -358,12 +385,106 @@ describe('ToolTimelineBlock — agentic task insights surface', () => {
     expect(screen.getByTestId('agent-task-insights')).toHaveAttribute('open');
   });
 
+  // Regression coverage for "Agentic task insights keeps collapsing on every
+  // new feedback": the workflow copilot keeps ONE `ToolTimelineBlock` mounted
+  // for the life of a thread, appending each new turn's entries onto the same
+  // `entries` prop (see `WorkflowCopilotPanel`/`useWorkflowBuilderChat`) — it
+  // never remounts the block per turn. Before the fix, the outer group's
+  // `open` was driven purely by `isRunning || expandAllRows`, so every time a
+  // turn settled (running → not running) the group snapped shut regardless of
+  // anything the user had done, discarding a manual expand made moments
+  // earlier. These tests simulate that same "new turn's entries land on an
+  // already-mounted block" shape via `rerender` rather than remounting.
+  describe('agentic task insights — sticky user expand/collapse across turns', () => {
+    it('keeps an explicit user expand across a new turn that starts and settles', () => {
+      const turn1Settled: ToolTimelineEntry[] = [
+        { id: 't1', name: 'web_search', round: 1, seq: 0, status: 'success' },
+      ];
+      const { rerender } = renderInStore(<ToolTimelineBlock entries={turn1Settled} />);
+      // Default: settled and collapsed (unchanged behaviour).
+      expect(screen.getByTestId('agent-task-insights')).not.toHaveAttribute('open');
+
+      // The user manually expands it.
+      fireEvent.click(screen.getByText('Agentic task insights'));
+      expect(screen.getByTestId('agent-task-insights')).toHaveAttribute('open');
+
+      // A new turn/feedback starts streaming onto the SAME mounted block.
+      const turn2Running: ToolTimelineEntry[] = [
+        ...turn1Settled,
+        { id: 't2', name: 'file_read', round: 2, seq: 1, status: 'running' },
+      ];
+      rerender(
+        <Provider store={store}>
+          <ToolTimelineBlock entries={turn2Running} />
+        </Provider>
+      );
+      expect(screen.getByTestId('agent-task-insights')).toHaveAttribute('open');
+
+      // ...and settles. Without the fix this is exactly where it would
+      // involuntarily re-collapse, wiping out the user's choice.
+      const turn2Settled: ToolTimelineEntry[] = [
+        ...turn1Settled,
+        { id: 't2', name: 'file_read', round: 2, seq: 1, status: 'success' },
+      ];
+      rerender(
+        <Provider store={store}>
+          <ToolTimelineBlock entries={turn2Settled} />
+        </Provider>
+      );
+      expect(screen.getByTestId('agent-task-insights')).toHaveAttribute('open');
+    });
+
+    it('leaves the default open-while-running/collapsed-when-settled behaviour unchanged absent any user interaction', () => {
+      const running: ToolTimelineEntry[] = [
+        { id: 'r', name: 'web_search', round: 1, seq: 0, status: 'running' },
+      ];
+      const { rerender } = renderInStore(<ToolTimelineBlock entries={running} />);
+      expect(screen.getByTestId('agent-task-insights')).toHaveAttribute('open');
+
+      const settled: ToolTimelineEntry[] = [
+        { id: 'r', name: 'web_search', round: 1, seq: 0, status: 'success' },
+      ];
+      rerender(
+        <Provider store={store}>
+          <ToolTimelineBlock entries={settled} />
+        </Provider>
+      );
+      expect(screen.getByTestId('agent-task-insights')).not.toHaveAttribute('open');
+    });
+
+    it('also persists an explicit user collapse across a new turn (does not force it back open)', () => {
+      const turn1Running: ToolTimelineEntry[] = [
+        { id: 't1', name: 'web_search', round: 1, seq: 0, status: 'running' },
+      ];
+      const { rerender } = renderInStore(<ToolTimelineBlock entries={turn1Running} />);
+      expect(screen.getByTestId('agent-task-insights')).toHaveAttribute('open');
+
+      // The user collapses it while a turn is still running.
+      fireEvent.click(screen.getByText('Agentic task insights'));
+      expect(screen.getByTestId('agent-task-insights')).not.toHaveAttribute('open');
+
+      // A new turn starts running — the auto rule alone would force it back
+      // open, but the user's explicit collapse must win.
+      const turn2Running: ToolTimelineEntry[] = [
+        { id: 't1', name: 'web_search', round: 1, seq: 0, status: 'success' },
+        { id: 't2', name: 'file_read', round: 2, seq: 1, status: 'running' },
+      ];
+      rerender(
+        <Provider store={store}>
+          <ToolTimelineBlock entries={turn2Running} />
+        </Provider>
+      );
+      expect(screen.getByTestId('agent-task-insights')).not.toHaveAttribute('open');
+    });
+  });
+
   it('renders the tool result output inside the expanded row', () => {
     const entries: ToolTimelineEntry[] = [
       {
         id: 'd',
         name: 'web_search',
         round: 1,
+        seq: 0,
         status: 'success',
         argsBuffer: '{"query":"f1"}',
         result: 'Top result: https://openhuman.dev',
@@ -377,8 +498,8 @@ describe('ToolTimelineBlock — agentic task insights surface', () => {
   it('makes a row expandable on a result alone and omits the block without one', () => {
     const entries: ToolTimelineEntry[] = [
       // No argsBuffer / detail / subagent — the result is the only body.
-      { id: 'a', name: 'run_code', round: 1, status: 'success', result: 'exit 0' },
-      { id: 'b', name: 'run_code', round: 2, status: 'success' },
+      { id: 'a', name: 'run_code', round: 1, seq: 0, status: 'success', result: 'exit 0' },
+      { id: 'b', name: 'run_code', round: 2, seq: 0, status: 'success' },
     ];
     renderInStore(<ToolTimelineBlock entries={entries} expandAllRows />);
     const outputs = screen.getAllByTestId('tool-result-output');
@@ -388,7 +509,14 @@ describe('ToolTimelineBlock — agentic task insights surface', () => {
 
   it('renders the parent live response inside the panel under a Response heading', () => {
     const entries: ToolTimelineEntry[] = [
-      { id: 'r', name: 'web_search', round: 1, status: 'running', argsBuffer: '{"query":"f1"}' },
+      {
+        id: 'r',
+        name: 'web_search',
+        round: 1,
+        seq: 0,
+        status: 'running',
+        argsBuffer: '{"query":"f1"}',
+      },
     ];
     renderInStore(
       <ToolTimelineBlock
@@ -403,7 +531,7 @@ describe('ToolTimelineBlock — agentic task insights surface', () => {
 
   it('omits the Response block when there is no live response', () => {
     const entries: ToolTimelineEntry[] = [
-      { id: 'r', name: 'web_search', round: 1, status: 'running' },
+      { id: 'r', name: 'web_search', round: 1, seq: 0, status: 'running' },
     ];
     renderInStore(<ToolTimelineBlock entries={entries} />);
     expect(screen.queryByTestId('agent-live-response')).toBeNull();
@@ -411,7 +539,7 @@ describe('ToolTimelineBlock — agentic task insights surface', () => {
 
   it('strips a leaked <tool_call> envelope from the live response', () => {
     const entries: ToolTimelineEntry[] = [
-      { id: 'r', name: 'web_search', round: 1, status: 'running' },
+      { id: 'r', name: 'web_search', round: 1, seq: 0, status: 'running' },
     ];
     renderInStore(
       <ToolTimelineBlock
@@ -434,6 +562,7 @@ describe('ToolTimelineBlock — coalescing repeated rows', () => {
       id: `dup-${i}`,
       name: 'integrations_agent',
       round: 1,
+      seq: 0,
       status: 'success' as const,
     }));
     renderInStore(<ToolTimelineBlock entries={entries} />);
@@ -444,12 +573,12 @@ describe('ToolTimelineBlock — coalescing repeated rows', () => {
 
   it('does not merge across differing status or the live running row', () => {
     const entries: ToolTimelineEntry[] = [
-      { id: 'a', name: 'integrations_agent', round: 1, status: 'success' },
-      { id: 'b', name: 'integrations_agent', round: 1, status: 'success' },
+      { id: 'a', name: 'integrations_agent', round: 1, seq: 0, status: 'success' },
+      { id: 'b', name: 'integrations_agent', round: 1, seq: 0, status: 'success' },
       // Different status breaks the run.
-      { id: 'c', name: 'integrations_agent', round: 1, status: 'error' },
+      { id: 'c', name: 'integrations_agent', round: 1, seq: 0, status: 'error' },
       // The live running row is never folded away.
-      { id: 'd', name: 'integrations_agent', round: 1, status: 'running' },
+      { id: 'd', name: 'integrations_agent', round: 1, seq: 0, status: 'running' },
     ];
     renderInStore(<ToolTimelineBlock entries={entries} />);
     // success×2 (merged) + error (single) + running (single) = 3 rows.
@@ -461,8 +590,8 @@ describe('ToolTimelineBlock — coalescing repeated rows', () => {
 
   it('never merges rows that carry a unique result body', () => {
     const entries: ToolTimelineEntry[] = [
-      { id: 'a', name: 'run_code', round: 1, status: 'success', result: 'exit 0' },
-      { id: 'b', name: 'run_code', round: 1, status: 'success', result: 'exit 1' },
+      { id: 'a', name: 'run_code', round: 1, seq: 0, status: 'success', result: 'exit 0' },
+      { id: 'b', name: 'run_code', round: 1, seq: 0, status: 'success', result: 'exit 1' },
     ];
     renderInStore(<ToolTimelineBlock entries={entries} expandAllRows />);
     // Both keep their own row — distinct results are never coalesced.
@@ -477,6 +606,7 @@ describe('ToolTimelineBlock — subagent rendering', () => {
       id: 'tid:subagent:sub-1:researcher',
       name: 'subagent:researcher',
       round: 1,
+      seq: 0,
       status: 'running',
       subagent: {
         taskId: 'sub-1',
@@ -500,6 +630,7 @@ describe('ToolTimelineBlock — subagent rendering', () => {
       id: 'plain',
       name: 'list_threads',
       round: 0,
+      seq: 0,
       status: 'success',
     };
     renderInStore(<ToolTimelineBlock entries={[entry]} />);
@@ -527,6 +658,7 @@ describe('ToolTimelineBlock — worker thread ref status propagation', () => {
       id: `tid:subagent:task-42:researcher:${status}`,
       name: 'subagent:researcher',
       round: 1,
+      seq: 0,
       status,
       detail: WORKER_REF_DETAIL,
     };
@@ -571,6 +703,7 @@ describe('ToolTimelineBlock — compact chat mode (onViewDetails)', () => {
       id: 'tl-1',
       name: 'agent_prepare_context',
       round: 1,
+      seq: 0,
       status: 'success',
       detail: 'fetch X',
       result: 'Prepared context from 3 sources.',
@@ -580,6 +713,7 @@ describe('ToolTimelineBlock — compact chat mode (onViewDetails)', () => {
       id: 'sa-1',
       name: 'subagent:researcher',
       round: 1,
+      seq: 0,
       status: 'running',
       subagent: {
         taskId: 'task-1',
@@ -620,6 +754,7 @@ describe('ToolTimelineBlock — compact chat mode (onViewDetails)', () => {
             id: 'sa-done',
             name: 'subagent:researcher',
             round: 1,
+            seq: 0,
             status: 'success',
             subagent: {
               taskId: 'task-2',

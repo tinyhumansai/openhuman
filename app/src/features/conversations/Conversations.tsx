@@ -2017,6 +2017,22 @@ const Conversations = ({
       </>
     ) : null;
 
+  // Standalone fallback slot (rendered once, below all messages) for the
+  // rare thread with no user message at all (e.g. a proactive-only run), so
+  // `agentInsights` is never unreachable. This slot sits at a fixed JSX
+  // position with no per-thread key of its own, so switching directly
+  // between two threads that both hit this fallback (e.g. two proactive-only
+  // threads) would otherwise reuse the same `ToolTimelineBlock` instance
+  // instead of remounting it — leaking its sticky `userOverrideOpen`
+  // disclosure state from the old thread into the new one (flagged in
+  // review on #4942). Keying on thread id forces a clean remount on every
+  // thread switch, matching the `key={msg.id}` pattern used for the in-flow
+  // timeline above.
+  const proactiveInsightsFallback = (() => {
+    if (lastUserMessageId) return null;
+    return <Fragment key={selectedThreadId ?? 'none'}>{agentInsights}</Fragment>;
+  })();
+
   const filteredThreads = useMemo(() => {
     return threads.filter(t => isThreadVisibleInTab(t, selectedLabel));
   }, [threads, selectedLabel]);
@@ -2675,6 +2691,7 @@ const Conversations = ({
                             id: 'active-tool',
                             name: selectedInferenceStatus.activeTool ?? 'tool',
                             round: selectedInferenceStatus.iteration,
+                            seq: 0,
                             status: 'running',
                           }
                         ).title
@@ -2686,6 +2703,7 @@ const Conversations = ({
                             id: 'active-subagent',
                             name: `subagent:${selectedInferenceStatus.activeSubagent ?? ''}`,
                             round: selectedInferenceStatus.iteration,
+                            seq: 0,
                             status: 'running',
                           }
                         ).title
@@ -2695,13 +2713,11 @@ const Conversations = ({
               )}
             {/* The "Agentic task insights" panel is rendered inline *above* the
                 latest answer (right after the latest turn's user message) so
-                processing reads before the result. This fallback only fires for
-                the rare thread with no user message (e.g. a proactive-only
-                thread) so the recorded steps are never unreachable. The cancel
-                control + view-process-source opener now live in `agentInsights`
-                and the floating footer respectively (upstream relocated the
-                in-flow cancel button below the composer). */}
-            {!lastUserMessageId && agentInsights}
+                processing reads before the result. `proactiveInsightsFallback`
+                (defined above, near `agentInsights`) covers the rare thread
+                with no user message at all — see its doc comment for the
+                per-thread keying that fix keeps this remount-safe. */}
+            {proactiveInsightsFallback}
             <div ref={messagesEndRef} />
           </div>
         ) : isNewWindow ? (

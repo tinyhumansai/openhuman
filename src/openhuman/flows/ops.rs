@@ -2366,6 +2366,10 @@ pub async fn flows_list_connections(
     // connection sync. Loaded once here so `build_flow_connections` can stay
     // a pure, unit-testable matcher.
     let identities = crate::openhuman::composio::providers::profile::load_connected_identities();
+    tracing::debug!(
+        count = identities.len(),
+        "[flows] flows_list_connections: identity-cache load"
+    );
     let connections = build_flow_connections(composio_conns, http_creds, &identities);
     tracing::debug!(
         total = connections.len(),
