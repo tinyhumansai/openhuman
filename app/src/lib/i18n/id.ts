@@ -7335,9 +7335,9 @@ const messages: TranslationMap = {
 
   // Emergency stop (#4255)
   'safety.emergencyStop': 'Hentikan darurat',
-  'safety.stopFailed': 'Tidak dapat menghentikan otomasi — coba lagi.',
+  'safety.stopFailed': 'Tidak dapat menghentikan otomasi. Coba lagi.',
   'safety.resume': 'Lanjutkan otomasi',
-  'safety.resumeFailed': 'Tidak dapat melanjutkan — otomasi masih dihentikan. Coba lagi.',
+  'safety.resumeFailed': 'Tidak dapat melanjutkan. Otomasi masih dihentikan. Coba lagi.',
   'safety.haltedTitle': 'Otomasi dihentikan',
   'safety.haltedBody': 'Semua otomasi desktop dihentikan. Lanjutkan ketika Anda siap.',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)

@@ -6903,7 +6903,7 @@ const messages: TranslationMap = {
   'safety.emergencyStop': '紧急停止',
   'safety.stopFailed': '无法停止自动化，请重试。',
   'safety.resume': '恢复自动化',
-  'safety.resumeFailed': '无法恢复——自动化仍处于暂停状态。请重试。',
+  'safety.resumeFailed': '无法恢复，自动化仍处于暂停状态。请重试。',
   'safety.haltedTitle': '自动化已暂停',
   'safety.haltedBody': '所有桌面自动化已停止。准备好后请恢复。',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)

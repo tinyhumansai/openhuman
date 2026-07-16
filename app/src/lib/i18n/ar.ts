@@ -7133,9 +7133,9 @@ const messages: TranslationMap = {
 
   // Emergency stop (#4255)
   'safety.emergencyStop': 'إيقاف الطوارئ',
-  'safety.stopFailed': 'تعذّر إيقاف الأتمتة — أعد المحاولة.',
+  'safety.stopFailed': 'تعذّر إيقاف الأتمتة. أعد المحاولة.',
   'safety.resume': 'استئناف الأتمتة',
-  'safety.resumeFailed': 'تعذّر الاستئناف — لا تزال الأتمتة متوقفة. أعد المحاولة.',
+  'safety.resumeFailed': 'تعذّر الاستئناف. لا تزال الأتمتة متوقفة. أعد المحاولة.',
   'safety.haltedTitle': 'الأتمتة متوقفة',
   'safety.haltedBody': 'تم إيقاف جميع أتمتة سطح المكتب. استأنف عندما تكون مستعدًا.',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)

@@ -7411,10 +7411,9 @@ const messages: TranslationMap = {
 
   // Emergency stop (#4255)
   'safety.emergencyStop': 'Awaryjne zatrzymanie',
-  'safety.stopFailed': 'Nie udało się zatrzymać automatyzacji — spróbuj ponownie.',
+  'safety.stopFailed': 'Nie udało się zatrzymać automatyzacji. Spróbuj ponownie.',
   'safety.resume': 'Wznów automatyzację',
-  'safety.resumeFailed':
-    'Nie udało się wznowić — automatyzacja nadal wstrzymana. Spróbuj ponownie.',
+  'safety.resumeFailed': 'Nie udało się wznowić. Automatyzacja nadal wstrzymana. Spróbuj ponownie.',
   'safety.haltedTitle': 'Automatyzacja wstrzymana',
   'safety.haltedBody': 'Cała automatyzacja pulpitu jest zatrzymana. Wznów, gdy będziesz gotowy.',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
