@@ -42,13 +42,14 @@ function tool(
   round = 0,
   status: ToolTimelineEntry['status'] = 'success'
 ): ToolTimelineEntry {
-  return { id, name, round, status };
+  return { id, name, round, seq: 0, status };
 }
 function subagentRow(id: string, taskId: string, round = 0): ToolTimelineEntry {
   return {
     id,
     name: 'subagent:researcher',
     round,
+    seq: 0,
     status: 'running',
     subagent: { taskId, agentId: 'researcher', toolCalls: [] },
   };

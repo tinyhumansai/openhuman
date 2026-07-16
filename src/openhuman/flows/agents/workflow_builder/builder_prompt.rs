@@ -376,6 +376,30 @@ mod tests {
             "standing prompt must explicitly forbid falling back to a public \
              channel (e.g. #general/#team-product) for a personal \"DM me\" request"
         );
+
+        // Positive: assert the *complete* wiring instruction, not just the
+        // presence of the `platform_user_id` keyword — a regression could
+        // drop the actual "pass it as `channel`" directive while leaving the
+        // word `platform_user_id` elsewhere in the prompt and still pass the
+        // looser check above.
+        assert!(
+            STANDING_PROMPT
+                .contains("that id verbatim as the `channel` arg on `SLACK_SEND_MESSAGE`"),
+            "standing prompt must explicitly instruct passing `platform_user_id` \
+             verbatim as the `channel` arg on `SLACK_SEND_MESSAGE` — not just \
+             mention the field name"
+        );
+
+        // Positive: the null-`platform_user_id` fallback (ask the user for
+        // their member id in one question) must survive too — this is the
+        // other half of the self-DM contract and must not be silently lost.
+        assert!(
+            STANDING_PROMPT.contains("Only if `platform_user_id` is null")
+                && STANDING_PROMPT.contains("ask the user for their member id"),
+            "standing prompt must preserve the null-`platform_user_id` fallback: \
+             ask the user for their member id in one question rather than \
+             guessing a channel"
+        );
     }
 
     #[test]

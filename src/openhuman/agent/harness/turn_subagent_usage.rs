@@ -30,10 +30,10 @@ use super::subagent_runner::SubagentUsage;
 
 /// One sub-agent's spend, tagged with its identity for the per-child breakdown.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SubagentUsageEntry {
-    pub(crate) task_id: String,
-    pub(crate) agent_id: String,
-    pub(crate) usage: SubagentUsage,
+pub struct SubagentUsageEntry {
+    pub task_id: String,
+    pub agent_id: String,
+    pub usage: SubagentUsage,
 }
 
 /// Holistic token/cost accounting for a single completed turn, including any
@@ -42,22 +42,22 @@ pub(crate) struct SubagentUsageEntry {
 /// event so the UI footer can show session tokens, context-window utilisation,
 /// USD cost, and a per-sub-agent hover breakdown.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct LastTurnUsage {
+pub struct LastTurnUsage {
     /// Input (prompt) tokens for the turn, parent + sub-agents.
-    pub(crate) input_tokens: u64,
+    pub input_tokens: u64,
     /// Output (completion) tokens for the turn, parent + sub-agents.
-    pub(crate) output_tokens: u64,
+    pub output_tokens: u64,
     /// Cached-input tokens for the turn, parent + sub-agents.
-    pub(crate) cached_input_tokens: u64,
+    pub cached_input_tokens: u64,
     /// USD cost for the turn (backend-charged where available, else estimated),
     /// parent + sub-agents.
-    pub(crate) cost_usd: f64,
+    pub cost_usd: f64,
     /// The model's context window for this turn (`0` when unknown, e.g. a cloud
     /// model whose window the core couldn't resolve). Lets the UI show real
     /// context utilisation instead of a hard-coded default.
-    pub(crate) context_window: u64,
+    pub context_window: u64,
     /// Per-sub-agent spend gathered during the turn, for the hover breakdown.
-    pub(crate) subagents: Vec<SubagentUsageEntry>,
+    pub subagents: Vec<SubagentUsageEntry>,
 }
 
 /// Shared, mutable list of sub-agent spend gathered during one parent turn.

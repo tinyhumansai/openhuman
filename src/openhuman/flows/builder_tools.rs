@@ -1495,7 +1495,8 @@ impl Tool for GetFlowRunTool {
 
 /// `list_flow_connections`: read-only enumeration of the connection sources a
 /// node's `connection_ref` can attach to (Composio connected accounts +
-/// named HTTP credentials) — ids / display labels / kind only, never secrets.
+/// named HTTP credentials) — non-secret metadata only (ids / display labels
+/// / kind / toolkit / scheme / platform_user_id), never secrets.
 pub struct ListFlowConnectionsTool {
     config: Arc<Config>,
 }
@@ -1515,7 +1516,8 @@ impl Tool for ListFlowConnectionsTool {
     fn description(&self) -> &str {
         "List the connection sources a flow node's `connection_ref` can attach to: \
          Composio connected accounts and named HTTP credentials. Read-only; \
-         returns ids + display labels + kind ONLY (never any secret). Each \
+         returns only non-secret metadata — ids, display labels, kind, and \
+         `toolkit`/`scheme` (never any secret). Each \
          Composio entry also carries `platform_user_id` — the connected \
          account's own member id (e.g. Slack `U123ABC`) — use it to wire a \
          self-targeted action like 'DM me' to that account instead of a \
