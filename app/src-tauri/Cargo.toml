@@ -158,8 +158,10 @@ cef = { version = "=146.4.1", default-features = false }
 openhuman_core = { path = "../..", package = "openhuman", default-features = false, features = [
     "media",
     "voice",
+    "tokenjuice-treesitter",
     "web3",
     "flows",
+    "meet",
 ] }
 tinyjuice = { version = "0.2.1", default-features = false }
 
