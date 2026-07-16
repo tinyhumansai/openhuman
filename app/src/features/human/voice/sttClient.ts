@@ -42,7 +42,7 @@ export class VoiceNotCompiledError extends Error {
  * retry boundaries, and structured-clone/serialization paths can strip the
  * prototype while preserving own properties.
  */
-export function isVoiceNotCompiledError(err: unknown): boolean {
+export function isVoiceNotCompiledError(err: unknown): err is VoiceNotCompiledError {
   return (
     typeof err === 'object' &&
     err !== null &&

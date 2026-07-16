@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { CodingSessionsCard } from '../components/intelligence/CodingSessionsCard';
 import GoalsPanel from '../components/intelligence/GoalsPanel';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import { MemoryControls } from '../components/intelligence/MemoryControls';
@@ -293,6 +294,7 @@ export default function Brain() {
 
               {activeTab === 'sources' && (
                 <div className="space-y-5 animate-fade-up">
+                  <CodingSessionsCard onToast={addToast} />
                   <MemorySourcesRegistry onToast={addToast} />
                 </div>
               )}

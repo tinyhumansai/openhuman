@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.61.3"
+version = "0.61.5"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -150,6 +150,8 @@ cef = { version = "=146.4.1", default-features = false }
 # - `media` — re-registers the `media_generate_*` agent tools that #4804 moved
 #   behind `#[cfg(feature = "media")]`; it sheds no deps, so this only restores
 #   the pre-gate desktop tool surface.
+# - `web3` — keeps the wallet/web3/x402 domains and their agent tools in the
+#   desktop build while allowing slim builds to omit the crypto-only deps.
 # - `tokenjuice-treesitter` — forwards `tinyjuice/tinyjuice-treesitter`, which
 #   pulls the tree-sitter Rust/TS/Python grammars. Without it TokenJuice falls
 #   back to the brace-depth heuristic, so the desktop app compresses code worse
@@ -162,6 +164,7 @@ openhuman_core = { path = "../..", package = "openhuman", default-features = fal
     "media",
     "tokenjuice-treesitter",
     "voice",
+    "web3",
 ] }
 tinyjuice = { version = "0.2.1", default-features = false }
 
@@ -246,7 +249,7 @@ tinyagents = { path = "../../vendor/tinyagents" }
 # TinyAgents so integration work can test crate changes against OpenHuman before
 # publishing.
 tinyflows = { path = "../../vendor/tinyflows" }
-tinycortex = { path = "../../vendor/tinycortex", features = ["git-diff"] }
+tinycortex = { path = "../../vendor/tinycortex" }
 tinyjuice = { path = "../../vendor/tinyjuice" }
 tinychannels = { path = "../../vendor/tinychannels" }
 tinyplace = { path = "../../vendor/tinyplace/sdk/rust" }

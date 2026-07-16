@@ -16,7 +16,7 @@
 /// arm. Reword the tail freely, but keep the anchor phrase or the drift-coupling
 /// test `demotes_composio_set_key_invalid_key_rejection` fails CI.
 pub(crate) const COMPOSIO_INVALID_API_KEY_USER_MESSAGE: &str =
-    "Invalid Composio API key. Re-enter a valid key in Settings > Connections > Composio.";
+    "Invalid Composio API key. Re-enter a valid key in Connections > Composio.";
 
 /// Lowercase substring the observability classifier's TAURI-RUST-K27 arm matches
 /// on to demote the set-key rejection. Shared with the runtime matcher so the

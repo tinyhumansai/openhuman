@@ -3,6 +3,8 @@ use crate::openhuman::config::HttpRequestConfig;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
+// Only used by the `web3`-gated x402 402-retry path below.
+#[cfg(feature = "web3")]
 use base64::engine::Engine as _;
 use serde_json::json;
 use std::sync::Arc;
@@ -161,6 +163,11 @@ impl HttpRequestTool {
         Ok(request.send().await?)
     }
 
+    // x402 machine-payment retry — gated with the `web3` feature (the x402
+    // domain, its ledger, and the `SettlementResponse`/`PaymentRecord` types
+    // are compiled out when web3 is disabled). With the feature off, a 402 is
+    // returned to the caller unpaid (see the call site).
+    #[cfg(feature = "web3")]
     async fn handle_x402_payment(
         &self,
         _initial_response: reqwest::Response,
@@ -433,7 +440,9 @@ impl Tool for HttpRequestTool {
         };
 
         // x402: if the server returns 402 with a PAYMENT-REQUIRED header,
-        // attempt to pay using the wallet's Solana key and retry.
+        // attempt to pay using the wallet's Solana key and retry. Compiled out
+        // when the `web3` feature is off — a 402 then passes through unpaid.
+        #[cfg(feature = "web3")]
         let response = if response.status() == reqwest::StatusCode::PAYMENT_REQUIRED
             && (response.headers().get("PAYMENT-REQUIRED").is_some()
                 || response.headers().get("X-PAYMENT-REQUIRED").is_some())

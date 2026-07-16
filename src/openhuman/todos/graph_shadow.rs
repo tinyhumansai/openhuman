@@ -4,8 +4,9 @@
 //!
 //! ADAPTER-FIRST / SHADOW ONLY — nothing in this module changes product
 //! behavior. The legacy [`TaskBoardStore`](crate::openhuman::agent::task_board)
-//! + [`todos::ops`](crate::openhuman::todos::ops) remain the single source of
-//! truth. This module (C2b first slice) mirrors post-mutation card snapshots
+//! + [`todos::ops`](crate::openhuman::todos::ops) remain the single source of truth.
+//!
+//! This module (C2b first slice) mirrors post-mutation card snapshots
 //! into a crate `Store` and shadow-runs the crate `claim_card` CAS purely to
 //! prove parity ahead of the C2 cutover, logging any divergence. All work is
 //! best-effort and fire-and-forget: a mirror/claim failure is logged and

@@ -22,7 +22,7 @@ function entry(
   subagent?: SubagentActivity,
   name = 'subagent:researcher'
 ): ToolTimelineEntry {
-  return { id: `e-${subagent?.taskId ?? name}`, name, round: 0, status, subagent };
+  return { id: `e-${subagent?.taskId ?? name}`, name, round: 0, seq: 0, status, subagent };
 }
 
 describe('selectBackgroundProcesses', () => {

@@ -217,11 +217,11 @@ impl SessionExecutor for ScriptedSession {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Serializes tests that touch the process-global event bus.
-fn bus_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| StdMutex::new(()))
+async fn bus_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
-        .unwrap_or_else(|p| p.into_inner())
+        .await
 }
 
 struct Harness {
@@ -350,7 +350,7 @@ fn human_msg(channel: &str, sender: &str, message: &str) -> DomainEvent {
 
 #[tokio::test]
 async fn conversation_human_delegates_then_subagent_reports_back() {
-    let _g = bus_lock();
+    let _g = bus_lock().await;
     let h = Harness::new(OrchestratorConfig::default());
 
     // Human asks for deep work.
@@ -382,7 +382,7 @@ async fn conversation_human_delegates_then_subagent_reports_back() {
 
 #[tokio::test]
 async fn conversation_subagent_failure_recovers_with_retry() {
-    let _g = bus_lock();
+    let _g = bus_lock().await;
     let h = Harness::new(OrchestratorConfig::default());
 
     // Inject a sub-agent FAILURE conclusion directly (as if a prior spawn failed).
@@ -408,7 +408,7 @@ async fn conversation_subagent_failure_recovers_with_retry() {
 
 #[tokio::test]
 async fn conversation_interleaved_traffic_is_handled() {
-    let _g = bus_lock();
+    let _g = bus_lock().await;
     let h = Harness::new(OrchestratorConfig::default());
 
     // Routine cron tick — gate should drop it (no session run).
@@ -446,7 +446,7 @@ async fn conversation_interleaved_traffic_is_handled() {
 
 #[tokio::test]
 async fn conversation_promotion_budget_caps_a_burst() {
-    let _g = bus_lock();
+    let _g = bus_lock().await;
     // The scripted gate intentionally has no promotion budget (that lives in
     // the real GatePass), so this scenario isolates the *rate limiter*: a
     // flood of distinct user messages from one source is capped by the token

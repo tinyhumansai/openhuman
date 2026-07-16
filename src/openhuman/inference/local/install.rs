@@ -339,7 +339,6 @@ mod tests {
     /// (OLLAMA_BIN, PATH) with other local-AI tests that also read these
     /// variables. Without this, cargo's test runner can interleave set/remove
     /// calls and cause flakes.
-
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         crate::openhuman::inference::inference_test_guard()
     }

@@ -4,7 +4,7 @@ import type { ToolTimelineEntry } from '../store/chatRuntimeSlice';
 import { formatTimelineEntry, formatToolName } from './toolTimelineFormatting';
 
 function entry(partial: Partial<ToolTimelineEntry> & { name: string }): ToolTimelineEntry {
-  return { id: 'e1', round: 0, status: 'running', ...partial };
+  return { id: 'e1', round: 0, seq: 0, status: 'running', ...partial };
 }
 
 describe('toolTimelineFormatting — agent_prepare_context / context_scout', () => {

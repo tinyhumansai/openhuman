@@ -134,8 +134,8 @@ pub async fn meet_call_open_window<R: Runtime>(
     }
 
     // Only one meet-call window can be live at a time — concurrent bot
-    // sessions race the CEF audio handler registration (`listen_capture`)
-    // and confuse the user with multiple "Meet — OpenHuman" windows in
+    // sessions race the shared audio bridge and confuse the user with
+    // multiple "Meet — OpenHuman" windows in
     // their Dock. Close any stragglers from a prior Join before opening
     // a fresh one. The CloseRequested handler will tear down their
     // scanner + audio session via the per-window event listeners below.

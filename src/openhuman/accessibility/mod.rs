@@ -10,6 +10,10 @@ pub mod automate;
 mod automation_state;
 pub mod ax_interact;
 mod capture;
+// Pure ranked/normalized matching of listed AX elements against a target label
+// — the "reliable UI element clicking" selection primitive (no FFI). Consumed by
+// `ax_interact.rs` to order filtered results best-first.
+mod element_match;
 mod focus;
 mod globe;
 mod helper;
@@ -28,12 +32,11 @@ mod vision_click;
 #[cfg(target_os = "windows")]
 mod uia_interact;
 
-#[cfg(test)]
-pub(crate) use automation_state::test_lock as automation_state_test_lock;
 pub use automation_state::{
     clear as clear_automation_denial, mark_system_events_denied, system_events_denied,
 };
 pub use capture::{capture_screen_image_ref_for_context, CaptureMode, MAX_SCREENSHOT_BYTES};
+pub use element_match::{best_match, ElementMatch, MatchTier};
 pub use focus::{
     focused_text_context, focused_text_context_verbose, foreground_context,
     parse_foreground_output, validate_focused_target,

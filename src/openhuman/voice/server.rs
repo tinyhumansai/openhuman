@@ -566,6 +566,10 @@ fn start_hotkey_listener(
     // Non-macOS: rdev-based listener for all keys.
     #[cfg(not(target_os = "macos"))]
     {
+        // `server_cancel` is only consumed by the macOS Swift-globe listener
+        // branch above; the rdev listener manages its own lifecycle, so bind it
+        // here to keep the shared signature warning-free on non-macOS.
+        let _ = server_cancel;
         let combo = hotkey::parse_hotkey(hotkey_str)?;
         let (handle, rx) = hotkey::start_listener(combo, mode)?;
         Ok((HotkeyListenerKind::Rdev(handle), rx))

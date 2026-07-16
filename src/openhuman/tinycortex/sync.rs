@@ -116,7 +116,7 @@ fn source_sync_context(memory: MemoryClientRef, config: &Config, local: bool) ->
         documents: adapter.clone(),
         state: adapter.clone(),
         local_documents: local.then(|| adapter.clone() as std::sync::Arc<dyn LocalDocumentSink>),
-        external_sources: local.then(|| adapter as std::sync::Arc<dyn ExternalSourceReader>),
+        external_sources: local.then_some(adapter as std::sync::Arc<dyn ExternalSourceReader>),
         summariser: local.then(|| {
             std::sync::Arc::new(super::HostSummariser::new(config.clone()))
                 as std::sync::Arc<dyn tinycortex::memory::tree::Summariser>

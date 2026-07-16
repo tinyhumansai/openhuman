@@ -80,7 +80,7 @@ const messages: TranslationMap = {
   'connections.welcome.eyebrow': 'Ligações',
   'connections.welcome.title': 'Tudo o que usa, num só lugar',
   'connections.welcome.body':
-    'Ligue as suas aplicações de mensagens, email, calendário e ferramentas para que o seu agente possa ler o contexto e agir em todas elas: sem copiar e colar entre uma dúzia de separadores. Você mantém o controlo daquilo em que ele pode tocar.',
+    'Ligue as suas aplicações de mensagens, email, calendário e ferramentas para que o seu agente possa ler o contexto e agir em todas elas, sem copiar e colar entre uma dúzia de separadores. Você mantém o controlo daquilo em que ele pode tocar.',
   'connections.welcome.ctaChannel': 'Ligar um canal',
   'connections.welcome.ctaApps': 'Ligar aplicações',
   'connections.welcome.ctaSkills': 'Explorar competências',
@@ -100,7 +100,7 @@ const messages: TranslationMap = {
   'notifications.welcome.eyebrow': 'Notificações',
   'notifications.welcome.title': 'Apenas o que realmente precisa de si',
   'notifications.welcome.body':
-    'Um resumo calmo e classificado do que os seus agentes fizeram e do que precisa de uma decisão: para que o importante venha à tona e o ruído fique fora do seu caminho.',
+    'Um resumo calmo e classificado do que os seus agentes fizeram e do que precisa de uma decisão, para que o importante venha à tona e o ruído fique fora do seu caminho.',
   'notifications.welcome.ctaView': 'Ver alertas',
   'notifications.welcome.featsLabel': 'O que vai ver',
   'notifications.welcome.feat1Title': 'O que precisa de si',
@@ -116,7 +116,7 @@ const messages: TranslationMap = {
   'rewards.welcome.eyebrow': 'Recompensas',
   'rewards.welcome.title': 'Seja recompensado por aparecer',
   'rewards.welcome.body':
-    'Ganhe pontos à medida que usa o OpenHuman e convida outros, mantenha a sua sequência viva e resgate o que ganhou: tudo registado num só lugar.',
+    'Ganhe pontos à medida que usa o OpenHuman e convida outros, mantenha a sua sequência viva e resgate o que ganhou, tudo registado num só lugar.',
   'rewards.welcome.ctaView': 'Ver recompensas',
   'rewards.welcome.featsLabel': 'Como funciona',
   'rewards.welcome.feat1Title': 'Ganhe pontos',
@@ -130,7 +130,7 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': 'Fluxos de trabalho',
   'flows.welcome.title': 'Coloque o trabalho repetitivo em piloto automático',
   'flows.welcome.body':
-    'Descreva algo que faz uma e outra vez: triagem, acompanhamentos, resumos: e o seu agente transforma-o num fluxo de trabalho que pode executar de ponta a ponta, num horário ou a pedido.',
+    'Descreva algo que faz uma e outra vez (triagem, acompanhamentos, resumos) e o seu agente transforma-o num fluxo de trabalho que pode executar de ponta a ponta, de acordo com um horário ou a pedido.',
   'flows.welcome.ctaNew': 'Novo fluxo de trabalho',
   'flows.welcome.ctaBrowse': 'Explorar fluxos de trabalho',
   'flows.welcome.featsLabel': 'O que pode automatizar',
@@ -335,7 +335,7 @@ const messages: TranslationMap = {
   'orchPage.medulla.title': 'Medulla',
   'orchPage.medulla.tagline': 'O modelo de orquestração da OpenHuman',
   'orchPage.medulla.body':
-    'O Medulla é o LLM próprio da OpenHuman, projetado para orquestrar milhares de agentes de uma só vez: com uma janela de contexto de 10 milhões de tokens e uma orquestração de custo radicalmente baixo.',
+    'O Medulla é o LLM próprio da OpenHuman, projetado para orquestrar milhares de agentes de uma só vez, com uma janela de contexto de 10 milhões de tokens e uma orquestração de custo radicalmente baixo.',
   'orchPage.medulla.featAgents': 'Milhares de agentes',
   'orchPage.medulla.featContext': 'Contexto de 10M de tokens',
   'orchPage.medulla.featCost': 'Orquestração de baixo custo',
@@ -962,6 +962,7 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'Como posso ajudá-lo hoje?',
   'chat.send': 'Enviar mensagem',
   'chat.stopGeneration': 'Parar geração',
+  'chat.stoppedByUser': 'Interrompido',
   'chat.parallelBranchHint': 'Digite uma ramificação paralela: ⌘/Ctrl+Enter para enviar',
   'chat.followupHint':
     'Enfileirar um acompanhamento: enviado após esta resposta · ⌘/Ctrl+Enter para uma ramificação paralela',
@@ -1112,7 +1113,7 @@ const messages: TranslationMap = {
   'namespaceOverview.truncated': 'Mostrando os {shown} principais de {total} namespaces.',
   'graphCentrality.title': 'Centralidade do Grafo de Conhecimento',
   'graphCentrality.intro':
-    'O PageRank sobre seu grafo de memória revela os hubs que suportam carga: e as entidades conectoras que ligam clusters que, de outra forma, seriam separados, algo que uma contagem de frequência bruta não consegue revelar.',
+    'O PageRank sobre seu grafo de memória revela os hubs que suportam carga e as entidades conectoras que ligam clusters que, de outra forma, seriam separados, algo que uma contagem de frequência bruta não consegue revelar.',
   'graphCentrality.loading': 'Calculando centralidade…',
   'graphCentrality.errorPrefix': 'Não foi possível carregar o gráfico:',
   'graphCentrality.retry': 'Tentar novamente',
@@ -1139,7 +1140,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': 'Associações de Entidades',
   'entityAssociations.intro':
-    'Entidades que compartilham muitas conexões estão associadas: mesmo quando nenhum fato as liga diretamente. A similaridade de Jaccard revela esses pares ocultos.',
+    'Entidades que compartilham muitas conexões estão associadas, mesmo quando nenhum fato as liga diretamente. A similaridade de Jaccard revela esses pares ocultos.',
   'entityAssociations.loading': 'Calculando associações…',
   'entityAssociations.errorPrefix': 'Não foi possível carregar o grafo:',
   'entityAssociations.retry': 'Retry',
@@ -1678,7 +1679,7 @@ const messages: TranslationMap = {
   'settings.search.placeholderQuerit': 'Chave Querit API',
   'settings.search.allowedSitesLabel': 'Sites permitidos',
   'settings.search.allowedSitesHint':
-    'Hosts que o assistente pode abrir e ler: via busca na web e ferramenta de navegador: um por linha, ex.: reuters.com. Um host também cobre seus subdomínios. A busca na web em si não é restringida por esta lista.',
+    'Liste, um por linha, os hosts que o assistente pode abrir e ler (via busca na web e ferramenta de navegador), ex.: reuters.com. Um host também cobre seus subdomínios. A busca na web em si não é restringida por esta lista.',
   'settings.search.allowedSitesAllOn':
     'O assistente pode abrir qualquer site público. Endereços locais e privados permanecem bloqueados.',
   'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
@@ -2891,7 +2892,7 @@ const messages: TranslationMap = {
   'workspace.vaultNotRegisteredHelp':
     'O Obsidian só abre pastas adicionadas como vault. No Obsidian, escolha "Abrir pasta como vault" e selecione a pasta abaixo: você só precisa fazer isso uma vez. Depois clique em Ver Vault novamente.',
   'workspace.obsidianNotFoundHelp':
-    'Não encontramos o Obsidian neste dispositivo. Instale-o, ou: se estiver instalado em um local não padrão: defina sua pasta de configuração em Avançado.',
+    'Não encontramos o Obsidian neste dispositivo. Instale-o, ou (se estiver instalado em um local não padrão) defina sua pasta de configuração em Avançado.',
   'workspace.openAnyway': 'Abrir no Obsidian mesmo assim',
   'workspace.installObsidian': 'Instalar Obsidian',
   'workspace.obsidianAdvanced': 'Obsidian instalado em outro local?',
@@ -3519,6 +3520,13 @@ const messages: TranslationMap = {
   'channels.telegram.remoteControlTitle': 'Controle remoto (Telegram)',
   'channels.telegram.remoteControlBody':
     'Em um bate-papo Telegram permitido, envie /status, /sessions, /new ou /help. O roteamento de modelo ainda usa /model e /models.',
+  'channels.connectHelp.title': 'Como conectar',
+  'channels.connectHelp.discord':
+    'Escolha um método abaixo: vincule sua conta pelo OpenHuman, instale o bot com OAuth ou cole seu próprio token de bot do portal de desenvolvedores do Discord.',
+  'channels.connectHelp.telegram':
+    'Escolha um método abaixo: envie uma mensagem ao bot gerenciado do OpenHuman para vincular sua conta, ou cole seu próprio token de bot do @BotFather.',
+  'channels.connectHelp.slackNote':
+    'Procurando o Slack? O Slack é conectado como um app em Conexões → OAuth, não como um canal de mensagens aqui.',
   'channels.web.displayName': 'Web',
   'channels.web.description': 'Bate-papo por meio da interface da web integrada.',
   'channels.web.authMode.managed_dm.description':
@@ -5527,7 +5535,7 @@ const messages: TranslationMap = {
   'settings.agentAccess.accessMode': 'Modo de acesso',
   'settings.agentAccess.tier.readonly.title': 'Somente leitura',
   'settings.agentAccess.tier.readonly.desc':
-    'Lê arquivos e executa comandos apenas de leitura para explorar: mas nunca escreve, edita ou executa nada que altere o estado.',
+    'Lê arquivos e executa comandos apenas de leitura para explorar, mas nunca escreve, edita ou executa nada que altere o estado.',
   'settings.agentAccess.tier.supervised.title': 'Pergunte antes de editar',
   'settings.agentAccess.tier.supervised.desc':
     'Cria novos arquivos livremente, mas pede sua aprovação antes de editar um arquivo existente, executar um comando, acessar a rede ou instalar qualquer coisa.',
@@ -5539,7 +5547,7 @@ const messages: TranslationMap = {
     '⚠ O acesso total executa comandos com acesso completo à sua conta e não é isolado. Só o habilite quando você confiar no agente com esta máquina. Diretórios de credenciais e do sistema continuam bloqueados, e ações destrutivas, de rede e de instalação ainda solicitam aprovação.',
   'settings.agentAccess.confine.label': 'Confinar ao espaço de trabalho',
   'settings.agentAccess.confine.desc':
-    'Restringir o agente ao diretório de trabalho (mais quaisquer pastas concedidas), qualquer que seja o modo de acesso selecionado. Quando desligado, ele pode acessar qualquer lugar que seu usuário possa: exceto os diretórios de credenciais e do sistema que sempre são bloqueados.',
+    'Restrinja o agente ao diretório de trabalho (mais quaisquer pastas concedidas), qualquer que seja o modo de acesso selecionado. Quando desligado, ele pode acessar qualquer lugar que seu usuário possa, exceto os diretórios de credenciais e do sistema que sempre são bloqueados.',
   'settings.agentAccess.requireTaskPlanApproval.label': 'Exigir aprovação do plano de tarefas',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Pausa antes que um agente designado execute um briefing de tarefa elaborado pelo agente.',
@@ -5611,7 +5619,7 @@ const messages: TranslationMap = {
     'Escolha quanta liberdade o assistente tem ao realizar ações no seu computador.',
   'settings.permissions.preset.readonly.title': 'Olhar, não tocar',
   'settings.permissions.preset.readonly.desc':
-    'O assistente pode ler ficheiros e explorar: mas nunca escrever, editar ou executar qualquer coisa que mude o estado.',
+    'O assistente pode ler ficheiros e explorar, mas nunca escrever, editar ou executar qualquer coisa que mude o estado.',
   'settings.permissions.preset.supervised.title': 'Perguntar primeiro',
   'settings.permissions.preset.supervised.desc':
     'Pode criar novos ficheiros livremente, mas pede sempre a sua aprovação antes de editar, executar comandos ou aceder à rede.',
@@ -5770,7 +5778,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'Extra grande',
   'settings.appearance.fontSizeXLargeDesc': 'O maior texto, para máxima legibilidade.',
   'settings.appearance.fontSizeHelperText':
-    'Dimensiona o texto em todo o app: chat, configurações e painéis: independentemente da configuração de fonte do seu sistema.',
+    'Dimensiona o texto em todo o app (chat, configurações e painéis) independentemente da configuração de fonte do seu sistema.',
   'settings.appearance.fontSizeCustomLabel': 'Tamanho personalizado',
   'settings.appearance.fontSizeCustomAria': 'Tamanho da fonte personalizado em pixels',
   'settings.appearance.fontSizeCustomSliderAria':
@@ -5911,7 +5919,7 @@ const messages: TranslationMap = {
     'Padrão sensato: boa continuidade sem queimar tokens extras em cada execução.',
   'settings.memoryWindow.balanced.label': 'Balanceado',
   'settings.memoryWindow.description':
-    'Quanto contexto lembrado o OpenHuman injeta em cada nova execução do agente. Janelas maiores parecem mais cientes de conversas passadas, mas usam mais tokens: e custam mais: a cada execução.',
+    'A quantidade de contexto que o OpenHuman injeta em cada nova execução do agente. Janelas maiores parecem mais cientes de conversas passadas, mas usam mais tokens e custam mais a cada execução.',
   'settings.memoryWindow.extended.badge': 'Mais contexto',
   'settings.memoryWindow.extended.hint':
     'Mais memória de longo prazo injetada em cada execução. Custo maior por turno.',
@@ -6936,7 +6944,7 @@ const messages: TranslationMap = {
     'À medida que o assistente registra fatos conectados sobre você, a estrutura de agrupamento aparecerá aqui.',
   'graphCohesion.errorPrefix': 'Não foi possível carregar o grafo:',
   'graphCohesion.intro':
-    'Quão fortemente entrelaçada é a vizinhança ao redor de cada entidade. Intermediadores: entidades cujos vizinhos não estão ligados entre si: são os pontos únicos que mantêm grupos separados unidos, algo que uma ordenação por frequência ou PageRank não pode revelar.',
+    'Esta métrica mede o grau de interligação da vizinhança em torno de cada entidade. Intermediadores (entidades cujos vizinhos não estão ligados entre si) são os pontos únicos que mantêm grupos separados unidos, algo que uma ordenação por frequência ou PageRank não pode revelar.',
   'graphCohesion.loading': 'Calculando coesão…',
   'graphCohesion.metricConnections': 'Conexões',
   'graphCohesion.metricEntities': 'Entidades',
@@ -7389,6 +7397,26 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Excluir',
   'flows.delete.deleting': 'Excluindo…',
   'flows.canvas.renameLabel': 'Renomear fluxo de trabalho',
+  'memorySources.codingSessions.title': 'Sessões de agentes de programação',
+  'memorySources.codingSessions.description':
+    'Transforme decisões e correções do Codex e Claude Code em memória privada de persona.',
+  'memorySources.codingSessions.ingest': 'Ingerir novas sessões',
+  'memorySources.codingSessions.ingesting': 'Ingerindo…',
+  'memorySources.codingSessions.claude': 'Histórico do Claude Code',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '{files} sessões · {evidence} mensagens humanas',
+  'memorySources.codingSessions.notFound': 'Nenhum histórico local encontrado',
+  'memorySources.codingSessions.scanning': 'Verificando o histórico local…',
+  'memorySources.codingSessions.truncated':
+    'A verificação foi limitada aos primeiros 1.000 arquivos de sessão.',
+  'memorySources.codingSessions.complete': 'Sessões de programação ingeridas',
+  'memorySources.codingSessions.completeMessage':
+    '{processed} sessões produziram {observations} observações de persona.',
+  'memorySources.codingSessions.partialFailure':
+    '{failed} sessões falharam enquanto {processed} foram processadas. Execute a ingestão novamente para tentar de novo.',
+  'memorySources.codingSessions.moreRemaining':
+    'O limite de sessões do lote foi atingido. Execute a ingestão novamente para continuar importando seu histórico.',
+  'memorySources.codingSessions.failed': 'Falha ao ingerir sessões de programação',
   'flows.canvas.sidePanelToggle': 'Painel lateral',
   'flows.canvas.legendTab': 'Manual',
 

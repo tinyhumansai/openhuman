@@ -34,7 +34,7 @@ struct Provider {
 
 /// Providers tracked in the webview-account snapshot. Keep this list aligned
 /// with the webview accounts system in `app/src-tauri/src/webview_accounts/`.
-pub(crate) const PROVIDERS: &[Provider] = &[
+const PROVIDERS: &[Provider] = &[
     Provider {
         key: "gmail",
         host_suffixes: &[".google.com"],

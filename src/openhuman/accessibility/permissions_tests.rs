@@ -158,8 +158,7 @@ fn permission_state_serde_round_trip() {
 mod automation_state_stale_cache {
     use crate::openhuman::accessibility::automation_state;
     use crate::openhuman::accessibility::{
-        automation_state_test_lock, clear_automation_denial, mark_system_events_denied,
-        system_events_denied,
+        clear_automation_denial, mark_system_events_denied, system_events_denied,
     };
 
     #[test]

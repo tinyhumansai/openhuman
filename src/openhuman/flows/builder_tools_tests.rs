@@ -182,6 +182,29 @@ async fn list_flow_connections_is_read_only() {
     assert!(parsed["connections"].is_array());
 }
 
+#[test]
+fn list_flow_connections_json_surfaces_platform_user_id() {
+    use crate::openhuman::flows::types::FlowConnection;
+
+    let with_identity = FlowConnection {
+        connection_ref: "composio:slack:ca_slack1".to_string(),
+        kind: "composio".to_string(),
+        display: "Slack".to_string(),
+        toolkit: Some("slack".to_string()),
+        scheme: None,
+        platform_user_id: Some("U123ABC".to_string()),
+    };
+    let json = flow_connection_to_json(&with_identity);
+    assert_eq!(json["platform_user_id"], "U123ABC");
+
+    let without_identity = FlowConnection {
+        platform_user_id: None,
+        ..with_identity
+    };
+    let json = flow_connection_to_json(&without_identity);
+    assert!(json["platform_user_id"].is_null());
+}
+
 // ── search_tool_catalog / get_tool_contract ─────────────────────────────────
 // The live-catalog cache is process-global (`LIVE_CATALOG_CACHE`) — every
 // test below seeds the exact toolkit(s)/contract(s) it needs via

@@ -1,3 +1,6 @@
+import createDebug from 'debug';
+import { useState } from 'react';
+
 import WorktreeActions from '../../../components/worktree/WorktreeActions';
 import { useT } from '../../../lib/i18n/I18nContext';
 import type {
@@ -422,6 +425,8 @@ function RepeatCount({ count }: { count: number }) {
   );
 }
 
+const log = createDebug('app:conversations:tool-timeline');
+
 /**
  * Neutral surface tones for an expanded row's body (worker-thread card,
  * detail bubble, code block). Per the Figma "Agentic task insights"
@@ -476,10 +481,38 @@ export function ToolTimelineBlock({
   liveResponse?: string;
 }) {
   const { t } = useT();
-  const latestRunningEntryId = [...entries].reverse().find(entry => entry.status === 'running')?.id;
+
+  // Sticky override for the outer "Agentic task insights" group: `null` means
+  // the user hasn't explicitly toggled it on THIS mount yet, so the group
+  // falls back to the auto rule below (open while running, collapsed once
+  // settled). Once the user clicks the summary, this pins their choice —
+  // including across later turns that stream onto the SAME mounted block
+  // (e.g. the workflow copilot's dedicated thread, whose `ToolTimelineBlock`
+  // stays mounted for the life of the conversation while `entries` keeps
+  // growing turn over turn) — so a new turn's activity landing no longer
+  // involuntarily re-collapses (or re-expands) a choice the user already
+  // made ("Agentic task insights keeps collapsing on every new feedback").
+  // Deliberately component-local state, not lifted to Redux:
+  // the block never remounts mid-conversation in the one place this bug was
+  // reported (`WorkflowCopilotPanel` renders it at a stable JSX position
+  // with entries accumulating in `toolTimelineByThread`, not reset per
+  // turn), so a plain `useState` already survives every turn it needs to.
+  const [userOverrideOpen, setUserOverrideOpen] = useState<boolean | null>(null);
 
   if (entries.length === 0) return null;
 
+  // The rows + the parent's streaming response — shared by both the collapsible
+  // (in-flight) and static (settled) header layouts below.
+  // Sort by issue order (`seq`), not arrival order: a `tool_args_delta` for a
+  // later parallel call can reach the store before an earlier call's own
+  // event, which would otherwise create rows in the wrong order.
+  // Sort a copy — `entries` may be a state slice other callers still rely on.
+  const ordered = [...entries].sort((a, b) => a.seq - b.seq);
+  // "Latest running" must be derived from the same seq-ordered list the rows
+  // render from — not raw arrival order — or a running row that arrived late
+  // but sorts earlier (e.g. seq [2, 0, 1]) gets treated as "latest" and the
+  // wrong step stays expanded/linked in compact chat mode.
+  const latestRunningEntryId = [...ordered].reverse().find(entry => entry.status === 'running')?.id;
   const isRunning = latestRunningEntryId != null;
 
   const titleLabel = (
@@ -505,11 +538,9 @@ export function ToolTimelineBlock({
     </button>
   ) : null;
 
-  // The rows + the parent's streaming response — shared by both the collapsible
-  // (in-flight) and static (settled) header layouts below.
   // Coalesce runs of identical, body-less rows (e.g. a retry loop that spawns
   // the same integrations step 25×) into single `×N` rows before rendering.
-  const rows = coalesceTimelineEntries(entries);
+  const rows = coalesceTimelineEntries(ordered);
 
   const body = (
     <>
@@ -629,20 +660,38 @@ export function ToolTimelineBlock({
 
   // The group header is a static section label — the live "working" state is
   // conveyed by the pulsing agent-name rows, so it never repeats a "Working…"
-  // string. The group is always collapsible: while the run is in flight it is
-  // open so the live activity is visible; once it settles it collapses to a
-  // single-line opener by default so a finished run (which can be dozens of
-  // steps) never dominates the conversation — the rows stay one click away, and
-  // the whole-run side panel is still reachable via the header link. The full
-  // "Agent Process Source" panel forces every row open via `expandAllRows`.
-  const open = isRunning || expandAllRows;
+  // string. Absent a user override, the group is auto-driven: open while the
+  // run is in flight so the live activity is visible; collapsed once it
+  // settles so a finished run (which can be dozens of steps) never dominates
+  // the conversation. The full "Agent Process Source" panel forces every row
+  // open via `expandAllRows`. Once the user has explicitly toggled the group
+  // (see `userOverrideOpen` above), THAT choice wins over the auto rule —
+  // otherwise a new turn streaming onto an already-mounted block (settling,
+  // or starting a fresh run) would silently flip `open` out from under the
+  // user's manual choice on every turn.
+  const autoOpen = isRunning || expandAllRows;
+  const open = userOverrideOpen ?? autoOpen;
+
+  // Fully own the disclosure via React state rather than letting the browser
+  // toggle the native `open` attribute itself — `preventDefault` stops the
+  // native toggle so there is exactly one source of truth (`open` above),
+  // never a race between the DOM's own uncontrolled state and the next
+  // render's `open` prop.
+  const handleSummaryClick = (event: React.MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    const next = !open;
+    log('agent-task-insights: user toggled open=%s (auto would be %s)', next, autoOpen);
+    setUserOverrideOpen(next);
+  };
 
   return (
     <details
       open={open}
       className="group/insights mb-2 px-1 py-0"
       data-testid="agent-task-insights">
-      <summary className="mb-1.5 flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
+      <summary
+        onClick={handleSummaryClick}
+        className="mb-1.5 flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
         {titleLabel}
         <span className="text-[11px] text-content-faint transition-transform group-open/insights:rotate-90">
           ▶

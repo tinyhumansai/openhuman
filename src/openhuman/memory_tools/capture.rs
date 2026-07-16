@@ -82,8 +82,10 @@ impl ToolMemoryCaptureHook {
         // phrases like "I want to stop working" don't trigger false captures.
         let stop_imperative =
             lower.starts_with("stop ") || lower.contains(". stop ") || lower.contains("\nstop ");
-        if !(lower.contains("never ") || lower.contains("don't ") || lower.contains("do not "))
-            && !stop_imperative
+        if !(lower.contains("never ")
+            || lower.contains("don't ")
+            || lower.contains("do not ")
+            || stop_imperative)
         {
             return Vec::new();
         }

@@ -1,7 +1,6 @@
 //! Tests for companion session lifecycle and state machine.
 
 use super::*;
-use crate::openhuman::desktop_companion::types::*;
 
 /// Serialize tests that mutate the process-global session state. Shared with
 /// `pipeline_tests` via `lock_test_state()` (defined in `session`) so a

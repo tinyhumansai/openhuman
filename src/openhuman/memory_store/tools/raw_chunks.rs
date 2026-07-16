@@ -101,6 +101,7 @@ impl Tool for MemoryStoreRawChunksTool {
             since_ms: parsed.since_ms,
             until_ms: parsed.until_ms,
             limit: parsed.limit,
+            offset: None,
             source_scope: crate::openhuman::memory::source_scope::current_source_scope(),
             exclude_dropped: false,
         };

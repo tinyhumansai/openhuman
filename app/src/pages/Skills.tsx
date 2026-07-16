@@ -1293,6 +1293,9 @@ export default function Skills() {
                         <p className="mt-0.5 text-[11px] leading-relaxed text-content-muted">
                           {t('channels.defaultMessaging')}
                         </p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-content-faint">
+                          {t('channels.connectHelp.slackNote')}
+                        </p>
                       </div>
                       {/* One unified surface: each tile shows connection status,
                           opens setup/configure on click, and owns the "default

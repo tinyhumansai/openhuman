@@ -16,6 +16,7 @@ fn sample_tree(id: &str, scope: &str) -> Tree {
         id: id.to_string(),
         kind: TreeKind::Source,
         scope: scope.to_string(),
+        ask: None,
         root_id: None,
         max_level: 0,
         status: TreeStatus::Active,

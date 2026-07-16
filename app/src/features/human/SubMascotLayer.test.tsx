@@ -17,6 +17,7 @@ function subagentEntry(overrides: Partial<ToolTimelineEntry> = {}): ToolTimeline
     id: 'thread-1:subagent:sub-1:researcher',
     name: 'subagent:researcher',
     round: 1,
+    seq: 0,
     status: 'running',
     detail: 'Research the relevant docs.',
     subagent: {
@@ -33,7 +34,7 @@ function subagentEntry(overrides: Partial<ToolTimelineEntry> = {}): ToolTimeline
 describe('subMascotModelsFromTimeline', () => {
   it('builds visible models only from subagent timeline rows', () => {
     const models = subMascotModelsFromTimeline([
-      { id: 'thread-1:tool:search', name: 'web_search', round: 1, status: 'running' },
+      { id: 'thread-1:tool:search', name: 'web_search', round: 1, seq: 0, status: 'running' },
       subagentEntry(),
     ]);
 
@@ -190,7 +191,7 @@ describe('<SubMascotLayer />', () => {
   it('renders nothing when no subagent rows are present', () => {
     const { container } = render(
       <SubMascotLayer
-        entries={[{ id: 'tool-1', name: 'web_search', round: 1, status: 'running' }]}
+        entries={[{ id: 'tool-1', name: 'web_search', round: 1, seq: 0, status: 'running' }]}
       />
     );
 

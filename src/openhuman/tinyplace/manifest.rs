@@ -2668,7 +2668,6 @@ use std::sync::Arc;
 
 use tinyplace::signal::session::SignalSession;
 use tinyplace::signal::store::SessionStore;
-use tinyplace::signal::store::SessionStore as _;
 
 /// Get the `Arc<dyn Signer>` from the client or fail with a clear message.
 ///
