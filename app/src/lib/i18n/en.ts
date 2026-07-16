@@ -7598,6 +7598,15 @@ const en: TranslationMap = {
     'Your AI provider has no API key set. Add one in provider settings to continue.',
   'userErrors.scope.chat': 'Chat',
   'userErrors.scope.cron': 'Scheduled job',
+
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'Emergency stop',
+  'safety.stopFailed': 'Could not stop automation. Try again.',
+  'safety.resume': 'Resume automation',
+  'safety.resumeFailed': 'Could not resume. Automation is still halted. Try again.',
+  'safety.haltedTitle': 'Automation halted',
+  'safety.haltedBody': 'All desktop automation is stopped. Resume when you are ready.',
+
   'memorySources.codingSessions.title': 'Coding-agent sessions',
   'memorySources.codingSessions.description':
     'Turn your Codex and Claude Code decisions and corrections into private persona memory.',

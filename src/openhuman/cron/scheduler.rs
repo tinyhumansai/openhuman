@@ -483,6 +483,27 @@ async fn execute_job_with_retry(
     security: &SecurityPolicy,
     job: &CronJob,
 ) -> (bool, String) {
+    // Emergency stop: refuse every scheduled job while the kill switch is
+    // engaged. The tinyagents middleware already fails-closed on external-effect
+    // tools inside `JobType::Agent`, but `JobType::Shell` spawns `sh -lc` and
+    // `JobType::Flow` publishes a flow-trigger event — neither goes through the
+    // middleware, so without this check a due or Run Now shell/flow job could
+    // still perform external actions while automation is halted. Fail-closed at
+    // the outermost dispatch is the safest place: it applies to every job type
+    // and to every retry attempt, and never spawns the underlying process. See
+    // #4255.
+    if crate::openhuman::emergency_stop::is_engaged_global() {
+        log::warn!(
+            "[cron] action=refused_while_halted job_id={} job_type={:?} — emergency stop engaged",
+            job.id.as_str(),
+            job.job_type
+        );
+        return (
+            false,
+            "blocked by emergency stop: automation is halted — resume to run this job".to_string(),
+        );
+    }
+
     let mut last_output = String::new();
     let mut last_agent_error: Option<String> = None;
     let retries = config.reliability.scheduler_retries;
@@ -494,6 +515,23 @@ async fn execute_job_with_retry(
     let mut local_unreachable = false;
 
     for attempt in 0..=retries {
+        // Re-check the kill switch before each RETRY (attempt 0 is already
+        // covered by the pre-loop guard above): a user who engages Emergency
+        // Stop during the backoff sleep must not have the next attempt execute.
+        // Same fail-closed denial as the pre-loop guard (#4255).
+        if attempt > 0 && crate::openhuman::emergency_stop::is_engaged_global() {
+            log::warn!(
+                "[cron] action=refused_retry_while_halted job_id={} job_type={:?} attempt={} — emergency stop engaged",
+                job.id.as_str(),
+                job.job_type,
+                attempt
+            );
+            return (
+                false,
+                "blocked by emergency stop: automation is halted — resume to run this job"
+                    .to_string(),
+            );
+        }
         let (success, output, agent_error) = match job.job_type {
             JobType::Shell => {
                 let (success, output) = run_job_command(config, security, job).await;
@@ -980,7 +1018,11 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
             // and provider URLs are appropriate; it must NOT reach the
             // user-visible notification body.
             let user_message = classify_agent_anyhow_for_user(&e);
-            (false, user_message.to_string(), Some(e.to_string()))
+            // Preserve the FULL anyhow chain (`{:#}`), not just the top-level
+            // message: the loopback-unreachable classifier and the observability
+            // pipeline key on the transport cause (`… tcp connect error: Connection
+            // refused (os error N)`), which a bare `to_string()` drops.
+            (false, user_message.to_string(), Some(format!("{e:#}")))
         }
     }
 }

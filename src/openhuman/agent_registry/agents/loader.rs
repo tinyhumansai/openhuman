@@ -263,12 +263,17 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::mcp_agent::prompt::build,
         graph_fn: None,
     },
+    // Skill agents — `#[cfg]` rather than stub: `include_str!` embeds the
+    // agent TOML from disk regardless of module gating, so the entry itself
+    // must disappear when the `skills` feature is off.
+    #[cfg(feature = "skills")]
     BuiltinAgent {
         id: "skill_setup",
         toml: include_str!("../../skill_registry/agent/skill_setup/agent.toml"),
         prompt_fn: crate::openhuman::skill_registry::agent::skill_setup::prompt::build,
         graph_fn: None,
     },
+    #[cfg(feature = "skills")]
     BuiltinAgent {
         id: "skill_executor",
         toml: include_str!("../../skill_runtime/agent/skill_executor/agent.toml"),

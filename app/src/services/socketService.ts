@@ -17,6 +17,7 @@ import {
 import { upsertChannelConnection } from '../store/channelConnectionsSlice';
 import { type CompanionStateChangedEvent, setCompanionState } from '../store/companionSlice';
 import { setBackend } from '../store/connectivitySlice';
+import { clearHalt, setHalt } from '../store/safetySlice';
 import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/socketSlice';
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
 import { IS_DEV } from '../utils/config';
@@ -461,6 +462,46 @@ class SocketService {
         sourceDomain,
         provider,
       });
+    });
+
+    // Automation halt/resume broadcasts — core publishes this when emergency_stop
+    // or emergency_resume is called from any client (UI, CLI, cron) so all
+    // connected surfaces reflect the halt state without polling.
+    this.socket.on('automation_halt', (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj || typeof obj !== 'object') {
+        socketWarn('automation_halt dropped — invalid payload shape');
+        return;
+      }
+      // Halt fields ride under `args` in the `WebChannelEvent` envelope
+      // (same contract as `approval_request`; see `event_bus.rs` builder and
+      // `emit_web_channel_event` in `src/core/socketio.rs`, which does
+      // `serde_json::to_value(event)` on the whole envelope). Fall back to
+      // the top level so a direct-emit test payload keeps working.
+      const payload =
+        obj.args && typeof obj.args === 'object' ? (obj.args as Record<string, unknown>) : obj;
+      // Fail closed: a kill-switch event must carry an explicit boolean
+      // `engaged`. An ambiguous payload (missing/non-boolean flag, e.g. `{}` or
+      // `{reason:'x'}`) is dropped rather than treated as `false`, so a
+      // malformed broadcast can never silently clear an active halt.
+      if (typeof payload.engaged !== 'boolean') {
+        socketWarn('automation_halt dropped — missing/invalid engaged flag');
+        return;
+      }
+      const engaged = payload.engaged;
+      const reason = typeof payload.reason === 'string' ? payload.reason : undefined;
+      const source = typeof payload.source === 'string' ? payload.source : undefined;
+      socketLog(
+        'automation_halt engaged=%s reason=%s source=%s',
+        engaged,
+        reason ?? 'none',
+        source ?? 'none'
+      );
+      if (engaged) {
+        store.dispatch(setHalt({ reason, source }));
+      } else {
+        store.dispatch(clearHalt());
+      }
     });
 
     // Backend Meet bot events — forwarded from core's DomainEvent bus

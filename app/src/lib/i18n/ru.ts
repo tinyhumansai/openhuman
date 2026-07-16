@@ -7380,6 +7380,15 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': 'Боковая панель',
   'flows.canvas.legendTab': 'Вручную',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'Аварийная остановка',
+  'safety.stopFailed': 'Не удалось остановить автоматизацию. Попробуйте ещё раз.',
+  'safety.resume': 'Возобновить автоматизацию',
+  'safety.resumeFailed':
+    'Не удалось возобновить. Автоматизация всё ещё приостановлена. Повторите попытку.',
+  'safety.haltedTitle': 'Автоматизация приостановлена',
+  'safety.haltedBody':
+    'Вся автоматизация рабочего стола остановлена. Возобновите, когда будете готовы.',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'Состояние конфиденциальности',
   'privacy.status.external': 'Вне устройства',

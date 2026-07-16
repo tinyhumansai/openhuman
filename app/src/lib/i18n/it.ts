@@ -7440,6 +7440,13 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': 'Pannello laterale',
   'flows.canvas.legendTab': 'Manuale',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'Arresto di emergenza',
+  'safety.stopFailed': "Impossibile fermare l'automazione. Riprova.",
+  'safety.resume': "Riprendi l'automazione",
+  'safety.resumeFailed': "Impossibile riprendere. L'automazione è ancora sospesa. Riprova.",
+  'safety.haltedTitle': 'Automazione sospesa',
+  'safety.haltedBody': "Tutta l'automazione del desktop è ferma. Riprendi quando sei pronto.",
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'Stato privacy',
   'privacy.status.external': 'Fuori dal dispositivo',

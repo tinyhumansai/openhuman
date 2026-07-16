@@ -152,16 +152,23 @@ cef = { version = "=146.4.1", default-features = false }
 #   the pre-gate desktop tool surface.
 # - `web3` — keeps the wallet/web3/x402 domains and their agent tools in the
 #   desktop build while allowing slim builds to omit the crypto-only deps.
+# - `tokenjuice-treesitter` — forwards `tinyjuice/tinyjuice-treesitter`, which
+#   pulls the tree-sitter Rust/TS/Python grammars. Without it TokenJuice falls
+#   back to the brace-depth heuristic, so the desktop app compresses code worse
+#   than intended. This failed *soft* (no error, no Sentry signal) and had never
+#   once been forwarded since the gate was added in #4123 (#4918).
 #
-# `tokenjuice-treesitter` is the remaining un-forwarded default — tracked in
-# #4918, deliberately not bundled here because dropping it may be intentional.
+# `scripts/ci/check-feature-forwarding.mjs` fails CI when this list drifts from
+# the core's `[features] default` (#4919) — do not hand-maintain it from memory.
 openhuman_core = { path = "../..", package = "openhuman", default-features = false, features = [
     "media",
+    "tokenjuice-treesitter",
     "voice",
     "tokenjuice-treesitter",
     "web3",
     "flows",
     "meet",
+    "skills",
 ] }
 tinyjuice = { version = "0.2.1", default-features = false }
 

@@ -234,6 +234,42 @@ fn voice_and_audio_controllers_absent_when_feature_off() {
     );
 }
 
+/// With the `skills` feature on (the default), all three skill domains are
+/// compiled in and registered — the desktop build is byte-identical.
+#[test]
+#[cfg(feature = "skills")]
+fn skill_controllers_registered_when_feature_on() {
+    let schemas = all_controller_schemas();
+    for ns in ["skills", "skill_runtime", "skill_registry"] {
+        assert!(
+            schemas.iter().any(|s| s.namespace == ns),
+            "`{ns}` controllers must be registered when the `skills` feature is on"
+        );
+    }
+}
+
+/// With the `skills` feature off, all three domains are compiled out: their
+/// controllers never enter the registry, so skills RPC methods are
+/// unknown-method and absent from `/schema`. This is the compile-time
+/// stub-facade correctness gate (see `openhuman::skills::stub`).
+///
+/// Note this does NOT cover `skills::types` / `skills::ops_types`: those stay
+/// compiled in both directions (the type carve-out — `tools::traits` re-exports
+/// `ToolResult`/`ToolContent` out of them), but they expose no controllers, so
+/// the namespaces are absent either way.
+#[test]
+#[cfg(not(feature = "skills"))]
+fn skill_controllers_absent_when_feature_off() {
+    let schemas = all_controller_schemas();
+    assert!(
+        !schemas.iter().any(|s| s.namespace == "skills"
+            || s.namespace == "skill_runtime"
+            || s.namespace == "skill_registry"),
+        "skills/skill_runtime/skill_registry controllers must be compiled out \
+         when the `skills` feature is off"
+    );
+}
+
 /// With the `web3` feature on (the default), the wallet + web3 + x402
 /// controllers are compiled in and registered, and the high-level web3 agent
 /// tools (swap/bridge/dapp) are present — the desktop build is byte-identical.
@@ -917,6 +953,9 @@ fn group_mapping_smoke() {
     // entry to map when its feature is off.
     #[cfg(feature = "flows")]
     assert_eq!(group_for_namespace("flows"), Some(DomainGroup::Flows));
+    // `group_for_namespace` is registry-derived, so a compile-time-gated domain
+    // has no controller to map. Skip when its Cargo feature is off.
+    #[cfg(feature = "skills")]
     assert_eq!(group_for_namespace("skills"), Some(DomainGroup::Skills));
     assert_eq!(group_for_namespace("voice"), Some(DomainGroup::Voice));
     #[cfg(feature = "web3")]

@@ -1127,6 +1127,22 @@ pub enum DomainEvent {
         overall: String,
         failed_required: bool,
     },
+    /// Emergency stop engaged — all desktop automation is halted and every
+    /// external-effect / accessibility action is refused until resumed.
+    /// Published by `emergency_stop::ops::emergency_stop`; bridged to the
+    /// `automation_halt` web-channel socket event.
+    AutomationHalted {
+        /// Optional human-readable reason (redacted of PII by the caller).
+        reason: Option<String>,
+        /// Who engaged it: `"user"`, `"hotkey"`, or `"system"`.
+        source: String,
+    },
+    /// Emergency stop cleared — automation may resume. Published by
+    /// `emergency_stop::ops::emergency_resume`.
+    AutomationResumed {
+        /// Who cleared it: `"user"`, `"hotkey"`, or `"system"`.
+        source: String,
+    },
 
     // ── Keyring ─────────────────────────────────────────────────────────
     /// The OS keyring is unavailable and no user consent for local fallback
@@ -1454,7 +1470,9 @@ impl DomainEvent {
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. }
             | Self::HarnessInitProgress { .. }
-            | Self::HarnessInitCompleted { .. } => "system",
+            | Self::HarnessInitCompleted { .. }
+            | Self::AutomationHalted { .. }
+            | Self::AutomationResumed { .. } => "system",
 
             Self::KeyringConsentRequired | Self::KeyringDecryptFailed { .. } => "keyring",
 
@@ -1610,6 +1628,8 @@ impl DomainEvent {
             Self::HealthRestarted { .. } => "HealthRestarted",
             Self::HarnessInitProgress { .. } => "HarnessInitProgress",
             Self::HarnessInitCompleted { .. } => "HarnessInitCompleted",
+            Self::AutomationHalted { .. } => "AutomationHalted",
+            Self::AutomationResumed { .. } => "AutomationResumed",
             Self::KeyringConsentRequired => "KeyringConsentRequired",
             Self::KeyringDecryptFailed { .. } => "KeyringDecryptFailed",
             Self::SessionExpired { .. } => "SessionExpired",
