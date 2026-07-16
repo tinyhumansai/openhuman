@@ -6,9 +6,10 @@
 //! submodules below are gated behind the default-ON `skills` Cargo feature;
 //! when it is off, [`stub`] takes their place and exposes the same public
 //! surface that always-on callers depend on (`load_workflow_metadata`,
-//! `init_workflows_dir`, `registry`, `bus`, `tools`, the controller
-//! aggregators) with no-op / empty bodies. Callers therefore do **not** need
-//! per-call `#[cfg]`.
+//! `init_workflows_dir`, `registry`, `bus`, the controller aggregators) with
+//! no-op / empty bodies. Callers therefore do **not** need per-call `#[cfg]`.
+//! (The `tools` glob is `#[cfg(feature = "skills")]` at its re-export site in
+//! `tools/mod.rs`, so the stub omits it — mirroring the `voice` gate.)
 //!
 //! ### Type carve-out (why `types` + `ops_types` are NOT gated)
 //!
