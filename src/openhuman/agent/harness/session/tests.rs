@@ -692,6 +692,84 @@ async fn turn_without_tools_returns_text() {
     assert_eq!(response, "hello");
 }
 
+/// The public [`Agent::last_turn_usage`] accessor peeks the per-turn
+/// token/cost totals **without draining** them, so a downstream crate
+/// embedding OpenHuman as a library (e.g. the OpenCompany hosting platform's
+/// cost-metering hook) can read usage after a turn while the existing
+/// web-channel `take_last_turn_usage_totals` drain path still works.
+#[tokio::test]
+async fn last_turn_usage_is_public_and_non_draining() {
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let workspace_path = workspace.path().to_path_buf();
+
+    let provider = Box::new(MockProvider {
+        responses: Mutex::new(vec![crate::openhuman::inference::provider::ChatResponse {
+            text: Some("hello".into()),
+            tool_calls: vec![],
+            usage: Some(crate::openhuman::inference::provider::UsageInfo {
+                input_tokens: 123,
+                output_tokens: 45,
+                context_window: 8000,
+                charged_amount_usd: 0.01,
+                ..Default::default()
+            }),
+            reasoning_content: None,
+        }]),
+    });
+
+    let memory_cfg = crate::openhuman::config::MemoryConfig {
+        backend: "none".into(),
+        ..crate::openhuman::config::MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
+
+    let mut agent = Agent::builder()
+        .provider(provider)
+        .tools(vec![Box::new(MockTool)])
+        .memory(mem)
+        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .workspace_dir(workspace_path)
+        .build()
+        .unwrap();
+
+    // No turn has run yet — nothing to report.
+    assert!(agent.last_turn_usage().is_none());
+
+    let response = agent.turn("hi").await.unwrap();
+    assert_eq!(response, "hello");
+
+    // The accessor now yields totals, and the return type's fields are all
+    // publicly readable (this closure would not compile if they were not).
+    let peeked: crate::openhuman::agent::harness::LastTurnUsage = {
+        let usage = agent
+            .last_turn_usage()
+            .expect("usage should be populated after a turn");
+        crate::openhuman::agent::harness::LastTurnUsage {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cached_input_tokens: usage.cached_input_tokens,
+            cost_usd: usage.cost_usd,
+            context_window: usage.context_window,
+            subagents: usage.subagents.clone(),
+        }
+    };
+
+    // Peeking must not consume: a second read returns the same snapshot.
+    assert_eq!(agent.last_turn_usage(), Some(&peeked));
+
+    // The internal web-channel drain still sees the very same value, proving
+    // the borrow accessor left it untouched.
+    let drained = agent
+        .take_last_turn_usage_totals()
+        .expect("drain should still yield the totals the borrow peeked");
+    assert_eq!(drained, peeked);
+
+    // After the drain the peek accessor reports nothing, as expected.
+    assert!(agent.last_turn_usage().is_none());
+}
+
 #[tokio::test]
 async fn turn_with_native_dispatcher_handles_tool_results_variant() {
     let workspace = tempfile::TempDir::new().expect("temp workspace");
