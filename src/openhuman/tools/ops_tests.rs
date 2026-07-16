@@ -2224,8 +2224,45 @@ fn tool_group_classifies_gate_and_harness_families() {
     assert_eq!(tool_group("run_workflow"), DomainGroup::Skills);
     assert_eq!(tool_group("skill_registry_browse"), DomainGroup::Skills);
     assert_eq!(tool_group("list_workflows"), DomainGroup::Skills);
-    assert_eq!(tool_group("propose_workflow"), DomainGroup::Flows);
-    assert_eq!(tool_group("list_flows"), DomainGroup::Flows);
+    // Flows has no name prefix, so EVERY flow-owned tool must be classified
+    // explicitly — a missing one falls through to Platform and stays callable
+    // when the Flows domain is runtime-gated off (#4797 maintainer review).
+    // This list mirrors the compile-time `#[cfg(feature = "flows")]`
+    // registrations and `default_tools_omits_flows_tools_when_feature_off`.
+    for flow_tool in [
+        "propose_workflow",
+        "revise_workflow",
+        "edit_workflow",
+        "validate_workflow",
+        "get_flow_history",
+        "dry_run_workflow",
+        "save_workflow",
+        "suggest_workflows",
+        "run_flow",
+        "list_flow_runs",
+        "resume_flow_run",
+        "cancel_flow_run",
+        "create_workflow",
+        "duplicate_flow",
+        "list_flows",
+        "get_flow",
+        "get_flow_run",
+        "list_flow_connections",
+        "search_tool_catalog",
+        "get_tool_contract",
+        "get_tool_output_sample",
+        "list_agent_profiles",
+        "list_connectable_toolkits",
+        "list_node_kinds",
+        "get_node_kind_contract",
+        "rhai_workflows",
+    ] {
+        assert_eq!(
+            tool_group(flow_tool),
+            DomainGroup::Flows,
+            "flow-owned tool `{flow_tool}` must classify as Flows, not fall through to Platform"
+        );
+    }
     assert_eq!(tool_group("media_generate_image"), DomainGroup::Media);
     // Voice audio_* tools have no voice_/tts_/stt_ prefix — must be classified
     // explicitly, not fall through to Platform (#4808 review).

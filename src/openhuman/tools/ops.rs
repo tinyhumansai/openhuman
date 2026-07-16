@@ -1207,13 +1207,28 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         "skill_registry_uninstall",
         "skill_runtime_resolve_runtimes",
     ];
+    // Flows has no clean tool-name prefix, so it MUST list every flow-owned
+    // tool explicitly — a missing name falls through to `Platform` below and
+    // stays callable under a custom `DomainSet { platform: true, flows: false }`,
+    // leaking the flows surface past the runtime gate (#4808 review; #4797
+    // maintainer review). Keep this in lockstep with the `#[cfg(feature =
+    // "flows")]` registrations in `all_tools_with_runtime` above — the same 26
+    // names asserted by `default_tools_omits_flows_tools_when_feature_off`.
     const FLOWS: &[&str] = &[
         "propose_workflow",
         "revise_workflow",
+        "edit_workflow",
+        "validate_workflow",
+        "get_flow_history",
         "dry_run_workflow",
         "save_workflow",
         "suggest_workflows",
         "run_flow",
+        "list_flow_runs",
+        "resume_flow_run",
+        "cancel_flow_run",
+        "create_workflow",
+        "duplicate_flow",
         "list_flows",
         "get_flow",
         "get_flow_run",
@@ -1222,6 +1237,12 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         "get_tool_contract",
         "get_tool_output_sample",
         "list_agent_profiles",
+        "list_connectable_toolkits",
+        "list_node_kinds",
+        "get_node_kind_contract",
+        // The `rhai_workflows` (.ragsh) tool is compile-gated with `flows` and
+        // belongs to the same runtime domain — drop it when Flows is off too.
+        "rhai_workflows",
     ];
     // Voice family agent tools (audio_toolkit) — no `voice_`/`tts_`/`stt_`
     // prefix, so they must be listed explicitly or they fall through to
