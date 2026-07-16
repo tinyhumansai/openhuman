@@ -1473,7 +1473,7 @@ async fn approval_gate_approve_flow_inner() {
     .await;
 
     // Wait for the approval_request SSE event.
-    // Actual shape (src/openhuman/channels/providers/web/event_bus.rs:195-224):
+    // Actual shape (src/openhuman/web_chat/event_bus.rs:195-224):
     //   { "event": "approval_request", "data": { "request_id": "...", "tool_name": "...",
     //     "action_summary": "...", "args_redacted": {...} }, ... }
     let approval = wait_for_event(&mut events, "approval_request", Duration::from_secs(60)).await;
