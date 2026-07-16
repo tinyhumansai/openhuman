@@ -195,13 +195,13 @@ pub(super) async fn run_autonomous(
     if let Some(thread_id) = session_thread_id.as_deref() {
         let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(64);
         agent.set_on_progress(Some(progress_tx));
-        crate::openhuman::channels::providers::web::spawn_progress_bridge(
+        crate::openhuman::web_chat::spawn_progress_bridge(
             progress_rx,
             "system".to_string(),
             thread_id.to_string(),
             run_id.to_string(),
             crate::openhuman::threads::turn_state::TurnStateStore::new(workspace_dir.clone()),
-            crate::openhuman::channels::providers::web::ChatRequestMetadata {
+            crate::openhuman::web_chat::ChatRequestMetadata {
                 // Trace attribution: mark the run autonomous and carry the
                 // resolved executor agent so Langfuse traces read
                 // `agent.turn:<agent_id>` with channel.source=autonomous.
@@ -251,7 +251,7 @@ pub(super) async fn run_autonomous(
     if let Some(thread_id) = session_thread_id.as_deref() {
         match &result {
             Ok(response) => {
-                crate::openhuman::channels::providers::web::presentation::deliver_response(
+                crate::openhuman::web_chat::presentation::deliver_response(
                     "system",
                     thread_id,
                     run_id,
@@ -265,7 +265,7 @@ pub(super) async fn run_autonomous(
                 .await;
             }
             Err(err) => {
-                crate::openhuman::channels::providers::web::publish_web_channel_event(
+                crate::openhuman::web_chat::publish_web_channel_event(
                     crate::core::socketio::WebChannelEvent {
                         event: "chat_error".to_string(),
                         client_id: "system".to_string(),

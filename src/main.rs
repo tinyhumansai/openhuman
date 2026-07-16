@@ -119,7 +119,7 @@ fn main() {
             // slipped past the call-site filters in
             // `agent::harness::session::runtime::run_single`,
             // `channels::runtime::dispatch`, and
-            // `channels::providers::web::run_chat_task`. The cap is a
+            // `web_chat::run_chat_task`. The cap is a
             // deterministic agent-state outcome surfaced to the user via
             // the chat-rendered "Error: …" message — Sentry is the wrong
             // surface for it (OPENHUMAN-TAURI-99 / -98).

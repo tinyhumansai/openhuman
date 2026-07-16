@@ -211,7 +211,7 @@ pub enum ExpectedErrorKind {
     /// `agent::run_single` already suppresses the **agent-layer** Sentry
     /// event for this condition via the typed
     /// `AgentError::EmptyProviderResponse` + `AgentError::skips_sentry()`
-    /// (PR #2790, TAURI-RUST-4JX). But `channels::providers::web::
+    /// (PR #2790, TAURI-RUST-4JX). But `web_chat::
     /// run_chat_task` **re-reports** the same failure under
     /// `domain=web_channel operation=run_chat_task` after the typed error
     /// has been flattened to a `String` at the native-bus boundary — so the
@@ -302,7 +302,7 @@ pub enum ExpectedErrorKind {
     /// (`api_error`) already demotes its own per-attempt event; this catches
     /// the **re-report** when the same flattened error is raised again under
     /// `domain=web_channel` / `agent` (the path
-    /// `channels::providers::web::run_chat_task` →
+    /// `web_chat::run_chat_task` →
     /// `report_error_or_expected`). The FE surfaces actionable copy via
     /// `classify_inference_error`; Sentry must not double-report (F2/F4).
     ///
@@ -975,7 +975,7 @@ fn is_memory_store_breaker_open(lower: &str) -> bool {
 /// - `"OpenHuman API error (401 Unauthorized): {…\"Session expired. Please
 ///   log in again.\"…}"` — emitted by `providers::ops::api_error` from the
 ///   OpenHuman backend and re-raised through `agent::run_single` /
-///   `channels::providers::web::run_chat_task` (OPENHUMAN-TAURI-26). The
+///   `web_chat::run_chat_task` (OPENHUMAN-TAURI-26). The
 ///   `"session expired"` substring anchors the match to the OpenHuman
 ///   backend's session-renewal body, not the bare numeric status.
 /// - `"OpenHuman API error (401 Unauthorized): {…\"error\":\"Invalid token\"…}"`
@@ -1870,7 +1870,7 @@ fn is_filesystem_user_path_invalid_message(lower: &str) -> bool {
 /// `text_chars=0 thinking_chars=0 tool_calls=0`.
 ///
 /// This catches the **web-channel re-report** (Sentry TAURI-RUST-4Z1):
-/// `channels::providers::web::run_chat_task` wraps the failure as
+/// `web_chat::run_chat_task` wraps the failure as
 /// `"run_chat_task failed client_id=… error=The model returned an empty
 /// response. Please try again."` and routes it through
 /// `report_error_or_expected` after the typed
@@ -2598,7 +2598,7 @@ fn all_provider_attempts_are_transient(message: &str) -> bool {
 /// Defense-in-depth filter for the Sentry `before_send` hook: the primary
 /// suppression lives at the call sites in `agent::harness::session::
 /// runtime::run_single`, `channels::runtime::dispatch`, and
-/// `channels::providers::web::run_chat_task`, all of which now skip
+/// `web_chat::run_chat_task`, all of which now skip
 /// `report_error` when this variant is detected. This filter catches any
 /// future call site that re-emits the message without going through those
 /// funnels — e.g. a new wrapper that calls `tracing::error!` directly with

@@ -388,7 +388,7 @@ fn build_registered_controllers() -> Vec<GroupedController> {
     push(
         &mut controllers,
         DomainGroup::Channels,
-        crate::openhuman::channels::providers::web::all_web_channel_registered_controllers(),
+        crate::openhuman::web_chat::all_web_channel_registered_controllers(),
     );
     push(
         &mut controllers,

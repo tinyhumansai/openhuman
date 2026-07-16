@@ -3,7 +3,7 @@
 //! Centralizes "what leaves, to where, why" for every external data transfer.
 //! See [`types`] for the [`EgressDescriptor`] contract and [`emit`] for the
 //! single publish chokepoint. Consumed by the web bridge
-//! ([`crate::openhuman::channels::providers::web`]) which surfaces the
+//! ([`crate::openhuman::web_chat`]) which surfaces the
 //! descriptor to the frontend, and by later privacy slices (disclosure S3,
 //! approval S4, identification-risk detector S5, enforcement S7).
 

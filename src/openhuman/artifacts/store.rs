@@ -616,7 +616,7 @@ pub async fn fail_artifact(
 }
 
 /// Read the active [`ApprovalChatContext`] task-local (set by
-/// `channels::providers::web` around each chat turn) and return its
+/// `web_chat` around each chat turn) and return its
 /// thread + client ids. Returns `(None, None)` for non-chat callers
 /// (CLI, cron, sub-agent runners) so artifact emit hooks degrade
 /// gracefully — the event is still published but the web subscriber

@@ -505,7 +505,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                 );
 
                     // Trigger the web channel's chat logic.
-                    match crate::openhuman::channels::providers::web::start_chat(
+                    match crate::openhuman::web_chat::start_chat(
                         &client_id,
                         &payload.thread_id,
                         &payload.message,
@@ -514,7 +514,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                         payload.profile_id,
                         payload.locale,
                         payload.queue_mode,
-                        crate::openhuman::channels::providers::web::ChatRequestMetadata::default(),
+                        crate::openhuman::web_chat::ChatRequestMetadata::default(),
                     )
                     .await
                     {
@@ -556,7 +556,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                         client_id,
                         payload.thread_id
                     );
-                    let _ = crate::openhuman::channels::providers::web::cancel_chat_scoped(
+                    let _ = crate::openhuman::web_chat::cancel_chat_scoped(
                         &client_id,
                         &payload.thread_id,
                         payload.request_id.as_deref(),
@@ -607,7 +607,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     // 1. Web channel events → per-client rooms.
     let io_web = io.clone();
     tokio::spawn(async move {
-        let mut rx = crate::openhuman::channels::providers::web::subscribe_web_channel_events();
+        let mut rx = crate::openhuman::web_chat::subscribe_web_channel_events();
         loop {
             let event = match rx.recv().await {
                 Ok(event) => event,

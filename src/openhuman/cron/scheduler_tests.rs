@@ -1866,7 +1866,7 @@ fn next_user_error(
 
 #[test]
 fn publish_cron_user_error_broadcasts_metadata_only_for_each_kind() {
-    use crate::openhuman::channels::providers::web::subscribe_web_channel_events;
+    use crate::openhuman::web_chat::subscribe_web_channel_events;
 
     // Folded from two tests that both published `api_key_missing` to the
     // process-global bus and could false-pass off each other's broadcast under

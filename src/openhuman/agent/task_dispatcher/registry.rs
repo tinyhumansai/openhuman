@@ -106,17 +106,15 @@ fn cancel_taken_run(thread_id: &str, run: ActiveRun) {
         &run.run_id,
         Err("Cancelled by user".to_string()),
     );
-    crate::openhuman::channels::providers::web::publish_web_channel_event(
-        crate::core::socketio::WebChannelEvent {
-            event: "chat_error".to_string(),
-            client_id: "system".to_string(),
-            thread_id: thread_id.to_string(),
-            request_id: run.run_id.clone(),
-            message: Some("Cancelled".to_string()),
-            error_type: Some("cancelled".to_string()),
-            ..Default::default()
-        },
-    );
+    crate::openhuman::web_chat::publish_web_channel_event(crate::core::socketio::WebChannelEvent {
+        event: "chat_error".to_string(),
+        client_id: "system".to_string(),
+        thread_id: thread_id.to_string(),
+        request_id: run.run_id.clone(),
+        message: Some("Cancelled".to_string()),
+        error_type: Some("cancelled".to_string()),
+        ..Default::default()
+    });
     tracing::info!(
         thread_id = %thread_id,
         card_id = %run.card_id,

@@ -4018,13 +4018,13 @@ fn attach_flow_progress_bridge(
         source = %source,
         "[flows] progress bridge: attaching (streaming copilot/scout turn)"
     );
-    crate::openhuman::channels::providers::web::spawn_progress_bridge(
+    crate::openhuman::web_chat::spawn_progress_bridge(
         progress_rx,
         "system".to_string(),
         target.thread_id.clone(),
         target.request_id.clone(),
         crate::openhuman::threads::turn_state::TurnStateStore::new(config.workspace_dir.clone()),
-        crate::openhuman::channels::providers::web::ChatRequestMetadata {
+        crate::openhuman::web_chat::ChatRequestMetadata {
             source: Some(source.to_string()),
             ..Default::default()
         },
@@ -4046,7 +4046,7 @@ async fn finalize_flow_stream(
 ) {
     match result {
         Ok(text) => {
-            crate::openhuman::channels::providers::web::presentation::deliver_response(
+            crate::openhuman::web_chat::presentation::deliver_response(
                 "system",
                 &target.thread_id,
                 &target.request_id,
@@ -4060,7 +4060,7 @@ async fn finalize_flow_stream(
             .await;
         }
         Err(err) => {
-            crate::openhuman::channels::providers::web::publish_web_channel_event(
+            crate::openhuman::web_chat::publish_web_channel_event(
                 crate::core::socketio::WebChannelEvent {
                     event: "chat_error".to_string(),
                     client_id: "system".to_string(),
