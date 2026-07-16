@@ -50,7 +50,7 @@ mod update;
 pub use accessibility::ScreenIntelligenceConfig;
 pub use agent::{
     AgentConfig, DelegateAgentConfig, MemoryContextWindow, MemoryWindowLimits,
-    OrchestratorModelConfig, TeamModelConfig,
+    OrchestratorModelConfig, RequiredOutputContract, TeamModelConfig,
 };
 pub use autocomplete::AutocompleteConfig;
 pub use autonomy::AutonomyConfig;

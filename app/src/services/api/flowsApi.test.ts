@@ -6,6 +6,7 @@ import {
   dismissSuggestion,
   type FlowSuggestion,
   getFlowRun,
+  listAllFlowRuns,
   listFlowRuns,
   listFlows,
   listSuggestions,
@@ -123,6 +124,50 @@ describe('flowsApi', () => {
       mockCallCoreRpc.mockRejectedValue(new Error('boom'));
 
       await expect(listFlowRuns('flow-1')).rejects.toThrow('boom');
+    });
+  });
+
+  describe('listAllFlowRuns', () => {
+    it('calls openhuman.flows_list_all_runs with no params by default', async () => {
+      mockCallCoreRpc.mockResolvedValue(cliEnvelope([]));
+
+      await listAllFlowRuns();
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.flows_list_all_runs',
+        params: {},
+      });
+    });
+
+    it('passes limit when provided and unwraps the envelope', async () => {
+      const runs = [
+        {
+          id: 't1',
+          flow_id: 'flow-1',
+          thread_id: 't1',
+          status: 'failed' as const,
+          started_at: '2026-01-01T00:00:00Z',
+          finished_at: null,
+          steps: [],
+          pending_approvals: [],
+          error: 'boom',
+        },
+      ];
+      mockCallCoreRpc.mockResolvedValue(cliEnvelope(runs));
+
+      const result = await listAllFlowRuns(50);
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.flows_list_all_runs',
+        params: { limit: 50 },
+      });
+      expect(result).toEqual(runs);
+    });
+
+    it('propagates rejection from callCoreRpc', async () => {
+      mockCallCoreRpc.mockRejectedValue(new Error('rpc down'));
+
+      await expect(listAllFlowRuns()).rejects.toThrow('rpc down');
     });
   });
 
@@ -295,7 +340,7 @@ describe('flowsApi', () => {
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
         method: 'openhuman.flows_discover',
         params: {},
-        timeoutMs: 310_000,
+        timeoutMs: 610_000,
       });
       expect(result).toEqual([suggestion]);
     });
@@ -308,7 +353,7 @@ describe('flowsApi', () => {
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
         method: 'openhuman.flows_discover',
         params: { thread_id: 'scout-thread-1' },
-        timeoutMs: 310_000,
+        timeoutMs: 610_000,
       });
     });
 

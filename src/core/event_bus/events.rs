@@ -463,6 +463,23 @@ pub enum DomainEvent {
         status: String,
     },
 
+    /// A saved flow's definition changed (created / updated / deleted /
+    /// enable-toggled). Bridged to a `flow:changed` socket event so an open
+    /// Workflows list or canvas refetches instead of silently showing stale
+    /// state — most importantly, so an agent `save_workflow` becomes visible in
+    /// a canvas the user has open (audit F6). Best-effort (broadcast bridges
+    /// drop on lag); the UI's own refetch-on-focus remains the backstop.
+    FlowChanged {
+        /// The affected flow's id.
+        flow_id: String,
+        /// What happened: `"created"` | `"updated"` | `"deleted"` |
+        /// `"enabled_changed"`.
+        kind: String,
+        /// Who made the change: `"agent"` | `"user"` | `"system"` — a coarse
+        /// hint for the UI banner ("an assistant edited this flow").
+        actor: String,
+    },
+
     // ── Skills ──────────────────────────────────────────────────────────
     /// A skill was loaded into the runtime.
     WorkflowLoaded { skill_id: String, runtime: String },
@@ -1379,7 +1396,8 @@ impl DomainEvent {
             | Self::CronDeliveryRequested { .. }
             | Self::ProactiveMessageRequested { .. }
             | Self::FlowScheduleTick { .. }
-            | Self::FlowRunProgress { .. } => "cron",
+            | Self::FlowRunProgress { .. }
+            | Self::FlowChanged { .. } => "cron",
 
             Self::WorkflowLoaded { .. }
             | Self::WorkflowStopped { .. }
@@ -1543,6 +1561,7 @@ impl DomainEvent {
             Self::ProactiveMessageRequested { .. } => "ProactiveMessageRequested",
             Self::FlowScheduleTick { .. } => "FlowScheduleTick",
             Self::FlowRunProgress { .. } => "FlowRunProgress",
+            Self::FlowChanged { .. } => "FlowChanged",
             Self::WorkflowLoaded { .. } => "WorkflowLoaded",
             Self::WorkflowStopped { .. } => "WorkflowStopped",
             Self::WorkflowStartFailed { .. } => "WorkflowStartFailed",

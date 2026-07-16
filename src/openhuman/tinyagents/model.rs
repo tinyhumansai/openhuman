@@ -26,6 +26,10 @@ use crate::openhuman::inference::provider::{
 };
 use crate::openhuman::tools::ToolSpec;
 
+pub(super) type TurnChatModel = Arc<dyn ChatModel<()>>;
+pub(super) type TierRoutes = Vec<(String, TurnChatModel)>;
+pub(super) type BuiltTurnModels = (TurnChatModel, TierRoutes, TurnChatModel);
+
 /// Translate a harness [`ModelRequest`] into openhuman's message list + tool
 /// specs (shared by the buffered and streaming paths).
 fn build_chat_inputs(

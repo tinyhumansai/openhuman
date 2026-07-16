@@ -179,6 +179,25 @@ impl Tool for CurlTool {
             return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
         }
 
+        // Local-only enforcement (privacy epic S7, #4441): mirror the read-only
+        // `can_act()` deny above — under LocalOnly, refuse the download before
+        // URL validation / DNS so nothing leaves the device.
+        {
+            let host = reqwest::Url::parse(url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "unknown".to_string());
+            if let Some(msg) = crate::openhuman::security::egress::local_only_tool_block(
+                &crate::openhuman::security::egress::EgressDescriptor::network_fetch(host.clone()),
+            ) {
+                // Log only the host, never the full URL: a raw URL can carry
+                // secrets in its query string (pre-signed links, tokens). The
+                // gate helper already logs `desc.service` (host only) too.
+                tracing::debug!(target: "[curl]", host = %host, "blocked: local-only privacy mode");
+                return Ok(ToolResult::error(msg));
+            }
+        }
+
         let url = match self.validate_url(url).await {
             Ok(v) => v,
             Err(e) => {
@@ -186,6 +205,28 @@ impl Tool for CurlTool {
                 return Ok(ToolResult::error(e.to_string()));
             }
         };
+
+        // Egress spine (privacy epic S2/S7, #4436/#4441): a curl download
+        // contacts an external host — disclose the destination (and that custom
+        // headers ride along) before the request. Enforcement already ran at the
+        // top of `execute`; this is the observe-only disclosure for permitted
+        // downloads.
+        {
+            use crate::openhuman::security::egress::{DataKind, EgressDescriptor};
+            let host = reqwest::Url::parse(&url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "unknown".to_string());
+            let has_headers = headers_val
+                .as_object()
+                .map(|h| !h.is_empty())
+                .unwrap_or(false);
+            let mut desc = EgressDescriptor::network_fetch(host);
+            if has_headers {
+                desc = desc.with_data_kind(DataKind::Metadata);
+            }
+            crate::openhuman::security::egress::emit_external_transfer(desc);
+        }
 
         let dest = match dest_arg {
             Some(d) => d.to_string(),
@@ -532,6 +573,30 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("rate limit"));
+    }
+
+    #[tokio::test]
+    async fn execute_blocked_under_local_only_privacy_mode() {
+        // Privacy epic S7 (#4441): under LocalOnly the download is refused with a
+        // `[policy-blocked]` result before URL validation / network.
+        let _mode = super::super::local_only_scope();
+        let tmp = TempDir::new().unwrap();
+        let t = tool(&tmp, vec!["example.com"]);
+        let result = t
+            .execute(serde_json::json!({"url": "https://example.com/x"}))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(
+            result.output().contains("[policy-blocked]"),
+            "got: {}",
+            result.output()
+        );
+        assert!(
+            result.output().contains("Local-only"),
+            "got: {}",
+            result.output()
+        );
     }
 
     /// Live integration smoke: downloads example.com (a tiny, stable

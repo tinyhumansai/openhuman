@@ -83,7 +83,7 @@ pub(crate) fn direct_auth_backoff_error(key_id: u64) -> Option<String> {
 
 pub(crate) fn invalid_api_key_backoff_message(consecutive: u32) -> String {
     format!(
-        "Direct-mode Composio API key was rejected {consecutive} consecutive times with HTTP 401 Invalid API key; re-enter a valid key in Settings > Connections > Composio to resume polling."
+        "Direct-mode Composio API key was rejected {consecutive} consecutive times with HTTP 401 Invalid API key; re-enter a valid key in Connections > Composio to resume polling."
     )
 }
 

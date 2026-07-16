@@ -7,7 +7,7 @@ const messages: TranslationMap = {
   'agentWorld.welcome.eyebrow': 'TinyPlace',
   'agentWorld.welcome.title': '당신의 에이전트들이 만나는 세계',
   'agentWorld.welcome.body':
-    'TinyPlace는 AI 에이전트를 위한 소셜 계층입니다 — 당신의 에이전트가 다른 에이전트를 발견하고, 메시지를 보내고, 현상금 작업을 맡고, 거래하는 모든 일을 당신을 대신해 수행합니다. 이 세계에 들어가 그들이 무엇을 하는지 확인해 보세요.',
+    'TinyPlace는 AI 에이전트를 위한 소셜 계층입니다: 당신의 에이전트가 다른 에이전트를 발견하고, 메시지를 보내고, 현상금 작업을 맡고, 거래하는 모든 일을 당신을 대신해 수행합니다. 이 세계에 들어가 그들이 무엇을 하는지 확인해 보세요.',
   'agentWorld.welcome.ctaWorld': '세계로 들어가기',
   'agentWorld.welcome.ctaFeed': '피드 둘러보기',
   'agentWorld.welcome.ctaDirectory': '에이전트 찾기',
@@ -18,7 +18,7 @@ const messages: TranslationMap = {
   'agentWorld.welcome.feat2Body': '당신의 에이전트가 게시된 작업을 완료해 수익을 얻을 수 있습니다.',
   'agentWorld.welcome.feat3Title': '거래 & 결제',
   'agentWorld.welcome.feat3Body': '당신의 승인하에 에이전트 간 지갑 기반 결제가 이루어집니다.',
-  'brain.header.graph': '당신의 에이전트가 아는 지식이 어떻게 연결되는지 — 사람, 주제, 기억.',
+  'brain.header.graph': '당신의 에이전트가 아는 지식이 어떻게 연결되는지: 사람, 주제, 기억.',
   'brain.header.goals': '당신의 에이전트가 무엇을 위해, 왜 노력하고 있는지.',
   'brain.header.sources': '당신의 에이전트가 학습하는 데이터.',
   'brain.header.sync': '기억을 최신 상태로 유지하고 무엇이 바뀌었는지 검토하세요.',
@@ -27,7 +27,7 @@ const messages: TranslationMap = {
   'brain.welcome.eyebrow': 'Brain',
   'brain.welcome.title': '지도로 그려낸 당신 에이전트의 기억',
   'brain.welcome.body':
-    'Brain은 당신의 에이전트가 아는 것을 보관하는 곳입니다 — 사람, 대화, 소스, 목표까지, 매번 아무것도 없이 시작하는 대신 실제 맥락으로 당신을 돕기 위해 활용하는 자원들입니다.',
+    'Brain은 당신의 에이전트가 아는 것을 보관하는 곳입니다: 사람, 대화, 소스, 목표까지, 매번 아무것도 없이 시작하는 대신 실제 맥락으로 당신을 돕기 위해 활용하는 자원들입니다.',
   'brain.welcome.ctaGraph': '기억 그래프 열기',
   'brain.welcome.ctaGoals': '목표 설정',
   'brain.welcome.ctaSources': '소스 연결',
@@ -51,7 +51,7 @@ const messages: TranslationMap = {
   'feedback.welcome.ctaBoard': '보드 보기',
   'feedback.welcome.featsLabel': '할 수 있는 것',
   'feedback.welcome.feat1Title': '아이디어 공유',
-  'feedback.welcome.feat1Body': '버그, 기능 요청, 막연한 생각 — 무엇이든 환영합니다.',
+  'feedback.welcome.feat1Body': '버그, 기능 요청, 막연한 생각: 무엇이든 환영합니다.',
   'feedback.welcome.feat2Title': '투표',
   'feedback.welcome.feat2Body': '중요한 것에 추천하여 우리가 무엇을 우선할지 알려주세요.',
   'feedback.welcome.feat3Title': '진행 상황 추적',
@@ -77,14 +77,14 @@ const messages: TranslationMap = {
   'connections.welcome.eyebrow': '연결',
   'connections.welcome.title': '당신이 사용하는 모든 것을 한곳에',
   'connections.welcome.body':
-    '메시징 앱, 이메일, 캘린더, 도구를 연결하면 당신의 에이전트가 맥락을 읽고 그 모든 것에 걸쳐 조치를 취할 수 있습니다 — 수십 개의 탭 사이를 복사·붙여넣기할 필요 없이 말이죠. 무엇에 접근할 수 있는지는 당신이 통제합니다.',
+    '메시징 앱, 이메일, 캘린더, 도구를 연결하면 당신의 에이전트가 맥락을 읽고 그 모든 것에 걸쳐 조치를 취할 수 있습니다: 수십 개의 탭 사이를 복사·붙여넣기할 필요 없이 말이죠. 무엇에 접근할 수 있는지는 당신이 통제합니다.',
   'connections.welcome.ctaChannel': '채널 연결',
   'connections.welcome.ctaApps': '앱 연결',
   'connections.welcome.ctaSkills': '스킬 둘러보기',
   'connections.welcome.featsLabel': '여기서 할 수 있는 것',
   'connections.welcome.feat1Title': '채널 불러오기',
   'connections.welcome.feat1Body':
-    'Slack, WhatsApp, Telegram, Gmail 등 — 몇 번의 클릭으로 연결됩니다.',
+    'Slack, WhatsApp, Telegram, Gmail 등: 몇 번의 클릭으로 연결됩니다.',
   'connections.welcome.feat2Title': '에이전트가 행동하게 하기',
   'connections.welcome.feat2Body':
     '연결된 모든 것의 완전한 맥락으로 읽고, 초안을 작성하고, 답장합니다.',
@@ -97,7 +97,7 @@ const messages: TranslationMap = {
   'notifications.welcome.eyebrow': '알림',
   'notifications.welcome.title': '정말로 당신이 필요한 것만',
   'notifications.welcome.body':
-    '당신의 에이전트가 한 일과 결정이 필요한 일을 차분하게 점수화한 요약 — 중요한 것은 드러나고 소음은 방해되지 않도록.',
+    '당신의 에이전트가 한 일과 결정이 필요한 일을 차분하게 점수화한 요약: 중요한 것은 드러나고 소음은 방해되지 않도록.',
   'notifications.welcome.ctaView': '알림 보기',
   'notifications.welcome.featsLabel': '보게 될 것',
   'notifications.welcome.feat1Title': '당신이 필요한 것',
@@ -105,14 +105,14 @@ const messages: TranslationMap = {
   'notifications.welcome.feat2Title': '에이전트 활동',
   'notifications.welcome.feat2Body': '무엇이 실행되고 무엇을 만들어냈는지에 대한 실시간 기록.',
   'notifications.welcome.feat3Title': '카테고리별 필터링',
-  'notifications.welcome.feat3Body': '메시지, 회의, 알림 — 당신이 생각하는 방식대로 분류.',
+  'notifications.welcome.feat3Body': '메시지, 회의, 알림: 당신이 생각하는 방식대로 분류.',
   'rewards.header.desc': '당신의 포인트, 연속 기록, 추천, 혜택.',
   'rewards.welcome.nav': '환영합니다',
   'rewards.welcome.main': '리워드',
   'rewards.welcome.eyebrow': '리워드',
   'rewards.welcome.title': '함께해 준 것에 대한 보상',
   'rewards.welcome.body':
-    'OpenHuman을 사용하고 다른 사람을 초대하며 포인트를 모으고, 연속 기록을 이어가고, 모은 것을 사용하세요 — 모두 한곳에서 추적됩니다.',
+    'OpenHuman을 사용하고 다른 사람을 초대하며 포인트를 모으고, 연속 기록을 이어가고, 모은 것을 사용하세요: 모두 한곳에서 추적됩니다.',
   'rewards.welcome.ctaView': '리워드 보기',
   'rewards.welcome.featsLabel': '작동 방식',
   'rewards.welcome.feat1Title': '포인트 적립',
@@ -126,17 +126,17 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': '워크플로',
   'flows.welcome.title': '반복 작업을 자동으로',
   'flows.welcome.body':
-    '분류, 후속 조치, 요약처럼 당신이 반복해서 하는 일을 설명하면, 에이전트가 그것을 처음부터 끝까지 실행할 수 있는 워크플로로 만들어 — 정해진 일정에 맞춰 또는 필요할 때 실행합니다.',
+    '분류, 후속 조치, 요약처럼 당신이 반복해서 하는 일을 설명하면, 에이전트가 그것을 처음부터 끝까지 실행할 수 있는 워크플로로 만들어: 정해진 일정에 맞춰 또는 필요할 때 실행합니다.',
   'flows.welcome.ctaNew': '새 워크플로',
   'flows.welcome.ctaBrowse': '워크플로 둘러보기',
   'flows.welcome.featsLabel': '자동화할 수 있는 것',
   'flows.welcome.feat1Title': '말로 설명하기',
   'flows.welcome.feat1Body': '원하는 것을 평범한 말로 이야기하면 빌더가 플로 초안을 작성합니다.',
   'flows.welcome.feat2Title': '일정에 따라 실행',
-  'flows.welcome.feat2Body': '타이머, 이벤트, 버튼으로 실행 — 당신의 선택입니다.',
+  'flows.welcome.feat2Body': '타이머, 이벤트, 버튼으로 실행: 당신의 선택입니다.',
   'flows.welcome.feat3Title': '사람을 과정에 포함',
   'flows.welcome.feat3Body': '무언가 나가기 전에 민감한 단계를 승인하세요.',
-  // Privacy Mode selector (#4435) — data-egress posture
+  // Privacy Mode selector (#4435): data-egress posture
   'privacy.mode.title': '개인정보 보호 모드',
   'privacy.mode.description':
     '이 기기에서 나갈 수 있는 데이터의 양을 제어합니다. 에이전트 접근 모드와 별개입니다.',
@@ -179,7 +179,7 @@ const messages: TranslationMap = {
   'conversations.toolFailure.serviceUnavailable.cause':
     'OpenHuman에 필요한 서비스를 일시적으로 사용할 수 없습니다.',
   'conversations.toolFailure.serviceUnavailable.next':
-    'OpenHuman이 곧 다시 시도합니다 — 별도의 조치가 필요하지 않습니다.',
+    'OpenHuman이 곧 다시 시도합니다: 별도의 조치가 필요하지 않습니다.',
   'conversations.toolFailure.badCredentials.cause':
     '저장된 로그인 정보가 없거나 더 이상 유효하지 않습니다.',
   'conversations.toolFailure.badCredentials.next':
@@ -195,15 +195,15 @@ const messages: TranslationMap = {
     'OpenHuman이 다시 시도하거나 수동으로 다시 실행할 수 있습니다.',
   'conversations.toolFailure.denied.cause': '이 작업을 거부했습니다.',
   'conversations.toolFailure.denied.next':
-    '할 일이 없습니다 — 실행되지 않았습니다. 마음이 바뀌면 다시 요청하세요.',
+    '할 일이 없습니다: 실행되지 않았습니다. 마음이 바뀌면 다시 요청하세요.',
   'conversations.toolFailure.approvalExpired.cause':
     '아무도 응답하기 전에 승인 요청이 만료되었습니다.',
   'conversations.toolFailure.approvalExpired.next':
-    '실행하려면 다시 요청하세요 — OpenHuman이 스스로 재시도하지 않습니다.',
+    '실행하려면 다시 요청하세요: OpenHuman이 스스로 재시도하지 않습니다.',
   'conversations.toolFailure.unknown.cause': '이 작업에서 문제가 발생했습니다.',
   'conversations.toolFailure.unknown.next':
     '다시 시도하세요. 계속 실패하면 설정에서 진단을 실행하세요.',
-  'conversations.backgroundTasks.title': 'Background tasks',
+  'conversations.backgroundTasks.title': '백그라운드 작업',
   'nav.feedback': '피드백 보내기',
   'feedback.board': '피드백 보드',
   'feedback.empty': '아직 피드백이 없습니다. 가장 먼저 아이디어를 공유해 보세요.',
@@ -243,21 +243,21 @@ const messages: TranslationMap = {
   'feedback.comments.loadError': '댓글을 불러오지 못했습니다',
   'feedback.comments.postError': '댓글을 등록하지 못했습니다',
   'feedback.comments.you': '나',
-  'conversations.backgroundTasks.titleWithCount': 'Background tasks ({count})',
-  'conversations.backgroundTasks.running': '{count} running',
-  'conversations.backgroundTasks.noneRunning': 'none running',
-  'conversations.backgroundTasks.total': '{count} total',
+  'conversations.backgroundTasks.titleWithCount': '백그라운드 작업({count})',
+  'conversations.backgroundTasks.running': '{count} 실행 중',
+  'conversations.backgroundTasks.noneRunning': '실행 중 없음',
+  'conversations.backgroundTasks.total': '{count} 합계',
   'conversations.backgroundTasks.empty':
-    'No background tasks in this chat. Ask the assistant to do something in the background and it shows up here.',
+    '이 채팅에는 백그라운드 작업이 없습니다. 어시스턴트에게 백그라운드에서 작업을 요청하면 여기에 표시됩니다.',
   'conversations.backgroundTasks.statusRunning': 'Running',
   'conversations.backgroundTasks.statusDone': 'Done',
   'conversations.backgroundTasks.statusFailed': 'Failed',
-  'conversations.backgroundTasks.statusNeedsYou': 'Needs you',
+  'conversations.backgroundTasks.statusNeedsYou': '당신이 필요합니다',
   'conversations.backgroundTasks.statusCancelled': '취소됨',
-  'conversations.backgroundTasks.toolCallOne': '{count} tool call',
-  'conversations.backgroundTasks.toolCallOther': '{count} tool calls',
-  'conversations.backgroundTasks.steps': '{count} steps',
-  'conversations.backgroundTasks.viewDetails': 'View details →',
+  'conversations.backgroundTasks.toolCallOne': '{count} 공구 호출',
+  'conversations.backgroundTasks.toolCallOther': '{count} 도구 호출',
+  'conversations.backgroundTasks.steps': '{count} 단계',
+  'conversations.backgroundTasks.viewDetails': '세부정보 보기 →',
   'conversations.backgroundTasks.close': 'Close',
   'conversations.backgroundTasks.sectionThisChat': '이 채팅에서',
   'conversations.backgroundTasks.sectionScheduled': '예약된 작업',
@@ -306,9 +306,11 @@ const messages: TranslationMap = {
   'nav.activity': '활동',
   'nav.brain': '브레인',
   'nav.flows': '워크플로',
+  'nav.workflowRuns': '워크플로 실행',
+  'nav.workflowDiscoveries': '워크플로 발견',
   'nav.orchestration': '오케스트레이션',
   'orchestration.cloudUnreachable':
-    '클라우드 브레인에 연결할 수 없습니다 — 캐시된 화면을 표시합니다.',
+    '클라우드 브레인에 연결할 수 없습니다: 캐시된 화면을 표시합니다.',
   'orchPage.subtitle': '메인 에이전트를 조율하세요',
   'orchPage.group.agent': '에이전트',
   'orchPage.group.network': '네트워크',
@@ -329,7 +331,8 @@ const messages: TranslationMap = {
   'orchPage.medulla.featContext': '10M 토큰 컨텍스트',
   'orchPage.medulla.featCost': '저비용 오케스트레이션',
   'orchPage.medulla.subscriberTitle': 'OpenHuman 구독자',
-  'orchPage.medulla.subscriberNote': 'Medulla와 오케스트레이션 엔진에 대한 얼리 액세스를 받으세요.',
+  'orchPage.medulla.subscriberNote': 'Medulla가 출시되면 OpenHuman 구독자 전용으로 제공됩니다.',
+  'orchPage.medulla.subscriberCta': '구독하기',
   'orchPage.medulla.discordTitle': 'Discord 참여하기',
   'orchPage.medulla.earlyAccess':
     '먼저 사용해 보고 싶으신가요? 저희 Discord에 참여하고 얼리 액세스 초대를 받으세요.',
@@ -350,7 +353,7 @@ const messages: TranslationMap = {
   'orchPage.demo.peerSessions': '하위 에이전트 {count}개',
   'orchPage.demo.chat.user1': '모든 채널에서 아웃리치 캠페인을 조율해 주세요.',
   'orchPage.demo.chat.assistant1':
-    '진행 중입니다 — 아웃리치, 보강, 후속 조치를 병렬로 실행하기 위해 2대의 기기에서 120개의 에이전트를 가동하고 있습니다.',
+    '진행 중입니다: 아웃리치, 보강, 후속 조치를 병렬로 실행하기 위해 2대의 기기에서 120개의 에이전트를 가동하고 있습니다.',
   'orchPage.demo.chat.activity1': '기기 1 · 100개 에이전트가 1,284개 대화를 라우팅 중',
   'orchPage.demo.chat.activity2': '기기 2 · 20개 에이전트가 512개 연락처를 보강 중',
   'orchPage.demo.chat.activity3': '640개의 맞춤형 답장 초안 작성 중',
@@ -382,7 +385,7 @@ const messages: TranslationMap = {
   'orchPage.connections.nav': '연결',
   'orchPage.connections.title': '연결된 에이전트',
   'orchPage.connections.description':
-    '에이전트가 협력하는 상대 — 하나를 펼쳐 해당 상대와의 세션을 확인하세요',
+    '에이전트가 협력하는 상대: 하나를 펼쳐 해당 상대와의 세션을 확인하세요',
   'orchPage.connections.empty': '아직 연결이 없습니다.',
   'orchPage.connections.emptyCta': '연결 추가',
   'orchPage.connections.statContacts': '연결',
@@ -459,7 +462,7 @@ const messages: TranslationMap = {
   'agentWorld.addressCopied': '복사됨',
   'agentWorld.walletUnavailable': '지갑을 사용할 수 없음',
   'agentWorld.walletRetry': '지갑 다시 불러오기',
-  // Agent World — Explore section live data
+  // Agent World: Explore section live data
   'explore.networkOverview': '네트워크 개요',
   'explore.trendingCommunities': '트렌딩 커뮤니티',
   'explore.activeJobs': '활성 일자리',
@@ -477,7 +480,7 @@ const messages: TranslationMap = {
   'nav.avatarMenu.invites': '친구 초대',
   'nav.avatarMenu.wallet': '지갑',
 
-  // Brain — full-page memory knowledge-graph surface
+  // Brain: full-page memory knowledge-graph surface
   'brain.subtitle': '지식 그래프, 메모리 소스 및 컨트롤.',
   'brain.tabs.memory': '기억',
   'brain.tabs.subconscious': '잠재의식',
@@ -556,7 +559,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.makeDiscoverable': '검색 가능하게 만들기',
   'tinyplaceOrchestration.identity.republish': '키 다시 게시',
   'tinyplaceOrchestration.identity.publishing': '게시 중…',
-  'tinyplaceOrchestration.identity.publishFailed': '게시 실패 — 다시 시도하세요',
+  'tinyplaceOrchestration.identity.publishFailed': '게시 실패: 다시 시도하세요',
   'tinyplaceOrchestration.identity.card': '디렉터리 카드',
   'tinyplaceOrchestration.identity.key': '암호화 키',
   'tinyplaceOrchestration.identity.published': '게시됨',
@@ -577,7 +580,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.attention.kind.approval': '승인',
   'tinyplaceOrchestration.attention.kind.needsInput': '입력 필요',
   'tinyplaceOrchestration.attention.kind.unread': '안 읽음',
-  'brain.empty': '아직 브레인이 비어 있습니다 — 소스를 연결하여 메모리를 만들어 보세요.',
+  'brain.empty': '아직 브레인이 비어 있습니다: 소스를 연결하여 메모리를 만들어 보세요.',
   'brain.error': '브레인을 불러올 수 없습니다. 다시 시도해 주세요.',
   'common.cancel': '취소',
   'common.save': '저장',
@@ -639,7 +642,7 @@ const messages: TranslationMap = {
   'common.breadcrumb': '탐색경로',
   'common.beta': '베타',
   'common.betaDisclaimer':
-    '이 기능은 베타 버전입니다. 변경되거나 불완전할 수 있습니다 — 피드백이 개선에 도움이 됩니다.',
+    '이 기능은 베타 버전입니다. 변경되거나 불완전할 수 있습니다: 피드백이 개선에 도움이 됩니다.',
   'settings.general': '일반',
   // Settings layman groups (Phase 4 IA revamp)
   'settings.groups.account': '계정',
@@ -680,7 +683,7 @@ const messages: TranslationMap = {
   'settings.devGroups.council': '위원회',
   'settings.analysisViews.title': '분석 보기',
   'settings.analysisViews.menuDesc':
-    '메모리 그래프 분석 — 다이어그램, 중심성, 응집도, 연관, 최신성, 타임라인, 경로 및 네임스페이스',
+    '메모리 그래프 분석: 다이어그램, 중심성, 응집도, 연관, 최신성, 타임라인, 경로 및 네임스페이스',
   'settings.buildInfo.title': '빌드 / 버전 정보',
   'settings.buildInfo.menuDesc': '앱 빌드, 버전 및 코어 연결 세부 정보',
   'settings.tokenUsage.title': '토큰 및 비용',
@@ -724,7 +727,7 @@ const messages: TranslationMap = {
   'settings.tokenUsage.ccrDisk': '캐시를 디스크에 유지',
   'settings.tokenUsage.ccrDiskDesc': '재시작 후에도 복구 가능한 원본을 유지합니다.',
   'settings.dataSync.title': '데이터 동기화',
-  'settings.dataSync.menuDesc': '어시스턴트가 동기화하는 항목 — 소스, 최신성 및 상태',
+  'settings.dataSync.menuDesc': '어시스턴트가 동기화하는 항목: 소스, 최신성 및 상태',
   'settings.dataSync.description':
     '어시스턴트의 메모리에 무엇이 동기화되는지 관리하세요: 연결된 각 소스의 마지막 동기화 시간, 동기화된 양, 지금 동기화 중인지 여부를 확인할 수 있습니다.',
   'settings.devGroups.diagnosticsLogs': '진단 및 로그',
@@ -809,7 +812,7 @@ const messages: TranslationMap = {
   'migration.applyRunning': '가져오는 중…',
   'migration.applyDisclaimer':
     '동일한 소스에서 미리 보기를 성공적으로 완료한 후 적용이 활성화됩니다. 가져오기 전에 기존 메모리가 백업됩니다.',
-  'migration.reportTitlePreview': '미리 보기 — 아직 가져온 항목 없음',
+  'migration.reportTitlePreview': '미리 보기: 아직 가져온 항목 없음',
   'migration.reportTitleApplied': '가져오기 완료',
   'migration.report.source': '소스 작업 영역',
   'migration.report.target': '대상 작업 영역',
@@ -911,7 +914,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': '아직 실행되지 않음',
   'routines.runNow': '지금 실행',
   'routines.running': '실행 중…',
-  'routines.runNowTimedOut': '실행 시간 초과 — 새로고침 후 다시 시도하세요.',
+  'routines.runNowTimedOut': '실행 시간 초과: 새로고침 후 다시 시도하세요.',
   'routines.viewHistory': '기록 보기',
   'routines.loadingHistory': '로딩 중…',
   'routines.noHistory': '아직 실행 기록이 없습니다.',
@@ -931,11 +934,12 @@ const messages: TranslationMap = {
   'chat.typeMessage': '오늘 무엇을 도와드릴까요?',
   'chat.send': '메시지 보내기',
   'chat.stopGeneration': '생성 중지',
-  'chat.parallelBranchHint': '병렬 분기 입력 — 보내려면 ⌘/Ctrl+Enter',
-  'chat.followupHint': '후속 메시지를 대기열에 추가 — 이 응답 후 전송 · 병렬 분기는 ⌘/Ctrl+Enter',
+  'chat.stoppedByUser': '중지됨',
+  'chat.parallelBranchHint': '병렬 분기 입력: 보내려면 ⌘/Ctrl+Enter',
+  'chat.followupHint': '후속 메시지를 대기열에 추가: 이 응답 후 전송 · 병렬 분기는 ⌘/Ctrl+Enter',
   'chat.queuedFollowups.label': '대기 중인 후속 메시지',
   'chat.queuedFollowups.clear': '지우기',
-  'chat.queuedFollowups.clearFailed': '대기열을 지우지 못했습니다 — 다시 시도하세요.',
+  'chat.queuedFollowups.clearFailed': '대기열을 지우지 못했습니다: 다시 시도하세요.',
   'chat.parallelBranchLabel': '병렬 분기',
   'chat.thinking': '생각 중...',
   'chat.noMessages': '아직 메시지가 없습니다',
@@ -987,7 +991,7 @@ const messages: TranslationMap = {
   'skills.explorer.installing': '설치 중…',
   'skills.integrations': 'Composio 통합',
   'skills.integrationsSubtitle':
-    '클라우드 기반 OAuth 연결 — 계정으로 로그인하면 Composio가 토큰을 관리하여 에이전트가 사용자를 대신해 읽고 작동할 수 있습니다. API 키 관리가 필요 없습니다.',
+    '클라우드 기반 OAuth 연결: 계정으로 로그인하면 Composio가 토큰을 관리하여 에이전트가 사용자를 대신해 읽고 작동할 수 있습니다. API 키 관리가 필요 없습니다.',
   'skills.composio.noApiKeyTitle': '아니요 Composio API 키가 구성됨',
   'skills.composio.noApiKeyDescription':
     '로컬 모드에서는 자체 Composio API 키를 사용합니다. 설정 → 고급 → Composio에서 키를 추가한 후 여기서 통합을 연결하세요.',
@@ -1016,23 +1020,23 @@ const messages: TranslationMap = {
   'memory.tab.memoryTree': '메모리 트리',
   'memory.tab.tasks': '작업',
   'memory.tab.tasksDescription':
-    '작업을 만들고 추적하세요 — 본인의 할 일 목록과 에이전트가 대화를 통해 구성한 보드가 모두 포함됩니다.',
+    '작업을 만들고 추적하세요: 본인의 할 일 목록과 에이전트가 대화를 통해 구성한 보드가 모두 포함됩니다.',
   'memory.tab.subconscious': '잠재의식',
   'memory.tab.agentWork': '에이전트 작업',
   'memory.tab.agentWorkDescription':
-    '모든 백그라운드 에이전트 실행을 위한 명령 센터 — 입력이 필요한 것, 진행 중인 것, 완료된 것별로 그룹화됩니다.',
+    '모든 백그라운드 에이전트 실행을 위한 명령 센터: 입력이 필요한 것, 진행 중인 것, 완료된 것별로 그룹화됩니다.',
   'memory.tab.worktrees': '워크트리',
   'memory.tab.worktreesDescription':
-    '병렬 에이전트 워커가 만든 격리된 git 워크트리 — 변경 사항을 확인하거나 열거나 정리하세요.',
+    '병렬 에이전트 워커가 만든 격리된 git 워크트리: 변경 사항을 확인하거나 열거나 정리하세요.',
   'memory.tab.teams': '팀',
   'memory.tab.teamsDescription':
-    '조율된 에이전트 팀 — 각 작업을 누가 담당하는지, 무엇이 차단되어 있는지, 그리고 팀원들이 서로 무슨 이야기를 나누는지.',
+    '조율된 에이전트 팀: 각 작업을 누가 담당하는지, 무엇이 차단되어 있는지, 그리고 팀원들이 서로 무슨 이야기를 나누는지.',
   'memory.tab.agents': '라이브러리',
   'memory.tab.agentsDescription':
-    '사용 가능한 에이전트를 탐색하고 실행하세요 — 각 에이전트는 고유한 도구, 기능 및 전문 분야를 갖추고 있습니다.',
+    '사용 가능한 에이전트를 탐색하고 실행하세요: 각 에이전트는 고유한 도구, 기능 및 전문 분야를 갖추고 있습니다.',
   'memory.tab.workflows': 'Workflows',
   'memory.tab.workflowsDescription':
-    '재사용 가능하고 실행 가능한 절차 — 목표와 그에 도달하는 단계. 새로 만들거나, URL에서 설치하거나, 워크플로를 열어 실행하세요.',
+    '재사용 가능하고 실행 가능한 절차: 목표와 그에 도달하는 단계. 새로 만들거나, URL에서 설치하거나, 워크플로를 열어 실행하세요.',
   'memory.tab.dreams': '꿈',
   'memory.tab.calls': '통화',
   'memory.tab.diagram': 'Diagram',
@@ -1043,7 +1047,7 @@ const messages: TranslationMap = {
   'memory.analyzeNow': '지금 분석',
   'memoryTimeline.title': '기억 타임라인',
   'memoryTimeline.intro':
-    '어시스턴트가 당신에 대해 학습한 시기 — 마지막으로 강화된 월별로 그룹화된 사실. 성장, 활동 급증 및 조용한 기간을 보여줍니다.',
+    '어시스턴트가 당신에 대해 학습한 시기: 마지막으로 강화된 월별로 그룹화된 사실. 성장, 활동 급증 및 조용한 기간을 보여줍니다.',
   'memoryTimeline.loading': '타임라인 구축 중…',
   'memoryTimeline.errorPrefix': '그래프를 로드할 수 없습니다:',
   'memoryTimeline.retry': 'Retry',
@@ -1060,7 +1064,7 @@ const messages: TranslationMap = {
   'memoryTimeline.truncated': '{total}개월 중 가장 최근 {shown}개 표시.',
   'namespaceOverview.title': '네임스페이스 개요',
   'namespaceOverview.intro':
-    '컨텍스트 전반에 걸쳐 지식이 어떻게 분포되어 있는지 — 각 네임스페이스에 기록된 사실과 고유 엔터티의 수입니다.',
+    '컨텍스트 전반에 걸쳐 지식이 어떻게 분포되어 있는지: 각 네임스페이스에 기록된 사실과 고유 엔터티의 수입니다.',
   'namespaceOverview.loading': '네임스페이스 집계 중…',
   'namespaceOverview.errorPrefix': '그래프를 로드할 수 없습니다:',
   'namespaceOverview.retry': '다시 시도',
@@ -1104,7 +1108,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': '엔티티 연관',
   'entityAssociations.intro':
-    '많은 동일한 연결을 공유하는 엔티티들은 연관됩니다 — 단일 사실이 직접 연결하지 않더라도. Jaccard 유사도가 이러한 숨겨진 연관을 드러냅니다.',
+    '많은 동일한 연결을 공유하는 엔티티들은 연관됩니다: 단일 사실이 직접 연결하지 않더라도. Jaccard 유사도가 이러한 숨겨진 연관을 드러냅니다.',
   'entityAssociations.loading': '연관 계산 중…',
   'entityAssociations.errorPrefix': '그래프를 로드할 수 없습니다:',
   'entityAssociations.retry': 'Retry',
@@ -1119,10 +1123,10 @@ const messages: TranslationMap = {
   'entityAssociations.linkedBadge': 'linked',
   'entityAssociations.inferredBadge': 'inferred',
   'entityAssociations.linkedTitle': '이 엔티티들은 직접 연결되어 있습니다.',
-  'entityAssociations.inferredTitle': '직접적인 링크 없음 — 공유된 연결을 통해서만 연관됨.',
+  'entityAssociations.inferredTitle': '직접적인 링크 없음: 공유된 연결을 통해서만 연관됨.',
   'entityAssociations.sharedLabel': '{shared}개 공유',
   'entityAssociations.pairTitle': '{jaccard}% 유사 · {shared}/{union} 연결 공유',
-  'entityAssociations.truncated': '{shown}/{total} 표시 — 가장 강한 것 먼저.',
+  'entityAssociations.truncated': '{shown}/{total} 표시: 가장 강한 것 먼저.',
   'memory.tab.freshness': 'Freshness',
   'memoryFreshness.title': '지식 신선도',
   'memoryFreshness.intro':
@@ -1139,8 +1143,8 @@ const messages: TranslationMap = {
   'memoryFreshness.metricStale': 'Stale',
   'memoryFreshness.recallCaption': '{total}개 사실에서 평균 재현율 {recall}%',
   'memoryFreshness.queueHeading': '재확인 대기열',
-  'memoryFreshness.queueTruncated': '{shown}/{total} 표시 — 이것들을 먼저 처리하세요.',
-  'memoryFreshness.allFresh': '모든 사실이 아직 신선합니다 — 재확인할 것이 없습니다.',
+  'memoryFreshness.queueTruncated': '{shown}/{total} 표시: 이것들을 먼저 처리하세요.',
+  'memoryFreshness.allFresh': '모든 사실이 아직 신선합니다: 재확인할 것이 없습니다.',
   'memoryFreshness.statusFading': 'fading',
   'memoryFreshness.statusStale': 'stale',
   'memoryFreshness.ageLabel': '{days}일 전',
@@ -1148,7 +1152,7 @@ const messages: TranslationMap = {
   'memory.tab.path': '경로',
   'connectionPath.title': '연결 경로',
   'connectionPath.intro':
-    '두 엔티티를 잇는 가장 짧은 관계 사슬을 추적합니다 — 여러 홉을 거치더라도 그래프가 둘을 어떻게 연결하는지 보여줍니다.',
+    '두 엔티티를 잇는 가장 짧은 관계 사슬을 추적합니다: 여러 홉을 거치더라도 그래프가 둘을 어떻게 연결하는지 보여줍니다.',
   'connectionPath.loading': '그래프를 불러오는 중…',
   'connectionPath.errorPrefix': '그래프를 불러올 수 없습니다:',
   'connectionPath.retry': '다시 시도',
@@ -1466,7 +1470,7 @@ const messages: TranslationMap = {
   'misc.downloading': '다운로드 중...',
   'misc.installing': '설치 중...',
   'misc.beta':
-    'OpenHuman은 초기 베타 버전입니다. 피드백을 공유하거나 발견한 버그를 신고해 주세요 — 모든 신고는 더 빠른 출시를 돕습니다.',
+    'OpenHuman은 초기 베타 버전입니다. 피드백을 공유하거나 발견한 버그를 신고해 주세요: 모든 신고는 더 빠른 출시를 돕습니다.',
   'misc.betaFeedback': '피드백 보내기',
   'mnemonic.title': '복구 문구',
   'mnemonic.warning': '이 단어들을 순서대로 적어 안전한 곳에 보관하세요.',
@@ -1558,7 +1562,7 @@ const messages: TranslationMap = {
   'settings.costDashboard.dailyTarget': '일일 목표',
   'settings.costDashboard.today': '오늘',
   'settings.costDashboard.todayBadge': '오늘',
-  'settings.costDashboard.unknownProvider': '—',
+  'settings.costDashboard.unknownProvider': '없음',
   'settings.costDashboard.justNow': '방금 전',
   'settings.costDashboard.secondsAgo': '{value}초 전',
   'settings.costDashboard.minutesAgo': '{value}분 전',
@@ -1676,7 +1680,7 @@ const messages: TranslationMap = {
   'settings.embeddings.applyCustom': '적용',
   'settings.embeddings.testConnection': '연결 테스트',
   'settings.embeddings.testing': '테스트 중…',
-  'settings.embeddings.testSuccess': '연결됨 — {dims} 차원',
+  'settings.embeddings.testSuccess': '연결됨: {dims} 차원',
   'settings.embeddings.connectionTestFailed': '테스트 실패',
   'settings.embeddings.verifyFallback':
     '임베딩 엔드포인트를 확인할 수 없습니다. 엔드포인트가 실행 중이고 임베딩 모델을 제공하는지 확인한 후 다시 저장하세요.',
@@ -1919,8 +1923,8 @@ const messages: TranslationMap = {
   'mcp.tab.transportFilter.aria': '전송 방식으로 서버 필터링',
   'mcp.tab.link.website': '웹사이트',
   'mcp.tab.link.repo': '저장소',
-  'mcp.tab.transport.hostedHint': '원격 서버에서 실행 — 설치 시 로그인 또는 토큰을 설정합니다',
-  'mcp.tab.transport.localHint': '기기에서 실행 — 설치 시 토큰이 필요할 수 있습니다',
+  'mcp.tab.transport.hostedHint': '원격 서버에서 실행: 설치 시 로그인 또는 토큰을 설정합니다',
+  'mcp.tab.transport.localHint': '기기에서 실행: 설치 시 토큰이 필요할 수 있습니다',
   'mcp.tab.officialBadge': '공식',
   'mcp.tab.officialHint': '공급업체의 공식 서버',
   'mcp.tab.badge.installed': '설치됨',
@@ -2021,7 +2025,7 @@ const messages: TranslationMap = {
   'autonomy.statusSaving': '저장 중…',
   'autonomy.statusSaved': '저장되었습니다.',
   'autonomy.statusFailed': '실패',
-  'autonomy.unlimitedNote': '무제한 — 속도 제한이 비활성화되었습니다.',
+  'autonomy.unlimitedNote': '무제한: 속도 제한이 비활성화되었습니다.',
   'autonomy.invalidIntegerMsg': "양의 정수여야 합니다 (제한 없음은 '무제한' 프리셋을 사용하세요).",
   'autonomy.presetUnlimited': '무제한(기본값)',
   'triggers.toggleFailed': '{trigger}에 대해 {action} 실패: {message}',
@@ -2123,14 +2127,14 @@ const messages: TranslationMap = {
   'devOptions.cloud': '클라우드',
   'devOptions.remoteCoreRpc': '원격 코어 RPC',
   'devOptions.token': '토큰',
-  'devOptions.tokenNotSet': '설정되지 않음 — RPC가 401을 반환합니다',
+  'devOptions.tokenNotSet': '설정되지 않음: RPC가 401을 반환합니다',
   'devOptions.triggerSentryTest': 'Sentry 테스트 트리거(스테이징)',
   'devOptions.triggerSentryTestDesc':
-    'Sentry 파이프라인을 확인하기 위해 태그가 지정된 오류를 발생시킵니다. 이슈 #1072 — 확인 후 제거.',
+    'Sentry 파이프라인을 확인하기 위해 태그가 지정된 오류를 발생시킵니다. 이슈 #1072: 확인 후 제거.',
   'devOptions.sendTestEvent': '테스트 이벤트 보내기',
   'devOptions.sending': '보내는 중…',
   'devOptions.eventSent': '이벤트 전송됨',
-  'devOptions.sentryDisabled': '(id 없음 — 이 빌드에서 센트리가 비활성화되었습니다.)',
+  'devOptions.sentryDisabled': '(id 없음: 이 빌드에서 센트리가 비활성화되었습니다.)',
   'devOptions.failed': '실패',
   'devOptions.appLogs': '앱 로그',
   'devOptions.appLogsDesc':
@@ -2392,22 +2396,22 @@ const messages: TranslationMap = {
   'pttSettings.shortcutLabel': '단축키',
   'pttSettings.shortcutPlaceholder': '키를 누르세요 (예: F13)',
   'pttSettings.shortcutUnsetHint':
-    '눌러서 말하기가 꺼져 있습니다 — 활성화하려면 단축키를 선택하세요.',
+    '눌러서 말하기가 꺼져 있습니다: 활성화하려면 단축키를 선택하세요.',
   'pttSettings.speakRepliesLabel': '에이전트 답변 음성으로 읽어주기',
   'pttSettings.showOverlayLabel': '누르고 있는 동안 오버레이 표시',
   'pttSettings.errorConflictsWithDictation':
     '이 단축키는 받아쓰기에 이미 사용 중입니다. 다른 키를 선택하세요.',
   'pttSettings.errorModifierOnly':
-    '일반 키를 선택하세요(예: F13) — 보조 키로만 구성된 단축키는 눌러서 말하기에서 동작하지 않습니다.',
+    '일반 키를 선택하세요(예: F13): 보조 키로만 구성된 단축키는 눌러서 말하기에서 동작하지 않습니다.',
   'pttSettings.errorEmpty': '바인딩할 키를 선택하세요.',
   'pttSettings.errorAccessibility':
     '이 단축키에는 macOS의 손쉬운 사용 권한이 필요합니다. 시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용을 열고 OpenHuman을 활성화하세요.',
   'pttSettings.errorShortcutInUse':
     '다른 앱이 이미 이 단축키를 사용 중입니다. 다른 단축키를 선택하세요.',
   'pttSettings.errorUnsupportedWayland':
-    'Wayland 세션은 OpenHuman의 전역 단축키를 아직 지원하지 않습니다 — X11 세션으로 전환하거나 앱 내 받아쓰기 토글을 사용하세요.',
+    'Wayland 세션은 OpenHuman의 전역 단축키를 아직 지원하지 않습니다: X11 세션으로 전환하거나 앱 내 받아쓰기 토글을 사용하세요.',
   'pttSettings.exclusiveFullscreenHint':
-    '전용 전체 화면 게임에서는 오버레이가 표시되지 않습니다 — 알림음만 들립니다. 오버레이를 보려면 테두리 없는 전체 화면으로 전환하세요.',
+    '전용 전체 화면 게임에서는 오버레이가 표시되지 않습니다: 알림음만 들립니다. 오버레이를 보려면 테두리 없는 전체 화면으로 전환하세요.',
   'pttOverlay.listening': '듣는 중…',
   'pttOverlay.idle': '대기 중',
   'autocomplete.title': '자동 완성',
@@ -2444,9 +2448,9 @@ const messages: TranslationMap = {
   'chat.sendMessage': '메시지 보내기',
   'composio.triageTitle': '통합 트리거',
   'composio.triageDesc':
-    '활성화되면 들어오는 각 Composio 트리거가 이벤트를 분류하고 자동 작업을 시작할 수 있는 AI 선별 단계를 거칩니다 — 트리거당 로컬 LLM 턴 하나가 사용됩니다. 수동 검토를 선호한다면 전체 또는 통합별로 비활성화하세요. 환경 변수가',
+    '활성화되면 들어오는 각 Composio 트리거가 이벤트를 분류하고 자동 작업을 시작할 수 있는 AI 선별 단계를 거칩니다: 트리거당 로컬 LLM 턴 하나가 사용됩니다. 수동 검토를 선호한다면 전체 또는 통합별로 비활성화하세요. 환경 변수가',
   'composio.disableAllTriage': '모든 트리거에 대한 AI 선별 비활성화',
-  'composio.triggersStillRecorded': '트리거는 기록에 계속 저장됩니다 — LLM 턴은 실행되지 않습니다.',
+  'composio.triggersStillRecorded': '트리거는 기록에 계속 저장됩니다: LLM 턴은 실행되지 않습니다.',
   'composio.disableSpecificIntegrations': '특정 통합에 대한 AI 선별 비활성화',
   'composio.settingsSaved': '설정이 저장되었습니다',
   'composio.saveFailed': '저장에 실패했습니다. 다시 시도하세요.',
@@ -2574,11 +2578,11 @@ const messages: TranslationMap = {
     '연결된 계정의 모든 알림은 로컬 AI 모델로 점수가 매겨집니다. 중요도가 높은 알림은 오케스트레이터 에이전트로 자동으로 라우팅되어 중요한 사항을 놓치지 않습니다.',
   'notifications.routing.howItWorks': '작동 방식',
   'notifications.routing.level.drop': '삭제',
-  'notifications.routing.level.dropDesc': '소음/스팸 — 저장되었지만 표시되지 않음',
+  'notifications.routing.level.dropDesc': '소음/스팸: 저장되었지만 표시되지 않음',
   'notifications.routing.level.acknowledge': '승인',
-  'notifications.routing.level.acknowledgeDesc': '낮은 우선 순위 — 알림 센터에 표시됨',
+  'notifications.routing.level.acknowledgeDesc': '낮은 우선 순위: 알림 센터에 표시됨',
   'notifications.routing.level.react': '반응',
-  'notifications.routing.level.reactDesc': '중간 우선순위 — 집중된 에이전트 응답을 트리거합니다.',
+  'notifications.routing.level.reactDesc': '중간 우선순위: 집중된 에이전트 응답을 트리거합니다.',
   'notifications.routing.level.escalate': '에스컬레이션',
   'notifications.routing.level.escalateDesc': '높은 우선 순위 - 오케스트레이터 에이전트로 전달됨',
   'notifications.routing.perProvider': '공급자별 라우팅',
@@ -2688,7 +2692,7 @@ const messages: TranslationMap = {
   'mic.unavailable': '마이크를 사용할 수 없습니다',
   'mic.permissionDenied': '마이크 권한이 거부되었습니다',
   'mic.failedToStartRecorder': '녹음기를 시작하지 못했습니다',
-  'mic.deviceUnavailable': '선택한 마이크를 사용할 수 없습니다 — 다른 장치를 사용해 보세요.',
+  'mic.deviceUnavailable': '선택한 마이크를 사용할 수 없습니다: 다른 장치를 사용해 보세요.',
   'mic.deviceInUse': '마이크가 다른 애플리케이션에서 사용 중입니다.',
   'mic.error': '마이크 오류',
   'mic.transcribing': '전사 중...',
@@ -2726,7 +2730,7 @@ const messages: TranslationMap = {
   'token.popOutput': '출력 토큰',
   'token.popCacheHit': '캐시 적중',
   'token.popContext': '컨텍스트 윈도우',
-  'token.tipInput': '이 세션에서 모델로 보낸 토큰 — 사용자 프롬프트와 대화 기록.',
+  'token.tipInput': '이 세션에서 모델로 보낸 토큰: 사용자 프롬프트와 대화 기록.',
   'token.tipOutput': '이 세션에서 모델이 생성한 토큰.',
   'token.tipCacheHit': '캐시된 프롬프트 접두부에서 제공된 입력 토큰으로, 낮은 요금으로 청구됩니다.',
   'token.clickForDetails': '세션 사용량 세부정보를 보려면 클릭하세요',
@@ -2803,7 +2807,7 @@ const messages: TranslationMap = {
   'workspace.revealFolder': '폴더 공개',
   'workspace.checkingVault': '확인 중…',
   'workspace.vaultNotRegisteredHelp':
-    'Obsidian은 볼트로 추가된 폴더만 열 수 있습니다. Obsidian에서 "폴더를 볼트로 열기"를 선택하고 아래 폴더를 선택하세요 — 한 번만 하면 됩니다. 그런 다음 볼트 보기를 다시 클릭하세요.',
+    'Obsidian은 볼트로 추가된 폴더만 열 수 있습니다. Obsidian에서 "폴더를 볼트로 열기"를 선택하고 아래 폴더를 선택하세요: 한 번만 하면 됩니다. 그런 다음 볼트 보기를 다시 클릭하세요.',
   'workspace.obsidianNotFoundHelp':
     '이 기기에서 Obsidian을 찾을 수 없습니다. 설치하거나, 비표준 위치에 설치되어 있는 경우 고급 설정에서 구성 폴더를 설정하세요.',
   'workspace.openAnyway': '어쨌든 Obsidian에서 열기',
@@ -2887,7 +2891,7 @@ const messages: TranslationMap = {
   'memorySources.loadingConnections': '연결을 불러오는 중…',
   'memorySources.noConnections': '활성 Composio 연결을 찾을 수 없습니다. 먼저 통합을 연결하세요.',
   'memorySources.pickConnection': '연결 선택',
-  'memorySources.selectConnection': '— 연결 선택 —',
+  'memorySources.selectConnection': '연결 선택',
   'memorySources.comingSoon': '출시 예정',
   'memorySources.composioListFailed': 'Composio 연결을 불러오지 못했습니다.',
   'memorySources.browse': '찾아보기…',
@@ -3059,7 +3063,7 @@ const messages: TranslationMap = {
   'bootCheck.validUrlRequired': '유효한 URL처럼 보이지 않습니다(예: https://core.example.com/rpc)',
   'bootCheck.tokenRequired': '연결하려면 인증 토큰이 필요합니다.',
   'bootCheck.httpPublicWarning':
-    '공개 호스트의 일반 HTTP URL입니다 — 트래픽이 암호화되지 않습니다. 이 네트워크를 신뢰하지 않는다면 HTTPS를 사용하세요.',
+    '공개 호스트의 일반 HTTP URL입니다: 트래픽이 암호화되지 않습니다. 이 네트워크를 신뢰하지 않는다면 HTTPS를 사용하세요.',
   'bootCheck.chooseCoreMode': '런타임 선택',
   'bootCheck.connectToCore': '런타임에 연결',
   'bootCheck.desktopDescription':
@@ -3195,9 +3199,11 @@ const messages: TranslationMap = {
   'memory.ingestingTitle': '{title} 수집 중',
   'mic.noAudioCaptured': '캡처된 오디오가 없습니다',
   'mic.noSpeechDetected': '음성이 감지되지 않았습니다',
-  'mic.lowConfidenceResult': '오디오를 명확하게 이해할 수 없습니다 — 다시 시도해 주세요',
+  'mic.lowConfidenceResult': '오디오를 명확하게 이해할 수 없습니다: 다시 시도해 주세요',
   'mic.failedToStopRecording': '녹음을 중지하지 못했습니다: {message}',
   'mic.transcriptionFailed': '전사에 실패했습니다: {message}',
+  'mic.voiceNotCompiled':
+    '이 버전의 앱에는 음성 받아쓰기가 포함되어 있지 않습니다. OpenHuman을 업데이트하면 사용할 수 있습니다.',
   'reflections.kind.retrospective': '회고',
   'reflections.kind.derivedFact': '파생된 사실',
   'reflections.kind.moodInsight': '기분 인사이트',
@@ -3267,7 +3273,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk3': '혜택3',
   'app.openhumanLink.discord.perk4': '혜택4',
   'app.openhumanLink.discordReport.intro':
-    '죄송합니다 — 저희 측에서 오류가 발생했습니다. 이러한 오류를 자동으로 기록하려고 하지만, Discord에 세부 정보를 공유해 주시면 더 빠르게 해결할 수 있습니다.',
+    '죄송합니다: 저희 측에서 오류가 발생했습니다. 이러한 오류를 자동으로 기록하려고 하지만, Discord에 세부 정보를 공유해 주시면 더 빠르게 해결할 수 있습니다.',
   'app.openhumanLink.discordReport.openDiscord': 'Discord 열기',
   'app.openhumanLink.done': '완료',
   'app.openhumanLink.notifications.desktopOnly':
@@ -3422,6 +3428,13 @@ const messages: TranslationMap = {
   'channels.telegram.remoteControlTitle': '원격 제어(Telegram)',
   'channels.telegram.remoteControlBody':
     '허용된 Telegram 채팅에서 /status, /sessions, /new 또는 /help를 보냅니다. 모델 라우팅은 여전히 ​​/model 및 /models를 사용합니다.',
+  'channels.connectHelp.title': '연결 방법',
+  'channels.connectHelp.discord':
+    '아래에서 방법을 선택하세요: OpenHuman으로 계정 연결, OAuth로 봇 설치, 또는 Discord 개발자 포털에서 발급한 봇 토큰 붙여넣기.',
+  'channels.connectHelp.telegram':
+    '아래에서 방법을 선택하세요: 관리형 OpenHuman 봇에 메시지를 보내 연결하거나, @BotFather에서 발급한 봇 토큰을 붙여넣으세요.',
+  'channels.connectHelp.slackNote':
+    'Slack을 찾으세요? Slack은 여기서 메시징 채널이 아니라 연결 → OAuth에서 앱으로 연결됩니다.',
   'channels.web.displayName': '웹',
   'channels.web.description': '내장된 웹 UI를 통해 채팅합니다.',
   'channels.web.authMode.managed_dm.description':
@@ -3761,7 +3774,7 @@ const messages: TranslationMap = {
   'intelligence.tasks.composer.attachLabel': '대화에 첨부',
   'intelligence.tasks.composer.attachNone': '개인용(대화 없음)',
   'intelligence.tasks.composer.objectiveLabel': '목표',
-  'intelligence.tasks.composer.objectivePlaceholder': '선택 사항 — 원하는 결과',
+  'intelligence.tasks.composer.objectivePlaceholder': '선택 사항: 원하는 결과',
   'intelligence.tasks.composer.notesLabel': '메모',
   'intelligence.tasks.composer.notesPlaceholder': '선택 사항 메모',
   'intelligence.tasks.composer.create': '작업 만들기',
@@ -3842,7 +3855,7 @@ const messages: TranslationMap = {
     '격리된 워크트리가 없습니다. 워크트리 격리를 사용하는 병렬 워커가 여기에 표시됩니다.',
   'worktree.panel.overlapsTitle': '겹치는 변경 사항',
   'worktree.panel.overlapHint':
-    '이 파일들은 둘 이상의 워크트리에서 변경되었습니다 — 병합하기 전에 조정하세요.',
+    '이 파일들은 둘 이상의 워크트리에서 변경되었습니다: 병합하기 전에 조정하세요.',
   'intelligence.agentWork.action.stop': '중지',
   'intelligence.agentWork.action.retry': '다시 시도',
   'intelligence.agentWork.action.continue': '계속',
@@ -3993,6 +4006,19 @@ const messages: TranslationMap = {
   'flows.list.lastRun': '마지막 실행',
   'flows.list.neverRun': '실행된 적 없음',
   'flows.list.justNow': '방금',
+  'flows.discoveries.title': '워크플로 발견',
+  'flows.discoveries.description': '작업 방식을 기반으로 Flow Scout가 제안하는 자동화입니다.',
+  'flows.allRuns.title': '워크플로 실행',
+  'flows.allRuns.description': '워크스페이스의 모든 워크플로 실행, 최신순.',
+  'flows.allRuns.loading': '실행 불러오는 중…',
+  'flows.allRuns.empty': '아직 워크플로 실행이 없습니다.',
+  'flows.allRuns.unknownWorkflow': '알 수 없는 워크플로',
+  'flows.allRuns.status.running': '실행 중',
+  'flows.allRuns.status.completed': '완료',
+  'flows.allRuns.status.completed_with_warnings': '경고와 함께 완료',
+  'flows.allRuns.status.pending_approval': '승인 대기 중',
+  'flows.allRuns.status.failed': '실패',
+  'flows.allRuns.status.cancelled': '취소됨',
   'flows.list.minutesAgo': '{count}분 전',
   'flows.list.hoursAgo': '{count}시간 전',
   'flows.list.daysAgo': '{count}일 전',
@@ -4009,8 +4035,11 @@ const messages: TranslationMap = {
   'flows.runs.loadError': '실행 기록을 불러올 수 없습니다',
   'flows.runs.empty': '아직 실행 기록이 없습니다',
   'flows.promptBar.label': '워크플로를 설명하세요',
-  'flows.promptBar.placeholder': '워크플로를 설명하세요…',
+  'flows.promptBar.placeholder': '워크플로를 설명하세요',
+  'flows.promptBar.copilotTitle': '코파일럿',
   'flows.promptBar.submit': '만들기',
+  'flows.promptBar.startBuilding': '만들기 시작',
+  'flows.promptBar.disclaimer': '코파일럿은 AI이며 실수할 수 있습니다. 응답을 다시 확인하세요.',
   'flows.promptBar.thinking': '만드는 중…',
   'flows.promptBar.heroTitle': '워크플로를 설명하세요',
   'flows.promptBar.heroSubtitle': '무엇을 자동화할지 빌더에게 알려주고 제안을 검토하세요.',
@@ -4048,8 +4077,10 @@ const messages: TranslationMap = {
   'flows.copilot.removed': '{count}개 제거',
   'flows.copilot.noChanges': '이 제안은 노드를 변경하지 않습니다.',
   'flows.copilot.accept': '초안에 적용',
+  'flows.copilot.acceptAndSave': '수락 및 저장',
+  'flows.copilot.saving': '저장 중…',
   'flows.copilot.reject': '버리기',
-  'flows.copilot.previewHint': '제안된 초안을 검토 중입니다 — 아직 저장되지 않았습니다.',
+  'flows.copilot.previewHint': '제안된 초안을 검토 중입니다: 아직 저장되지 않았습니다.',
   'flows.copilot.repairDisplay': '실행이 실패했습니다. 확인하고 수정을 제안하세요.',
   'flows.copilot.tool.proposing': '워크플로 제안 중…',
   'flows.copilot.tool.dryRunning': '워크플로 시험 실행 중…',
@@ -4095,6 +4126,14 @@ const messages: TranslationMap = {
   'flows.editor.validate': '검증',
   'flows.editor.validating': '검증 중…',
   'flows.editor.discard': '변경 사항 취소',
+  'flows.editor.confirm.runTitle': '워크플로를 실행할까요?',
+  'flows.editor.confirm.runBody': '지금 워크플로를 실행합니다.',
+  'flows.editor.confirm.saveTitle': '변경 사항을 저장할까요?',
+  'flows.editor.confirm.saveBody': '워크플로에 대한 변경 사항을 저장합니다.',
+  'flows.editor.confirm.discardTitle': '변경 사항을 취소할까요?',
+  'flows.editor.confirm.discardBody': '저장되지 않은 모든 편집을 되돌리며 실행 취소할 수 없습니다.',
+  'flows.editor.confirm.confirm': '확인',
+  'flows.editor.confirm.cancel': '취소',
   'flows.editor.unsaved': '저장되지 않은 변경 사항',
   'flows.editor.saveBlocked': '저장하기 전에 아래 오류를 수정하세요.',
   'flows.editor.errorsTitle': '오류',
@@ -4105,7 +4144,7 @@ const messages: TranslationMap = {
     '이 워크플로에 저장되지 않은 변경 사항이 있습니다. 지금 나가면 변경 사항이 사라집니다.',
   'flows.editor.leaveStay': '머무르기',
   'flows.editor.leaveDiscard': '나가기',
-  // ── Node config drawer (issue B5b / Phase 3b) — per-kind config forms
+  // ── Node config drawer (issue B5b / Phase 3b): per-kind config forms
   'flowRuns.inspector.diagnosticsTitle': '표현식 경고',
   'flowRuns.inspector.diagnosticResolvedNull': 'null로 확인됨',
   'flows.runs.sidebarTitle': '실행',
@@ -4129,7 +4168,7 @@ const messages: TranslationMap = {
   'flows.nodeConfig.trigger.scheduleUnit_hours': '시간',
   'flows.nodeConfig.trigger.scheduleAt': '에',
   'flows.nodeConfig.trigger.scheduleTime': '하루 중 시간',
-  'flows.nodeConfig.trigger.scheduleDays': '요일 (선택 사항 — 매일이면 비워 두세요)',
+  'flows.nodeConfig.trigger.scheduleDays': '요일 (선택 사항: 매일이면 비워 두세요)',
   'flows.nodeConfig.trigger.scheduleAdvanced': '고급 (cron 편집)',
   'flows.nodeConfig.trigger.scheduleSimple': '간단한 일정으로 돌아가기',
   'flows.nodeConfig.trigger.pickApp': '먼저 연결된 앱을 선택하세요.',
@@ -4145,14 +4184,14 @@ const messages: TranslationMap = {
   'flows.nodeConfig.agent.modelInherit': '기본값 (상속)',
   'flows.nodeConfig.agent.agentRefLabel': '에이전트',
   'flows.nodeConfig.agent.agentRefHint':
-    '이 노드를 등록된 에이전트로 실행합니다 — 해당 에이전트의 도구와 가드레일이 적용됩니다.',
+    '이 노드를 등록된 에이전트로 실행합니다: 해당 에이전트의 도구와 가드레일이 적용됩니다.',
   'flows.nodeConfig.agent.agentRefInherit': '기본값 (워크플로 빌더)',
   'flows.nodeConfig.agent.modelManagedTiers': '관리형 등급',
   'flows.nodeConfig.agent.modelHints': '모델 힌트',
   'flows.nodeConfig.agent.modelCustom': '사용자 지정 모델…',
   'flows.nodeConfig.agent.modelCustomPlaceholder': '예: gpt-4o-mini',
   'flows.nodeConfig.tool.requiredMark': '필수',
-  'flows.nodeConfig.tool.requiredMissing': '필수 — 연결되지 않음',
+  'flows.nodeConfig.tool.requiredMissing': '필수: 연결되지 않음',
   'flows.nodeConfig.tool.argsAdvancedLabel': '모든 인수 (고급)',
   'flows.nodeConfig.upstream.insert': '삽입…',
   'flows.nodeConfig.upstream.insertLabel': '이전 단계의 값 삽입',
@@ -4168,7 +4207,7 @@ const messages: TranslationMap = {
   'flows.nodeConfig.rawJsonLabel': '구성 (JSON)',
   'flows.nodeConfig.rawJsonHint': '이 노드의 자유 구성입니다.',
   'flows.nodeConfig.rawJsonInvalid':
-    '잘못된 JSON — 구문 분석에 성공할 때까지 변경 사항이 적용되지 않습니다.',
+    '잘못된 JSON: 구문 분석에 성공할 때까지 변경 사항이 적용되지 않습니다.',
   'flows.nodeConfig.expressionHint': '노드 입력에서 값을 계산하려면 =로 시작하세요. 예: =item.url',
   'flows.nodeConfig.expressionBadge': '표현식',
   'flows.nodeConfig.keymapKeyPlaceholder': '키',
@@ -4255,7 +4294,7 @@ const messages: TranslationMap = {
 
   'oauth.button.connecting': '연결 중...',
   'oauth.button.loopbackTimeout':
-    '로그인 시간 초과 — 브라우저가 OAuth 리디렉션을 완료하지 못했습니다. 다시 시도해 주세요.',
+    '로그인 시간 초과: 브라우저가 OAuth 리디렉션을 완료하지 못했습니다. 다시 시도해 주세요.',
   'oauth.login.continueWith': '다음으로 계속:',
   'onboarding.contextGathering.buildingDesc': '작성 설명',
   'onboarding.contextGathering.buildingProfile': '프로필을 만드는 중...',
@@ -4306,7 +4345,7 @@ const messages: TranslationMap = {
   'settings.developerMenu.composio.desc': '라우팅 모드, 통합 트리거 및 트리거 기록 아카이브.',
   'pages.settings.features.desktopCompanion': '데스크탑 동반자',
   'pages.settings.features.desktopCompanionDesc':
-    '화면 인식 기능이 있는 음성 도우미 — 듣고, 보고, 말하고, 가리킵니다.',
+    '화면 인식 기능이 있는 음성 도우미: 듣고, 보고, 말하고, 가리킵니다.',
   'pages.settings.features.messagingChannels': '메시징 채널',
   'pages.settings.features.messagingChannelsDesc': '메시징 채널 설명',
   'pages.settings.features.notifications': '알림',
@@ -4462,7 +4501,7 @@ const messages: TranslationMap = {
   'settings.ai.routing': '라우팅',
   'settings.ai.claudeCode.button': 'Claude Code',
   'settings.ai.claudeCode.inlineNotConnected':
-    '연결되지 않음 — 로컬 Claude Code CLI를 통해 채팅을 라우팅합니다.',
+    '연결되지 않음: 로컬 Claude Code CLI를 통해 채팅을 라우팅합니다.',
   'settings.ai.claudeCode.checkingSignIn': '로그인 확인 중…',
   'settings.ai.claudeCode.inlineConnected': '연결됨.',
   'settings.ai.claudeCode.signedInAs': '로그인 계정',
@@ -4495,17 +4534,17 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.fullAccessOn':
     'Claude Code가 명령을 실행하고 네트워크를 사용하며 하위 에이전트를 생성할 수 있습니다.',
   'settings.ai.claudeCode.fullAccessOff':
-    '편집만 수락 — 파일 편집을 자동으로 적용하고 명령과 네트워크를 제한합니다.',
+    '편집만 수락: 파일 편집을 자동으로 적용하고 명령과 네트워크를 제한합니다.',
   'settings.ai.claudeCode.sandboxNoteMac':
     'macOS에서는 두 모드 모두 ~/.openhuman이 샌드박스로 보호됩니다.',
   'settings.ai.claudeCode.sandboxNoteOther':
-    '이 플랫폼에서는 전체 액세스가 제한되지 않습니다 — 작업 공간을 신뢰하는 경우에만 사용 설정하세요.',
+    '이 플랫폼에서는 전체 액세스가 제한되지 않습니다: 작업 공간을 신뢰하는 경우에만 사용 설정하세요.',
   'settings.ai.claudeCode.enableToCheck': '로그인을 확인하려면 Claude Code를 사용 설정하세요.',
   'settings.ai.claudeCode.usingApiKeyEnvDetail': '환경에서 ANTHROPIC_API_KEY를 사용 중입니다.',
   'settings.ai.claudeCode.notFoundInstall':
-    'Claude Code CLI를 찾을 수 없습니다 — 다음으로 설치하세요: npm install -g @anthropic-ai/claude-code',
+    'Claude Code CLI를 찾을 수 없습니다: 다음으로 설치하세요: npm install -g @anthropic-ai/claude-code',
   'settings.ai.claudeCode.unknownDetail':
-    '로그인 상태를 확인할 수 없습니다. claude CLI가 인증 상태 지원 이전 버전일 수 있습니다 — 다시 연결한 후 다시 확인하세요.',
+    '로그인 상태를 확인할 수 없습니다. claude CLI가 인증 상태 지원 이전 버전일 수 있습니다: 다시 연결한 후 다시 확인하세요.',
   'settings.ai.claudeCode.notSignedIn': '로그인되지 않음.',
   'settings.ai.routingCustom': '사용자 지정 라우팅',
   'settings.ai.routingDefault': '기본값',
@@ -4600,7 +4639,7 @@ const messages: TranslationMap = {
   'settings.ai.testingModel': '모델 테스트 중...',
   'settings.ai.modelResponse': '모델 응답',
   'settings.ai.providerWithValue': '공급자: {value}',
-  'settings.ai.noneDash': '—',
+  'settings.ai.noneDash': '없음',
   'settings.ai.promptHelloWorld': '프롬프트: Hello world',
   'settings.ai.startedAt': '시작됨: {value}',
   'settings.ai.waitingForModelResponse': '선택한 모델의 응답을 기다리는 중...',
@@ -4641,9 +4680,9 @@ const messages: TranslationMap = {
   'settings.ai.memoryWorkerPolls': '메모리 작업자 설문 조사',
   'settings.ai.defaultProviderName': 'OpenHuman',
   'settings.ai.routing.managed': '관리됨',
-  'settings.ai.routing.managedAlwaysOn': 'Always on',
+  'settings.ai.routing.managedAlwaysOn': '항상 켜짐',
   'settings.ai.routing.managedHint':
-    'Managed is always available as a fallback. To use your own model, choose a routing mode below.',
+    '관리형은 항상 대체 수단으로 사용할 수 있습니다. 자신의 모델을 사용하려면 아래에서 라우팅 모드를 선택하세요.',
   'settings.ai.routing.managedDesc':
     'OpenHuman이 모든 추론을 클라우드에서 실행하고, 작업에 가장 적합한 모델을 선택하며, 비용을 최적화하고 가장 안전한 라우팅 기본값을 유지합니다.',
   'settings.ai.routing.managedMsg':
@@ -4663,45 +4702,43 @@ const messages: TranslationMap = {
   'settings.ai.routing.bgTasksDesc':
     '요약, 하트비트, 학습 및 잠재의식 평가처럼 기본 대화 흐름 밖에서 사용되는 모델입니다.',
   'settings.ai.routing.workload.chat.label': 'Chat',
-  'settings.ai.routing.workload.chat.description':
-    'Direct conversational back-and-forth — “Quick” mode in Conversations',
+  'settings.ai.routing.workload.chat.description': '직접 대화 앞뒤로: 대화의 "빠른" 모드',
   'settings.ai.routing.workload.chat.hint':
-    'Recommended: a cheap or mid-cost fast chat model with high tokens/sec and low latency. Open-source local models can work well here if they feel responsive.',
+    '권장 사항: 초당 토큰 수가 많고 대기 시간이 짧은 저렴하거나 중간 수준의 빠른 채팅 모델입니다. 오픈 소스 로컬 모델은 반응성이 좋다면 여기에서 잘 작동할 수 있습니다.',
   'settings.ai.routing.workload.reasoning.label': 'Reasoning',
   'settings.ai.routing.workload.reasoning.description':
-    'Main chat agent, meeting summarizer — “Reasoning” mode in Conversations',
+    '주요 채팅 상담원, 회의 요약자: 대화의 "추론" 모드',
   'settings.ai.routing.workload.reasoning.hint':
-    'Recommended: a more expensive frontier or strong reasoning model for deep thinking. This is used for the main chat agent, meeting summaries, and heavier answer synthesis.',
+    '권장사항: 더 비싼 프론티어 또는 깊은 사고를 위한 강력한 추론 모델. 이는 기본 채팅 상담원, 회의 요약 및 더 무거운 답변 합성에 사용됩니다.',
   'settings.ai.routing.workload.agentic.label': 'Agentic',
-  'settings.ai.routing.workload.agentic.description':
-    'Sub-agent runners, tool loops, GIF decisions',
+  'settings.ai.routing.workload.agentic.description': '하위 에이전트 실행자, 도구 루프, GIF 결정',
   'settings.ai.routing.workload.agentic.hint':
-    'Recommended: a reliable instruction-following model with strong tool use. Mid-cost frontier models are usually safest; capable open-source models can work if tool calling is stable.',
+    '권장 사항: 강력한 도구 사용으로 신뢰할 수 있는 지침을 따르는 모델입니다. 일반적으로 중간 비용의 프론티어 모델이 가장 안전합니다. 도구 호출이 안정적이면 가능한 오픈 소스 모델이 작동할 수 있습니다.',
   'settings.ai.routing.workload.coding.label': 'Coding',
-  'settings.ai.routing.workload.coding.description': 'Code generation and refactor passes',
+  'settings.ai.routing.workload.coding.description': '코드 생성 및 리팩터링 통과',
   'settings.ai.routing.workload.coding.hint':
-    'Recommended: a coding-tuned model with strong instruction following, edit quality, and long-context performance. This is usually worth spending more on.',
+    '권장 사항: 강력한 지시 따르기, 편집 품질 및 장기 컨텍스트 성능을 갖춘 코딩 조정 모델. 이것은 일반적으로 더 많은 비용을 지출할 가치가 있습니다.',
   'settings.ai.routing.workload.vision.label': 'Vision',
   'settings.ai.routing.workload.vision.description':
-    'Image understanding for the vision sub-agent — always multimodal',
+    '비전 하위 에이전트에 대한 이미지 이해: 항상 다중 모드',
   'settings.ai.routing.workload.vision.hint':
-    'Recommended: a multimodal model that accepts image input. The managed default (vision-v1) is image-capable; any provider you route here is always treated as vision-enabled.',
-  'settings.ai.routing.workload.memory.label': 'Memory summarization',
-  'settings.ai.routing.workload.memory.description': 'Tree-extracts and consolidations',
+    '권장 사항: 이미지 입력을 허용하는 다중 모드 모델. 관리형 기본값(vision-v1)은 이미지를 사용할 수 있습니다. 여기로 연결하는 모든 제공자는 항상 비전 지원 제공자로 간주됩니다.',
+  'settings.ai.routing.workload.memory.label': '메모리 요약',
+  'settings.ai.routing.workload.memory.description': '나무 추출물 및 통합',
   'settings.ai.routing.workload.memory.hint':
-    'Recommended: a cheaper summarization model. It should be consistent and compact, but it does not need premium frontier-level reasoning.',
+    '권장사항: 더 저렴한 요약 모델. 일관되고 간결해야 하지만 프리미엄 프론티어 수준의 추론은 필요하지 않습니다.',
   'settings.ai.routing.workload.heartbeat.label': 'Heartbeat',
-  'settings.ai.routing.workload.heartbeat.description': 'Background reasoning between user turns',
+  'settings.ai.routing.workload.heartbeat.description': '사용자 차례 사이의 배경 추론',
   'settings.ai.routing.workload.heartbeat.hint':
-    'Recommended: a cheap, efficient background model. This runs often between turns, so low cost matters more than maximum intelligence.',
-  'settings.ai.routing.workload.learning.label': 'Learning · Reflections',
-  'settings.ai.routing.workload.learning.description': 'Periodic reflection over recent history',
+    '권장 사항: 저렴하고 효율적인 배경 모델. 이는 턴 사이에 자주 실행되므로 최대 지능보다 저렴한 비용이 더 중요합니다.',
+  'settings.ai.routing.workload.learning.label': '학습 · 반성',
+  'settings.ai.routing.workload.learning.description': '최근 역사에 대한 주기적인 성찰',
   'settings.ai.routing.workload.learning.hint':
-    'Recommended: a stronger reflective model. This can be mid-cost or premium because it benefits from better synthesis over recent history.',
+    '권장 사항: 더 강한 반사 모델. 최근 역사에 비해 더 나은 합성을 통해 이점을 얻을 수 있으므로 중간 비용 또는 프리미엄이 될 수 있습니다.',
   'settings.ai.routing.workload.subconscious.label': 'Subconscious',
-  'settings.ai.routing.workload.subconscious.description': 'Eventfulness scoring + drift checks',
+  'settings.ai.routing.workload.subconscious.description': '사건성 점수 + 드리프트 검사',
   'settings.ai.routing.workload.subconscious.hint':
-    'Recommended: a very cheap monitoring model, ideally one that is lightweight and predictable. This is for eventfulness scoring, drift checks, and quiet background evaluation.',
+    '권장 사항: 매우 저렴한 모니터링 모델, 이상적으로는 가볍고 예측 가능한 모델입니다. 이는 다사다난성 채점, 드리프트 검사 및 조용한 배경 평가를 위한 것입니다.',
   'settings.ai.routing.addCustomProvider': '사용자 정의 공급자 추가',
   'settings.ai.globalModel.title': '모든 것에 대해 하나의 모델을 선택합니다.',
   'settings.ai.globalModel.desc':
@@ -4740,9 +4777,9 @@ const messages: TranslationMap = {
   'settings.autocomplete.appFilter.runtime': '런타임',
   'settings.autocomplete.appFilter.test': '테스트',
   'settings.autocomplete.completionStyle.acceptedCompletion':
-    '수락된 완성 {count}개가 저장됨 — 향후 제안을 개인화하는 데 사용됩니다.',
+    '수락된 완성 {count}개가 저장됨: 향후 제안을 개인화하는 데 사용됩니다.',
   'settings.autocomplete.completionStyle.acceptedCompletions':
-    '수락된 완성 {count}개가 저장됨 — 향후 제안을 개인화하는 데 사용됩니다.',
+    '수락된 완성 {count}개가 저장됨: 향후 제안을 개인화하는 데 사용됩니다.',
   'settings.autocomplete.completionStyle.clearHistory': '지우는 중…',
   'settings.autocomplete.completionStyle.clearing': '지우는 중…',
   'settings.autocomplete.completionStyle.debounce': '디바운스(ms)',
@@ -4866,12 +4903,12 @@ const messages: TranslationMap = {
   'settings.composio.confirmItem1': 'API 키가 있는 app.composio.dev 계정',
   'settings.composio.confirmItem2': '개인 Composio 계정을 통해 각 통합을 다시 연결해야 합니다',
   'settings.composio.confirmItem3':
-    '참고: Composio 트리거(실시간 웹훅)는 아직 Direct 모드에서 실행되지 않습니다 — 동기식 도구 호출만 지원됩니다',
+    '참고: Composio 트리거(실시간 웹훅)는 아직 Direct 모드에서 실행되지 않습니다: 동기식 도구 호출만 지원됩니다',
   'settings.composio.confirmNeedItems': '필요한 항목:',
   'settings.composio.confirmSwitch': '이해했습니다. Direct로 전환',
   'settings.composio.confirmTitle': '⚠️ Direct 모드로 전환',
   'settings.composio.confirmWarning':
-    '기존 통합(Gmail, Slack, GitHub 등 OpenHuman을 통해 연결된 통합)은 표시되지 않습니다 — OpenHuman 관리형 Composio 테넌트에 있습니다.',
+    '기존 통합(Gmail, Slack, GitHub 등 OpenHuman을 통해 연결된 통합)은 표시되지 않습니다: OpenHuman 관리형 Composio 테넌트에 있습니다.',
   'settings.composio.intro':
     'Composio는 에이전트가 호출할 수 있는 도구로 250개 이상의 외부 앱을 통합합니다. 이러한 도구 호출이 라우팅되는 방식을 선택하세요.',
   'settings.composio.title': 'Composio',
@@ -4998,7 +5035,7 @@ const messages: TranslationMap = {
   'settings.localModel.deviceCapability.installingOllama': 'Ollama 설치 중',
   'settings.localModel.deviceCapability.loadingDeviceInfo': '기기 정보 불러오는 중',
   'settings.localModel.deviceCapability.localAiDisabled':
-    '로컬 AI 비활성화됨 — 클라우드 대체 사용 중.',
+    '로컬 AI 비활성화됨: 클라우드 대체 사용 중.',
   'settings.localModel.deviceCapability.modelTier': '모델 티어',
   'settings.localModel.deviceCapability.needsOllama': 'Ollama 필요',
   'settings.localModel.deviceCapability.notDetected': '감지되지 않음',
@@ -5159,7 +5196,7 @@ const messages: TranslationMap = {
   'settings.skillsRunner.placeholder.required': '필수',
   'settings.skillsRunner.runNow': '지금 실행',
   'settings.skillsRunner.starting': '시작 중…',
-  'settings.skillsRunner.started': '시작됨 — 실행 ID:',
+  'settings.skillsRunner.started': '시작됨: 실행 ID:',
   'settings.skillsRunner.logPath': '로그:',
   'settings.skillsRunner.error.listSkills': '스킬을 불러오지 못했습니다:',
   'settings.skillsRunner.error.describe': '입력을 불러오지 못했습니다:',
@@ -5251,7 +5288,7 @@ const messages: TranslationMap = {
   'settings.devWorkflow.lastOutput': '마지막 출력',
   'settings.devWorkflow.noOutput': '캡처된 출력이 없습니다',
   'settings.devWorkflow.runningStatus':
-    '에이전트가 실행 중입니다 — 이슈를 선택하고 수정 작업을 진행하는 중...',
+    '에이전트가 실행 중입니다: 이슈를 선택하고 수정 작업을 진행하는 중...',
   'settings.devWorkflow.errorNotConnected':
     'GitHub이 연결되어 있지 않습니다. 먼저 설정 > 고급 > Composio에서 GitHub을 연결하세요.',
   'settings.devWorkflow.errorToolNotEnabled':
@@ -5265,7 +5302,7 @@ const messages: TranslationMap = {
   'settings.devWorkflow.schedule.onceDaily': '하루 한 번(오전 9시)',
   'settings.developerMenu.tasks.title': '작업',
   'settings.developerMenu.tasks.desc':
-    '작업 보드를 둘러보고 관리하세요 — 내 할 일과 대화 전반에서 에이전트가 만든 보드를 함께 확인합니다.',
+    '작업 보드를 둘러보고 관리하세요: 내 할 일과 대화 전반에서 에이전트가 만든 보드를 함께 확인합니다.',
   'settings.developerMenu.cronJobs.title': '크론 작업',
   'settings.developerMenu.cronJobs.desc': '예약 보기 및 구성 런타임 기술용 작업',
   'settings.developerMenu.localModelDebug.title': '로컬 모델 디버그',
@@ -5341,7 +5378,7 @@ const messages: TranslationMap = {
     '에이전트가 읽고 쓸 수 있는 위치와 shell 사용 가능 여부를 제어합니다.',
   'settings.agentAccess.loadError': '접근 설정을 불러오지 못했습니다',
   'settings.agentAccess.saveError': '접근 설정을 저장하지 못했습니다',
-  'settings.agentAccess.saved': '저장됨 — 다음 메시지부터 적용됩니다.',
+  'settings.agentAccess.saved': '저장됨: 다음 메시지부터 적용됩니다.',
   'settings.agentAccess.desktopOnly': '접근 설정은 데스크톱 앱에서만 사용할 수 있습니다.',
   'settings.agentAccess.loading': '불러오는 중…',
   'settings.agentAccess.accessMode': '접근 모드',
@@ -5412,9 +5449,9 @@ const messages: TranslationMap = {
   'settings.agentAccess.actionDirEmptyError': '경로는 비워둘 수 없습니다.',
   'settings.agentAccess.actionDirSaveError': '작업 샌드박스를 업데이트할 수 없습니다.',
   'settings.agentAccess.actionDirEnvOverrideError':
-    'OPENHUMAN_ACTION_DIR이 설정되어 있습니다 — 설정에서 편집하려면 환경 변수를 해제하세요.',
+    'OPENHUMAN_ACTION_DIR이 설정되어 있습니다: 설정에서 편집하려면 환경 변수를 해제하세요.',
   'settings.agentAccess.actionDirEnvOverrideNote':
-    'OPENHUMAN_ACTION_DIR에 의해 재정의됨 — 설정에서 관리하려면 환경 변수를 해제하세요.',
+    'OPENHUMAN_ACTION_DIR에 의해 재정의됨: 설정에서 관리하려면 환경 변수를 해제하세요.',
   'settings.agentAccess.approvalHistory': '승인 이력',
   'settings.agentAccess.approvalHistoryDesc': '에이전트가 요청한 이전 승인/거부 결정을 검토합니다.',
   'settings.agentAccess.viewApprovalHistory': '승인 기록 보기',
@@ -5467,7 +5504,7 @@ const messages: TranslationMap = {
   'settings.sandbox.desktopOnly': '샌드박스 설정은 데스크톱 앱에서만 사용할 수 있습니다.',
   'settings.sandbox.loadError': '샌드박스 설정을 불러오지 못했습니다.',
   'settings.sandbox.saveError': '샌드박스 설정을 저장하지 못했습니다.',
-  'settings.sandbox.saved': '저장됨 — 새 에이전트 세션에 적용됩니다.',
+  'settings.sandbox.saved': '저장됨: 새 에이전트 세션에 적용됩니다.',
   'settings.sandbox.saving': '저장 중…',
   'settings.sandbox.status': '상태',
   'settings.sandbox.dockerStatus': 'Docker',
@@ -5531,7 +5568,7 @@ const messages: TranslationMap = {
   'settings.theme.copyName': '{name} (사용자 지정)',
   'settings.theme.importedName': '가져온 테마',
   'settings.theme.contrastWarn':
-    '텍스트와 배경 사이의 대비가 낮습니다 — 이 테마는 읽기 어려울 수 있습니다.',
+    '텍스트와 배경 사이의 대비가 낮습니다: 이 테마는 읽기 어려울 수 있습니다.',
   'settings.theme.group.surfaces': '표면',
   'settings.theme.group.text': '텍스트',
   'settings.theme.group.borders': '테두리',
@@ -5564,11 +5601,11 @@ const messages: TranslationMap = {
   'settings.appearance.modeSystem': '시스템과 일치',
   'settings.appearance.modeSystemDesc': 'OS 외관 설정을 따릅니다.',
   'settings.appearance.helperText':
-    '다크 모드는 전체 앱 — 채팅, 설정, 패널 — 을 어두운 팔레트로 전환합니다. "시스템과 일치"는 OS 외관을 따르며 실시간으로 업데이트됩니다.',
+    '다크 모드는 전체 앱: 채팅, 설정, 패널: 을 어두운 팔레트로 전환합니다. "시스템과 일치"는 OS 외관을 따르며 실시간으로 업데이트됩니다.',
   'settings.appearance.fontSizeHeading': '글꼴 크기',
   'settings.appearance.fontSizeAria': '글꼴 크기',
   'settings.appearance.fontSizeSmall': '작게',
-  'settings.appearance.fontSizeSmallDesc': '간결한 텍스트 — 화면에 더 많이 표시.',
+  'settings.appearance.fontSizeSmallDesc': '간결한 텍스트: 화면에 더 많이 표시.',
   'settings.appearance.fontSizeMedium': '보통',
   'settings.appearance.fontSizeMediumDesc': '기본의 균형 잡힌 크기.',
   'settings.appearance.fontSizeLarge': '크게',
@@ -5576,7 +5613,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': '아주 크게',
   'settings.appearance.fontSizeXLargeDesc': '최대 가독성을 위한 가장 큰 텍스트.',
   'settings.appearance.fontSizeHelperText':
-    '시스템 글꼴 설정과 관계없이 앱 전체 — 채팅, 설정, 패널 — 의 텍스트 크기를 조정합니다.',
+    '시스템 글꼴 설정과 관계없이 앱 전체: 채팅, 설정, 패널: 의 텍스트 크기를 조정합니다.',
   'settings.appearance.fontSizeCustomLabel': '사용자 지정 크기',
   'settings.appearance.fontSizeCustomAria': '픽셀 단위 사용자 지정 글꼴 크기',
   'settings.appearance.fontSizeCustomSliderAria': '사용자 지정 글꼴 크기 슬라이더, 픽셀 단위',
@@ -5688,12 +5725,12 @@ const messages: TranslationMap = {
   'settings.persona.builder.aboutPlaceholder':
     '예: 작은 디자인 스튜디오를 운영하며 쉬운 표현을 선호합니다.',
   'settings.persona.builder.preservedNote':
-    '직접 작성한 다른 섹션은 그대로 유지됩니다 — 전체 페르소나를 보려면 고급으로 전환하세요.',
+    '직접 작성한 다른 섹션은 그대로 유지됩니다: 전체 페르소나를 보려면 고급으로 전환하세요.',
   'settings.persona.builder.securityNote': '어시스턴트가 할 수 있는 일을 정하시겠어요?',
   'settings.persona.builder.securityLink': '에이전트 액세스 열기',
   'settings.persona.templates.heading': '템플릿으로 시작',
   'settings.persona.templates.desc':
-    '시작점을 고르세요 — 성격과 커뮤니케이션 스타일을 채워 줍니다. 이후 모두 수정할 수 있습니다.',
+    '시작점을 고르세요: 성격과 커뮤니케이션 스타일을 채워 줍니다. 이후 모두 수정할 수 있습니다.',
   'settings.persona.templates.doctor.label': '임상 어시스턴트',
   'settings.persona.templates.doctor.desc': '신중하고 출처를 밝히며 불확실성을 표시',
   'settings.persona.templates.researcher.label': '리서치 어시스턴트',
@@ -5712,7 +5749,7 @@ const messages: TranslationMap = {
   'settings.persona.openMascotSettings': '마스코트 설정 열기',
   'settings.memoryWindow.balanced.badge': '추천',
   'settings.memoryWindow.balanced.hint':
-    '합리적인 기본값 — 매번 추가 토큰을 많이 쓰지 않으면서 좋은 연속성을 제공합니다.',
+    '합리적인 기본값: 매번 추가 토큰을 많이 쓰지 않으면서 좋은 연속성을 제공합니다.',
   'settings.memoryWindow.balanced.label': '균형',
   'settings.memoryWindow.description':
     'OpenHuman이 새 에이전트 실행마다 주입하는 기억된 컨텍스트의 양입니다. 창이 클수록 과거 대화를 더 잘 인식하지만, 매 실행마다 더 많은 토큰을 사용하고 비용도 더 듭니다.',
@@ -5769,8 +5806,7 @@ const messages: TranslationMap = {
   'settings.desktopAgent.microphone': '마이크',
   'settings.desktopAgent.grant': '허용',
   'settings.desktopAgent.notRequiredOnOs': '이 운영 체제에서는 필요하지 않음',
-  'settings.desktopAgent.allGranted':
-    '모두 완료 — 데스크톱 에이전트에 필요한 모든 권한이 있습니다.',
+  'settings.desktopAgent.allGranted': '모두 완료: 데스크톱 에이전트에 필요한 모든 권한이 있습니다.',
   'settings.desktopAgent.recheck': '다시 확인',
   'settings.desktopAgent.restartAndRecheck': '코어 재시작 후 다시 확인',
   'settings.desktopAgent.seamless.title': '에이전트 작업',
@@ -5778,9 +5814,9 @@ const messages: TranslationMap = {
   'settings.desktopAgent.seamless.description':
     '전체 접근을 허용하고 데스크톱 작업(앱 열기, 앱 인터페이스 제어)을 자동 승인하여 에이전트가 승인 요청 없이 실행하도록 합니다.',
   'settings.desktopAgent.seamless.note':
-    '데스크톱 작업만 확인을 건너뜁니다 — 셸 명령 실행, 파일 편집, 네트워크 요청, 소프트웨어 설치는 여전히 확인을 요청합니다. 이 기능을 끄면 데스크톱 작업의 자동 승인이 중단되지만 접근 수준은 그대로 유지됩니다.',
+    '데스크톱 작업만 확인을 건너뜁니다: 셸 명령 실행, 파일 편집, 네트워크 요청, 소프트웨어 설치는 여전히 확인을 요청합니다. 이 기능을 끄면 데스크톱 작업의 자동 승인이 중단되지만 접근 수준은 그대로 유지됩니다.',
   'settings.desktopAgent.beta':
-    '베타 — 데스크톱 에이전트는 실험적 기능이며 항상 기대대로 작동하지 않을 수 있습니다.',
+    '베타: 데스크톱 에이전트는 실험적 기능이며 항상 기대대로 작동하지 않을 수 있습니다.',
   'settings.desktopAgent.wakeWordHint': '에이전트를 깨우려면 명령 앞에 “Hey Tiny”라고 말하세요.',
   'settings.screenIntel.permissions.accessibility': '접근성',
   'settings.screenIntel.permissions.grantHint': '권한 허용 안내',
@@ -5839,7 +5875,7 @@ const messages: TranslationMap = {
   'skills.create.scope': '범위',
   'skills.create.scopeProjectHint': '/.openhuman/skills/',
   'skills.create.scopeUserHint':
-    '~/.openhuman/skills/<slug>/SKILL.md에 작성됨 — 모든 워크스페이스에서 사용 가능.',
+    '~/.openhuman/skills/<slug>/SKILL.md에 작성됨: 모든 워크스페이스에서 사용 가능.',
   'skills.create.slugLabel': '슬러그 라벨',
   'skills.create.subtitle': 'SKILL.md',
   'skills.create.tags': '태그',
@@ -5948,7 +5984,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.starting': '시작 중…',
   'skills.meetingBots.recentCallsAriaLabel': '최근 회의 통화',
   'skills.meetingBots.recentCallsHeading': '최근 통화',
-  'skills.meetingBots.recentCallsEmpty': '이전 통화가 없습니다 — 회의 기록이 여기에 표시됩니다.',
+  'skills.meetingBots.recentCallsEmpty': '이전 통화가 없습니다: 회의 기록이 여기에 표시됩니다.',
   'skills.meetingBots.recentCallsLoading': '로딩 중\u2026',
   'skills.meetingBots.recentCallAddedBy': '{name}님이 추가함',
   'skills.meetingBots.recentCallParticipants': '{names}님과 함께',
@@ -5978,7 +6014,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.respondToParticipantHint': '예: 김철수 (통화에서 표시되는 이름)',
   'skills.meetingBots.replyName.label': '회의에서 사용할 이름',
   'skills.meetingBots.replyName.description':
-    '봇이 듣고 응답하는 이름입니다. 통화에 표시되는 이름을 입력하세요 — 참여하는 모든 회의에 적용됩니다.',
+    '봇이 듣고 응답하는 이름입니다. 통화에 표시되는 이름을 입력하세요: 참여하는 모든 회의에 적용됩니다.',
   'skills.meetingBots.replyName.placeholder': '예: Alex Kim',
   'skills.meetingBots.respondToParticipantDesc':
     '회의에서 사용하는 정확한 표시 이름을 입력하세요. 봇은 이름(웨이크 구문)을 말할 때만 응답합니다.',
@@ -6014,7 +6050,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.upcoming.today': '오늘',
   'skills.meetingBots.upcoming.tomorrow': '내일',
   'skills.meetingBots.upcoming.empty':
-    '예정된 회의가 없습니다 — Google Calendar를 연결하여 여기에서 확인하세요.',
+    '예정된 회의가 없습니다: Google Calendar를 연결하여 여기에서 확인하세요.',
   'skills.meetingBots.upcoming.error': '예정된 회의를 불러올 수 없습니다.',
   'skills.meetingBots.upcoming.retry': '다시 시도',
   'skills.meetingBots.upcoming.refresh': '새로 고침',
@@ -6024,7 +6060,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.upcoming.autoJoinsAt': '~{time}에 자동 참가',
   'skills.meetingBots.upcoming.asksAtStart': '시작 시 묻기',
   'skills.meetingBots.upcoming.watchCalendarHint':
-    "자동/묻기가 적용되도록 기본값(기어 아이콘)에서 '내 캘린더 감시'를 활성화하세요 — 그렇지 않으면 이 정책들은 저장되지만 트리거되지 않습니다.",
+    "자동/묻기가 적용되도록 기본값(기어 아이콘)에서 '내 캘린더 감시'를 활성화하세요: 그렇지 않으면 이 정책들은 저장되지만 트리거되지 않습니다.",
   'skills.meetingBots.relative.now': '지금',
   'skills.meetingBots.relative.inMinutes': '{count}분 후',
   'skills.meetingBots.relative.inHours': '{count}시간 후',
@@ -6303,7 +6339,7 @@ const messages: TranslationMap = {
   'walletBalances.refresh': 'Refresh',
   'walletBalances.loading': '잔액 불러오는 중…',
   'walletBalances.retry': 'Retry',
-  'walletBalances.emptyState': '아직 지갑 계정이 없습니다 — 복구 문구에서 지갑을 설정하세요.',
+  'walletBalances.emptyState': '아직 지갑 계정이 없습니다: 복구 문구에서 지갑을 설정하세요.',
   'walletBalances.copyAddress': '주소 복사',
   'walletBalances.providerMissing': '공급자 사용 불가',
   'walletBalances.rawBalance': '원본: {raw}',
@@ -6435,7 +6471,7 @@ const messages: TranslationMap = {
   'nav.workflows': 'Workflows',
   'workflows.title': '워크플로',
   'workflows.subtitle':
-    '재사용 가능하고 실행 가능한 절차 — 목표와 그에 도달하는 단계. 새로 만들거나, URL에서 설치하거나, 워크플로를 열어 실행하세요.',
+    '재사용 가능하고 실행 가능한 절차: 목표와 그에 도달하는 단계. 새로 만들거나, URL에서 설치하거나, 워크플로를 열어 실행하세요.',
   'workflows.createNew': '새 워크플로',
   'workflows.listHeading': 'Workflows',
   'workflows.delete': '워크플로 삭제',
@@ -6512,7 +6548,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     '기본 제공 에이전트는 편집할 수 없습니다. 에이전트 목록에서 활성화, 비활성화 또는 초기화할 수 있습니다.',
-  // Chat — agent-generated artifacts (#2779)
+  // Chat: agent-generated artifacts (#2779)
   'chat.artifact.aria': '아티팩트: {title}',
   'chat.artifact.generating': '{kind} 생성 중…',
   'chat.artifact.ready': '준비됨',
@@ -6526,7 +6562,7 @@ const messages: TranslationMap = {
   'chat.artifact.show_more': '더 보기',
   'chat.artifact.show_less': '간단히 보기',
 
-  // Chat — files panel (#3024)
+  // Chat: files panel (#3024)
   'chat.files.chip.aria.one': '이 채팅의 파일 {count}개',
   'chat.files.chip.aria.other': '이 채팅의 파일 {count}개',
   'chat.files.panel.aria': '이 채팅의 파일',
@@ -6550,7 +6586,7 @@ const messages: TranslationMap = {
   'memory.tab.council': 'Council',
   'activity.tabs.automations': '자동화',
   'activity.tabs.automationsDescription':
-    '재사용 가능하고 실행 가능한 절차 — 목표와 그것을 달성하기 위한 단계.',
+    '재사용 가능하고 실행 가능한 절차: 목표와 그것을 달성하기 위한 단계.',
   'activity.tabs.backgroundActivity': '잠재의식',
   'activity.tabs.alerts': '알림',
 
@@ -6707,7 +6743,7 @@ const messages: TranslationMap = {
   'modelCouncil.usageTotalTokens': 'Total',
   'graphCohesion.brokerBadge': '브로커',
   'graphCohesion.brokerTitle':
-    '구조적 공백: 이 엔티티의 이웃들은 서로 연결되어 있지 않습니다 — 이들 사이의 유일한 연결고리입니다.',
+    '구조적 공백: 이 엔티티의 이웃들은 서로 연결되어 있지 않습니다: 이들 사이의 유일한 연결고리입니다.',
   'graphCohesion.colCohesion': '응집도',
   'graphCohesion.colEntity': '엔티티',
   'graphCohesion.colLinks': '링크',
@@ -6717,7 +6753,7 @@ const messages: TranslationMap = {
     '어시스턴트가 당신에 관한 연결된 사실들을 기록함에 따라, 그 군집화 구조가 여기에 드러납니다.',
   'graphCohesion.errorPrefix': '그래프를 불러올 수 없습니다:',
   'graphCohesion.intro':
-    '각 엔티티 주변 이웃이 얼마나 촘촘히 엮여 있는지. 브로커 — 이웃들이 서로 연결되지 않은 엔티티 — 는 그렇지 않으면 분리되었을 클러스터를 묶어주는 단일 지점이며, 빈도나 PageRank 정렬로는 드러낼 수 없는 것입니다.',
+    '각 엔티티 주변 이웃이 얼마나 촘촘히 엮여 있는지. 브로커: 이웃들이 서로 연결되지 않은 엔티티: 는 그렇지 않으면 분리되었을 클러스터를 묶어주는 단일 지점이며, 빈도나 PageRank 정렬로는 드러낼 수 없는 것입니다.',
   'graphCohesion.loading': '응집도 계산 중…',
   'graphCohesion.metricConnections': '연결',
   'graphCohesion.metricEntities': '엔티티',
@@ -6725,7 +6761,7 @@ const messages: TranslationMap = {
   'graphCohesion.namespaceAll': '모든 네임스페이스',
   'graphCohesion.namespaceLabel': '네임스페이스',
   'graphCohesion.noBrokers': '아직 연결이 둘 이상인 엔티티가 없습니다.',
-  'graphCohesion.rankedHeading': '브로커 — 가장 느슨한 이웃',
+  'graphCohesion.rankedHeading': '브로커: 가장 느슨한 이웃',
   'graphCohesion.retry': '다시 시도',
   'graphCohesion.summaryCaption': '평균 군집계수 {avg} · 전이성 {transitivity}',
   'graphCohesion.title': '그래프 응집도',
@@ -6744,7 +6780,7 @@ const messages: TranslationMap = {
   'harnessInit.stateSkipped': '건너뜀',
   'harnessInit.stateFailed': '실패',
   'harnessInit.failedMessage':
-    '일부 설정 단계가 완료되지 않았습니다. 다시 시도하거나 계속 진행할 수 있습니다 — OpenHuman이 내장 대체 기능을 사용합니다.',
+    '일부 설정 단계가 완료되지 않았습니다. 다시 시도하거나 계속 진행할 수 있습니다: OpenHuman이 내장 대체 기능을 사용합니다.',
   'harnessInit.retry': '다시 시도',
   'harnessInit.continueAnyway': '그래도 계속',
   'harnessInit.runInBackground': '백그라운드에서 실행',
@@ -6806,14 +6842,14 @@ const messages: TranslationMap = {
   'memory.health.remediation.summarizer_unavailable':
     '요약 트리 만들기에 사용할 수 있는 요약 제공자가 없습니다. 로컬 AI(Ollama)를 활성화하거나, memory_tree.cloud_summarization_opt_in=true를 설정하고 연결 → API 키 → LLM에서 LLM 제공자를 구성하세요.',
   'memory.health.remediation.empty_input_refused':
-    '텍스트가 비어 있어 메모리 항목이 건너뛰어졌습니다. 조치가 필요하지 않습니다 — 새 항목은 정상적으로 임베딩됩니다.',
+    '텍스트가 비어 있어 메모리 항목이 건너뛰어졌습니다. 조치가 필요하지 않습니다: 새 항목은 정상적으로 임베딩됩니다.',
   'memory.health.remediation.storage_unavailable':
-    'OpenHuman이 메모리 저장소에 쓸 수 없습니다 — 디스크 또는 SD 카드가 손상되었거나 가득 찼거나 읽기 전용인 것 같습니다. 드라이브를 확인하고 공간을 확보하세요. 저장소에 다시 쓸 수 있게 되면 메모리 처리가 자동으로 재개됩니다.',
+    'OpenHuman이 메모리 저장소에 쓸 수 없습니다: 디스크 또는 SD 카드가 손상되었거나 가득 찼거나 읽기 전용인 것 같습니다. 드라이브를 확인하고 공간을 확보하세요. 저장소에 다시 쓸 수 있게 되면 메모리 처리가 자동으로 재개됩니다.',
   'memory.health.remediation.transient':
     '일시적인 오류로 메모리 처리가 중단되었습니다. 자동으로 다시 시도됩니다.',
   'memory.health.remediation.unknown':
     '메모리 처리 중 문제가 발생했습니다. 연결 → API 키에서 구성을 확인하세요.',
-  // Chat — agent-generated artifacts (#2779)
+  // Chat: agent-generated artifacts (#2779)
 
   // Chat composer toolbar
   'composer.attachFile': '파일 첨부',
@@ -6873,7 +6909,7 @@ const messages: TranslationMap = {
   'onboarding.custom.activity.title': '에이전트 활동',
   'onboarding.custom.activity.subtitle':
     '에이전트가 백그라운드에서 얼마나 능동적으로 모니터링하고 행동하는지.',
-  'onboarding.custom.activity.defaultDesc': '보통 활동 — 매시간 동기화, 일일 요약.',
+  'onboarding.custom.activity.defaultDesc': '보통 활동: 매시간 동기화, 일일 요약.',
   'onboarding.custom.activity.configureDesc':
     '자신만의 활동 수준을 선택하세요. 설정 › 에이전트 활동 수준에서 구성하세요.',
   'onboarding.custom.vault.title': '메모리 및 볼트 설정',
@@ -6925,7 +6961,7 @@ const messages: TranslationMap = {
     'OpenHuman이 생성된 메모리 노트를 memory_tree/content에 기록합니다.',
   'memoryData.connectedSources': '연결된 소스 · 읽기',
   'memoryData.connectedSourcesDesc':
-    '폴더, 사서함, 채팅, 저장소가 메모리 인덱싱을 위해 가져와집니다 — 원본 파일은 절대 수정되지 않습니다.',
+    '폴더, 사서함, 채팅, 저장소가 메모리 인덱싱을 위해 가져와집니다: 원본 파일은 절대 수정되지 않습니다.',
   'memoryData.internalFiles': '내부 메모리 트리 파일',
   'memoryData.internalFilesDesc':
     '인덱스, 큐 상태, 요약은 OpenHuman이 관리하여 회상과 동기화를 정상 상태로 유지합니다.',
@@ -7021,7 +7057,7 @@ const messages: TranslationMap = {
   // ── Agent Profiles ───────────────────────────────────────────────────────
   'settings.profiles.title': '에이전트 프로필',
   'settings.profiles.subtitle':
-    '개성 있는 에이전트 — 각자 고유한 영혼, 기억, 커넥터, 기술을 갖습니다.',
+    '개성 있는 에이전트: 각자 고유한 영혼, 기억, 커넥터, 기술을 갖습니다.',
   'settings.profiles.menuDesc': '에이전트 프로필 만들기 및 관리',
   'settings.profiles.new': '새 프로필',
   'settings.profiles.empty': '아직 에이전트 프로필이 없습니다',
@@ -7095,7 +7131,7 @@ const messages: TranslationMap = {
     'AI 제공업체에 API 키가 설정되지 않았습니다. 제공업체 설정에서 추가하세요.',
   'userErrors.scope.chat': '채팅',
   'userErrors.scope.cron': '예약된 작업',
-  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  // Agent World: Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': '금액',
   'agentWorld.trading.networkLabel': '네트워크',
   'agentWorld.trading.balanceLabel': '내 잔액',
@@ -7117,12 +7153,12 @@ const messages: TranslationMap = {
     '이 결제를 완료하기에 잔액이 부족합니다. 계속하려면 지갑에 자금을 추가하세요.',
   'agentWorld.trading.spendBroadcastNote': '지갑이 이 결제에 서명하여 다음 네트워크에 전파합니다',
   'agentWorld.trading.commitInsufficientWarning':
-    '약정이 수락되면 잔액이 이를 충당하지 못할 수 있습니다. 그래도 제출할 수 있습니다 — 자금은 수락 시에만 이동합니다.',
+    '약정이 수락되면 잔액이 이를 충당하지 못할 수 있습니다. 그래도 제출할 수 있습니다: 자금은 수락 시에만 이동합니다.',
   'agentWorld.trading.commitSettleNote':
-    '이것은 서명된 약정입니다 — 수락된 경우에만 자금이 이동합니다.',
+    '이것은 서명된 약정입니다: 수락된 경우에만 자금이 이동합니다.',
   'agentWorld.trading.commitReviewSubtitle': '제출하기 전에 약정을 검토하세요.',
   'agentWorld.trading.balanceUnverified':
-    '지갑 잔액을 확인할 수 없습니다. 그래도 계속할 수 있습니다 — 결제는 제출 시 확인됩니다.',
+    '지갑 잔액을 확인할 수 없습니다. 그래도 계속할 수 있습니다: 결제는 제출 시 확인됩니다.',
   'agentWorld.trading.amountTooManyDecimals': '이 금액의 소수점 자릿수가 너무 많습니다.',
   'agentWorld.trading.amountMustBePositive': '0보다 큰 금액을 입력하세요.',
   'agentWorld.trading.amountInvalid': '유효한 금액을 입력하세요.',
@@ -7152,30 +7188,32 @@ const messages: TranslationMap = {
   'flows.delete.confirm': '삭제',
   'flows.delete.deleting': '삭제 중…',
   'flows.canvas.renameLabel': '워크플로 이름 바꾸기',
+  'memorySources.codingSessions.title': '코딩 에이전트 세션',
+  'memorySources.codingSessions.description':
+    'Codex와 Claude Code의 결정 및 수정 사항을 비공개 페르소나 메모리로 변환합니다.',
+  'memorySources.codingSessions.ingest': '새 세션 수집',
+  'memorySources.codingSessions.ingesting': '수집 중…',
+  'memorySources.codingSessions.claude': '클로드 코드',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '세션 {files}개 · 사용자 입력 {evidence}개',
+  'memorySources.codingSessions.notFound': '로컬 기록을 찾지 못했습니다',
+  'memorySources.codingSessions.scanning': '로컬 세션 기록을 검색하는 중…',
+  'memorySources.codingSessions.truncated': '스캔이 처음 1,000개 세션 파일로 제한되었습니다.',
+  'memorySources.codingSessions.complete': '코딩 세션 수집 완료',
+  'memorySources.codingSessions.completeMessage':
+    '세션 {processed}개에서 페르소나 관찰 {observations}개를 만들었습니다.',
+  'memorySources.codingSessions.partialFailure':
+    '세션 {processed}개를 처리하는 동안 {failed}개가 실패했습니다. 다시 시도하려면 수집을 다시 실행하세요.',
+  'memorySources.codingSessions.moreRemaining':
+    '세션 배치 한도에 도달했습니다. 기록 가져오기를 계속하려면 수집을 다시 실행하세요.',
+  'memorySources.codingSessions.failed': '코딩 세션 수집 실패',
+  'flows.canvas.sidePanelToggle': '사이드 패널',
+  'flows.canvas.legendTab': '수동',
 
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': '개인정보 상태',
   'privacy.status.external': '기기 외',
   'privacy.status.local': '기기 내',
-  'privacy.disclosure.title': '기기에서 나가는 중',
-  'privacy.disclosure.body':
-    '이 작업은 {destination}(으)로 다음 데이터를 보냅니다: {kinds}. ({reason})',
-  'privacy.disclosure.dismiss': '확인',
-  'privacy.disclosure.ariaLabel': '외부 데이터 공개',
-  'privacy.disclosure.kindSeparator': ', ',
-  'privacy.disclosure.kind.prompt': '메시지',
-  'privacy.disclosure.kind.toolArguments': '도구 입력값',
-  'privacy.disclosure.kind.embeddingInput': '색인할 텍스트',
-  'privacy.disclosure.kind.fileContent': '파일 내용',
-  'privacy.disclosure.kind.url': '웹 주소',
-  'privacy.disclosure.kind.metadata': '요청 메타데이터',
-  'privacy.disclosure.kind.unknown': '데이터',
-  'privacy.disclosure.reason.inference': 'AI 모델이 이를 처리해야 하기 때문에',
-  'privacy.disclosure.reason.toolCall': '도구가 이를 필요로 하기 때문에',
-  'privacy.disclosure.reason.integration': '연결된 통합 기능이 이를 필요로 하기 때문에',
-  'privacy.disclosure.reason.embedding': '검색을 위해 색인해야 하기 때문에',
-  'privacy.disclosure.reason.networkFetch': '웹 요청이 이를 필요로 하기 때문에',
-  'privacy.disclosure.reason.unknown': '이 작업에 필요하기 때문에',
 };
 
 export default messages;

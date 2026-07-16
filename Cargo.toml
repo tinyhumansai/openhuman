@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.59.1"
+version = "0.61.5"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -88,7 +88,7 @@ tinyagents = { version = "1.7", features = ["sqlite", "repl"] }
 # security gating, and the global singleton stay host-side. rusqlite/git2 are
 # aligned to the host pins (=0.40 / 0.21) so one bundled SQLite + one libgit2
 # link. Keep the version pin in lockstep with the submodule tag.
-tinycortex = { version = "0.1", features = ["git-diff", "sync"] }
+tinycortex = { version = "0.1", features = ["git-diff", "persona", "sync"] }
 tinychannels = { version = "0.1", features = ["relay-websocket"] }
 # TokenJuice code compressor — AST-aware signature extraction. Optional (C build)
 # behind the default `tokenjuice-treesitter` feature; disabling it falls back to
@@ -268,6 +268,13 @@ pdf-extract = "0.10"
 # stack) now lives in the tinychannels crate; the `whatsapp-web` feature forwards
 # to `tinychannels/whatsapp-web`.
 ppt-rs = "0.2.14"
+# Native-Rust `.docx` writer for the `generate_document` tool (GH #4847).
+# Pure Rust (no subprocess / managed runtime), MIT-licensed, actively
+# maintained (2.8M downloads, last release 0.4.20 — Apr 2026). Mirrors the
+# `ppt-rs` presentation engine: synthesise bytes in-process, hand them to
+# the byte-agnostic artifact pipeline. `default-features` keeps the crate's
+# image support (unused here, but avoids a bespoke feature list drifting).
+docx-rs = "0.4.20"
 
 [target.'cfg(windows)'.dependencies]
 # Windows: tokio-tungstenite uses native-tls (schannel) so wss://
@@ -334,7 +341,7 @@ tokio = { version = "1", features = ["test-util"] }
 proptest = "1"
 
 [features]
-default = ["tokenjuice-treesitter", "voice", "web3"]
+default = ["tokenjuice-treesitter", "voice", "web3", "media"]
 # AST-aware code compression (tree-sitter Rust/TS/Python grammars; C build).
 # On by default; disable to fall back to the brace-depth heuristic.
 tokenjuice-treesitter = [
@@ -365,6 +372,18 @@ voice = ["dep:hound", "dep:lettre"]
 # always-on. When off, tinyplace payments + Polymarket writes degrade to
 # graceful "wallet disabled" errors via the wallet/web3/x402 stub facades.
 web3 = ["dep:bitcoin", "dep:curve25519-dalek"]
+# Media-generation + image domains: the `media_generate_*` agent tools
+# (image/video via GMI through the backend) and the `openhuman::image` tool
+# contracts scaffold. Default-ON. Slim builds opt out via
+# `--no-default-features --features "<explicit list without media>"`.
+# Composes with the runtime `DomainSet::media` flag (#4796).
+# NOTE: this gate sheds NO exclusive dependencies — media generation is
+# backend-proxied (reqwest, shared) and the `image` crate is shared with
+# channel media upload. It is a surface-only gate (drops the tool code +
+# module from the compile), not a dependency-shedding one. There are no
+# controllers / stores / subscribers tagged `Media` (agent tools only), and
+# `openhuman::image` is currently unwired scaffold (added #2997).
+media = []
 sandbox-landlock = ["dep:landlock"]
 sandbox-bubblewrap = []
 peripheral-rpi = ["dep:rppal"]
@@ -380,6 +399,19 @@ e2e-test-support = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
+
+# These project-wide shape/documentation lints describe intentional public APIs
+# and long-standing module docs. Keep them explicitly baselined so `-D warnings`
+# can make every other Clippy and rustc diagnostic a hard failure.
+[lints.clippy]
+borrowed_box = "allow"
+doc_overindented_list_items = "allow"
+field_reassign_with_default = "allow"
+large_enum_variant = "allow"
+result_large_err = "allow"
+should_implement_trait = "allow"
+too_many_arguments = "allow"
+while_let_loop = "allow"
 
 # Fix whisper-rs-sys CRT mismatch on Windows MSVC (LNK2038).
 # Upstream cmake build defaults to /MD but Rust uses /MT.

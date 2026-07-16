@@ -23,6 +23,12 @@
 //! (`cargo check --no-default-features --features "<all-but-voice>"`): any
 //! signature drift fails that build.
 
+// Ungated — part of the always-compiled facade (see the module docs above): it
+// reports which side of the gate this binary landed on, so it must exist in
+// both states.
+pub mod compile_status;
+pub use compile_status::VOICE_COMPILED_IN;
+
 #[cfg(feature = "voice")]
 pub mod always_on;
 #[cfg(feature = "voice")]

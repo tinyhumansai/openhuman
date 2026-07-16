@@ -133,7 +133,7 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': 'Flujos de trabajo',
   'flows.welcome.title': 'Pon el trabajo rutinario en piloto automático',
   'flows.welcome.body':
-    'Describe algo que haces una y otra vez —clasificación, seguimientos, resúmenes— y tu agente lo convierte en un flujo de trabajo que puede ejecutar de principio a fin, según un horario o cuando lo pidas.',
+    'Describe algo que haces una y otra vez: clasificación, seguimientos, resúmenes: y tu agente lo convierte en un flujo de trabajo que puede ejecutar de principio a fin, según un horario o cuando lo pidas.',
   'flows.welcome.ctaNew': 'Nuevo flujo de trabajo',
   'flows.welcome.ctaBrowse': 'Explorar flujos de trabajo',
   'flows.welcome.featsLabel': 'Lo que puedes automatizar',
@@ -144,7 +144,7 @@ const messages: TranslationMap = {
   'flows.welcome.feat2Body': 'Actívalo con un temporizador, un evento o un botón: tú decides.',
   'flows.welcome.feat3Title': 'Mantén a los humanos al tanto',
   'flows.welcome.feat3Body': 'Aprueba los pasos sensibles antes de que salga cualquier cosa.',
-  // Privacy Mode selector (#4435) — data-egress posture
+  // Privacy Mode selector (#4435): data-egress posture
   'privacy.mode.title': 'Modo de privacidad',
   'privacy.mode.description':
     'Controla cuántos de tus datos pueden salir de este dispositivo. Independiente del modo de acceso del agente.',
@@ -158,7 +158,7 @@ const messages: TranslationMap = {
     'Cuidado adicional con datos sensibles. Pronto habrá más controles.',
   'privacy.mode.saved': 'Guardado',
   'privacy.mode.saveError': 'No se pudo actualizar el modo de privacidad.',
-  'skills.recallCalendar.title': 'Google Calendar',
+  'skills.recallCalendar.title': 'Calendario de Google',
   'skills.recallCalendar.description':
     'Unirse automáticamente a las llamadas de Google Meet con Recall.ai',
   // Core connection panel (GH-4396)
@@ -217,7 +217,7 @@ const messages: TranslationMap = {
   'conversations.toolFailure.unknown.cause': 'Algo salió mal con esta acción.',
   'conversations.toolFailure.unknown.next':
     'Inténtalo de nuevo; si sigue fallando, ejecuta el diagnóstico desde Configuración.',
-  'conversations.backgroundTasks.title': 'Background tasks',
+  'conversations.backgroundTasks.title': 'Tareas en segundo plano',
   'nav.feedback': 'Compartir opiniones',
   'feedback.board': 'Tablero de opiniones',
   'feedback.empty': 'Aún no hay opiniones. Sé el primero en compartir una idea.',
@@ -257,21 +257,21 @@ const messages: TranslationMap = {
   'feedback.comments.loadError': 'No se pudieron cargar los comentarios',
   'feedback.comments.postError': 'No se pudo publicar el comentario',
   'feedback.comments.you': 'Tú',
-  'conversations.backgroundTasks.titleWithCount': 'Background tasks ({count})',
-  'conversations.backgroundTasks.running': '{count} running',
-  'conversations.backgroundTasks.noneRunning': 'none running',
-  'conversations.backgroundTasks.total': '{count} total',
+  'conversations.backgroundTasks.titleWithCount': 'Tareas en segundo plano ({count})',
+  'conversations.backgroundTasks.running': '{count} corriendo',
+  'conversations.backgroundTasks.noneRunning': 'ninguno corriendo',
+  'conversations.backgroundTasks.total': '{count} en total',
   'conversations.backgroundTasks.empty':
-    'No background tasks in this chat. Ask the assistant to do something in the background and it shows up here.',
+    'No hay tareas en segundo plano en este chat. Pídele al asistente que haga algo en segundo plano y aparecerá aquí.',
   'conversations.backgroundTasks.statusRunning': 'Running',
   'conversations.backgroundTasks.statusDone': 'Done',
   'conversations.backgroundTasks.statusFailed': 'Failed',
-  'conversations.backgroundTasks.statusNeedsYou': 'Needs you',
+  'conversations.backgroundTasks.statusNeedsYou': 'te necesita',
   'conversations.backgroundTasks.statusCancelled': 'Cancelado',
-  'conversations.backgroundTasks.toolCallOne': '{count} tool call',
-  'conversations.backgroundTasks.toolCallOther': '{count} tool calls',
-  'conversations.backgroundTasks.steps': '{count} steps',
-  'conversations.backgroundTasks.viewDetails': 'View details →',
+  'conversations.backgroundTasks.toolCallOne': 'Llamada a herramienta {count}',
+  'conversations.backgroundTasks.toolCallOther': 'Llamadas a herramientas {count}',
+  'conversations.backgroundTasks.steps': 'Pasos {count}',
+  'conversations.backgroundTasks.viewDetails': 'Ver detalles →',
   'conversations.backgroundTasks.close': 'Close',
   'conversations.backgroundTasks.sectionThisChat': 'En este chat',
   'conversations.backgroundTasks.sectionScheduled': 'Tareas programadas',
@@ -320,6 +320,8 @@ const messages: TranslationMap = {
   'nav.activity': 'Actividad',
   'nav.brain': 'Cerebro',
   'nav.flows': 'Flujos de trabajo',
+  'nav.workflowRuns': 'Ejecuciones de flujos',
+  'nav.workflowDiscoveries': 'Descubrir flujos',
   'nav.orchestration': 'Orquestación',
   'orchestration.cloudUnreachable':
     'No se puede acceder al cerebro en la nube: mostrando la vista almacenada.',
@@ -344,7 +346,8 @@ const messages: TranslationMap = {
   'orchPage.medulla.featCost': 'Orquestación de bajo coste',
   'orchPage.medulla.subscriberTitle': 'Suscriptores de OpenHuman',
   'orchPage.medulla.subscriberNote':
-    'Consigue acceso anticipado a Medulla y al motor de orquestación.',
+    'Cuando Medulla se lance, será exclusivo para los suscriptores de OpenHuman.',
+  'orchPage.medulla.subscriberCta': 'Consigue una suscripción',
   'orchPage.medulla.discordTitle': 'Únete al Discord',
   'orchPage.medulla.earlyAccess':
     '¿Quieres acceso anticipado? Únete a nuestro Discord y consigue una invitación.',
@@ -411,7 +414,7 @@ const messages: TranslationMap = {
   'orchPage.connections.replyPlaceholder': 'Responder…',
   'orchPage.connections.initTitle': 'Inicializar un agente o una instancia',
   'orchPage.connections.initDesc':
-    'Crea un nuevo subagente para trabajar contigo. Abre el chat del agente y describe el rol, el objetivo y las herramientas que debe usar — OpenHuman aprovisiona una instancia dedicada que puedes dirigir desde aquí.',
+    'Crea un nuevo subagente para trabajar contigo. Abre el chat del agente y describe el rol, el objetivo y las herramientas que debe usar: OpenHuman aprovisiona una instancia dedicada que puedes dirigir desde aquí.',
   'orchPage.connections.initCta': 'Empezar en el chat',
   'orchPage.connections.status.needsYou': 'Te necesita',
   'orchPage.connections.status.running': 'En ejecución',
@@ -476,7 +479,7 @@ const messages: TranslationMap = {
   'agentWorld.addressCopied': 'Copiada',
   'agentWorld.walletUnavailable': 'Cartera no disponible',
   'agentWorld.walletRetry': 'Reintentar cargar la cartera',
-  // Agent World — Explore section live data
+  // Agent World: Explore section live data
   'explore.networkOverview': 'Resumen de red',
   'explore.trendingCommunities': 'Comunidades en tendencia',
   'explore.activeJobs': 'Trabajos activos',
@@ -494,7 +497,7 @@ const messages: TranslationMap = {
   'nav.avatarMenu.invites': 'Invitar a un amigo',
   'nav.avatarMenu.wallet': 'Cartera',
 
-  // Brain — full-page memory knowledge-graph surface
+  // Brain: full-page memory knowledge-graph surface
   'brain.subtitle': 'Tu grafo de conocimiento, fuentes de memoria y controles.',
   'brain.tabs.memory': 'Memoria',
   'brain.tabs.subconscious': 'Subconsciente',
@@ -574,7 +577,7 @@ const messages: TranslationMap = {
   'tinyplaceOrchestration.identity.makeDiscoverable': 'Hacer detectable',
   'tinyplaceOrchestration.identity.republish': 'Volver a publicar claves',
   'tinyplaceOrchestration.identity.publishing': 'Publicando…',
-  'tinyplaceOrchestration.identity.publishFailed': 'Error al publicar — inténtalo de nuevo',
+  'tinyplaceOrchestration.identity.publishFailed': 'Error al publicar: inténtalo de nuevo',
   'tinyplaceOrchestration.identity.card': 'Tarjeta de directorio',
   'tinyplaceOrchestration.identity.key': 'Clave de cifrado',
   'tinyplaceOrchestration.identity.published': 'Publicado',
@@ -658,7 +661,7 @@ const messages: TranslationMap = {
   'common.breadcrumb': 'Miga de pan',
   'common.beta': 'Beta',
   'common.betaDisclaimer':
-    'Esta función está en beta. Puede cambiar o tener aspectos por pulir — tus comentarios nos ayudan a mejorarla.',
+    'Esta función está en beta. Puede cambiar o tener aspectos por pulir: tus comentarios nos ayudan a mejorarla.',
   'settings.general': 'generales',
   // Settings layman groups (Phase 4 IA revamp)
   'settings.groups.account': 'Cuenta',
@@ -836,7 +839,7 @@ const messages: TranslationMap = {
   'migration.applyRunning': 'Importando…',
   'migration.applyDisclaimer':
     'Aplicar se desbloquea tras una Vista previa exitosa del mismo origen. La memoria actual se respalda antes de cualquier importación.',
-  'migration.reportTitlePreview': 'Vista previa — aún no se importó nada',
+  'migration.reportTitlePreview': 'Vista previa: aún no se importó nada',
   'migration.reportTitleApplied': 'Importación completa',
   'migration.report.source': 'Espacio de trabajo de origen',
   'migration.report.target': 'Espacio de trabajo de destino',
@@ -943,7 +946,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'Aún no se ha ejecutado',
   'routines.runNow': 'Corre ahora',
   'routines.running': 'Corriendo…',
-  'routines.runNowTimedOut': 'Tiempo de espera agotado — actualiza e intenta de nuevo.',
+  'routines.runNowTimedOut': 'Tiempo de espera agotado: actualiza e intenta de nuevo.',
   'routines.viewHistory': 'Ver historial',
   'routines.loadingHistory': 'Cargando…',
   'routines.noHistory': 'Aún no hay historial de ejecuciones.',
@@ -963,9 +966,10 @@ const messages: TranslationMap = {
   'chat.typeMessage': '¿En qué puedo ayudarte hoy?',
   'chat.send': 'Enviar mensaje',
   'chat.stopGeneration': 'Detener generación',
-  'chat.parallelBranchHint': 'Escribe una rama paralela — ⌘/Ctrl+Enter para enviar',
+  'chat.stoppedByUser': 'Detenido',
+  'chat.parallelBranchHint': 'Escribe una rama paralela: ⌘/Ctrl+Enter para enviar',
   'chat.followupHint':
-    'Pon en cola un seguimiento — se envía tras esta respuesta · ⌘/Ctrl+Enter para una rama paralela',
+    'Pon en cola un seguimiento: se envía tras esta respuesta · ⌘/Ctrl+Enter para una rama paralela',
   'chat.queuedFollowups.label': 'Seguimientos en cola',
   'chat.queuedFollowups.clear': 'Borrar',
   'chat.queuedFollowups.clearFailed': 'No se pudo vaciar la cola: inténtalo de nuevo.',
@@ -1062,10 +1066,10 @@ const messages: TranslationMap = {
     'Equipos de agentes coordinados: quién se encarga de cada tarea, qué está bloqueado y qué se dicen los compañeros entre sí.',
   'memory.tab.agents': 'Biblioteca',
   'memory.tab.agentsDescription':
-    'Explora y ejecuta los agentes disponibles — cada uno con sus propias herramientas, capacidades y área de enfoque.',
+    'Explora y ejecuta los agentes disponibles: cada uno con sus propias herramientas, capacidades y área de enfoque.',
   'memory.tab.workflows': 'Workflows',
   'memory.tab.workflowsDescription':
-    'Procedimientos reutilizables y ejecutables — un objetivo y los pasos para alcanzarlo. Crea uno, instala desde una URL o abre un flujo de trabajo para ejecutarlo.',
+    'Procedimientos reutilizables y ejecutables: un objetivo y los pasos para alcanzarlo. Crea uno, instala desde una URL o abre un flujo de trabajo para ejecutarlo.',
   'memory.tab.dreams': 'Sueños',
   'memory.tab.calls': 'Llamadas',
   'memory.tab.diagram': 'Diagram',
@@ -1076,7 +1080,7 @@ const messages: TranslationMap = {
   'memory.analyzeNow': 'Analizar ahora',
   'memoryTimeline.title': 'Línea de tiempo de la memoria',
   'memoryTimeline.intro':
-    'Cuándo el asistente aprendió sobre ti — hechos agrupados por el mes en que se reforzaron por última vez. Muestra crecimiento, picos de actividad y períodos tranquilos.',
+    'Cuándo el asistente aprendió sobre ti: hechos agrupados por el mes en que se reforzaron por última vez. Muestra crecimiento, picos de actividad y períodos tranquilos.',
   'memoryTimeline.loading': 'Construyendo la línea de tiempo…',
   'memoryTimeline.errorPrefix': 'No se pudo cargar el grafo:',
   'memoryTimeline.retry': 'Reintentar',
@@ -1140,7 +1144,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': 'Asociaciones de entidades',
   'entityAssociations.intro':
-    'Las entidades que comparten muchas conexiones están asociadas — incluso cuando ningún hecho las vincula directamente. La similitud de Jaccard revela estos emparejamientos ocultos.',
+    'Las entidades que comparten muchas conexiones están asociadas: incluso cuando ningún hecho las vincula directamente. La similitud de Jaccard revela estos emparejamientos ocultos.',
   'entityAssociations.loading': 'Calculando asociaciones…',
   'entityAssociations.errorPrefix': 'No se pudo cargar el grafo:',
   'entityAssociations.retry': 'Reintentar',
@@ -1156,10 +1160,10 @@ const messages: TranslationMap = {
   'entityAssociations.inferredBadge': 'inferida',
   'entityAssociations.linkedTitle': 'Estas entidades están conectadas directamente.',
   'entityAssociations.inferredTitle':
-    'Sin enlace directo — asociadas solo a través de conexiones compartidas.',
+    'Sin enlace directo: asociadas solo a través de conexiones compartidas.',
   'entityAssociations.sharedLabel': '{shared} compartidas',
   'entityAssociations.pairTitle': '{jaccard}% similar · {shared} de {union} conexiones compartidas',
-  'entityAssociations.truncated': 'Mostrando {shown} de {total} — las más fuertes primero.',
+  'entityAssociations.truncated': 'Mostrando {shown} de {total}: las más fuertes primero.',
   'memory.tab.freshness': 'Freshness',
   'memoryFreshness.title': 'Frescura del conocimiento',
   'memoryFreshness.intro':
@@ -1177,8 +1181,8 @@ const messages: TranslationMap = {
   'memoryFreshness.metricStale': 'Obsoleto',
   'memoryFreshness.recallCaption': 'Recuperación promedio {recall}% en {total} hechos',
   'memoryFreshness.queueHeading': 'Cola de reconfirmación',
-  'memoryFreshness.queueTruncated': 'Mostrando {shown} de {total} — atiende estos primero.',
-  'memoryFreshness.allFresh': 'Todos los hechos siguen frescos — nada que reconfirmar.',
+  'memoryFreshness.queueTruncated': 'Mostrando {shown} de {total}: atiende estos primero.',
+  'memoryFreshness.allFresh': 'Todos los hechos siguen frescos: nada que reconfirmar.',
   'memoryFreshness.statusFading': 'desvaneciendose',
   'memoryFreshness.statusStale': 'obsoleto',
   'memoryFreshness.ageLabel': '{days} días',
@@ -1513,7 +1517,7 @@ const messages: TranslationMap = {
   'misc.downloading': 'Descargando...',
   'misc.installing': 'Instalando...',
   'misc.beta':
-    'OpenHuman está en beta temprana. No dudes en compartir comentarios o reportar cualquier error que encuentres — cada reporte nos ayuda a mejorar más rápido.',
+    'OpenHuman está en beta temprana. No dudes en compartir comentarios o reportar cualquier error que encuentres: cada reporte nos ayuda a mejorar más rápido.',
   'misc.betaFeedback': 'Enviar comentarios',
   'mnemonic.title': 'Frase de recuperación',
   'mnemonic.warning': 'Escribe estas palabras en orden y guárdalas en un lugar seguro.',
@@ -1595,7 +1599,7 @@ const messages: TranslationMap = {
   'settings.costDashboard.disabledHint':
     'El panel de costos está deshabilitado en la configuración. Configure [cost.dashboard] enabled = true en config.toml para volver a habilitarlo.',
   'settings.costDashboard.subtitle':
-    'Gasto en vivo y quema de tokens en todo el enjambre. Las barras se actualizan automáticamente cada pocos segundos — no se necesita recargar la página.',
+    'Gasto en vivo y quema de tokens en todo el enjambre. Las barras se actualizan automáticamente cada pocos segundos: no se necesita recargar la página.',
   'settings.costDashboard.summaryAriaLabel': 'Métricas de resumen de costos',
   'settings.costDashboard.lastSevenDays': 'últimos 7 días',
   'settings.costDashboard.utilizationOf': 'de',
@@ -1607,7 +1611,7 @@ const messages: TranslationMap = {
   'settings.costDashboard.dailyTarget': 'Objetivo diario',
   'settings.costDashboard.today': 'Hoy',
   'settings.costDashboard.todayBadge': 'HOY',
-  'settings.costDashboard.unknownProvider': '—',
+  'settings.costDashboard.unknownProvider': 'Ninguno',
   'settings.costDashboard.justNow': 'Hace un momento',
   'settings.costDashboard.secondsAgo': '{value}s hace',
   'settings.costDashboard.minutesAgo': '{value}m hace',
@@ -1644,7 +1648,7 @@ const messages: TranslationMap = {
     'Elimina las herramientas de búsqueda del contexto del agente y de la lista de herramientas disponibles.',
   'settings.search.engineManagedLabel': 'OpenHuman Gestionado',
   'settings.search.engineManagedDesc':
-    'Predeterminado. Enrutado a través del backend OpenHuman — no se requiere la clave API.',
+    'Predeterminado. Enrutado a través del backend OpenHuman: no se requiere la clave API.',
   'settings.search.localManagedUnavailable':
     'La búsqueda gestionada por OpenHuman no está disponible para usuarios locales. Añade tu propia API key de Parallel o Brave para habilitar la búsqueda web.',
   'settings.search.engineParallelLabel': 'paralelo',
@@ -1677,7 +1681,7 @@ const messages: TranslationMap = {
   'settings.search.placeholderQuerit': 'Querit clave API',
   'settings.search.allowedSitesLabel': 'Sitios web permitidos',
   'settings.search.allowedSitesHint':
-    'Hosts que el asistente puede abrir y leer — mediante recuperación web y la herramienta de navegador — uno por línea, p. ej. reuters.com. Un host también incluye sus subdominios. La búsqueda web en sí no está restringida por esta lista.',
+    'Hosts que el asistente puede abrir y leer: mediante recuperación web y la herramienta de navegador: uno por línea, p. ej. reuters.com. Un host también incluye sus subdominios. La búsqueda web en sí no está restringida por esta lista.',
   'settings.search.allowedSitesAllOn':
     'El asistente puede abrir cualquier sitio web público. Las direcciones locales y privadas permanecen bloqueadas.',
   'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
@@ -1726,7 +1730,7 @@ const messages: TranslationMap = {
   'settings.embeddings.applyCustom': 'Aplicar',
   'settings.embeddings.testConnection': 'Probar conexión',
   'settings.embeddings.testing': 'Probando…',
-  'settings.embeddings.testSuccess': 'Conectado — {dims} dimensiones',
+  'settings.embeddings.testSuccess': 'Conectado: {dims} dimensiones',
   'settings.embeddings.connectionTestFailed': 'La prueba falló',
   'settings.embeddings.verifyFallback':
     'No se pudo verificar el endpoint de embeddings. Asegúrate de que esté en ejecución y sirviendo un modelo de embeddings, luego guarda de nuevo.',
@@ -1743,7 +1747,7 @@ const messages: TranslationMap = {
   'settings.embeddings.saveAndSwitch': 'Guardar y cambiar',
   'settings.embeddings.optional': 'opcional',
   'settings.embeddings.vectorSearchDisabled':
-    'La búsqueda vectorial está desactivada. La recuperación de memoria utilizará únicamente la coincidencia de palabras clave y la actualidad — sin clasificación semántica.',
+    'La búsqueda vectorial está desactivada. La recuperación de memoria utilizará únicamente la coincidencia de palabras clave y la actualidad: sin clasificación semántica.',
   'settings.embeddings.clearKey': 'Borrar clave API',
   'pages.settings.ai.embeddings': 'Incrustaciones',
   'pages.settings.ai.embeddingsDesc':
@@ -2067,7 +2071,7 @@ const messages: TranslationMap = {
   'mcp.connectAuth.oauthTimeout':
     'Se agotó el tiempo de espera del inicio de sesión en el navegador. Inténtalo de nuevo.',
   'mcp.connectAuth.authError.oauthRequired':
-    'Este servidor usa OAuth. Usa “Iniciar sesión con el navegador” — no se aceptará un token pegado.',
+    'Este servidor usa OAuth. Usa “Iniciar sesión con el navegador”: no se aceptará un token pegado.',
   'mcp.connectAuth.authError.tokenRejected':
     'El servidor rechazó este token. Comprueba que sea correcto y que no haya caducado.',
   'mcp.connectAuth.authError.credentialRequired':
@@ -2192,10 +2196,10 @@ const messages: TranslationMap = {
   'devOptions.cloud': 'Nube',
   'devOptions.remoteCoreRpc': 'RPC de core remoto',
   'devOptions.token': 'ficha',
-  'devOptions.tokenNotSet': 'no establecido — RPC devolverá 401',
+  'devOptions.tokenNotSet': 'no establecido: RPC devolverá 401',
   'devOptions.triggerSentryTest': 'Activar prueba de Sentry (staging)',
   'devOptions.triggerSentryTestDesc':
-    'Dispara un error etiquetado para verificar el pipeline de Sentry. Issue #1072 — eliminar después de la verificación.',
+    'Dispara un error etiquetado para verificar el pipeline de Sentry. Issue #1072: eliminar después de la verificación.',
   'devOptions.sendTestEvent': 'Enviar evento de prueba',
   'devOptions.sending': 'Enviando…',
   'devOptions.eventSent': 'Evento enviado',
@@ -2469,21 +2473,21 @@ const messages: TranslationMap = {
   'pttSettings.shortcutLabel': 'Atajo de teclado',
   'pttSettings.shortcutPlaceholder': 'Pulsa una tecla (p. ej. F13)',
   'pttSettings.shortcutUnsetHint':
-    'Pulsa para hablar está desactivado — elige un atajo para activarlo.',
+    'Pulsa para hablar está desactivado: elige un atajo para activarlo.',
   'pttSettings.speakRepliesLabel': 'Leer las respuestas del agente en voz alta',
   'pttSettings.showOverlayLabel': 'Mostrar el panel mientras se mantiene pulsado',
   'pttSettings.errorConflictsWithDictation':
     'Este atajo ya lo usa el dictado. Elige una tecla distinta.',
   'pttSettings.errorModifierOnly':
-    'Elige una tecla normal (p. ej. F13) — los atajos compuestos solo por modificadores no funcionan para pulsa para hablar.',
+    'Elige una tecla normal (p. ej. F13): los atajos compuestos solo por modificadores no funcionan para pulsa para hablar.',
   'pttSettings.errorEmpty': 'Elige una tecla para asignarla.',
   'pttSettings.errorAccessibility':
     'macOS necesita permiso de Accesibilidad para este atajo. Abre Ajustes del sistema → Privacidad y seguridad → Accesibilidad y activa OpenHuman.',
   'pttSettings.errorShortcutInUse': 'Otra aplicación ya usa este atajo. Elige uno distinto.',
   'pttSettings.errorUnsupportedWayland':
-    'Las sesiones Wayland todavía no admiten atajos globales en OpenHuman — cambia a una sesión X11 o usa el botón de dictado dentro de la aplicación.',
+    'Las sesiones Wayland todavía no admiten atajos globales en OpenHuman: cambia a una sesión X11 o usa el botón de dictado dentro de la aplicación.',
   'pttSettings.exclusiveFullscreenHint':
-    'En juegos a pantalla completa exclusiva el panel no se mostrará — solo oirás el aviso sonoro. Cambia a pantalla completa sin bordes para ver el panel.',
+    'En juegos a pantalla completa exclusiva el panel no se mostrará: solo oirás el aviso sonoro. Cambia a pantalla completa sin bordes para ver el panel.',
   'pttOverlay.listening': 'Escuchando…',
   'pttOverlay.idle': 'En espera',
   'autocomplete.title': 'Autocompletado',
@@ -2520,10 +2524,10 @@ const messages: TranslationMap = {
   'chat.sendMessage': 'Enviar mensaje',
   'composio.triageTitle': 'Disparadores de integración',
   'composio.triageDesc':
-    'Cuando está activo, cada disparador de Composio entrante pasa por un paso de clasificación con IA que clasifica el evento y puede iniciar acciones automatizadas — un turno de LLM local por disparador. Desactívalo globalmente o por integración si prefieres revisión manual. Si la variable de entorno',
+    'Cuando está activo, cada disparador de Composio entrante pasa por un paso de clasificación con IA que clasifica el evento y puede iniciar acciones automatizadas: un turno de LLM local por disparador. Desactívalo globalmente o por integración si prefieres revisión manual. Si la variable de entorno',
   'composio.disableAllTriage': 'Desactivar clasificación de IA para todos los disparadores',
   'composio.triggersStillRecorded':
-    'Los disparadores siguen registrándose en el historial — no se ejecuta ningún turno de LLM.',
+    'Los disparadores siguen registrándose en el historial: no se ejecuta ningún turno de LLM.',
   'composio.disableSpecificIntegrations':
     'Desactivar clasificación de IA para integraciones específicas',
   'composio.settingsSaved': 'Ajustes guardados',
@@ -2539,7 +2543,7 @@ const messages: TranslationMap = {
     'Elige qué subsistemas corren en el modelo local. Todo lo que esté desactivado usa la nube.',
   'localModel.enableRuntime': 'Activar runtime de IA local',
   'localModel.enableRuntimeDesc':
-    'Interruptor principal. Desactivado por defecto — Ollama permanece inactivo. Cuando está activado, el resumidor de árbol, la inteligencia de pantalla y el autocompletado siempre usan el modelo local.',
+    'Interruptor principal. Desactivado por defecto: Ollama permanece inactivo. Cuando está activado, el resumidor de árbol, la inteligencia de pantalla y el autocompletado siempre usan el modelo local.',
   'localModel.advancedSettings': 'Configuración avanzada',
   'localModel.debugTitle': 'Depuración de modelo local',
   'screenAwareness.debugTitle': 'Depuración de Conciencia de pantalla',
@@ -2658,10 +2662,10 @@ const messages: TranslationMap = {
   'notifications.routing.level.dropDesc': 'Ruido/spam: almacenado pero no revelado',
   'notifications.routing.level.acknowledge': 'Reconocer',
   'notifications.routing.level.acknowledgeDesc':
-    'Prioridad baja — se muestra en el centro de notificaciones',
+    'Prioridad baja: se muestra en el centro de notificaciones',
   'notifications.routing.level.react': 'reaccionar',
   'notifications.routing.level.reactDesc':
-    'Prioridad media — activa una respuesta enfocada del agente',
+    'Prioridad media: activa una respuesta enfocada del agente',
   'notifications.routing.level.escalate': 'escalar',
   'notifications.routing.level.escalateDesc': 'Prioridad alta: reenviado al agente orquestador',
   'notifications.routing.perProvider': 'Enrutamiento por proveedor',
@@ -2894,7 +2898,7 @@ const messages: TranslationMap = {
   'workspace.vaultNotRegisteredHelp':
     'Obsidian solo abre las carpetas que hayas agregado como almacén. En Obsidian, elige «Abrir carpeta como almacén» y selecciona la carpeta de abajo; solo necesitas hacerlo una vez. Luego haz clic en Ver almacén de nuevo.',
   'workspace.obsidianNotFoundHelp':
-    'No encontramos Obsidian en este dispositivo. Instálalo, o — si está instalado en una ubicación no estándar — establece su carpeta de configuración en Avanzado.',
+    'No encontramos Obsidian en este dispositivo. Instálalo, o: si está instalado en una ubicación no estándar: establece su carpeta de configuración en Avanzado.',
   'workspace.openAnyway': 'Abrir en Obsidian de todos modos',
   'workspace.installObsidian': 'Instalar Obsidian',
   'workspace.obsidianAdvanced': '¿Obsidian instalado en otro lugar?',
@@ -2980,7 +2984,7 @@ const messages: TranslationMap = {
   'memorySources.noConnections':
     'No se encontraron conexiones activas de Composio. Conecta una integración primero.',
   'memorySources.pickConnection': 'Elige una conexión',
-  'memorySources.selectConnection': '— Seleccionar una conexión —',
+  'memorySources.selectConnection': 'Seleccionar una conexión',
   'memorySources.comingSoon': 'Próximamente',
   'memorySources.composioListFailed': 'Error al cargar las conexiones Composio.',
   'memorySources.browse': 'Examinar…',
@@ -3293,9 +3297,11 @@ const messages: TranslationMap = {
   'memory.ingestingTitle': 'Ingiriendo {title}',
   'mic.noAudioCaptured': 'No se capturó audio',
   'mic.noSpeechDetected': 'No se detectó habla',
-  'mic.lowConfidenceResult': 'No se pudo entender el audio con claridad — intenta de nuevo',
+  'mic.lowConfidenceResult': 'No se pudo entender el audio con claridad: intenta de nuevo',
   'mic.failedToStopRecording': 'No se pudo detener la grabación: {message}',
   'mic.transcriptionFailed': 'Transcripción fallida: {message}',
+  'mic.voiceNotCompiled':
+    'La transcripción de voz no está incluida en esta versión de la aplicación. Actualiza OpenHuman para activarla.',
   'reflections.kind.retrospective': 'Retrospectiva',
   'reflections.kind.derivedFact': 'Hecho derivado',
   'reflections.kind.moodInsight': 'Insight de ánimo',
@@ -3365,7 +3371,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk3': 'Ventaja 3',
   'app.openhumanLink.discord.perk4': 'Ventaja 4',
   'app.openhumanLink.discordReport.intro':
-    'Lo sentimos — algo falló de nuestra parte. Intentamos registrar estos errores automáticamente, pero compartir los detalles en Discord nos ayuda a solucionarlo más rápido.',
+    'Lo sentimos: algo falló de nuestra parte. Intentamos registrar estos errores automáticamente, pero compartir los detalles en Discord nos ayuda a solucionarlo más rápido.',
   'app.openhumanLink.discordReport.openDiscord': 'Abrir Discord',
   'app.openhumanLink.done': 'Listo',
   'app.openhumanLink.notifications.desktopOnly':
@@ -3522,6 +3528,13 @@ const messages: TranslationMap = {
   'channels.telegram.remoteControlTitle': 'Control remoto (Telegram)',
   'channels.telegram.remoteControlBody':
     'Desde un chat Telegram permitido, envíe /status, /sessions, /new o /help. El enrutamiento de modelos todavía usa /model y /models.',
+  'channels.connectHelp.title': 'Cómo conectar',
+  'channels.connectHelp.discord':
+    'Elige un método abajo: vincula tu cuenta con OpenHuman, instala el bot con OAuth o pega tu propio token de bot del portal para desarrolladores de Discord.',
+  'channels.connectHelp.telegram':
+    'Elige un método abajo: escribe al bot gestionado de OpenHuman para vincularlo, o pega tu propio token de bot de @BotFather.',
+  'channels.connectHelp.slackNote':
+    '¿Buscas Slack? Slack se conecta como una app en Conexiones → OAuth, no como un canal de mensajería aquí.',
   'channels.web.displayName': 'Web',
   'channels.web.description': 'Chatea a través de la interfaz de usuario web incorporada.',
   'channels.web.authMode.managed_dm.description':
@@ -4109,6 +4122,19 @@ const messages: TranslationMap = {
   'flows.list.lastRun': 'Última ejecución',
   'flows.list.neverRun': 'Nunca ejecutado',
   'flows.list.justNow': 'Justo ahora',
+  'flows.discoveries.title': 'Descubrimientos de flujos',
+  'flows.discoveries.description': 'Automatizaciones que sugiere Flow Scout, según cómo trabajas.',
+  'flows.allRuns.title': 'Ejecuciones de flujos',
+  'flows.allRuns.description': 'Cada ejecución de flujo en tu espacio, las más recientes primero.',
+  'flows.allRuns.loading': 'Cargando ejecuciones…',
+  'flows.allRuns.empty': 'Aún no hay ejecuciones de flujos.',
+  'flows.allRuns.unknownWorkflow': 'Flujo desconocido',
+  'flows.allRuns.status.running': 'En ejecución',
+  'flows.allRuns.status.completed': 'Completado',
+  'flows.allRuns.status.completed_with_warnings': 'Completado con advertencias',
+  'flows.allRuns.status.pending_approval': 'Pendiente de aprobación',
+  'flows.allRuns.status.failed': 'Fallido',
+  'flows.allRuns.status.cancelled': 'Cancelado',
   'flows.list.minutesAgo': 'hace {count} min',
   'flows.list.hoursAgo': 'hace {count} h',
   'flows.list.daysAgo': 'hace {count} d',
@@ -4125,8 +4151,12 @@ const messages: TranslationMap = {
   'flows.runs.loadError': 'No se pudieron cargar las ejecuciones',
   'flows.runs.empty': 'Aún no hay ejecuciones',
   'flows.promptBar.label': 'Describe un flujo de trabajo',
-  'flows.promptBar.placeholder': 'Describe un flujo de trabajo…',
+  'flows.promptBar.placeholder': 'Describe tu flujo de trabajo',
+  'flows.promptBar.copilotTitle': 'Copiloto',
   'flows.promptBar.submit': 'Crear',
+  'flows.promptBar.startBuilding': 'Empezar a crear',
+  'flows.promptBar.disclaimer':
+    'El Copiloto usa IA y puede cometer errores. Verifica las respuestas.',
   'flows.promptBar.thinking': 'Creando…',
   'flows.promptBar.heroTitle': 'Describe un flujo de trabajo',
   'flows.promptBar.heroSubtitle': 'Indica al generador qué automatizar y revisa su propuesta.',
@@ -4165,6 +4195,8 @@ const messages: TranslationMap = {
   'flows.copilot.removed': '{count} eliminados',
   'flows.copilot.noChanges': 'Esta propuesta no cambia ningún nodo.',
   'flows.copilot.accept': 'Aplicar al borrador',
+  'flows.copilot.acceptAndSave': 'Aceptar y guardar',
+  'flows.copilot.saving': 'Guardando…',
   'flows.copilot.reject': 'Descartar',
   'flows.copilot.previewHint': 'Revisando un borrador propuesto: aún no se ha guardado nada.',
   'flows.copilot.repairDisplay': 'Falló una ejecución; revísala y propón una solución.',
@@ -4214,6 +4246,15 @@ const messages: TranslationMap = {
   'flows.editor.validate': 'Validar',
   'flows.editor.validating': 'Validando…',
   'flows.editor.discard': 'Descartar cambios',
+  'flows.editor.confirm.runTitle': '¿Ejecutar el flujo de trabajo?',
+  'flows.editor.confirm.runBody': 'Esto ejecutará el flujo de trabajo ahora.',
+  'flows.editor.confirm.saveTitle': '¿Guardar los cambios?',
+  'flows.editor.confirm.saveBody': 'Esto guardará tus cambios en el flujo de trabajo.',
+  'flows.editor.confirm.discardTitle': '¿Descartar los cambios?',
+  'flows.editor.confirm.discardBody':
+    'Esto revierte todas las ediciones sin guardar y no se puede deshacer.',
+  'flows.editor.confirm.confirm': 'Confirmar',
+  'flows.editor.confirm.cancel': 'Cancelar',
   'flows.editor.unsaved': 'Cambios sin guardar',
   'flows.editor.saveBlocked': 'Corrige los errores de abajo antes de guardar.',
   'flows.editor.errorsTitle': 'Errores',
@@ -4224,7 +4265,7 @@ const messages: TranslationMap = {
     'Tienes cambios sin guardar en este flujo de trabajo. Si sales ahora, se perderán.',
   'flows.editor.leaveStay': 'Quedarme',
   'flows.editor.leaveDiscard': 'Salir',
-  // ── Node config drawer (issue B5b / Phase 3b) — per-kind config forms
+  // ── Node config drawer (issue B5b / Phase 3b): per-kind config forms
   'flowRuns.inspector.diagnosticsTitle': 'Advertencias de expresión',
   'flowRuns.inspector.diagnosticResolvedNull': 'se resolvió como null',
   'flows.runs.sidebarTitle': 'Ejecuciones',
@@ -4248,7 +4289,7 @@ const messages: TranslationMap = {
   'flows.nodeConfig.trigger.scheduleUnit_hours': 'h',
   'flows.nodeConfig.trigger.scheduleAt': 'a las',
   'flows.nodeConfig.trigger.scheduleTime': 'Hora del día',
-  'flows.nodeConfig.trigger.scheduleDays': 'En días (opcional — deja vacío para todos los días)',
+  'flows.nodeConfig.trigger.scheduleDays': 'En días (opcional: deja vacío para todos los días)',
   'flows.nodeConfig.trigger.scheduleAdvanced': 'Avanzado (editar cron)',
   'flows.nodeConfig.trigger.scheduleSimple': 'Volver al horario simple',
   'flows.nodeConfig.trigger.pickApp': 'Primero elige una app conectada.',
@@ -4272,7 +4313,7 @@ const messages: TranslationMap = {
   'flows.nodeConfig.agent.modelCustom': 'Modelo personalizado…',
   'flows.nodeConfig.agent.modelCustomPlaceholder': 'p. ej., gpt-4o-mini',
   'flows.nodeConfig.tool.requiredMark': 'obligatorio',
-  'flows.nodeConfig.tool.requiredMissing': 'Obligatorio — no conectado',
+  'flows.nodeConfig.tool.requiredMissing': 'Obligatorio: no conectado',
   'flows.nodeConfig.tool.argsAdvancedLabel': 'Todos los argumentos (avanzado)',
   'flows.nodeConfig.upstream.insert': 'Insertar…',
   'flows.nodeConfig.upstream.insertLabel': 'Insertar un valor de un paso anterior',
@@ -4381,20 +4422,20 @@ const messages: TranslationMap = {
 
   'oauth.button.connecting': 'Conectando...',
   'oauth.button.loopbackTimeout':
-    'El inicio de sesión expiró — el navegador no completó la redirección OAuth. Por favor, inténtalo de nuevo.',
+    'El inicio de sesión expiró: el navegador no completó la redirección OAuth. Por favor, inténtalo de nuevo.',
   'oauth.login.continueWith': 'Continuar con',
   'onboarding.contextGathering.buildingDesc': 'Descripción de construcción',
   'onboarding.contextGathering.buildingProfile': 'Construyendo tu perfil...',
   'onboarding.contextGathering.continueToChat': 'Continuar al chat',
   'onboarding.contextGathering.coreAlive':
-    'El núcleo está disponible — el primer arranque puede tardar un minuto.',
+    'El núcleo está disponible: el primer arranque puede tardar un minuto.',
   'onboarding.contextGathering.coreAliveProbing': 'Comprobando la conexión con el núcleo…',
   'onboarding.contextGathering.coreUnreachable':
     'El núcleo no responde. Puedes continuar e intentarlo más tarde.',
   'onboarding.contextGathering.errorDesc':
-    'No pudimos construir tu perfil completo ahora mismo, pero no pasa nada — puedes continuar y tu perfil se construirá con el tiempo.',
+    'No pudimos construir tu perfil completo ahora mismo, pero no pasa nada: puedes continuar y tu perfil se construirá con el tiempo.',
   'onboarding.contextGathering.stillWorkingDesc':
-    'El primer arranque puede tardar 30–60 segundos mientras preparamos tu modelo local y tus herramientas. Puedes continuar al chat en cualquier momento — la construcción del perfil sigue en segundo plano.',
+    'El primer arranque puede tardar 30–60 segundos mientras preparamos tu modelo local y tus herramientas. Puedes continuar al chat en cualquier momento: la construcción del perfil sigue en segundo plano.',
   'onboarding.contextGathering.stillWorkingTitle': 'Seguimos trabajando en tu perfil…',
   'onboarding.contextGathering.title': 'Recopilación de contexto',
   'openhuman.team_list_teams': 'Lista de equipos',
@@ -4434,7 +4475,7 @@ const messages: TranslationMap = {
     'Modo de enrutamiento, activadores de integración y archivo de historial de activadores.',
   'pages.settings.features.desktopCompanion': 'Acompañante de escritorio',
   'pages.settings.features.desktopCompanionDesc':
-    'Asistente de voz con conciencia de pantalla — escucha, ve, habla, señala',
+    'Asistente de voz con conciencia de pantalla: escucha, ve, habla, señala',
   'pages.settings.features.messagingChannels': 'Canales de mensajería',
   'pages.settings.features.messagingChannelsDesc': 'Descripción de canales de mensajería',
   'pages.settings.features.notifications': 'Notificaciones',
@@ -4590,7 +4631,7 @@ const messages: TranslationMap = {
   'settings.ai.routing': 'Enrutamiento',
   'settings.ai.claudeCode.button': 'Claude Code',
   'settings.ai.claudeCode.inlineNotConnected':
-    'Sin conexión — enruta el chat a través de tu Claude Code CLI local.',
+    'Sin conexión: enruta el chat a través de tu Claude Code CLI local.',
   'settings.ai.claudeCode.checkingSignIn': 'Comprobando inicio de sesión…',
   'settings.ai.claudeCode.inlineConnected': 'Conectado.',
   'settings.ai.claudeCode.signedInAs': 'Sesión iniciada como',
@@ -4601,7 +4642,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.connectedNotSignedIn': 'Conectado · sin iniciar sesión',
   'settings.ai.claudeCode.modalTitle': 'Claude Code CLI',
   'settings.ai.claudeCode.modalDescription':
-    'Enruta las cargas de chat, agénticas y de razonamiento a través de tu Claude Code CLI instalado localmente. Sin clave de API — usa el propio inicio de sesión del CLI.',
+    'Enruta las cargas de chat, agénticas y de razonamiento a través de tu Claude Code CLI instalado localmente. Sin clave de API: usa el propio inicio de sesión del CLI.',
   'settings.ai.claudeCode.close': 'Cerrar',
   'settings.ai.claudeCode.connection': 'Conexión',
   'settings.ai.claudeCode.enabled': 'Activado',
@@ -4624,17 +4665,17 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.fullAccessOn':
     'Claude Code puede ejecutar comandos, usar la red y generar subagentes.',
   'settings.ai.claudeCode.fullAccessOff':
-    'Aceptar solo ediciones — aplica los cambios de archivos automáticamente y restringe comandos y red.',
+    'Aceptar solo ediciones: aplica los cambios de archivos automáticamente y restringe comandos y red.',
   'settings.ai.claudeCode.sandboxNoteMac':
     'En macOS, ~/.openhuman permanece protegido por el sandbox en ambos modos.',
   'settings.ai.claudeCode.sandboxNoteOther':
-    'El acceso completo no tiene restricciones en esta plataforma — actívalo solo si confías en el espacio de trabajo.',
+    'El acceso completo no tiene restricciones en esta plataforma: actívalo solo si confías en el espacio de trabajo.',
   'settings.ai.claudeCode.enableToCheck': 'Activa Claude Code para comprobar el inicio de sesión.',
   'settings.ai.claudeCode.usingApiKeyEnvDetail': 'Usando ANTHROPIC_API_KEY del entorno.',
   'settings.ai.claudeCode.notFoundInstall':
-    'Claude Code CLI no encontrado — instálalo con: npm install -g @anthropic-ai/claude-code',
+    'Claude Code CLI no encontrado: instálalo con: npm install -g @anthropic-ai/claude-code',
   'settings.ai.claudeCode.unknownDetail':
-    'No se pudo determinar el estado de inicio de sesión. Tu claude CLI puede ser anterior al estado de autenticación — prueba Reconectar y luego Volver a comprobar.',
+    'No se pudo determinar el estado de inicio de sesión. Tu claude CLI puede ser anterior al estado de autenticación: prueba Reconectar y luego Volver a comprobar.',
   'settings.ai.claudeCode.notSignedIn': 'Sesión no iniciada.',
   'settings.ai.routingCustom': 'Enrutamiento personalizado',
   'settings.ai.routingDefault': 'Predeterminado',
@@ -4733,7 +4774,7 @@ const messages: TranslationMap = {
   'settings.ai.testingModel': 'Modelo de prueba...',
   'settings.ai.modelResponse': 'Respuesta modelo',
   'settings.ai.providerWithValue': 'Proveedor: {value}',
-  'settings.ai.noneDash': '—',
+  'settings.ai.noneDash': 'Ninguno',
   'settings.ai.promptHelloWorld': 'Mensaje: Hola mundo',
   'settings.ai.startedAt': 'Iniciado: {value}',
   'settings.ai.waitingForModelResponse': 'Esperando respuesta del modelo seleccionado...',
@@ -4774,9 +4815,9 @@ const messages: TranslationMap = {
   'settings.ai.memoryWorkerPolls': 'Encuestas de trabajadores de la memoria',
   'settings.ai.defaultProviderName': 'OpenHuman',
   'settings.ai.routing.managed': 'Gestionado',
-  'settings.ai.routing.managedAlwaysOn': 'Always on',
+  'settings.ai.routing.managedAlwaysOn': 'Siempre encendido',
   'settings.ai.routing.managedHint':
-    'Managed is always available as a fallback. To use your own model, choose a routing mode below.',
+    'Gestionado siempre está disponible como alternativa. Para utilizar su propio modelo, elija un modo de enrutamiento a continuación.',
   'settings.ai.routing.managedDesc':
     'OpenHuman ejecutará toda la inferencia en la nube, elegirá el mejor modelo para la tarea, optimizará para el costo y mantendrá los valores predeterminados de enrutamiento más seguros.',
   'settings.ai.routing.managedMsg':
@@ -4797,44 +4838,48 @@ const messages: TranslationMap = {
     'Modelos utilizados fuera del flujo principal de la conversación para resumen, latido, aprendizaje y evaluación subconsciente.',
   'settings.ai.routing.workload.chat.label': 'Chat',
   'settings.ai.routing.workload.chat.description':
-    'Direct conversational back-and-forth — “Quick” mode in Conversations',
+    'Intercambio conversacional directo: modo “Rápido” en Conversaciones',
   'settings.ai.routing.workload.chat.hint':
-    'Recommended: a cheap or mid-cost fast chat model with high tokens/sec and low latency. Open-source local models can work well here if they feel responsive.',
+    'Recomendado: un modelo de chat rápido económico o de costo medio con tokens altos por segundo y baja latencia. Los modelos locales de código abierto pueden funcionar bien aquí si se sienten receptivos.',
   'settings.ai.routing.workload.reasoning.label': 'Reasoning',
   'settings.ai.routing.workload.reasoning.description':
-    'Main chat agent, meeting summarizer — “Reasoning” mode in Conversations',
+    'Agente de chat principal, resumidor de reuniones: modo “Razonamiento” en Conversaciones',
   'settings.ai.routing.workload.reasoning.hint':
-    'Recommended: a more expensive frontier or strong reasoning model for deep thinking. This is used for the main chat agent, meeting summaries, and heavier answer synthesis.',
+    'Recomendado: una frontera más cara o un modelo de razonamiento sólido para el pensamiento profundo. Esto se utiliza para el agente de chat principal, resúmenes de reuniones y síntesis de respuestas más completas.',
   'settings.ai.routing.workload.agentic.label': 'Agentic',
   'settings.ai.routing.workload.agentic.description':
-    'Sub-agent runners, tool loops, GIF decisions',
+    'Corredores de subagentes, bucles de herramientas, decisiones de GIF',
   'settings.ai.routing.workload.agentic.hint':
-    'Recommended: a reliable instruction-following model with strong tool use. Mid-cost frontier models are usually safest; capable open-source models can work if tool calling is stable.',
+    'Recomendado: un modelo confiable que sigue instrucciones con un fuerte uso de herramientas. Los modelos de frontera de costo medio suelen ser los más seguros; Los modelos de código abierto capaces pueden funcionar si la llamada a herramientas es estable.',
   'settings.ai.routing.workload.coding.label': 'Coding',
-  'settings.ai.routing.workload.coding.description': 'Code generation and refactor passes',
+  'settings.ai.routing.workload.coding.description':
+    'Pases de generación y refactorización de código.',
   'settings.ai.routing.workload.coding.hint':
-    'Recommended: a coding-tuned model with strong instruction following, edit quality, and long-context performance. This is usually worth spending more on.',
+    'Recomendado: un modelo ajustado a la codificación con un sólido seguimiento de instrucciones, calidad de edición y rendimiento en contextos prolongados. Por lo general, vale la pena gastar más en esto.',
   'settings.ai.routing.workload.vision.label': 'Vision',
   'settings.ai.routing.workload.vision.description':
-    'Image understanding for the vision sub-agent — always multimodal',
+    'Comprensión de imágenes para el subagente de visión: siempre multimodal',
   'settings.ai.routing.workload.vision.hint':
-    'Recommended: a multimodal model that accepts image input. The managed default (vision-v1) is image-capable; any provider you route here is always treated as vision-enabled.',
-  'settings.ai.routing.workload.memory.label': 'Memory summarization',
-  'settings.ai.routing.workload.memory.description': 'Tree-extracts and consolidations',
+    'Recomendado: un modelo multimodal que acepta entrada de imágenes. El valor predeterminado administrado (vision-v1) es compatible con imágenes; cualquier proveedor que envíe aquí siempre será tratado como habilitado para la visión.',
+  'settings.ai.routing.workload.memory.label': 'Resumen de memoria',
+  'settings.ai.routing.workload.memory.description': 'Extractos de árboles y consolidaciones.',
   'settings.ai.routing.workload.memory.hint':
-    'Recommended: a cheaper summarization model. It should be consistent and compact, but it does not need premium frontier-level reasoning.',
+    'Recomendado: un modelo de resumen más económico. Debe ser coherente y compacto, pero no necesita un razonamiento de primer nivel.',
   'settings.ai.routing.workload.heartbeat.label': 'Heartbeat',
-  'settings.ai.routing.workload.heartbeat.description': 'Background reasoning between user turns',
+  'settings.ai.routing.workload.heartbeat.description':
+    'Razonamiento en segundo plano entre turnos de usuario.',
   'settings.ai.routing.workload.heartbeat.hint':
-    'Recommended: a cheap, efficient background model. This runs often between turns, so low cost matters more than maximum intelligence.',
-  'settings.ai.routing.workload.learning.label': 'Learning · Reflections',
-  'settings.ai.routing.workload.learning.description': 'Periodic reflection over recent history',
+    'Recomendado: un modelo en segundo plano económico y eficiente. Esto ocurre a menudo entre turnos, por lo que el bajo costo importa más que la máxima inteligencia.',
+  'settings.ai.routing.workload.learning.label': 'Aprendizaje · Reflexiones',
+  'settings.ai.routing.workload.learning.description':
+    'Reflexión periódica sobre la historia reciente',
   'settings.ai.routing.workload.learning.hint':
-    'Recommended: a stronger reflective model. This can be mid-cost or premium because it benefits from better synthesis over recent history.',
+    'Recomendado: un modelo reflectante más fuerte. Esto puede ser de costo medio o premium porque se beneficia de una mejor síntesis a lo largo de la historia reciente.',
   'settings.ai.routing.workload.subconscious.label': 'Subconscious',
-  'settings.ai.routing.workload.subconscious.description': 'Eventfulness scoring + drift checks',
+  'settings.ai.routing.workload.subconscious.description':
+    'Puntuación de acontecimientos + comprobaciones de deriva',
   'settings.ai.routing.workload.subconscious.hint':
-    'Recommended: a very cheap monitoring model, ideally one that is lightweight and predictable. This is for eventfulness scoring, drift checks, and quiet background evaluation.',
+    'Recomendado: un modelo de seguimiento muy económico, idealmente uno que sea ligero y predecible. Esto es para puntuación de acontecimientos, verificaciones de deriva y evaluación de antecedentes silenciosa.',
   'settings.ai.routing.addCustomProvider': 'Agregar proveedor personalizado',
   'settings.ai.globalModel.title': 'Elige un modelo para todo',
   'settings.ai.globalModel.desc':
@@ -4873,9 +4918,9 @@ const messages: TranslationMap = {
   'settings.autocomplete.appFilter.runtime': 'Tiempo de ejecución',
   'settings.autocomplete.appFilter.test': 'Probar',
   'settings.autocomplete.completionStyle.acceptedCompletion':
-    '{count} completado aceptado almacenado — se usa para personalizar futuras sugerencias.',
+    '{count} completado aceptado almacenado: se usa para personalizar futuras sugerencias.',
   'settings.autocomplete.completionStyle.acceptedCompletions':
-    '{count} completados aceptados almacenados — se usan para personalizar futuras sugerencias.',
+    '{count} completados aceptados almacenados: se usan para personalizar futuras sugerencias.',
   'settings.autocomplete.completionStyle.clearHistory': 'Limpiando…',
   'settings.autocomplete.completionStyle.clearing': 'Limpiando…',
   'settings.autocomplete.completionStyle.debounce': 'Rebote (ms)',
@@ -5007,12 +5052,12 @@ const messages: TranslationMap = {
   'settings.composio.confirmItem2':
     'Vuelve a vincular cada integración a través de tu cuenta personal de Composio',
   'settings.composio.confirmItem3':
-    'Nota: los triggers de Composio (webhooks en tiempo real) aún no funcionan en modo Directo — solo las llamadas de herramientas síncronas',
+    'Nota: los triggers de Composio (webhooks en tiempo real) aún no funcionan en modo Directo: solo las llamadas de herramientas síncronas',
   'settings.composio.confirmNeedItems': 'Necesitarás:',
   'settings.composio.confirmSwitch': 'Entiendo, cambiar a Directo',
   'settings.composio.confirmTitle': '⚠️ Cambiando a modo Directo',
   'settings.composio.confirmWarning':
-    'Tus integraciones existentes (Gmail, Slack, GitHub, etc. vinculadas a través de OpenHuman) no serán visibles — viven en el inquilino de Composio gestionado por OpenHuman.',
+    'Tus integraciones existentes (Gmail, Slack, GitHub, etc. vinculadas a través de OpenHuman) no serán visibles: viven en el inquilino de Composio gestionado por OpenHuman.',
   'settings.composio.intro':
     'Composio integra más de 250 aplicaciones externas como herramientas que tu agente puede invocar. Elige cómo se enrutan esas llamadas.',
   'settings.composio.title': 'Composio',
@@ -5141,7 +5186,7 @@ const messages: TranslationMap = {
   'settings.localModel.deviceCapability.installingOllama': 'Instalando Ollama',
   'settings.localModel.deviceCapability.loadingDeviceInfo': 'Cargando info del dispositivo',
   'settings.localModel.deviceCapability.localAiDisabled':
-    'IA local desactivada — usando respaldo en la nube.',
+    'IA local desactivada: usando respaldo en la nube.',
   'settings.localModel.deviceCapability.modelTier': 'Nivel de modelo',
   'settings.localModel.deviceCapability.needsOllama': 'Necesita Ollama',
   'settings.localModel.deviceCapability.notDetected': 'No detectado',
@@ -5306,7 +5351,7 @@ const messages: TranslationMap = {
   'settings.skillsRunner.placeholder.required': 'requerido',
   'settings.skillsRunner.runNow': 'Corre ahora',
   'settings.skillsRunner.starting': 'Comenzando…',
-  'settings.skillsRunner.started': 'Iniciado — id de ejecución:',
+  'settings.skillsRunner.started': 'Iniciado: id de ejecución:',
   'settings.skillsRunner.logPath': 'Registro:',
   'settings.skillsRunner.error.listSkills': 'Error al cargar habilidades:',
   'settings.skillsRunner.error.describe': 'Error al cargar las entradas:',
@@ -5499,7 +5544,7 @@ const messages: TranslationMap = {
     'Controla dónde el agente puede read/write y si puede usar la consola.',
   'settings.agentAccess.loadError': 'Error al cargar la configuración de acceso',
   'settings.agentAccess.saveError': 'Error al guardar la configuración de acceso',
-  'settings.agentAccess.saved': 'Guardado — se aplica en tu próximo mensaje.',
+  'settings.agentAccess.saved': 'Guardado: se aplica en tu próximo mensaje.',
   'settings.agentAccess.desktopOnly':
     'La configuración de acceso solo está disponible en la aplicación de escritorio.',
   'settings.agentAccess.loading': 'Cargando…',
@@ -5524,7 +5569,7 @@ const messages: TranslationMap = {
     'Pausa antes de que un agente asignado ejecute un breve tarea elaborada por el agente.',
   'settings.agentAccess.tinyplaceAutopilot.title': 'Agente autónomo de tiny.place',
   'settings.agentAccess.tinyplaceAutopilot.desc':
-    'Deja que OpenHuman actúe en tiny.place por su cuenta: de forma programada busca trabajo que valga la pena —recompensas abiertas primero—, hace lo que encaja con sus habilidades y actúa desde tu identidad. Funciona sin supervisión y puede gastar, así que mantenlo en devnet mientras pruebas. Desactivado por defecto.',
+    'Deja que OpenHuman actúe en tiny.place por su cuenta. De forma programada, busca trabajo que valga la pena (primero las recompensas abiertas), hace lo que encaja con sus habilidades y actúa desde tu identidad. Funciona sin supervisión y puede gastar, así que mantenlo en devnet mientras pruebas. Desactivado por defecto.',
   'settings.agentAccess.tinyplaceAutopilot.label': 'Ejecutar automáticamente',
   'settings.agentAccess.timeout.label': 'Tiempo de espera de la acción',
   'settings.agentAccess.timeout.desc':
@@ -5573,9 +5618,9 @@ const messages: TranslationMap = {
   'settings.agentAccess.actionDirEmptyError': 'La ruta no puede estar vacía.',
   'settings.agentAccess.actionDirSaveError': 'No se pudo actualizar el sandbox de acciones.',
   'settings.agentAccess.actionDirEnvOverrideError':
-    'OPENHUMAN_ACTION_DIR está definido — elimina la variable de entorno para editar esto desde Ajustes.',
+    'OPENHUMAN_ACTION_DIR está definido: elimina la variable de entorno para editar esto desde Ajustes.',
   'settings.agentAccess.actionDirEnvOverrideNote':
-    'Anulado por OPENHUMAN_ACTION_DIR — elimina la variable de entorno para gestionarlo desde Ajustes.',
+    'Anulado por OPENHUMAN_ACTION_DIR: elimina la variable de entorno para gestionarlo desde Ajustes.',
   'settings.agentAccess.approvalHistory': 'Historial de aprobaciones',
   'settings.agentAccess.approvalHistoryDesc':
     'Revisa las decisiones anteriores de Aprobar / Denegar solicitadas por el agente.',
@@ -5634,7 +5679,7 @@ const messages: TranslationMap = {
     'La configuración de sandbox solo está disponible en la aplicación de escritorio.',
   'settings.sandbox.loadError': 'Error al cargar la configuración de sandbox.',
   'settings.sandbox.saveError': 'Error al guardar la configuración de sandbox.',
-  'settings.sandbox.saved': 'Guardado — se aplica a las nuevas sesiones del agente.',
+  'settings.sandbox.saved': 'Guardado: se aplica a las nuevas sesiones del agente.',
   'settings.sandbox.saving': 'Guardando…',
   'settings.sandbox.status': 'Estado',
   'settings.sandbox.dockerStatus': 'Docker',
@@ -5703,7 +5748,7 @@ const messages: TranslationMap = {
   'settings.theme.copyName': '{name} (personalizado)',
   'settings.theme.importedName': 'Tema importado',
   'settings.theme.contrastWarn':
-    'Bajo contraste entre el texto y el fondo — este tema puede resultar difícil de leer.',
+    'Bajo contraste entre el texto y el fondo: este tema puede resultar difícil de leer.',
   'settings.theme.group.surfaces': 'Superficies',
   'settings.theme.group.text': 'Texto',
   'settings.theme.group.borders': 'Bordes',
@@ -5751,7 +5796,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'Extra grande',
   'settings.appearance.fontSizeXLargeDesc': 'El texto más grande, para la máxima legibilidad.',
   'settings.appearance.fontSizeHelperText':
-    'Escala el texto en toda la app —chat, ajustes y paneles— independientemente de la configuración de fuente de tu sistema.',
+    'Escala el texto en toda la app: chat, ajustes y paneles: independientemente de la configuración de fuente de tu sistema.',
   'settings.appearance.fontSizeCustomLabel': 'Tamaño personalizado',
   'settings.appearance.fontSizeCustomAria': 'Tamaño de fuente personalizado en píxeles',
   'settings.appearance.fontSizeCustomSliderAria':
@@ -5809,7 +5854,7 @@ const messages: TranslationMap = {
   'settings.mascot.secondaryVoiceLabel': 'Voz de la segunda mascota',
   'settings.mascot.voice.current': 'actual',
   'settings.mascot.voice.customDesc':
-    'Encuentra los ID de voz en api.elevenlabs.io/v1/voices o en tu panel de ElevenLabs. Solo se almacena el ID — tu clave de API permanece en el backend.',
+    'Encuentra los ID de voz en api.elevenlabs.io/v1/voices o en tu panel de ElevenLabs. Solo se almacena el ID: tu clave de API permanece en el backend.',
   'settings.mascot.voice.customHeading': 'ID de voz personalizado',
   'settings.mascot.voice.customOption': 'Otro (pegar ID de voz)…',
   'settings.mascot.voice.customPlaceholder': 'por ej. 21m00Tcm4TlvDq8ikWAM',
@@ -5889,10 +5934,10 @@ const messages: TranslationMap = {
   'settings.persona.openMascotSettings': 'Abrir la configuración de Mascota',
   'settings.memoryWindow.balanced.badge': 'Recomendado',
   'settings.memoryWindow.balanced.hint':
-    'Predeterminado sensato — buena continuidad sin quemar tokens extra en cada ejecución.',
+    'Predeterminado sensato: buena continuidad sin quemar tokens extra en cada ejecución.',
   'settings.memoryWindow.balanced.label': 'Equilibrado',
   'settings.memoryWindow.description':
-    'Cuánto contexto recordado inyecta OpenHuman en cada nueva ejecución del agente. Ventanas más grandes parecen más conscientes de conversaciones pasadas, pero usan más tokens — y cuestan más — en cada ejecución.',
+    'Cuánto contexto recordado inyecta OpenHuman en cada nueva ejecución del agente. Ventanas más grandes parecen más conscientes de conversaciones pasadas, pero usan más tokens: y cuestan más: en cada ejecución.',
   'settings.memoryWindow.extended.badge': 'Más contexto',
   'settings.memoryWindow.extended.hint':
     'Más memoria a largo plazo inyectada en cada ejecución. Mayor coste de tokens por turno.',
@@ -6019,7 +6064,7 @@ const messages: TranslationMap = {
   'skills.create.scope': 'Alcance',
   'skills.create.scopeProjectHint': '/.openhuman/habilidades/',
   'skills.create.scopeUserHint':
-    'Se escribe en ~/.openhuman/skills/<slug>/SKILL.md — disponible en todos los espacios de trabajo.',
+    'Se escribe en ~/.openhuman/skills/<slug>/SKILL.md: disponible en todos los espacios de trabajo.',
   'skills.create.slugLabel': 'Etiqueta de slug',
   'skills.create.subtitle': 'HABILIDAD.md',
   'skills.create.tags': 'Etiquetas',
@@ -6130,7 +6175,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.recentCallsAriaLabel': 'Llamadas de reunión recientes',
   'skills.meetingBots.recentCallsHeading': 'Llamadas recientes',
   'skills.meetingBots.recentCallsEmpty':
-    'Aún no hay llamadas anteriores — tu historial de reuniones aparecerá aquí.',
+    'Aún no hay llamadas anteriores: tu historial de reuniones aparecerá aquí.',
   'skills.meetingBots.recentCallsLoading': 'Cargando\u2026',
   'skills.meetingBots.recentCallAddedBy': 'Añadido por {name}',
   'skills.meetingBots.recentCallParticipants': 'Con {names}',
@@ -6199,7 +6244,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.upcoming.today': 'Hoy',
   'skills.meetingBots.upcoming.tomorrow': 'Mañana',
   'skills.meetingBots.upcoming.empty':
-    'No hay reuniones próximas — conecta Google Calendar para verlas aquí.',
+    'No hay reuniones próximas: conecta Google Calendar para verlas aquí.',
   'skills.meetingBots.upcoming.error': 'No se pudieron cargar las reuniones próximas.',
   'skills.meetingBots.upcoming.retry': 'Reintentar',
   'skills.meetingBots.upcoming.refresh': 'Actualizar',
@@ -6209,7 +6254,7 @@ const messages: TranslationMap = {
   'skills.meetingBots.upcoming.autoJoinsAt': 'Se une automáticamente ~a las {time}',
   'skills.meetingBots.upcoming.asksAtStart': 'Pregunta al inicio',
   'skills.meetingBots.upcoming.watchCalendarHint':
-    "Activa 'Vigilar mi calendario' en Predeterminados (icono de engranaje) para que Auto/Preguntar surta efecto — de lo contrario, estas políticas se guardan pero no se activarán.",
+    "Activa 'Vigilar mi calendario' en Predeterminados (icono de engranaje) para que Auto/Preguntar surta efecto: de lo contrario, estas políticas se guardan pero no se activarán.",
   'skills.meetingBots.relative.now': 'ahora',
   'skills.meetingBots.relative.inMinutes': 'en {count}m',
   'skills.meetingBots.relative.inHours': 'en {count}h',
@@ -6502,7 +6547,7 @@ const messages: TranslationMap = {
   'walletBalances.loading': 'Cargando saldos…',
   'walletBalances.retry': 'Retry',
   'walletBalances.emptyState':
-    'Aún no hay cuentas de billetera — configura una billetera en Frase de recuperación.',
+    'Aún no hay cuentas de billetera: configura una billetera en Frase de recuperación.',
   'walletBalances.copyAddress': 'Copiar dirección',
   'walletBalances.providerMissing': 'proveedor no disponible',
   'walletBalances.rawBalance': 'Bruto: {raw}',
@@ -6638,7 +6683,7 @@ const messages: TranslationMap = {
   'nav.workflows': 'Workflows',
   'workflows.title': 'Flujos de trabajo',
   'workflows.subtitle':
-    'Procedimientos reutilizables y ejecutables — un objetivo y los pasos para alcanzarlo. Crea uno, instala desde una URL o abre un flujo de trabajo para ejecutarlo.',
+    'Procedimientos reutilizables y ejecutables: un objetivo y los pasos para alcanzarlo. Crea uno, instala desde una URL o abre un flujo de trabajo para ejecutarlo.',
   'workflows.createNew': 'Nuevo flujo de trabajo',
   'workflows.listHeading': 'Workflows',
   'workflows.delete': 'Eliminar flujo de trabajo',
@@ -6717,7 +6762,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'Los agentes integrados no se pueden editar. Puedes activarlos, desactivarlos o restablecerlos desde la lista de agentes.',
-  // Chat — agent-generated artifacts (#2779)
+  // Chat: agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Artefacto: {title}',
   'chat.artifact.generating': 'Generando {kind}…',
   'chat.artifact.ready': 'Listo',
@@ -6731,7 +6776,7 @@ const messages: TranslationMap = {
   'chat.artifact.show_more': 'Ver más',
   'chat.artifact.show_less': 'Ver menos',
 
-  // Chat — files panel (#3024)
+  // Chat: files panel (#3024)
   'chat.files.chip.aria.one': '{count} archivo en este chat',
   'chat.files.chip.aria.other': '{count} archivos en este chat',
   'chat.files.panel.aria': 'Archivos en este chat',
@@ -6756,7 +6801,7 @@ const messages: TranslationMap = {
   'memory.tab.council': 'Council',
   'activity.tabs.automations': 'Automatizaciones',
   'activity.tabs.automationsDescription':
-    'Procedimientos reutilizables y ejecutables — un objetivo y los pasos para alcanzarlo.',
+    'Procedimientos reutilizables y ejecutables: un objetivo y los pasos para alcanzarlo.',
   'activity.tabs.backgroundActivity': 'Subconsciente',
   'activity.tabs.alerts': 'Alertas',
 
@@ -6918,7 +6963,7 @@ const messages: TranslationMap = {
   'modelCouncil.usageTotalTokens': 'Total',
   'graphCohesion.brokerBadge': 'intermediario',
   'graphCohesion.brokerTitle':
-    'Hueco estructural: los vecinos de esta entidad no están conectados entre sí — ella es el único enlace entre ellos.',
+    'Hueco estructural: los vecinos de esta entidad no están conectados entre sí: ella es el único enlace entre ellos.',
   'graphCohesion.colCohesion': 'Cohesión',
   'graphCohesion.colEntity': 'Entidad',
   'graphCohesion.colLinks': 'Enlaces',
@@ -6928,7 +6973,7 @@ const messages: TranslationMap = {
     'A medida que el asistente registra hechos conectados sobre usted, su estructura de agrupamiento aparecerá aquí.',
   'graphCohesion.errorPrefix': 'No se pudo cargar el grafo:',
   'graphCohesion.intro':
-    'Cuán estrechamente tejido está el vecindario de cada entidad. Los intermediarios — entidades cuyos vecinos no están conectados entre sí — son los puntos únicos que mantienen unidos grupos que de otro modo estarían separados, algo que un orden por frecuencia o PageRank no puede revelar.',
+    'Cuán estrechamente tejido está el vecindario de cada entidad. Los intermediarios: entidades cuyos vecinos no están conectados entre sí: son los puntos únicos que mantienen unidos grupos que de otro modo estarían separados, algo que un orden por frecuencia o PageRank no puede revelar.',
   'graphCohesion.loading': 'Calculando cohesión…',
   'graphCohesion.metricConnections': 'Conexiones',
   'graphCohesion.metricEntities': 'Entidades',
@@ -6956,7 +7001,7 @@ const messages: TranslationMap = {
   'harnessInit.stateSkipped': 'Omitido',
   'harnessInit.stateFailed': 'Error',
   'harnessInit.failedMessage':
-    'Algunos pasos de la configuración no se completaron. Puedes reintentar o continuar — OpenHuman usará una alternativa integrada.',
+    'Algunos pasos de la configuración no se completaron. Puedes reintentar o continuar: OpenHuman usará una alternativa integrada.',
   'harnessInit.retry': 'Reintentar',
   'harnessInit.continueAnyway': 'Continuar de todos modos',
   'harnessInit.runInBackground': 'Ejecutar en segundo plano',
@@ -7019,14 +7064,14 @@ const messages: TranslationMap = {
   'memory.health.remediation.summarizer_unavailable':
     'No hay ningún proveedor de resúmenes disponible para Crear árboles de resumen. Activa la IA local (Ollama), o configura memory_tree.cloud_summarization_opt_in=true y un proveedor LLM en Conexiones → Claves de API → LLM.',
   'memory.health.remediation.empty_input_refused':
-    'Se omitió un elemento de memoria porque su texto estaba vacío. No se requiere ninguna acción — los elementos nuevos siguen incrustándose con normalidad.',
+    'Se omitió un elemento de memoria porque su texto estaba vacío. No se requiere ninguna acción: los elementos nuevos siguen incrustándose con normalidad.',
   'memory.health.remediation.storage_unavailable':
     'OpenHuman no puede escribir en su almacenamiento de memoria: el disco o la tarjeta SD parece estar fallando, lleno o de solo lectura. Revisa la unidad y libera espacio; el procesamiento de la memoria se reanudará automáticamente cuando el almacenamiento vuelva a permitir escritura.',
   'memory.health.remediation.transient':
     'Un error temporal interrumpió el procesamiento de la memoria. Se reintentará automáticamente.',
   'memory.health.remediation.unknown':
     'El procesamiento de la memoria encontró un problema. Comprueba Conexiones → Claves de API para la configuración.',
-  // Chat — agent-generated artifacts (#2779)
+  // Chat: agent-generated artifacts (#2779)
 
   // Chat composer toolbar
   'composer.attachFile': 'Adjuntar archivo',
@@ -7091,7 +7136,7 @@ const messages: TranslationMap = {
   'onboarding.custom.activity.subtitle':
     'Qué tan proactivamente monitorea y actúa tu agente en segundo plano.',
   'onboarding.custom.activity.defaultDesc':
-    'Actividad moderada — sincronización por hora, resumen diario.',
+    'Actividad moderada: sincronización por hora, resumen diario.',
   'onboarding.custom.activity.configureDesc':
     'Elige tu propio nivel de actividad. Configurar en Ajustes › Nivel de actividad del agente.',
 
@@ -7326,7 +7371,7 @@ const messages: TranslationMap = {
     'Tu proveedor de IA no tiene una clave de API configurada. Añade una en los ajustes del proveedor para continuar.',
   'userErrors.scope.chat': 'Chat',
   'userErrors.scope.cron': 'Tarea programada',
-  // Agent World — Identity trading (confirm-before-spend + balance gate)
+  // Agent World: Identity trading (confirm-before-spend + balance gate)
   'agentWorld.trading.amountLabel': 'Importe',
   'agentWorld.trading.networkLabel': 'Red',
   'agentWorld.trading.balanceLabel': 'Tu saldo',
@@ -7383,29 +7428,33 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Eliminar',
   'flows.delete.deleting': 'Eliminando…',
   'flows.canvas.renameLabel': 'Cambiar el nombre del flujo de trabajo',
+  'memorySources.codingSessions.title': 'Sesiones de agentes de programación',
+  'memorySources.codingSessions.description':
+    'Convierte tus decisiones y correcciones de Codex y Claude Code en memoria privada de personalidad.',
+  'memorySources.codingSessions.ingest': 'Ingerir sesiones nuevas',
+  'memorySources.codingSessions.ingesting': 'Ingiriendo…',
+  'memorySources.codingSessions.claude': 'Historial de Claude Code',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '{files} sesiones · {evidence} intervenciones humanas',
+  'memorySources.codingSessions.notFound': 'No se encontró historial local',
+  'memorySources.codingSessions.scanning': 'Buscando historial local de sesiones…',
+  'memorySources.codingSessions.truncated':
+    'El análisis se limitó a los primeros 1000 archivos de sesión.',
+  'memorySources.codingSessions.complete': 'Sesiones de programación ingeridas',
+  'memorySources.codingSessions.completeMessage':
+    '{processed} sesiones produjeron {observations} observaciones de personalidad.',
+  'memorySources.codingSessions.partialFailure':
+    'Fallaron {failed} sesiones mientras se procesaron {processed}. Ejecuta la ingesta de nuevo para reintentarlas.',
+  'memorySources.codingSessions.moreRemaining':
+    'Se alcanzó el límite de sesiones del lote. Ejecuta la ingesta de nuevo para seguir importando tu historial.',
+  'memorySources.codingSessions.failed': 'Falló la ingesta de sesiones de programación',
+  'flows.canvas.sidePanelToggle': 'Panel lateral',
+  'flows.canvas.legendTab': 'Manual',
 
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'Estado de privacidad',
   'privacy.status.external': 'Fuera del dispositivo',
   'privacy.status.local': 'En el dispositivo',
-  'privacy.disclosure.title': 'Sale de tu dispositivo',
-  'privacy.disclosure.body': 'Esto enviará {kinds} a {destination} porque {reason}.',
-  'privacy.disclosure.dismiss': 'Entendido',
-  'privacy.disclosure.ariaLabel': 'Divulgación de datos externos',
-  'privacy.disclosure.kindSeparator': ', ',
-  'privacy.disclosure.kind.prompt': 'tu mensaje',
-  'privacy.disclosure.kind.toolArguments': 'entradas de la herramienta',
-  'privacy.disclosure.kind.embeddingInput': 'texto para indexar',
-  'privacy.disclosure.kind.fileContent': 'contenido del archivo',
-  'privacy.disclosure.kind.url': 'una dirección web',
-  'privacy.disclosure.kind.metadata': 'metadatos de la solicitud',
-  'privacy.disclosure.kind.unknown': 'datos',
-  'privacy.disclosure.reason.inference': 'el modelo de IA necesita procesarlo',
-  'privacy.disclosure.reason.toolCall': 'una herramienta lo necesita',
-  'privacy.disclosure.reason.integration': 'una integración conectada lo necesita',
-  'privacy.disclosure.reason.embedding': 'necesita indexarse para la búsqueda',
-  'privacy.disclosure.reason.networkFetch': 'una solicitud web lo necesita',
-  'privacy.disclosure.reason.unknown': 'es necesario para esta acción',
 };
 
 export default messages;

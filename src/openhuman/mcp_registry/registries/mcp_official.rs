@@ -75,8 +75,11 @@ const MAX_CURSOR_WALK_PAGES: u32 = 50;
 /// `parking_lot::Mutex` matches the rest of the memory subsystem and keeps
 /// the critical section synchronous — every access is a `HashMap` op, no
 /// `.await` while the lock is held.
-fn cursor_cache() -> &'static Mutex<HashMap<(String, u32, u32), String>> {
-    static CACHE: OnceLock<Mutex<HashMap<(String, u32, u32), String>>> = OnceLock::new();
+type CursorCacheKey = (String, u32, u32);
+type CursorCache = Mutex<HashMap<CursorCacheKey, String>>;
+
+fn cursor_cache() -> &'static CursorCache {
+    static CACHE: OnceLock<CursorCache> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 

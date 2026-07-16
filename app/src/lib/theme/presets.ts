@@ -118,8 +118,14 @@ const OCEAN_DARK: Theme = {
     'line-subtle': '36 48 76',
     content: '224 232 244',
     'content-secondary': '182 196 220',
-    'content-muted': '140 156 188',
-    'content-faint': '104 118 150',
+    // Muted/faint raised so they clear AA (body 4.5:1, faint 3:1) even on the
+    // lightest elevated surfaces (surface-hover/strong `40 52 84`), not just the
+    // base surface.
+    'content-muted': '152 168 200',
+    'content-faint': '128 142 172',
+    // The primary fills here are light blue, so labels over them read as dark —
+    // a deep navy clears AA on primary-500/600 where white (2.5:1) failed.
+    'content-inverted': '8 14 28',
     'primary-500': '96 165 250',
     'primary-600': '59 130 246',
   },
@@ -169,8 +175,13 @@ const SEPIA_DARK: Theme = {
     'line-subtle': '48 40 30',
     content: '236 228 214',
     'content-secondary': '198 184 162',
-    'content-muted': '156 142 120',
-    'content-faint': '120 106 86',
+    // Raised so muted (4.5:1) and faint (3:1) hold on the lighter recessed/hover
+    // sepia surfaces, not only the base surface.
+    'content-muted': '176 160 136',
+    'content-faint': '150 134 110',
+    // Tan primary fills → dark labels. A near-black brown clears AA on
+    // primary-500/600 where white (2.6:1) failed.
+    'content-inverted': '26 22 17',
     ...BROWN_RAMP,
     'primary-500': '200 150 90',
     'primary-600': '176 126 70',
@@ -198,7 +209,9 @@ const MATRIX_DARK: Theme = {
     content: '134 255 168',
     'content-secondary': '78 210 122',
     'content-muted': '58 158 92',
-    'content-faint': '44 112 68',
+    // Raised from `44 112 68` so faint text clears 3:1 even on the brighter
+    // hover/strong green surfaces (was ~2.6:1); still clearly dimmer than muted.
+    'content-faint': '52 132 82',
     'content-inverted': '2 8 4',
     ...GREEN_RAMP,
   },
@@ -252,6 +265,10 @@ const HAL_DARK: Theme = {
     'content-muted': '170 130 130',
     'content-faint': '130 96 96',
     ...RED_RAMP,
+    // Deepen the resting primary (was `230 40 40`) so the white button label
+    // clears AA (4.5:1 → 5.2:1). The active fill (primary-600) also clears it,
+    // and accent text uses the lighter 300/400 shades, so the red identity holds.
+    'primary-500': '214 30 30',
   },
   gradient: { canvas: 'radial-gradient(circle at 50% 16%, rgb(84 10 10), rgb(8 4 4) 56%)' },
   fonts: {},

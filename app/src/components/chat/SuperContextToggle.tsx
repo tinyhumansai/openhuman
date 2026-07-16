@@ -3,34 +3,32 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { isTauri } from '../../utils/tauriCommands/common';
-import {
-  openhumanGetSuperContextEnabled,
-  openhumanSetSuperContextEnabled,
-} from '../../utils/tauriCommands/config';
+import { openhumanSetSuperContextEnabled } from '../../utils/tauriCommands/config';
 import SettingsSwitch from '../settings/controls/SettingsSwitch';
 import { trackSuperContextWrite } from './superContextWrite';
 
 const log = debugFactory('chat:super-context-toggle');
 
 /**
- * "Super context" toggle, rendered directly below the chat composer.
+ * "Super context" toggle, rendered directly below the chat composer on a fresh
+ * thread. When on, the harness runs a read-only context-collection pass on the
+ * **first turn of a new thread** — before the orchestrator LLM runs — and folds
+ * the result into the user message. This is harness-driven (deterministic),
+ * unlike the `agent_prepare_context` tool the model may call on its own.
  *
- * Flips the persistent `context.super_context_enabled` core config flag. When
- * on, the harness runs a read-only context-collection pass on the **first turn
- * of a new thread** — before the orchestrator LLM runs — and folds the result
- * into the user message. This is harness-driven (deterministic), unlike the
- * `agent_prepare_context` tool the model may call on its own.
- *
- * Because the flag is read at thread construction, toggling it only affects
- * threads started afterwards — surfaced to the user via the helper hint.
+ * Super context is OFF by default on **every new chat** and is NOT inherited
+ * from the persisted `context.super_context_enabled` config: opening a new chat
+ * resets the core flag to false, so a leftover "on" from an earlier chat can
+ * never silently run the context pass. Enabling it applies to the current chat
+ * only (the harness reads the flag at thread construction, i.e. on first send).
  */
 const SuperContextToggle = () => {
   const { t } = useT();
   const [enabled, setEnabled] = useState(false);
-  // Until the first read resolves we don't know the real value; keep the
-  // switch disabled so a stray click can't write a stale default back. Outside
-  // Tauri (Storybook/web preview) there's no core to read, so treat the control
-  // as loaded immediately in its default-off state without hitting the RPC.
+  // Outside Tauri (Storybook/web preview) there's no core to reset against, so
+  // treat the control as loaded immediately in its default-off state. In Tauri
+  // it stays disabled until the reset write settles so a stray click can't race
+  // the reset.
   const [loaded, setLoaded] = useState(() => !isTauri());
   const [busy, setBusy] = useState(false);
 
@@ -39,17 +37,21 @@ const SuperContextToggle = () => {
       return;
     }
     let cancelled = false;
+    // A new chat always starts with super context OFF (the initial state),
+    // regardless of the persisted flag. Reset the core flag to false on mount
+    // and register the write so a reset-then-immediately-Send awaits it before
+    // the new thread's session reads the flag — otherwise a stale "on" would run
+    // the context pass on this first turn.
+    const write = openhumanSetSuperContextEnabled(false);
+    trackSuperContextWrite(write);
     void (async () => {
       try {
-        const res = await openhumanGetSuperContextEnabled();
-        if (!cancelled) {
-          setEnabled(Boolean(res.result));
-          log('loaded super_context_enabled=%o', res.result);
-        }
+        await write;
+        log('reset super_context_enabled=false on new chat');
       } catch (err) {
-        // Best-effort: a read failure leaves the toggle in its default-off
+        // Best-effort: a write failure leaves the toggle in its default-off
         // state. The user can still flip it; the write path surfaces errors.
-        log('failed to load super_context_enabled: %o', err);
+        log('failed to reset super_context_enabled: %o', err);
       } finally {
         if (!cancelled) setLoaded(true);
       }

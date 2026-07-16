@@ -15,6 +15,7 @@ import {
 } from '../../store/chatRuntimeSlice';
 import { useAppDispatch } from '../../store/hooks';
 import Button from '../ui/Button';
+import { extensionFor } from './artifactExtension';
 
 /**
  * Popover panel listing every `ready` artifact for a thread (#3024).
@@ -73,23 +74,6 @@ function localizeErrorCode(
       const _exhaustive: never = code;
       return _exhaustive;
     }
-  }
-}
-
-function extensionFor(kind: ArtifactSnapshot['kind'], title: string): string {
-  const dot = title.lastIndexOf('.');
-  if (dot > 0 && dot < title.length - 1) {
-    return title.slice(dot + 1).toLowerCase();
-  }
-  switch (kind) {
-    case 'presentation':
-      return 'pptx';
-    case 'document':
-      return 'pdf';
-    case 'image':
-      return 'png';
-    default:
-      return 'bin';
   }
 }
 

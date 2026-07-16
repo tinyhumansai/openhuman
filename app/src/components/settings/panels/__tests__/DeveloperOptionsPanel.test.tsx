@@ -101,7 +101,7 @@ describe('DeveloperOptionsPanel — CoreModeBadge', () => {
         coreMode: { mode: { kind: 'cloud', url: 'https://core.example.com/rpc' } },
       },
     });
-    expect(screen.getByText(/not set — RPC will 401/i)).toBeInTheDocument();
+    expect(screen.getByText(/not set: RPC will 401/i)).toBeInTheDocument();
   });
 
   test('shows "not set" warning when coreMode is unset', async () => {

@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.59.1",
+  "version": "0.61.5",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -62,7 +62,7 @@
     "rust:check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "rust:format": "cargo fmt --manifest-path ../Cargo.toml --all && cargo fmt --manifest-path src-tauri/Cargo.toml --all",
     "rust:format:check": "cargo fmt --manifest-path ../Cargo.toml --all --check && cargo fmt --manifest-path src-tauri/Cargo.toml --all --check",
-    "rust:clippy": "cargo clippy -p openhuman -- -D warnings",
+    "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
     "format": "prettier --write . && pnpm rust:format",
     "format:check": "prettier --check . && pnpm rust:format:check",
     "lint": "eslint . --ext .ts,.tsx --cache",

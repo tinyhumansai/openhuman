@@ -167,7 +167,7 @@ const TOOL_FAMILIES: &[ToolFamily] = &[
     ToolFamily {
         id: "workflow_manage",
         rust_names: &[
-            "create_workflow",
+            "create_skill",
             "install_workflow_from_url",
             "uninstall_workflow",
         ],
@@ -180,7 +180,7 @@ const TOOL_FAMILIES: &[ToolFamily] = &[
     ToolFamily {
         id: "skill_manage",
         rust_names: &[
-            "create_workflow",
+            "create_skill",
             "install_workflow_from_url",
             "uninstall_workflow",
         ],

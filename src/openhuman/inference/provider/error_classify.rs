@@ -112,6 +112,13 @@ pub(crate) fn is_non_retryable(err: &anyhow::Error) -> bool {
 /// Classify a StreamError without losing type information.
 /// Inspects the inner reqwest::Error status directly for Http variants.
 pub(crate) fn is_stream_error_non_retryable(err: &StreamError) -> bool {
+    // A plan/quota `429` is terminal even though `429` is normally retryable —
+    // match the non-streaming loop so a plan-restricted stream fails fast with a
+    // clear message instead of burning its (now larger) rate-limit retry budget
+    // (#4895).
+    if is_stream_non_retryable_rate_limit(err) {
+        return true;
+    }
     match err {
         StreamError::Http(reqwest_err) => {
             if let Some(status) = reqwest_err.status() {
@@ -197,6 +204,13 @@ pub(crate) fn is_upstream_unhealthy(err: &anyhow::Error) -> bool {
         || lower.contains("504 gateway timeout")
 }
 
+/// Text-only rate-limit heuristic, shared by the anyhow and streaming
+/// classifiers so both read the same `429` signal.
+fn msg_is_rate_limited(msg: &str) -> bool {
+    msg.contains("429")
+        && (msg.contains("Too Many") || msg.contains("rate") || msg.contains("limit"))
+}
+
 /// Check if an error is a rate-limit (429) error.
 pub(crate) fn is_rate_limited(err: &anyhow::Error) -> bool {
     if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
@@ -204,9 +218,7 @@ pub(crate) fn is_rate_limited(err: &anyhow::Error) -> bool {
             return status.as_u16() == 429;
         }
     }
-    let msg = err.to_string();
-    msg.contains("429")
-        && (msg.contains("Too Many") || msg.contains("rate") || msg.contains("limit"))
+    msg_is_rate_limited(&err.to_string())
 }
 
 /// Check if a 429 is a business/quota-plan error that retries cannot fix.
@@ -216,11 +228,15 @@ pub(crate) fn is_rate_limited(err: &anyhow::Error) -> bool {
 /// - insufficient balance / package not active
 /// - known provider business codes (e.g. Z.AI: 1311, 1113)
 pub(crate) fn is_non_retryable_rate_limit(err: &anyhow::Error) -> bool {
-    if !is_rate_limited(err) {
-        return false;
-    }
+    is_rate_limited(err) && msg_indicates_non_retryable_rate_limit(&err.to_string())
+}
 
-    let msg = err.to_string();
+/// Core business/plan/quota-`429` detector, shared by the anyhow
+/// ([`is_non_retryable_rate_limit`]) and streaming
+/// ([`is_stream_non_retryable_rate_limit`]) classifiers so a plan/quota refusal
+/// fails fast on **both** the streaming and non-streaming paths (#4895). The
+/// caller is responsible for having already confirmed the error is a `429`.
+fn msg_indicates_non_retryable_rate_limit(msg: &str) -> bool {
     let lower = msg.to_lowercase();
 
     let business_hints = [
@@ -255,37 +271,137 @@ pub(crate) fn is_non_retryable_rate_limit(err: &anyhow::Error) -> bool {
     false
 }
 
+/// Whether a [`StreamError`] is a `429` rate-limit. Reads the typed reqwest
+/// status for `Http`, and the same text signal as [`is_rate_limited`] for the
+/// `Provider` string envelope (the managed backend surfaces its `429` body —
+/// including `errorCode`/`retryAfter` — through `StreamError::Provider`).
+pub(crate) fn is_stream_rate_limited(err: &StreamError) -> bool {
+    match err {
+        StreamError::Http(reqwest_err) => reqwest_err
+            .status()
+            .is_some_and(|status| status.as_u16() == 429),
+        StreamError::Provider(msg) => msg_is_rate_limited(msg),
+        _ => false,
+    }
+}
+
+/// Whether a streaming `429` is a business/plan/quota refusal that retries
+/// cannot fix (the streaming analogue of [`is_non_retryable_rate_limit`]).
+pub(crate) fn is_stream_non_retryable_rate_limit(err: &StreamError) -> bool {
+    is_stream_rate_limited(err) && msg_indicates_non_retryable_rate_limit(&err.to_string())
+}
+
+/// Extract a `Retry-After` (milliseconds) carried by a streaming error. The
+/// managed backend embeds its rate-limit `retryAfter` (and any provider
+/// `Retry-After` header text) in the `StreamError::Provider` envelope, so parse
+/// it from the error's `Display` string.
+pub(crate) fn parse_stream_retry_after_ms(err: &StreamError) -> Option<u64> {
+    parse_retry_after_ms_from_str_at(&err.to_string(), chrono::Utc::now())
+}
+
+/// Streaming-retry backoff (ms): honor a server `Retry-After` (capped at
+/// [`RETRY_AFTER_CAP_MS`], floored at `base`) when present, else the caller's
+/// exponential `base`. Mirrors `ReliableProvider::compute_backoff` for the
+/// streaming path, which previously ignored `Retry-After` entirely (#4895).
+pub(crate) fn compute_stream_backoff_ms(base: u64, err: &StreamError) -> u64 {
+    match parse_stream_retry_after_ms(err) {
+        Some(retry_after) => retry_after.min(RETRY_AFTER_CAP_MS).max(base),
+        None => base,
+    }
+}
+
+/// Cap on any honored `Retry-After` wait, in milliseconds. Mirrors the
+/// non-streaming `ReliableProvider::compute_backoff` cap and
+/// `agent::triage::evaluator::RETRY_AFTER_CAP` so a hostile or mis-set header
+/// can't wedge a turn for minutes.
+pub(crate) const RETRY_AFTER_CAP_MS: u64 = 30_000;
+
 /// Try to extract a Retry-After value (in milliseconds) from an error message.
-/// Looks for patterns like `Retry-After: 5` or `retry_after: 2.5` in the error string.
+/// Looks for patterns like `Retry-After: 5` or `retry_after: 2.5` in the error
+/// string. Convenience wrapper over [`parse_retry_after_ms_from_str_at`] using
+/// the current wall-clock (only relevant for the HTTP-date form).
 pub(crate) fn parse_retry_after_ms(err: &anyhow::Error) -> Option<u64> {
-    let msg = err.to_string();
+    parse_retry_after_ms_from_str_at(&err.to_string(), chrono::Utc::now())
+}
+
+/// Extract a `Retry-After` value (milliseconds) from a raw error/body string.
+///
+/// Recognises, case-insensitively:
+/// - the HTTP header form `Retry-After: <secs>` / `retry_after <secs>`
+///   (integer or fractional **seconds**),
+/// - the backend JSON body field the managed proxy emits,
+///   `"retryAfter": <secs>` (camelCase, see `error_code.rs`), and
+/// - an HTTP-date (RFC 7231 IMF-fixdate, e.g. `Wed, 21 Oct 2025 07:28:00 GMT`),
+///   whose delay is computed relative to `now` and floored at zero.
+///
+/// `now` is injected so the HTTP-date branch is deterministically testable.
+pub(crate) fn parse_retry_after_ms_from_str_at(
+    msg: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<u64> {
     let lower = msg.to_lowercase();
 
-    // Look for "retry-after: <number>" or "retry_after: <number>"
-    for prefix in &[
-        "retry-after:",
-        "retry_after:",
-        "retry-after ",
-        "retry_after ",
-    ] {
-        if let Some(pos) = lower.find(prefix) {
-            let after = &msg[pos + prefix.len()..];
-            let num_str: String = after
-                .trim()
-                .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '.')
-                .collect();
+    // Base keys without a trailing separator, so a single pass covers the
+    // header (`Retry-After: 5`), space (`retry-after 5`), and JSON
+    // (`"retryAfter":30`) spellings once the punctuation is trimmed.
+    for key in &["retry-after", "retry_after", "retryafter"] {
+        let Some(pos) = lower.find(key) else {
+            continue;
+        };
+        // Work on the original-case slice so an HTTP-date still parses. Use
+        // `get` (not direct slicing) so a non-ASCII byte earlier in the string —
+        // which would make the lowercased `pos` land off a char boundary — yields
+        // no match instead of panicking.
+        let Some(after) = msg.get(pos + key.len()..) else {
+            continue;
+        };
+        let value = after
+            .trim_start_matches(|c: char| c == '"' || c == ':' || c == '=' || c.is_whitespace());
+
+        // Numeric seconds (integer or fractional) first.
+        let num_str: String = value
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        if !num_str.is_empty() {
             if let Ok(secs) = num_str.parse::<f64>() {
                 if secs.is_finite() && secs >= 0.0 {
-                    let millis = Duration::from_secs_f64(secs).as_millis();
-                    if let Ok(value) = u64::try_from(millis) {
+                    if let Ok(value) = u64::try_from(Duration::from_secs_f64(secs).as_millis()) {
                         return Some(value);
                     }
                 }
             }
         }
+
+        // Otherwise try an HTTP-date value.
+        if let Some(ms) = parse_http_date_delay_ms(value, now) {
+            return Some(ms);
+        }
     }
     None
+}
+
+/// Parse an HTTP-date `Retry-After` value (RFC 7231 IMF-fixdate) and return the
+/// delay from `now` in milliseconds (floored at zero for past dates), or `None`
+/// when `value` doesn't lead with a parseable GMT date.
+fn parse_http_date_delay_ms(value: &str, now: chrono::DateTime<chrono::Utc>) -> Option<u64> {
+    let trimmed = value.trim();
+    // Bound the candidate to the date itself (ends at the "GMT" zone marker) so
+    // trailing JSON/prose (`… GMT"}`) doesn't defeat the strict parser.
+    let end = trimmed.find("GMT")? + 3;
+    // IMF-fixdate ("… 07:28:00 GMT") differs from RFC 2822 only in the zone
+    // spelling; normalise GMT → +0000 so chrono's RFC 2822 parser accepts it.
+    let normalized = trimmed[..end].replace("GMT", "+0000");
+    let parsed = chrono::DateTime::parse_from_rfc2822(normalized.trim()).ok()?;
+    let delta_ms = parsed
+        .with_timezone(&chrono::Utc)
+        .signed_duration_since(now)
+        .num_milliseconds();
+    if delta_ms <= 0 {
+        Some(0)
+    } else {
+        u64::try_from(delta_ms).ok()
+    }
 }
 
 pub(crate) fn failure_reason(
@@ -633,6 +749,114 @@ mod tests {
             !is_rate_limited(&err),
             "generic errors must not be flagged as rate-limited"
         );
+    }
+
+    // ── #4895: streaming Retry-After honoring + plan-vs-transient 429 split ──
+
+    #[test]
+    fn parse_retry_after_json_body_field() {
+        let now = chrono::Utc::now();
+        // The managed backend embeds `retryAfter` (camelCase, seconds) in the
+        // JSON error body that reaches the loop as a `StreamError::Provider`.
+        let body = r#"OpenHuman API error (429 Too Many Requests): {"error":{"message":"slow down","errorCode":"RATE_LIMITED","retryAfter":30}}"#;
+        assert_eq!(
+            parse_retry_after_ms_from_str_at(body, now),
+            Some(30_000),
+            "camelCase JSON retryAfter must be honored"
+        );
+        // Pretty-printed body with a space after the colon.
+        let spaced = r#"{"errorCode":"RATE_LIMITED","retryAfter": 12}"#;
+        assert_eq!(parse_retry_after_ms_from_str_at(spaced, now), Some(12_000));
+    }
+
+    #[test]
+    fn parse_retry_after_header_forms_still_work() {
+        let now = chrono::Utc::now();
+        assert_eq!(
+            parse_retry_after_ms_from_str_at("429 Too Many Requests, Retry-After: 5", now),
+            Some(5_000)
+        );
+        assert_eq!(
+            parse_retry_after_ms_from_str_at("rate limited. retry_after: 2.5 seconds", now),
+            Some(2_500)
+        );
+        assert_eq!(
+            parse_retry_after_ms_from_str_at("500 Internal Server Error", now),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_retry_after_http_date_form() {
+        // Anchor on chrono's own RFC-2822 parse so the fixture stays consistent
+        // with the parser (and the weekday can't silently drift).
+        let target = chrono::DateTime::parse_from_rfc2822("Tue, 21 Oct 2025 07:28:00 +0000")
+            .expect("valid rfc2822 anchor")
+            .with_timezone(&chrono::Utc);
+        let msg = "OpenHuman API error (429): Retry-After: Tue, 21 Oct 2025 07:28:00 GMT";
+
+        // 5s before the target → ~5000ms wait.
+        let now = target - chrono::Duration::seconds(5);
+        assert_eq!(parse_retry_after_ms_from_str_at(msg, now), Some(5_000));
+
+        // A date already in the past floors to 0 (never negative).
+        let past_now = target + chrono::Duration::seconds(10);
+        assert_eq!(parse_retry_after_ms_from_str_at(msg, past_now), Some(0));
+    }
+
+    #[test]
+    fn stream_rate_limited_detection() {
+        assert!(is_stream_rate_limited(&StreamError::Provider(
+            "OpenHuman API error (429 Too Many Requests): rate limit".into()
+        )));
+        assert!(!is_stream_rate_limited(&StreamError::Provider(
+            "500 Internal Server Error".into()
+        )));
+        assert!(!is_stream_rate_limited(&StreamError::InvalidSse(
+            "bad frame".into()
+        )));
+    }
+
+    #[test]
+    fn stream_non_retryable_rate_limit_splits_plan_from_transient() {
+        // Plan/quota 429 → terminal (retries can't fix it).
+        let plan = StreamError::Provider(
+            r#"OpenHuman API error (429 Too Many Requests): {"code":1311,"message":"the current account plan does not include glm-5"}"#
+                .into(),
+        );
+        assert!(is_stream_non_retryable_rate_limit(&plan));
+        assert!(
+            is_stream_error_non_retryable(&plan),
+            "a plan 429 must fail fast on the streaming path too"
+        );
+
+        // Transient 429 → retryable (must NOT be flagged terminal).
+        let transient =
+            StreamError::Provider("OpenHuman API error (429 Too Many Requests): slow down".into());
+        assert!(!is_stream_non_retryable_rate_limit(&transient));
+        assert!(
+            !is_stream_error_non_retryable(&transient),
+            "a transient 429 must remain retryable so it can be backed off"
+        );
+    }
+
+    #[test]
+    fn compute_stream_backoff_honors_and_caps_retry_after() {
+        let base = 500;
+        // Retry-After present → honored (floored at base).
+        let five_s = StreamError::Provider(
+            r#"OpenHuman API error (429): {"errorCode":"RATE_LIMITED","retryAfter":5}"#.into(),
+        );
+        assert_eq!(compute_stream_backoff_ms(base, &five_s), 5_000);
+        // Oversized Retry-After is capped.
+        let huge = StreamError::Provider(r#"{"errorCode":"RATE_LIMITED","retryAfter":600}"#.into());
+        assert_eq!(compute_stream_backoff_ms(base, &huge), RETRY_AFTER_CAP_MS);
+        // Tiny Retry-After is floored at the caller's base backoff.
+        let tiny = StreamError::Provider(r#"{"retryAfter":0}"#.into());
+        assert_eq!(compute_stream_backoff_ms(base, &tiny), base);
+        // No Retry-After → base backoff unchanged.
+        let none = StreamError::Provider("transient upstream blip".into());
+        assert_eq!(compute_stream_backoff_ms(base, &none), base);
     }
 
     // ── upstream_unhealthy classification and failure_reason precedence ──

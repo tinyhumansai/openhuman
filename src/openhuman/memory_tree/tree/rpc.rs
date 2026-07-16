@@ -139,6 +139,7 @@ pub async fn list_chunks_rpc(
         since_ms: req.since_ms,
         until_ms: req.until_ms,
         limit: req.limit,
+        offset: None,
         source_scope: None,
         exclude_dropped: false,
     };
@@ -832,10 +833,9 @@ pub async fn set_enabled_rpc(
 mod tests {
     use super::*;
     use crate::openhuman::memory_queue as jobs;
-    use crate::openhuman::memory_queue::store::count_total;
     use crate::openhuman::memory_store::chunks::types::SourceKind;
     use crate::openhuman::memory_sync::canonicalize::document::DocumentInput;
-    use chrono::{Duration as ChronoDuration, Utc};
+    use chrono::Utc;
     use serde_json::json;
     use tempfile::TempDir;
 

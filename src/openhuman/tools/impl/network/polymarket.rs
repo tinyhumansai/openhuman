@@ -574,6 +574,31 @@ impl PolymarketTool {
             return Ok(creds.clone());
         }
 
+        // Egress spine (privacy epic S2/S7, #4436/#4441): deriving CLOB
+        // credentials sends the wallet address + L1 EIP-712 signature to
+        // Polymarket's `/auth/api-key` (and `/auth/derive-api-key` fallback)
+        // directly on `self.http`, which does NOT pass through the
+        // `send_with_retry` egress chokepoint. Refuse BEFORE that round-trip
+        // under LocalOnly so no credential material leaves the device, then
+        // disclose the destination for a permitted derive — mirroring
+        // `send_with_retry` so this off-device transfer produces the same
+        // `ExternalTransferPending` disclosure as every other egress point. A
+        // cached-credential hit (checked above) never reaches here, so a
+        // permitted local read is unaffected — every `self.http` path is now
+        // gated and disclosed (this + `send_with_retry`).
+        {
+            use crate::openhuman::security::egress::{DataKind, EgressDescriptor};
+            let host = reqwest::Url::parse(&self.clob_base_url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "clob.polymarket.com".to_string());
+            let desc = EgressDescriptor::network_fetch(host).with_data_kind(DataKind::Metadata);
+            if let Some(msg) = crate::openhuman::security::egress::local_only_tool_block(&desc) {
+                anyhow::bail!("{msg}");
+            }
+            crate::openhuman::security::egress::emit_external_transfer(desc);
+        }
+
         ensure_https(&self.clob_base_url)?;
         let creds =
             derive_credentials(&self.http, wallet, &self.clob_base_url, POLY_CHAIN_ID, user)
@@ -925,6 +950,30 @@ impl PolymarketTool {
         let url = format!("{base_url}{path}");
         let method_label = method.as_str().to_string();
 
+        // Egress spine (privacy epic S2/S7, #4436/#4441): every Polymarket
+        // read/write funnels through here — the single network chokepoint for
+        // this tool. Enforce local-only (refuse before any request leaves the
+        // device), then disclose the destination for permitted calls. Body =>
+        // tool arguments, headers => metadata also ride along.
+        {
+            use crate::openhuman::security::egress::{DataKind, EgressDescriptor};
+            let host = reqwest::Url::parse(&url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "unknown".to_string());
+            let mut desc = EgressDescriptor::network_fetch(host);
+            if body.is_some() {
+                desc = desc.with_data_kind(DataKind::ToolArguments);
+            }
+            if headers.is_some() {
+                desc = desc.with_data_kind(DataKind::Metadata);
+            }
+            if let Some(msg) = crate::openhuman::security::egress::local_only_tool_block(&desc) {
+                anyhow::bail!("{msg}");
+            }
+            crate::openhuman::security::egress::emit_external_transfer(desc);
+        }
+
         for attempt in 1..=MAX_RETRY_ATTEMPTS {
             let mut request = self.http.request(method.clone(), &url);
             if !query.is_empty() {
@@ -1143,10 +1192,10 @@ impl Tool for PolymarketTool {
         // rejected by the CLOB. Credential derivation is similarly
         // single-flight (see ensure_clob_credentials OnceCell). Reads remain
         // concurrency-safe.
-        match args.get("action").and_then(Value::as_str) {
-            Some("place_order") | Some("cancel_order") => false,
-            _ => true,
-        }
+        !matches!(
+            args.get("action").and_then(Value::as_str),
+            Some("place_order") | Some("cancel_order")
+        )
     }
 
     async fn execute(&self, args: Value) -> Result<ToolResult> {

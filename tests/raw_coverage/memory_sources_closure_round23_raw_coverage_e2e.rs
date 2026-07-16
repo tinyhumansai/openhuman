@@ -167,7 +167,7 @@ async fn round23_memory_sources_status_registry_and_readers_cover_remaining_edge
         MemorySourcePatch {
             label: Some("Round23 Folder Updated".to_string()),
             enabled: Some(false),
-            glob: Some("**/*.md".to_string()),
+            glob: Some(Some("**/*.md".to_string())),
             ..MemorySourcePatch::default()
         },
     )

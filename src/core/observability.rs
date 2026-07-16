@@ -1702,7 +1702,7 @@ fn is_provider_user_state_message(lower: &str) -> bool {
     // validate-before-store probe (added in #4318) rejects an obviously invalid
     // BYO key *before* persisting it and returns its own user-facing prose,
     // `COMPOSIO_INVALID_API_KEY_USER_MESSAGE` ("Invalid Composio API key. Re-enter
-    // a valid key in Settings > Connections > Composio."). That string carries
+    // a valid key in Connections > Composio."). That string carries
     // neither the `[composio-direct]` prefix nor an `HTTP 401` token, and the word
     // "Composio" splits the `invalid … api key` sequence — so the X9 arm above
     // never claims it and the RPC-boundary `report_error` leaked as a Sentry error

@@ -1,5 +1,5 @@
 use super::store::JobStore;
-use super::types::{JobRecord, JobStatus, RunResult};
+use super::types::{JobStatus, RunResult};
 use std::time::Duration;
 
 #[test]

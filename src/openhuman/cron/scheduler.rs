@@ -884,7 +884,12 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                     ModelSpec::Exact(name) => name.clone(),
                 };
                 effective.default_model = Some(resolved_model);
-                effective.agent.max_tool_iterations = def.max_iterations;
+                // Issue #4868 — the iteration cap is no longer set here. The
+                // session builder (`build_session_agent_inner`) resolves it
+                // from `def.effective_max_iterations()` directly, which (unlike
+                // this cron path previously) correctly honors
+                // `iteration_policy = "extended"` agents (e.g. `tools_agent`
+                // getting 50, not the raw `max_iterations = 10`).
             } else {
                 tracing::warn!(
                     job_id = %job.id,

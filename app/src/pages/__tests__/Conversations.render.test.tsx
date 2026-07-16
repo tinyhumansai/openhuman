@@ -24,14 +24,15 @@ import chatRuntimeReducer, {
   bumpInferenceHeartbeatForThread,
   clearFollowupsForThread,
   enqueueFollowup,
+  markInferenceTurnStreaming,
   setInferenceStatusForThread,
   setPendingPlanReviewForThread,
+  setStreamingAssistantForThread,
   setTaskBoardForThread,
   setToolTimelineForThread,
   setTurnTimelinesForThread,
 } from '../../store/chatRuntimeSlice';
 import layoutReducer from '../../store/layoutSlice';
-import privacyReducer, { type PrivacyDisclosure } from '../../store/privacySlice';
 import socketReducer from '../../store/socketSlice';
 import themeReducer from '../../store/themeSlice';
 import threadReducer, { setSelectedThread } from '../../store/threadSlice';
@@ -66,7 +67,7 @@ const mockUseOpenRouterFreeModels = vi.hoisted(() => vi.fn());
 // ── Module mocks ───────────────────────────────────────────────────────────
 
 vi.mock('../../services/chatService', () => ({
-  chatCancel: vi.fn(),
+  chatCancel: vi.fn().mockResolvedValue(true),
   chatClearQueue: vi.fn().mockResolvedValue(0),
   chatSend: vi.fn().mockResolvedValue(undefined),
   subscribeChatEvents: vi.fn(() => () => {}),
@@ -203,7 +204,6 @@ function buildStore(preload: Record<string, unknown> = {}) {
       chatRuntime: chatRuntimeReducer,
       agentProfiles: agentProfileReducer,
       theme: themeReducer,
-      privacy: privacyReducer,
     }),
     preloadedState: preload as never,
   });
@@ -1219,6 +1219,224 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       fireEvent.click(footerCancel as HTMLElement);
     });
     expect(chatCancel).toHaveBeenCalledWith(thread.id);
+  });
+
+  // ── #4862: Stop-response + ESC-to-interrupt & re-edit ────────────────────
+
+  // Render a selected thread with an in-flight streaming turn (active + a
+  // partial assistant reply already streamed), so the in-composer Stop button
+  // is visible and ESC has a turn to interrupt.
+  async function renderStreamingConversation(
+    opts: { userPrompt?: string; streamingContent?: string } = {}
+  ) {
+    const thread = makeThread({ id: 'stream-thread', title: 'Streaming' });
+    const messages: ThreadMessage[] = opts.userPrompt
+      ? [
+          {
+            id: 'u-1',
+            sender: 'user',
+            type: 'text',
+            content: opts.userPrompt,
+            extraMetadata: {},
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ]
+      : [];
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+          // Marks the thread's turn as in-flight so the composer stays editable
+          // (`allowParallelSend`) and `selectedThreadActive` is true.
+          activeThreadIds: { [thread.id]: true },
+        },
+        socket: socketState('connected'),
+      });
+    });
+
+    await act(async () => {
+      store!.dispatch(beginInferenceTurn({ threadId: thread.id }));
+      store!.dispatch(markInferenceTurnStreaming({ threadId: thread.id }));
+      store!.dispatch(
+        setStreamingAssistantForThread({
+          threadId: thread.id,
+          streaming: {
+            requestId: 'req-stream-1',
+            content: opts.streamingContent ?? 'partial answer so far',
+            thinking: '',
+          },
+        })
+      );
+    });
+
+    return { store: store!, thread };
+  }
+
+  it('preserves the partial reply marked stopped when Stop is clicked mid-stream (#4862)', async () => {
+    const { thread } = await renderStreamingConversation({ streamingContent: 'half a thought' });
+
+    const stopButton = await screen.findByTestId('stop-generation-button');
+    await act(async () => {
+      fireEvent.click(stopButton);
+    });
+
+    expect(chatCancel).toHaveBeenCalledWith(thread.id);
+    // The partial stream is persisted as its own agent message flagged stopped
+    // so it survives the cancel instead of vanishing with the live preview.
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({
+          content: 'half a thought',
+          sender: 'agent',
+          extraMetadata: expect.objectContaining({ stopped: true }),
+        })
+      );
+    });
+  });
+
+  it('does not persist a stopped message when nothing has streamed yet (#4862)', async () => {
+    const { thread } = await renderStreamingConversation({ streamingContent: '   ' });
+
+    const stopButton = await screen.findByTestId('stop-generation-button');
+    await act(async () => {
+      fireEvent.click(stopButton);
+    });
+
+    expect(chatCancel).toHaveBeenCalledWith(thread.id);
+    // Whitespace-only partial → nothing worth preserving, so no message append.
+    expect(threadApi.appendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not persist a stopped reply when the cancel is rejected (#4862)', async () => {
+    // Socket down / RPC rejected → chatCancel resolves false. The original turn
+    // may keep running and append its own final response, so we must NOT leave a
+    // misleading partial bubble behind.
+    vi.mocked(chatCancel).mockResolvedValueOnce(false);
+    const { thread } = await renderStreamingConversation({ streamingContent: 'half a thought' });
+
+    const stopButton = await screen.findByTestId('stop-generation-button');
+    await act(async () => {
+      fireEvent.click(stopButton);
+    });
+
+    expect(chatCancel).toHaveBeenCalledWith(thread.id);
+    // Give the cancel promise a tick to resolve; no stopped message should land.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(threadApi.appendMessage).not.toHaveBeenCalled();
+  });
+
+  it('persists the stopped reply only once across repeated Stop clicks (#4862)', async () => {
+    const { thread } = await renderStreamingConversation({ streamingContent: 'half a thought' });
+
+    const stopButton = await screen.findByTestId('stop-generation-button');
+    // Two rapid Stop clicks before the cancel event clears the live stream.
+    await act(async () => {
+      fireEvent.click(stopButton);
+      fireEvent.click(stopButton);
+    });
+
+    expect(chatCancel).toHaveBeenCalledWith(thread.id);
+    // The one-shot requestId guard keeps the partial from being appended twice.
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(threadApi.appendMessage).toHaveBeenCalledWith(
+      thread.id,
+      expect.objectContaining({ extraMetadata: expect.objectContaining({ stopped: true }) })
+    );
+  });
+
+  it('interrupts the stream and restores the last prompt into the composer on ESC (#4862)', async () => {
+    const { thread } = await renderStreamingConversation({
+      userPrompt: 'my original question',
+      streamingContent: 'streaming so far',
+    });
+
+    const textarea = await screen.findByPlaceholderText(/Queue a follow-up/);
+    expect(textarea).toHaveValue('');
+
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Escape' });
+    });
+
+    // The turn is cancelled and the user's prompt is re-hydrated for editing.
+    expect(chatCancel).toHaveBeenCalledWith(thread.id);
+    await waitFor(() => {
+      expect(textarea).toHaveValue('my original question');
+    });
+  });
+
+  it('does not clobber a typed follow-up when ESC is pressed with a non-empty composer (#4862)', async () => {
+    const { thread } = await renderStreamingConversation({
+      userPrompt: 'my original question',
+      streamingContent: 'streaming so far',
+    });
+
+    const textarea = await screen.findByPlaceholderText(/Queue a follow-up/);
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'a fresh follow-up' } });
+    });
+
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Escape' });
+    });
+
+    // Interrupt still fires, but the in-progress follow-up text is left intact.
+    expect(chatCancel).toHaveBeenCalledWith(thread.id);
+    expect(textarea).toHaveValue('a fresh follow-up');
+  });
+
+  it('renders a Stopped marker on a stopped partial reply (#4862)', async () => {
+    const thread = makeThread({ id: 'stopped-marker-thread', title: 'Stopped' });
+    const messages: ThreadMessage[] = [
+      {
+        id: 'u',
+        sender: 'user',
+        type: 'text',
+        content: 'go',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'a',
+        sender: 'agent',
+        type: 'text',
+        content: 'partial reply that got cut off',
+        extraMetadata: { stopped: true },
+        createdAt: '2026-01-01T00:01:00.000Z',
+      },
+    ];
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    await act(async () => {
+      await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+        },
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(screen.getByTestId('stopped-marker')).toHaveTextContent('Stopped');
+  });
+
+  it('shows Send and no Stop button while the thread is idle (#4862)', async () => {
+    await renderSelectedConversation();
+
+    expect(screen.queryByTestId('stop-generation-button')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument();
   });
 
   it('releases the pending-send lock when appendMessage rejects with a generic error', async () => {
@@ -2715,11 +2933,10 @@ describe('Conversations — message list reserves room for the floating composer
   });
 });
 
-// External-transfer disclosure surface (#4437 / S3). The card's own unit test
-// covers the component in isolation; these drive the SELECTION path in
-// Conversations — latest-per-thread, `firstActiveThreadId` fallback, and
-// clear-after-dismissal — which the isolated card test cannot reach.
-describe('Conversations — external-transfer disclosure surface (#4437 / S3)', () => {
+// The in-chat "Leaving your device" external-transfer disclosure card was
+// removed. This guards against it coming back: even with a live external
+// transfer flagged on the active thread, no such card renders in the chat view.
+describe('Conversations — external-transfer disclosure card removed', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
@@ -2727,92 +2944,16 @@ describe('Conversations — external-transfer disclosure surface (#4437 / S3)', 
     mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
   });
 
-  function disclosure(over: Partial<PrivacyDisclosure> = {}): PrivacyDisclosure {
-    return {
-      id: 'd1',
-      providerSlug: 'openai',
-      service: 'OpenAI',
-      isExternal: true,
-      reason: 'inference',
-      dataKinds: ['prompt'],
-      riskLevel: 'unknown',
-      riskCategories: [],
-      receivedAt: 0,
-      ...over,
-    };
-  }
-
-  it('surfaces the latest disclosure for the selected thread', async () => {
+  it('never renders a "Leaving your device" card', async () => {
     const thread = makeThread({ id: 't-sel' });
     mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
     await act(async () => {
       await renderConversations({
         thread: selectedThreadState(thread),
         socket: socketState('connected'),
-        privacy: {
-          privacyMode: 'standard',
-          disclosuresByThread: {
-            't-sel': [
-              disclosure({ id: 'old', service: 'OldService' }),
-              disclosure({ id: 'new', service: 'OpenAI' }),
-            ],
-          },
-        },
       });
     });
 
-    const title = await screen.findByText('Leaving your device');
-    const card = title.closest('[role="status"]');
-    expect(card).not.toBeNull();
-    // Latest wins — the newest disclosure's destination, not the older one.
-    expect(card).toHaveTextContent('OpenAI');
-    expect(card).not.toHaveTextContent('OldService');
-  });
-
-  it('falls back to firstActiveThreadId when no thread is selected', async () => {
-    const thread = makeThread({ id: 't-act' });
-    // Keep thread loading pending so the mount flow's auto-select can't fire. With a
-    // resolved load the sole thread `t-act` would be auto-selected, and the assertion
-    // would then pass through the normal selected-thread path instead of the intended
-    // `selectedThreadId ?? firstActiveThreadId` fallback (CR #4849). A pending load
-    // leaves `selectedThreadId` null, so the fallback is the ONLY way the card shows.
-    mockGetThreads.mockReturnValue(new Promise(() => {}));
-    let store: Awaited<ReturnType<typeof renderConversations>>;
-    await act(async () => {
-      store = await renderConversations({
-        // No selectedThreadId — only an active thread present.
-        thread: { ...emptyThreadState, threads: [thread], activeThreadIds: { 't-act': true } },
-        socket: socketState('connected'),
-        privacy: {
-          privacyMode: 'standard',
-          disclosuresByThread: { 't-act': [disclosure({ service: 'Anthropic' })] },
-        },
-      });
-    });
-
-    // Auto-selection must NOT have fired — the fallback branch is what surfaces the
-    // card, not the normal selected-thread path.
-    expect(store!.getState().thread.selectedThreadId).toBeNull();
-    const title = await screen.findByText('Leaving your device');
-    expect(title.closest('[role="status"]')).toHaveTextContent('Anthropic');
-  });
-
-  it('clears the card after dismissal', async () => {
-    const thread = makeThread({ id: 't-sel' });
-    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
-    await act(async () => {
-      await renderConversations({
-        thread: selectedThreadState(thread),
-        socket: socketState('connected'),
-        privacy: { privacyMode: 'standard', disclosuresByThread: { 't-sel': [disclosure()] } },
-      });
-    });
-
-    const title = await screen.findByText('Leaving your device');
-    const card = title.closest('[role="status"]') as HTMLElement;
-    await act(async () => {
-      fireEvent.click(within(card).getByRole('button', { name: 'Got it' }));
-    });
     expect(screen.queryByText('Leaving your device')).toBeNull();
   });
 });

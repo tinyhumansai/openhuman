@@ -16,8 +16,13 @@
  * `streamingAssistantByThread`, streamed here by Phase B). So the copilot reads
  * like a real chat rather than a one-shot form.
  *
- * Invariant: the copilot only PROPOSES. Accept applies to the UNSAVED local
- * draft (no `flows_update`); persistence stays behind the canvas's own Save.
+ * Invariant: the copilot only PROPOSES — the agent turn itself never
+ * persists. Accept applies the proposal to the local draft AND immediately
+ * saves it (review + save in one click) via the host's `onAccept`, which
+ * awaits the host's own persistence call; the panel shows a saving state
+ * meanwhile and, if the save fails, leaves the proposal visible for retry
+ * rather than silently discarding it. Reject remains local-only (revert the
+ * overlay, no persistence call).
  */
 import createDebug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -65,8 +70,13 @@ interface Props {
    * reflects it.
    */
   onProposal: (proposal: WorkflowProposal) => void;
-  /** Accept the pending proposal into the local draft (host commits it). */
-  onAccept: (proposal: WorkflowProposal) => void;
+  /**
+   * Accept the pending proposal (host applies it to the local draft AND
+   * persists it — "accept" is now review + save in one step). May return a
+   * promise the panel awaits to show a saving state; a rejected promise
+   * leaves the proposal visible so the user can retry.
+   */
+  onAccept: (proposal: WorkflowProposal) => void | Promise<void>;
   /** Reject the pending proposal (host reverts the overlay). */
   onReject: () => void;
   /** Close the panel. */
@@ -118,6 +128,12 @@ interface Props {
   seedThreadId?: string | null;
   /** Reports the live thread id up so the host can persist it per workflow. */
   onThreadIdChange?: (threadId: string | null) => void;
+  /**
+   * Drop the panel's `max-w-sm` cap so it fills the available width. Used by
+   * the chat-first canvas open, where the copilot is the whole surface until
+   * the graph appears.
+   */
+  fullWidth?: boolean;
 }
 
 export default function WorkflowCopilotPanel({
@@ -134,6 +150,7 @@ export default function WorkflowCopilotPanel({
   onPrefillSeedConsumed,
   seedThreadId = null,
   onThreadIdChange,
+  fullWidth = false,
 }: Props) {
   const { t } = useT();
   const {
@@ -369,12 +386,35 @@ export default function WorkflowCopilotPanel({
   const noopAttach = useCallback(async () => {}, []);
   const noop = useCallback(() => {}, []);
 
-  const accept = useCallback(() => {
-    if (!proposal) return;
-    onAccept(proposal);
-    clearProposal();
-    lastSurfacedRef.current = null;
-  }, [proposal, onAccept, clearProposal]);
+  // Accept now review-and-saves: `onAccept` (the host's `handleAcceptProposal`)
+  // applies the proposal to the draft AND persists it. Track a local
+  // `acceptSaving` flag so the button can show a saving state and disable
+  // re-clicks while that's in flight. If the host's save throws, leave the
+  // proposal card visible (don't `clearProposal()`) so the user can retry —
+  // otherwise a failed autosave would silently vanish the only affordance to
+  // try again from the copilot itself (the header Save button is a fallback,
+  // but this keeps the copilot's own flow self-contained).
+  const [acceptSaving, setAcceptSaving] = useState(false);
+  const accept = useCallback(async () => {
+    // Self-guard against re-entrance: the JSX `disabled={acceptSaving}` on
+    // the Accept button prevents a normal double-click, but `acceptSaving`
+    // only flips after the FIRST call's `setAcceptSaving(true)` commits — a
+    // second invocation racing ahead of that render (e.g. programmatic
+    // re-fire) must not start a second concurrent save.
+    if (!proposal || acceptSaving) return;
+    setAcceptSaving(true);
+    log('accept: saving proposal via host onAccept');
+    try {
+      await onAccept(proposal);
+      log('accept: save succeeded, clearing proposal');
+      clearProposal();
+      lastSurfacedRef.current = null;
+    } catch (err) {
+      log('accept: save failed, leaving proposal visible for retry err=%o', err);
+    } finally {
+      setAcceptSaving(false);
+    }
+  }, [proposal, acceptSaving, onAccept, clearProposal]);
 
   const reject = useCallback(() => {
     onReject();
@@ -395,7 +435,9 @@ export default function WorkflowCopilotPanel({
   return (
     <aside
       data-testid="workflow-copilot-panel"
-      className="flex h-full w-full max-w-sm flex-col border-l border-line bg-surface">
+      className={`flex h-full w-full flex-col border-l border-line bg-surface ${
+        fullWidth ? '' : 'max-w-sm'
+      }`}>
       <header className="flex items-start gap-2 border-b border-line px-3 py-2.5">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-content">{t('flows.copilot.title')}</p>
@@ -524,14 +566,16 @@ export default function WorkflowCopilotPanel({
                 type="button"
                 variant="primary"
                 size="sm"
+                disabled={acceptSaving}
                 data-testid="workflow-copilot-accept"
-                onClick={accept}>
-                {t('flows.copilot.accept')}
+                onClick={() => void accept()}>
+                {acceptSaving ? t('flows.copilot.saving') : t('flows.copilot.acceptAndSave')}
               </Button>
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
+                disabled={acceptSaving}
                 data-testid="workflow-copilot-reject"
                 onClick={reject}>
                 {t('flows.copilot.reject')}

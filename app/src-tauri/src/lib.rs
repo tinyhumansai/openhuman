@@ -3,6 +3,20 @@
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("src-tauri host supports desktop (Windows/macOS/Linux) only. Mobile lives in app/src-tauri-mobile.");
 
+// The shipped desktop app must always embed the real voice domain. Cargo
+// features are per-crate, so `#[cfg(feature = "voice")]` here would test THIS
+// crate's features, not the core's — a voice-less core is only observable via
+// the core's own always-compiled facade. Without this assert the failure is
+// silent and runtime-only: every `openhuman.voice_*` RPC answers "unknown
+// method" and the UI blames a stale sidecar (#4901). Keep `voice` in the
+// `openhuman_core` feature list in Cargo.toml to satisfy this.
+const _: () = assert!(
+    openhuman_core::openhuman::voice::VOICE_COMPILED_IN,
+    "openhuman_core must be built with the `voice` feature: the desktop app ships voice, \
+     and without it every openhuman.voice_* controller is unregistered (#4901). \
+     Add \"voice\" to the openhuman_core `features` list in app/src-tauri/Cargo.toml."
+);
+
 mod app_update;
 // Artifact export commands (#2779, #3162) — both cross-platform
 // (macOS/Windows/Linux): native Save-As dialog (rfd) + Downloads copy.
@@ -399,9 +413,7 @@ async fn restart_app(app: tauri::AppHandle<AppRuntime>) -> Result<(), String> {
     perform_early_teardown_async(&app).await;
     log::info!("[app] restart_app — early teardown complete, restarting");
 
-    app.restart();
-    // restart() does not return, but we must satisfy the signature
-    Ok(())
+    app.restart()
 }
 
 /// Read the authoritative active user id from `active_user.toml` so the
@@ -1214,7 +1226,7 @@ fn mascot_native_window_is_open() -> bool {
     mascot_native_window::is_open()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 fn mascot_native_window_is_open() -> bool {
     false
 }
@@ -1848,7 +1860,9 @@ async fn perform_early_teardown_async(app_handle: &AppHandle<AppRuntime>) {
     log::info!("[app] perform_early_teardown_async — early teardown complete");
 }
 
-/// Explicitly winds down CEF and Tauri before an app.exit(0)
+/// Explicitly wind down CEF and the core before exiting from desktop-owned
+/// quit actions. Linux does not build the tray or macOS application menu.
+#[cfg(not(target_os = "linux"))]
 fn shutdown_app_sync(app_handle: &AppHandle<AppRuntime>, exit_code: i32) {
     log::info!("[app] shutdown_app_sync — starting early teardown");
     perform_early_teardown_sync_once(app_handle, "shutdown_app_sync");

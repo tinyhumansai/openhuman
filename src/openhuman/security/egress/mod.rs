@@ -8,7 +8,9 @@
 //! approval S4, identification-risk detector S5, enforcement S7).
 
 pub mod emit;
+pub mod enforce;
 pub mod types;
 
 pub use emit::{dedup_turn_scope, emit_external_transfer};
+pub use enforce::{enforce_egress, local_only_blocks, local_only_tool_block};
 pub use types::{DataKind, EgressDescriptor, EgressReason, IdentificationRisk};

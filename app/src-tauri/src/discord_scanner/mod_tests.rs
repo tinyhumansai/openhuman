@@ -339,7 +339,6 @@ fn page(id: &str, url: &str) -> crate::cdp::target::CdpTarget {
         id: id.to_string(),
         kind: "page".to_string(),
         url: url.to_string(),
-        title: String::new(),
     }
 }
 
@@ -409,7 +408,6 @@ fn resolve_none_when_no_prefix_target() {
             id: "iframe".to_string(),
             kind: "iframe".to_string(),
             url: "https://discord.com/channels/@me".to_string(),
-            title: String::new(),
         },
     ];
     assert!(

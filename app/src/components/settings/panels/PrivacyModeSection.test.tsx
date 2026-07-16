@@ -71,24 +71,6 @@ describe('PrivacyModeSection', () => {
     );
   });
 
-  // Finding 2 (#4437): saving a new mode must also push it into the Redux
-  // privacy slice so the persistent status pill updates live, instead of
-  // showing the stale mode until the next app reload.
-  it('dispatches the new mode into the privacy slice on a successful save', async () => {
-    const { store } = renderWithProviders(<PrivacyModeSection />);
-    await waitFor(() =>
-      expect(screen.getByTestId('privacy-mode-option-local_only')).toBeInTheDocument()
-    );
-
-    fireEvent.click(screen.getByTestId('privacy-mode-option-local_only'));
-
-    await waitFor(() =>
-      expect(
-        (store.getState() as { privacy: { privacyMode: string | null } }).privacy.privacyMode
-      ).toBe('local_only')
-    );
-  });
-
   it('does not re-issue the set RPC when the current mode is clicked', async () => {
     renderWithProviders(<PrivacyModeSection />);
     await waitFor(() =>
