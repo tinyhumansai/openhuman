@@ -401,7 +401,7 @@ jobs:
           cache-on-failure: true
           shared-key: pr-rust-feature-gate-smoke
 
-      - name: Check core builds with the voice + media gates disabled
+      - name: Check core builds with the default domain gates disabled
         run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tokenjuice-treesitter
 
   rust-core-coverage:

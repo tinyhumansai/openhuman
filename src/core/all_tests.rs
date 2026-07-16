@@ -821,6 +821,7 @@ async fn harness_excludes_gated_namespaces() {
         .iter()
         .map(|s| s.namespace)
         .collect();
+    #[cfg(feature = "flows")]
     assert!(full_ns.contains("flows"), "full() must expose flows");
     assert!(full_ns.contains("voice"), "full() must expose voice");
 
@@ -860,6 +861,12 @@ async fn harness_excludes_gated_namespaces() {
     );
 }
 
+// Uses a `flows.*` method as its gated-family vehicle, so the whole test is
+// `#[cfg(feature = "flows")]`: without the feature there is no flows controller
+// in the registry at all and the `.expect()` below would panic. The runtime
+// gating this proves is orthogonal to the compile-time gate, and CI runs the
+// test suite on default features (flows ON), so no coverage is lost there.
+#[cfg(feature = "flows")]
 #[tokio::test]
 async fn dispatch_returns_none_for_gated_method() {
     // A method whose group is gated OFF under the ambient DomainSet must
@@ -891,6 +898,8 @@ async fn dispatch_returns_none_for_gated_method() {
     );
 }
 
+// Same flows-vehicle reasoning as `dispatch_returns_none_for_gated_method`.
+#[cfg(feature = "flows")]
 #[tokio::test]
 async fn schema_lookup_is_gated_in_lockstep_with_dispatch() {
     // #4808 review: `schema_for_rpc_method` must gate identically to
@@ -940,7 +949,10 @@ fn group_mapping_smoke() {
     assert_eq!(group_for_namespace("config"), Some(DomainGroup::Config));
     assert_eq!(group_for_namespace("security"), Some(DomainGroup::Security));
     assert_eq!(group_for_namespace("agent"), Some(DomainGroup::Agent));
-    // …and a representative gated one maps to its gate group.
+    // …and a representative gated one maps to its gate group. `group_for_namespace`
+    // reads the real controller registry, so a compile-time-gated family has no
+    // entry to map when its feature is off.
+    #[cfg(feature = "flows")]
     assert_eq!(group_for_namespace("flows"), Some(DomainGroup::Flows));
     // `group_for_namespace` is registry-derived, so a compile-time-gated domain
     // has no controller to map. Skip when its Cargo feature is off.
@@ -1008,6 +1020,39 @@ fn mcp_namespaces_absent_when_gate_off() {
         None,
         "with `mcp` compiled out, the internal `mcp_audit` namespace must not \
          be registered — the stub aggregator returns an empty vec"
+    );
+}
+
+// --- #4797: `flows` compile-time gate (directional proof) -------------------
+//
+// One namespace, not three: `tinyflows` registers no controllers, and
+// `rhai_workflows` is `scope() = AgentOnly` (no controller schemas in v1), so
+// `flows` is the gate's entire controller surface.
+
+#[cfg(feature = "flows")]
+#[test]
+fn flows_controllers_registered_when_feature_on() {
+    let namespaces: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.namespace)
+        .collect();
+    assert!(
+        namespaces.contains(&"flows"),
+        "with the `flows` feature ON the flows controllers must be registered"
+    );
+}
+
+#[cfg(not(feature = "flows"))]
+#[test]
+fn flows_controllers_absent_when_feature_off() {
+    let namespaces: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.namespace)
+        .collect();
+    assert!(
+        !namespaces.contains(&"flows"),
+        "with the `flows` feature OFF the flows controllers must be absent \
+         (unknown-method over /rpc, omitted from /schema)"
     );
 }
 

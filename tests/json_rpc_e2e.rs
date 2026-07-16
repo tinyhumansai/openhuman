@@ -12595,6 +12595,7 @@ async fn json_rpc_workflows_lifecycle_round_trip() {
 /// Shared boot for a flows E2E: isolates `HOME`, seeds a minimal config against
 /// a mock upstream, and stands up the core HTTP router. Returns the rpc base
 /// URL plus the join handles + tempdir the caller must keep alive/abort.
+#[cfg(feature = "flows")]
 async fn boot_flows_rpc_env() -> (
     String,
     tempfile::TempDir,
@@ -12627,6 +12628,7 @@ async fn boot_flows_rpc_env() -> (
 /// The smallest valid graph with a human-in-the-loop approval gate:
 /// `trigger → gate(requires_approval) → downstream`. A run pauses at `gate`;
 /// approving it via `flows_resume` runs `downstream`.
+#[cfg(feature = "flows")]
 fn approval_gated_graph_json() -> Value {
     json!({
         "name": "approval-gated",
@@ -12649,6 +12651,7 @@ fn approval_gated_graph_json() -> Value {
 /// cancel operates on a run id (checkpoint thread id), so we cancel a *fresh*
 /// parked run rather than the already-completed one (cancelling a terminal run
 /// is an error).
+#[cfg(feature = "flows")]
 #[tokio::test]
 async fn json_rpc_flows_lifecycle_round_trip() {
     let _env_lock = json_rpc_e2e_env_lock();
@@ -12865,6 +12868,7 @@ async fn json_rpc_flows_lifecycle_round_trip() {
 /// `false`. This pins that the four new controllers are registered and dispatch
 /// end-to-end (schema + handler wiring), independent of the agent-backed
 /// `flows_discover`, which needs a provider.
+#[cfg(feature = "flows")]
 #[tokio::test]
 async fn json_rpc_flows_suggestion_lifecycle_methods_are_wired() {
     let _env_lock = json_rpc_e2e_env_lock();
@@ -12935,6 +12939,7 @@ async fn json_rpc_flows_suggestion_lifecycle_methods_are_wired() {
 /// resolves to `chat-v1` on the managed backend while a **reasoning**-tier node
 /// resolves to `reasoning-v1` — letting the full-arc test assert the two nodes
 /// routed to distinct managed tiers.
+#[cfg(feature = "flows")]
 fn write_flows_tier_config(openhuman_dir: &Path, api_origin: &str) {
     let cfg = format!(
         r#"api_url = "{api_origin}"
@@ -12975,6 +12980,7 @@ compaction_enabled = false
 /// `trigger` feeds a reasoning-tier `planner` (structured `{plan, angle}`) into a
 /// chat-tier `drafter` that references `nodes.planner.item.json.plan`, then a
 /// `transform` shapes `{topic, plan, draft}`.
+#[cfg(feature = "flows")]
 fn opus_sonnet_demo_graph() -> Value {
     json!({
         "schema_version": 1,
@@ -13049,6 +13055,7 @@ fn opus_sonnet_demo_graph() -> Value {
 ///
 /// Runs on the agent-sized worker stack because the builder/scout turns and the
 /// agent-node run drive the full harness (deep async stacks).
+#[cfg(feature = "flows")]
 #[test]
 fn json_rpc_flows_full_arc_discover_build_create_run() {
     run_json_rpc_e2e_on_agent_stack(
@@ -13057,6 +13064,7 @@ fn json_rpc_flows_full_arc_discover_build_create_run() {
     );
 }
 
+#[cfg(feature = "flows")]
 async fn json_rpc_flows_full_arc_discover_build_create_run_inner() {
     let _env_lock = json_rpc_e2e_env_lock();
     // Drain the scripted-completion FIFO even if an assertion below panics, so a
@@ -13300,6 +13308,7 @@ async fn json_rpc_flows_full_arc_discover_build_create_run_inner() {
 /// edge (→ `downstream`) and an `error` edge (→ `recover`). Resuming with the
 /// gate in `rejections` routes the denied gate's error item to `recover`, and
 /// `downstream` must not run.
+#[cfg(feature = "flows")]
 #[tokio::test]
 async fn json_rpc_flows_resume_deny_routes_to_error_port() {
     let _env_lock = json_rpc_e2e_env_lock();
@@ -13388,6 +13397,7 @@ async fn json_rpc_flows_resume_deny_routes_to_error_port() {
 /// clean but returns a loud, non-fatal warning; a `schedule` trigger (which
 /// does fire) warns nothing; a graph with no trigger is `valid: false` with a
 /// structural error and no warnings.
+#[cfg(feature = "flows")]
 #[tokio::test]
 async fn json_rpc_flows_validate_reports_warnings_and_errors() {
     let _env_lock = json_rpc_e2e_env_lock();
@@ -13498,6 +13508,7 @@ async fn json_rpc_flows_validate_reports_warnings_and_errors() {
 /// becomes an annotated placeholder, and the approximations come back as
 /// warnings — all WITHOUT persisting (the returned payload is a graph, not a
 /// saved Flow row; `flows_list` stays empty afterwards).
+#[cfg(feature = "flows")]
 #[tokio::test]
 async fn json_rpc_flows_import_native_and_n8n() {
     let _env_lock = json_rpc_e2e_env_lock();
@@ -13609,6 +13620,7 @@ async fn json_rpc_flows_import_native_and_n8n() {
 /// fault-tolerance: the mock upstream has no connected-accounts route, so the
 /// Composio source fails and is tolerated (the RPC still returns the HTTP half
 /// rather than erroring).
+#[cfg(feature = "flows")]
 #[tokio::test]
 async fn json_rpc_flows_list_connections_aggregates_secret_free() {
     let _env_lock = json_rpc_e2e_env_lock();

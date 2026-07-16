@@ -309,6 +309,9 @@ pub const BUILTINS: &[BuiltinAgent] = &[
     // Workflow-authoring specialist (Phase 5a): builds tinyflows automation
     // graphs from natural language and returns a validated PROPOSAL — it never
     // persists or enables a flow. Deliberately narrow propose-or-read tool belt.
+    // Gated with `flows`: a slim build must not advertise an agent whose entire
+    // tool belt is absent, so the entry (and its `include_str!`) is stripped.
+    #[cfg(feature = "flows")]
     BuiltinAgent {
         id: "workflow_builder",
         toml: include_str!("../../flows/agents/workflow_builder/agent.toml"),
@@ -320,7 +323,9 @@ pub const BUILTINS: &[BuiltinAgent] = &[
     // `suggest_workflows` to record concrete, buildable automation ideas for
     // the Flows page "Suggested for you" section. It never persists or enables
     // a flow — the read-only counterpart to `workflow_builder`, which turns a
-    // picked suggestion into a real graph proposal.
+    // picked suggestion into a real graph proposal. Gated with `flows` (same
+    // reasoning as `workflow_builder` above).
+    #[cfg(feature = "flows")]
     BuiltinAgent {
         id: "flow_discovery",
         toml: include_str!("../../flows/agents/flow_discovery/agent.toml"),
@@ -1019,6 +1024,9 @@ mod tests {
         assert!(matches!(def.tools, ToolScope::Wildcard));
     }
 
+    // Both flows agents are `#[cfg(feature = "flows")]` entries in `BUILTINS`
+    // (#4797), so these tests only apply when the gate is on.
+    #[cfg(feature = "flows")]
     #[test]
     fn workflow_builder_is_registered_worker_with_bounded_authoring_scope() {
         // Phase 5a/5b: the workflow-builder must be a Worker-tier leaf whose
@@ -1149,6 +1157,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "flows")]
     #[test]
     fn flow_discovery_is_registered_readonly_reasoning_scout() {
         // The Flow Scout must be a read-only reasoning leaf: it reads the
