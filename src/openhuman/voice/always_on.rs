@@ -238,11 +238,34 @@ pub async fn start_if_enabled(app_config: &Config) {
 
     // The cpal stream is `!Send`, so it lives on a dedicated thread that pushes
     // 16 kHz mono frames over a channel to the async processor below.
+    // `spawn_capture_thread` blocks on a synchronous readiness handshake while
+    // the OS builds the input stream — cold WASAPI init on Windows can take a
+    // while — so run it on the blocking pool. This function is polled
+    // concurrently with the other login-gated services (#3490), and blocking an
+    // async worker here would stall them.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<f32>>();
-    if let Err(e) = spawn_capture_thread(tx) {
-        log::error!("{LOG_PREFIX} could not start microphone capture: {e}");
-        RUNNING.store(false, Ordering::SeqCst);
-        return;
+    log::debug!(
+        "{LOG_PREFIX} starting microphone capture (blocking readiness handshake on the blocking pool)"
+    );
+    // Distinguish a Tokio join failure (the blocking task itself panicked) from a
+    // `spawn_capture_thread` setup error (e.g. no input device), so the log points
+    // at the right layer instead of flattening both into one message.
+    match tokio::task::spawn_blocking(move || spawn_capture_thread(tx)).await {
+        Ok(Ok(())) => {
+            log::debug!("{LOG_PREFIX} microphone capture stream ready");
+        }
+        Ok(Err(e)) => {
+            log::error!("{LOG_PREFIX} could not start microphone capture: {e}");
+            RUNNING.store(false, Ordering::SeqCst);
+            return;
+        }
+        Err(join_err) => {
+            log::error!(
+                "{LOG_PREFIX} microphone capture setup task failed to join (panicked): {join_err}"
+            );
+            RUNNING.store(false, Ordering::SeqCst);
+            return;
+        }
     }
 
     // Privacy hook: pause capture while the screen is locked.

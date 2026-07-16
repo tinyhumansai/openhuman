@@ -1963,7 +1963,7 @@ fn build_flow_connections_emits_parseable_refs_for_both_kinds() {
     )];
     let http = vec![http_summary("stripe", "bearer")];
 
-    let out = build_flow_connections(composio, http);
+    let out = build_flow_connections(composio, http, &[]);
     assert_eq!(out.len(), 2);
 
     let gmail = &out[0];
@@ -1978,6 +1978,7 @@ fn build_flow_connections_emits_parseable_refs_for_both_kinds() {
     assert_eq!(gmail.toolkit.as_deref(), Some("gmail"));
     assert_eq!(gmail.display, "Gmail · user@example.com");
     assert!(gmail.scheme.is_none());
+    assert!(gmail.platform_user_id.is_none());
 
     let stripe = &out[1];
     assert_eq!(stripe.kind, "http");
@@ -1989,6 +1990,7 @@ fn build_flow_connections_emits_parseable_refs_for_both_kinds() {
     assert_eq!(stripe.scheme.as_deref(), Some("bearer"));
     assert_eq!(stripe.display, "stripe (bearer)");
     assert!(stripe.toolkit.is_none());
+    assert!(stripe.platform_user_id.is_none());
 }
 
 #[test]
@@ -1997,7 +1999,7 @@ fn build_flow_connections_skips_non_active_composio_accounts() {
         composio_conn("ca_ok", "notion", "ACTIVE", None),
         composio_conn("ca_pending", "slack", "PENDING", None),
     ];
-    let out = build_flow_connections(composio, Vec::new());
+    let out = build_flow_connections(composio, Vec::new(), &[]);
     assert_eq!(out.len(), 1, "only the ACTIVE connection is surfaced");
     assert_eq!(out[0].connection_ref, "composio:notion:ca_ok");
     // No cached identity → title-cased toolkit alone.
@@ -2009,10 +2011,11 @@ fn build_flow_connections_never_carries_secret_fields() {
     let out = build_flow_connections(
         vec![composio_conn("ca_abc", "gmail", "ACTIVE", Some("u@x.io"))],
         vec![http_summary("stripe", "header")],
+        &[],
     );
     let json = serde_json::to_string(&out).unwrap();
     // The serialized picker payload must expose only ref/kind/display/toolkit/
-    // scheme — no secret-bearing key names at all.
+    // scheme/platform_user_id — no secret-bearing key names at all.
     for banned in [
         "secret", "token", "password", "\"key\"", "apiKey", "api_key",
     ] {
@@ -2023,6 +2026,47 @@ fn build_flow_connections_never_carries_secret_fields() {
             "serialized FlowConnection leaked a secret-bearing field ({banned}): {json}"
         );
     }
+}
+
+#[test]
+fn build_flow_connections_attaches_platform_user_id_from_a_seeded_identity() {
+    use crate::openhuman::composio::providers::profile::ConnectedIdentity;
+
+    let composio = vec![composio_conn("ca_slack1", "slack", "ACTIVE", None)];
+    let identities = vec![ConnectedIdentity {
+        source: "slack".to_string(),
+        identifier: "ca_slack1".to_string(),
+        user_id: Some("U123ABC".to_string()),
+        ..Default::default()
+    }];
+
+    let out = build_flow_connections(composio, Vec::new(), &identities);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].platform_user_id.as_deref(), Some("U123ABC"));
+}
+
+#[test]
+fn build_flow_connections_platform_user_id_is_none_without_a_matching_identity() {
+    use crate::openhuman::composio::providers::profile::ConnectedIdentity;
+
+    // No identities at all.
+    let composio = vec![composio_conn("ca_slack1", "slack", "ACTIVE", None)];
+    let out = build_flow_connections(composio, Vec::new(), &[]);
+    assert_eq!(out.len(), 1);
+    assert!(out[0].platform_user_id.is_none());
+
+    // An identity exists, but for a different toolkit/connection — must not
+    // cross-wire onto this connection.
+    let composio = vec![composio_conn("ca_slack1", "slack", "ACTIVE", None)];
+    let identities = vec![ConnectedIdentity {
+        source: "gmail".to_string(),
+        identifier: "ca_slack1".to_string(),
+        user_id: Some("U123ABC".to_string()),
+        ..Default::default()
+    }];
+    let out = build_flow_connections(composio, Vec::new(), &identities);
+    assert_eq!(out.len(), 1);
+    assert!(out[0].platform_user_id.is_none());
 }
 
 #[test]
@@ -2375,6 +2419,7 @@ fn ws3_flow_conn(toolkit: &str, id: &str) -> FlowConnection {
         display: toolkit.to_string(),
         toolkit: Some(toolkit.to_string()),
         scheme: None,
+        platform_user_id: None,
     }
 }
 
@@ -2851,7 +2896,7 @@ fn seeded_slack_send_message_contract_with_schema() -> ToolContract {
         output_fields: vec![],
         output_schema: None,
         primary_array_path: None,
-        is_curated: true,
+        is_curated: false,
     }
 }
 

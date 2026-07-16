@@ -39,6 +39,7 @@ mod embeddings;
 mod ingest;
 #[cfg(test)]
 mod parity;
+mod persona;
 mod queue_driver;
 mod seal;
 mod summariser;
@@ -48,6 +49,10 @@ pub use chat::{build_chat_provider, SeamChatProvider};
 pub use config::memory_config_from;
 pub use embeddings::SeamEmbedder;
 pub use ingest::{context as ingest_context, HostTreeJobSink};
+pub use persona::{
+    coding_session_status, coding_session_status_for_roots, ingest_coding_sessions,
+    CodingSessionIngestRequest, CodingSessionIngestResponse, CodingSessionSourceStatus,
+};
 pub use queue_driver::{
     classify_worker_error, HostQueueDelegates, WorkerErrorAction, WorkerReport,
 };

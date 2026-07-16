@@ -45,7 +45,7 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 1
-          submodules: true
+          submodules: recursive
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.93.0
       - name: Cache Cargo

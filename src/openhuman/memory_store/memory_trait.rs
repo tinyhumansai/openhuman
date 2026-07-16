@@ -45,13 +45,24 @@ fn normalize_namespace(namespace: Option<&str>) -> &str {
 }
 
 /// Helper to convert a raw string category from the database into a `MemoryCategory`.
+///
+/// The store persists a category via its `Display` form, and the current
+/// TinyCortex format renders `Custom(name)` as `custom:{name}` (so `Custom("core")`
+/// stays distinct from `Core`). Parse back through `FromStr` — the true inverse of
+/// `Display` — so the `custom:` prefix is stripped symmetrically. Wrapping the raw
+/// string in `Custom(_)` instead (the previous behaviour) double-prefixed on
+/// read-back once the wire format gained the prefix. An empty stored value has no
+/// `FromStr` mapping, so it falls back to an empty `Custom` (matching the prior
+/// catch-all for that degenerate case).
 fn memory_category_from_stored(raw: &str) -> MemoryCategory {
-    match raw {
-        "core" => MemoryCategory::Core,
-        "daily" => MemoryCategory::Daily,
-        "conversation" => MemoryCategory::Conversation,
-        other => MemoryCategory::Custom(other.to_string()),
-    }
+    raw.parse().unwrap_or_else(|error| {
+        tracing::debug!(
+            category_chars = raw.chars().count(),
+            reason = %error,
+            "[memory_store] invalid stored category; preserving as custom"
+        );
+        MemoryCategory::Custom(raw.to_string())
+    })
 }
 
 #[async_trait]

@@ -47,6 +47,40 @@ export default function MeshGradient() {
       }
     };
 
+    // Only animate when the app window is actually visible AND focused, and the
+    // user hasn't asked for reduced motion. A full-screen WebGL shader that keeps
+    // rendering every frame while the app merely sits open in the background
+    // (occluded/blurred) or minimized is pure wasted GPU/CPU — the sustained
+    // load users see as the machine running hot with nothing happening (#3524).
+    const prefersReducedMotion = () =>
+      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        : false;
+
+    const applyPlayState = () => {
+      if (!gradient) return;
+      const shouldAnimate = !document.hidden && document.hasFocus() && !prefersReducedMotion();
+      // Read the gradient's own play flag so we never double-schedule its rAF
+      // loop (calling play() while already playing starts a second loop).
+      const playing = gradient.conf?.playing ?? false;
+      if (shouldAnimate === playing) return;
+      try {
+        // Only (re)start once the WebGL mesh actually initialized. On a no-GPU /
+        // headless environment `connect()` leaves `conf.playing` truthy without
+        // ever creating `mesh`, so resuming here would schedule `animate`, which
+        // dereferences `mesh.material` on the next frame and throws — exactly the
+        // environment this component is meant to tolerate (#3524). `pause()` is
+        // always safe (it just clears the flag / cancels any rAF).
+        if (shouldAnimate) {
+          if (gradient.mesh) gradient.play();
+        } else {
+          gradient.pause();
+        }
+      } catch {
+        // Play-state control is best-effort.
+      }
+    };
+
     const start = () => {
       if (disposed) return;
       const root = document.documentElement;
@@ -67,6 +101,9 @@ export default function MeshGradient() {
       try {
         gradient = new Gradient();
         gradient.initGradient('#mesh-gradient');
+        // Honor the current visibility/focus/reduced-motion state right away, so
+        // a gradient created while the window is backgrounded never animates.
+        applyPlayState();
       } catch (err) {
         console.warn('[MeshGradient] WebGL init failed, gradient disabled:', err);
         gradient = null;
@@ -81,6 +118,25 @@ export default function MeshGradient() {
     };
 
     scheduleStart();
+
+    // Pause/resume the animation as the window gains or loses visibility/focus
+    // (and when the reduced-motion preference flips), so it only ever burns
+    // cycles while the user is actually looking at a focused OpenHuman window.
+    const onPlayStateChange = () => applyPlayState();
+    document.addEventListener('visibilitychange', onPlayStateChange);
+    window.addEventListener('focus', onPlayStateChange);
+    window.addEventListener('blur', onPlayStateChange);
+    let removeMotionListener: (() => void) | undefined;
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      const motionMq = window.matchMedia('(prefers-reduced-motion: reduce)');
+      if (motionMq.addEventListener) {
+        motionMq.addEventListener('change', onPlayStateChange);
+        removeMotionListener = () => motionMq.removeEventListener('change', onPlayStateChange);
+      } else {
+        motionMq.addListener(onPlayStateChange);
+        removeMotionListener = () => motionMq.removeListener(onPlayStateChange);
+      }
+    }
 
     let removeSystemListener: (() => void) | undefined;
     if (variant === 'system' && typeof window !== 'undefined' && window.matchMedia) {
@@ -98,6 +154,10 @@ export default function MeshGradient() {
     return () => {
       disposed = true;
       removeSystemListener?.();
+      removeMotionListener?.();
+      document.removeEventListener('visibilitychange', onPlayStateChange);
+      window.removeEventListener('focus', onPlayStateChange);
+      window.removeEventListener('blur', onPlayStateChange);
       window.cancelAnimationFrame(raf);
       disconnectGradient();
     };

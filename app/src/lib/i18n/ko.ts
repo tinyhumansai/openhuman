@@ -77,7 +77,7 @@ const messages: TranslationMap = {
   'connections.welcome.eyebrow': '연결',
   'connections.welcome.title': '당신이 사용하는 모든 것을 한곳에',
   'connections.welcome.body':
-    '메시징 앱, 이메일, 캘린더, 도구를 연결하면 당신의 에이전트가 맥락을 읽고 그 모든 것에 걸쳐 조치를 취할 수 있습니다: 수십 개의 탭 사이를 복사·붙여넣기할 필요 없이 말이죠. 무엇에 접근할 수 있는지는 당신이 통제합니다.',
+    '메시징 앱, 이메일, 캘린더, 도구를 연결하면 당신의 에이전트가 맥락을 읽고 그 모든 것에 걸쳐 조치를 취할 수 있습니다. 수십 개의 탭 사이를 복사·붙여넣기할 필요가 없습니다. 무엇에 접근할 수 있는지는 당신이 통제합니다.',
   'connections.welcome.ctaChannel': '채널 연결',
   'connections.welcome.ctaApps': '앱 연결',
   'connections.welcome.ctaSkills': '스킬 둘러보기',
@@ -97,7 +97,7 @@ const messages: TranslationMap = {
   'notifications.welcome.eyebrow': '알림',
   'notifications.welcome.title': '정말로 당신이 필요한 것만',
   'notifications.welcome.body':
-    '당신의 에이전트가 한 일과 결정이 필요한 일을 차분하게 점수화한 요약: 중요한 것은 드러나고 소음은 방해되지 않도록.',
+    '당신의 에이전트가 한 일과 결정이 필요한 일을 차분하게 점수화해 요약합니다. 중요한 것은 드러내고 소음은 방해되지 않게 합니다.',
   'notifications.welcome.ctaView': '알림 보기',
   'notifications.welcome.featsLabel': '보게 될 것',
   'notifications.welcome.feat1Title': '당신이 필요한 것',
@@ -112,7 +112,7 @@ const messages: TranslationMap = {
   'rewards.welcome.eyebrow': '리워드',
   'rewards.welcome.title': '함께해 준 것에 대한 보상',
   'rewards.welcome.body':
-    'OpenHuman을 사용하고 다른 사람을 초대하며 포인트를 모으고, 연속 기록을 이어가고, 모은 것을 사용하세요: 모두 한곳에서 추적됩니다.',
+    'OpenHuman을 사용하고 다른 사람을 초대하며 포인트를 모으고, 연속 기록을 이어가고, 모은 것을 사용하세요. 모두 한곳에서 추적됩니다.',
   'rewards.welcome.ctaView': '리워드 보기',
   'rewards.welcome.featsLabel': '작동 방식',
   'rewards.welcome.feat1Title': '포인트 적립',
@@ -126,7 +126,7 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': '워크플로',
   'flows.welcome.title': '반복 작업을 자동으로',
   'flows.welcome.body':
-    '분류, 후속 조치, 요약처럼 당신이 반복해서 하는 일을 설명하면, 에이전트가 그것을 처음부터 끝까지 실행할 수 있는 워크플로로 만들어: 정해진 일정에 맞춰 또는 필요할 때 실행합니다.',
+    '분류, 후속 조치, 요약처럼 당신이 반복해서 하는 일을 설명하면, 에이전트가 그것을 처음부터 끝까지 실행할 수 있는 워크플로로 만들어, 정해진 일정에 맞춰 또는 필요할 때 실행합니다.',
   'flows.welcome.ctaNew': '새 워크플로',
   'flows.welcome.ctaBrowse': '워크플로 둘러보기',
   'flows.welcome.featsLabel': '자동화할 수 있는 것',
@@ -934,6 +934,7 @@ const messages: TranslationMap = {
   'chat.typeMessage': '오늘 무엇을 도와드릴까요?',
   'chat.send': '메시지 보내기',
   'chat.stopGeneration': '생성 중지',
+  'chat.stoppedByUser': '중지됨',
   'chat.parallelBranchHint': '병렬 분기 입력: 보내려면 ⌘/Ctrl+Enter',
   'chat.followupHint': '후속 메시지를 대기열에 추가: 이 응답 후 전송 · 병렬 분기는 ⌘/Ctrl+Enter',
   'chat.queuedFollowups.label': '대기 중인 후속 메시지',
@@ -1107,7 +1108,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': '엔티티 연관',
   'entityAssociations.intro':
-    '많은 동일한 연결을 공유하는 엔티티들은 연관됩니다: 단일 사실이 직접 연결하지 않더라도. Jaccard 유사도가 이러한 숨겨진 연관을 드러냅니다.',
+    '많은 동일한 연결을 공유하는 엔티티들은 서로 연관됩니다. 단일 사실이 직접 연결하지 않더라도 Jaccard 유사도가 이러한 숨겨진 연관을 드러냅니다.',
   'entityAssociations.loading': '연관 계산 중…',
   'entityAssociations.errorPrefix': '그래프를 로드할 수 없습니다:',
   'entityAssociations.retry': 'Retry',
@@ -3201,6 +3202,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': '오디오를 명확하게 이해할 수 없습니다: 다시 시도해 주세요',
   'mic.failedToStopRecording': '녹음을 중지하지 못했습니다: {message}',
   'mic.transcriptionFailed': '전사에 실패했습니다: {message}',
+  'mic.voiceNotCompiled':
+    '이 버전의 앱에는 음성 받아쓰기가 포함되어 있지 않습니다. OpenHuman을 업데이트하면 사용할 수 있습니다.',
   'reflections.kind.retrospective': '회고',
   'reflections.kind.derivedFact': '파생된 사실',
   'reflections.kind.moodInsight': '기분 인사이트',
@@ -3425,6 +3428,13 @@ const messages: TranslationMap = {
   'channels.telegram.remoteControlTitle': '원격 제어(Telegram)',
   'channels.telegram.remoteControlBody':
     '허용된 Telegram 채팅에서 /status, /sessions, /new 또는 /help를 보냅니다. 모델 라우팅은 여전히 ​​/model 및 /models를 사용합니다.',
+  'channels.connectHelp.title': '연결 방법',
+  'channels.connectHelp.discord':
+    '아래에서 방법을 선택하세요: OpenHuman으로 계정 연결, OAuth로 봇 설치, 또는 Discord 개발자 포털에서 발급한 봇 토큰 붙여넣기.',
+  'channels.connectHelp.telegram':
+    '아래에서 방법을 선택하세요: 관리형 OpenHuman 봇에 메시지를 보내 연결하거나, @BotFather에서 발급한 봇 토큰을 붙여넣으세요.',
+  'channels.connectHelp.slackNote':
+    'Slack을 찾으세요? Slack은 여기서 메시징 채널이 아니라 연결 → OAuth에서 앱으로 연결됩니다.',
   'channels.web.displayName': '웹',
   'channels.web.description': '내장된 웹 UI를 통해 채팅합니다.',
   'channels.web.authMode.managed_dm.description':
@@ -5591,7 +5601,7 @@ const messages: TranslationMap = {
   'settings.appearance.modeSystem': '시스템과 일치',
   'settings.appearance.modeSystemDesc': 'OS 외관 설정을 따릅니다.',
   'settings.appearance.helperText':
-    '다크 모드는 전체 앱: 채팅, 설정, 패널: 을 어두운 팔레트로 전환합니다. "시스템과 일치"는 OS 외관을 따르며 실시간으로 업데이트됩니다.',
+    '다크 모드는 전체 앱(채팅, 설정, 패널)을 어두운 팔레트로 전환합니다. "시스템과 일치"는 OS 외관을 따르며 실시간으로 업데이트됩니다.',
   'settings.appearance.fontSizeHeading': '글꼴 크기',
   'settings.appearance.fontSizeAria': '글꼴 크기',
   'settings.appearance.fontSizeSmall': '작게',
@@ -5603,7 +5613,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': '아주 크게',
   'settings.appearance.fontSizeXLargeDesc': '최대 가독성을 위한 가장 큰 텍스트.',
   'settings.appearance.fontSizeHelperText':
-    '시스템 글꼴 설정과 관계없이 앱 전체: 채팅, 설정, 패널: 의 텍스트 크기를 조정합니다.',
+    '시스템 글꼴 설정과 관계없이 앱 전체(채팅, 설정, 패널)의 텍스트 크기를 조정합니다.',
   'settings.appearance.fontSizeCustomLabel': '사용자 지정 크기',
   'settings.appearance.fontSizeCustomAria': '픽셀 단위 사용자 지정 글꼴 크기',
   'settings.appearance.fontSizeCustomSliderAria': '사용자 지정 글꼴 크기 슬라이더, 픽셀 단위',
@@ -6743,7 +6753,7 @@ const messages: TranslationMap = {
     '어시스턴트가 당신에 관한 연결된 사실들을 기록함에 따라, 그 군집화 구조가 여기에 드러납니다.',
   'graphCohesion.errorPrefix': '그래프를 불러올 수 없습니다:',
   'graphCohesion.intro':
-    '각 엔티티 주변 이웃이 얼마나 촘촘히 엮여 있는지. 브로커: 이웃들이 서로 연결되지 않은 엔티티: 는 그렇지 않으면 분리되었을 클러스터를 묶어주는 단일 지점이며, 빈도나 PageRank 정렬로는 드러낼 수 없는 것입니다.',
+    '각 엔티티 주변 이웃이 얼마나 촘촘히 엮여 있는지 보여 줍니다. 브로커(이웃들이 서로 연결되지 않은 엔티티)는 서로 분리된 클러스터를 묶는 단일 지점이며, 빈도나 PageRank 정렬만으로는 드러나지 않습니다.',
   'graphCohesion.loading': '응집도 계산 중…',
   'graphCohesion.metricConnections': '연결',
   'graphCohesion.metricEntities': '엔티티',
@@ -7178,6 +7188,25 @@ const messages: TranslationMap = {
   'flows.delete.confirm': '삭제',
   'flows.delete.deleting': '삭제 중…',
   'flows.canvas.renameLabel': '워크플로 이름 바꾸기',
+  'memorySources.codingSessions.title': '코딩 에이전트 세션',
+  'memorySources.codingSessions.description':
+    'Codex와 Claude Code의 결정 및 수정 사항을 비공개 페르소나 메모리로 변환합니다.',
+  'memorySources.codingSessions.ingest': '새 세션 수집',
+  'memorySources.codingSessions.ingesting': '수집 중…',
+  'memorySources.codingSessions.claude': '클로드 코드',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '세션 {files}개 · 사용자 입력 {evidence}개',
+  'memorySources.codingSessions.notFound': '로컬 기록을 찾지 못했습니다',
+  'memorySources.codingSessions.scanning': '로컬 세션 기록을 검색하는 중…',
+  'memorySources.codingSessions.truncated': '스캔이 처음 1,000개 세션 파일로 제한되었습니다.',
+  'memorySources.codingSessions.complete': '코딩 세션 수집 완료',
+  'memorySources.codingSessions.completeMessage':
+    '세션 {processed}개에서 페르소나 관찰 {observations}개를 만들었습니다.',
+  'memorySources.codingSessions.partialFailure':
+    '세션 {processed}개를 처리하는 동안 {failed}개가 실패했습니다. 다시 시도하려면 수집을 다시 실행하세요.',
+  'memorySources.codingSessions.moreRemaining':
+    '세션 배치 한도에 도달했습니다. 기록 가져오기를 계속하려면 수집을 다시 실행하세요.',
+  'memorySources.codingSessions.failed': '코딩 세션 수집 실패',
   'flows.canvas.sidePanelToggle': '사이드 패널',
   'flows.canvas.legendTab': '수동',
 

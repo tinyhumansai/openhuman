@@ -1601,11 +1601,18 @@ fn memory_tree_runtime_store_buffers_and_retrieval_wire_helpers() {
 
     let summaries = tree_runtime_store::collect_root_summaries_with_caps(tmp.path(), 10, 12);
     assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].0, "slack_#eng");
+    let stored_namespace = tree_runtime_store::tree_dir(&config, namespace)
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .and_then(std::ffi::OsStr::to_str)
+        .expect("sanitized namespace directory")
+        .to_string();
+    assert!(stored_namespace.starts_with("slack_#eng-"));
+    assert_eq!(summaries[0].0, stored_namespace);
     assert!(summaries[0].1.contains("[... truncated]"));
     assert_eq!(
         tree_runtime_store::list_namespaces_with_root(&config).unwrap(),
-        vec!["slack_#eng".to_string()]
+        vec![stored_namespace]
     );
 
     let ts = Utc.with_ymd_and_hms(2026, 5, 29, 13, 0, 0).unwrap();
@@ -1921,6 +1928,9 @@ async fn memory_read_rpc_score_index_and_summary_helpers_cover_dashboard_paths()
         tree_kind: TreeKind::Global,
         target_level: 1,
         token_budget: 100,
+        input_token_budget: tinycortex::memory::config::INPUT_TOKEN_BUDGET,
+        overhead_reserve_tokens: tinycortex::memory::config::SUMMARY_OVERHEAD_RESERVE_TOKENS,
+        ask: None,
     };
     let empty =
         openhuman_core::openhuman::memory_tree::summarise::summarise(&config, &[], &empty_ctx)
@@ -1967,6 +1977,7 @@ fn memory_retrieval_embedding_and_rpc_model_helpers_round_trip() {
         id: "tree-1".into(),
         kind: TreeKind::Topic,
         scope: "topic:coverage".into(),
+        ask: None,
         root_id: Some("sum-1".into()),
         max_level: 2,
         status: StoredTreeStatus::Active,
@@ -2071,7 +2082,7 @@ fn memory_retrieval_embedding_and_rpc_model_helpers_round_trip() {
         score: Some(0.9),
         taint: Default::default(),
     };
-    assert_eq!(entry.category.to_string(), "testing");
+    assert_eq!(entry.category.to_string(), "custom:testing");
     let opts = RecallOpts {
         namespace: Some("default"),
         category: Some(MemoryCategory::Conversation),
@@ -2777,6 +2788,7 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
         id: "empty-tree".into(),
         kind: TreeKind::Source,
         scope: "source:contract".into(),
+        ask: None,
         root_id: None,
         max_level: 0,
         status: StoredTreeStatus::Active,
@@ -3951,8 +3963,7 @@ async fn memory_sources_registry_rpc_and_schema_handlers_cover_crud_edges() {
         patch: serde_json::from_value(json!({
             "label": "Disabled folder",
             "enabled": false,
-            "glob": "**/*.md",
-            "max_items": 2
+            "glob": "**/*.md"
         }))
         .expect("patch"),
     })
@@ -4698,17 +4709,15 @@ async fn memory_sources_types_registry_and_sync_state_cover_public_persistence_e
     let patch: registry::MemorySourcePatch = serde_json::from_value(json!({
         "label": "Updated repo",
         "enabled": false,
-        "toolkit": "github",
-        "connection_id": "conn_repo",
-        "path": "/tmp/repo",
-        "glob": "**/*.md",
         "url": "https://github.com/tinyhumansai/openhuman-skills",
         "branch": "main",
         "paths": ["skills", "README.md"],
-        "query": "is:open",
-        "since_days": 14,
-        "max_items": 9,
-        "selector": "main"
+        "max_tokens_per_sync": 1000,
+        "max_cost_per_sync_usd": 0.5,
+        "sync_depth_days": 30,
+        "max_commits": 5,
+        "max_issues": 6,
+        "max_prs": 7
     }))
     .expect("patch");
     let updated = registry::update_source("src_repo", patch)
@@ -4716,20 +4725,18 @@ async fn memory_sources_types_registry_and_sync_state_cover_public_persistence_e
         .expect("update repo source");
     assert_eq!(updated.label, "Updated repo");
     assert!(!updated.enabled);
-    assert_eq!(updated.toolkit.as_deref(), Some("github"));
-    assert_eq!(updated.connection_id.as_deref(), Some("conn_repo"));
-    assert_eq!(updated.path.as_deref(), Some("/tmp/repo"));
-    assert_eq!(updated.glob.as_deref(), Some("**/*.md"));
     assert_eq!(
         updated.url.as_deref(),
         Some("https://github.com/tinyhumansai/openhuman-skills")
     );
     assert_eq!(updated.branch.as_deref(), Some("main"));
     assert_eq!(updated.paths, vec!["skills", "README.md"]);
-    assert_eq!(updated.query.as_deref(), Some("is:open"));
-    assert_eq!(updated.since_days, Some(14));
-    assert_eq!(updated.max_items, Some(9));
-    assert_eq!(updated.selector.as_deref(), Some("main"));
+    assert_eq!(updated.max_tokens_per_sync, Some(1000));
+    assert_eq!(updated.max_cost_per_sync_usd, Some(0.5));
+    assert_eq!(updated.sync_depth_days, Some(30));
+    assert_eq!(updated.max_commits, Some(5));
+    assert_eq!(updated.max_issues, Some(6));
+    assert_eq!(updated.max_prs, Some(7));
 
     let memory = Arc::new(
         MemoryClient::from_workspace_dir(tmp.path().join("memory-sync-state"))

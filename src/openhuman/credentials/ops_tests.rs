@@ -1090,3 +1090,56 @@ async fn each_account_workspace_holds_its_own_credential_data() {
     assert_eq!(result_a.value[0].provider, "anthropic");
     assert_eq!(result_b.value[0].provider, "anthropic");
 }
+
+/// #3490 regression: `start_login_gated_services` must launch its services
+/// concurrently (independent `tokio::spawn` tasks) and return, rather than
+/// awaiting them serially. With an all-disabled config every `start_if_enabled`
+/// is a no-op, so this drives the spawn/await/join orchestration (the changed
+/// code path) deterministically — no microphone, model, or network is touched —
+/// and asserts the function completes promptly instead of blocking.
+///
+/// A serial regression here would still pass functionally, but the concurrent
+/// structure is what collapses the readiness latency from the sum of the
+/// per-service cold-starts to the slowest single one; this test guards that the
+/// orchestration keeps returning (and never deadlocks/panics on join).
+#[tokio::test]
+async fn start_login_gated_services_completes_with_all_services_disabled() {
+    // Serialize with the other env-mutating tests: this test sets a process-wide
+    // opt-in env var below, and the lock keeps it from leaking into a
+    // concurrently-running `store_session` test that would then start real
+    // background services. (These are the same semantics `TEST_ENV_LOCK` gives
+    // the HOME-mutating tests.)
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    // Under `#[cfg(test)]` `start_login_gated_services` skips the real services
+    // by default (they leak across the parallel test run); opt this one test
+    // back in so it actually drives the concurrent spawn/await path it guards.
+    // Only presence is checked, so the value (a temp path) is irrelevant.
+    let _run_services =
+        EnvVarGuard::set_to_path("OPENHUMAN_RUN_LOGIN_GATED_SERVICES_IN_TEST", tmp.path());
+
+    let mut config = Config::default();
+    // Every service is disabled so each `start_if_enabled` is a no-op: the test
+    // exercises the concurrent spawn/await machinery (the changed code) without
+    // touching the mic, a model, the screen, or the network. orchestration
+    // defaults ENABLED, so it must be turned off explicitly; the rest are set
+    // too, independent of future default changes.
+    config.local_ai.runtime_enabled = false;
+    config.voice_server.auto_start = false;
+    config.voice_server.always_on_enabled = false;
+    config.screen_intelligence.enabled = false;
+    config.autocomplete.enabled = false;
+    config.orchestration.enabled = false;
+
+    // Bound the wait so a serial-blocking regression (or a hung join) fails the
+    // test instead of hanging CI. Every service no-ops, so this resolves almost
+    // immediately; the generous ceiling only guards against a deadlock.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        start_login_gated_services(&config),
+    )
+    .await
+    .expect("start_login_gated_services must return, not block");
+}

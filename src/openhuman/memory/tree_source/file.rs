@@ -150,6 +150,7 @@ mod tests {
             id: "source:abc".into(),
             kind: TreeKind::Source,
             scope: scope.into(),
+            ask: None,
             root_id: None,
             max_level: 0,
             status: TreeStatus::Active,

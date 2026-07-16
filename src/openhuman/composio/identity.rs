@@ -65,7 +65,7 @@ pub async fn connection_identity(config: &Config, toolkit: &str) -> Option<Strin
     };
 
     // (2) Toolkit must be in the active integrations set. This is the
-    //     same source of truth Settings → Connections uses.
+    //     same source of truth Connections uses.
     let connections = fetch_connected_integrations(config).await;
     let matching = connections
         .iter()
