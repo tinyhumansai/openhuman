@@ -40,6 +40,9 @@ const DISABLED_MSG: &str = "mcp feature disabled at compile time";
 /// Banner suppression in `cli.rs` is a `matches!` on the raw string, so it
 /// keeps working here without touching a gated symbol.
 pub fn run_stdio_from_cli(_args: &[String]) -> anyhow::Result<()> {
+    log::warn!(
+        "[mcp_server] {DISABLED_MSG} — `openhuman mcp` rejected; rebuild with `--features mcp`"
+    );
     anyhow::bail!(
         "{DISABLED_MSG}: this build was compiled without the `mcp` feature, so the MCP stdio \
          server is unavailable. Rebuild with `--features mcp`."
@@ -68,6 +71,7 @@ pub struct LocalMcpEndpoint {
 /// tools" and continuing — so Claude Code still runs, just without our tool
 /// surface injected. That call site needs no `#[cfg]`.
 pub async fn ensure_local_http() -> anyhow::Result<LocalMcpEndpoint> {
+    log::debug!("[mcp_server] {DISABLED_MSG} — local HTTP endpoint not stood up");
     Err(anyhow::anyhow!(DISABLED_MSG))
 }
 
@@ -81,5 +85,6 @@ pub async fn ensure_local_http() -> anyhow::Result<LocalMcpEndpoint> {
 /// empty vec simply means the registry gains no `mcp_stdio`-transport entries.
 /// No `#[cfg]` needed at that call site.
 pub fn tool_specs() -> Vec<McpToolSpec> {
+    log::debug!("[mcp_server] {DISABLED_MSG} — advertising empty MCP tool catalog");
     Vec::new()
 }
