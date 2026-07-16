@@ -663,6 +663,18 @@ impl Tool for SpawnAsyncSubagentTool {
                         let error = format!(
                             "async sub-agent requested user clarification and was not continued: {question}"
                         );
+                        // #4896: a detached child that pauses for input won't
+                        // continue on its own — queue a framed notice so the
+                        // parent chat learns the delegated task needs input,
+                        // instead of finalizing silently on "Accepted". Rides the
+                        // same idle-gated background_delivery path as a success.
+                        crate::openhuman::agent_orchestration::background_completions::record_awaiting_input(
+                            background_parent_session.clone(),
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            question,
+                            background_parent_thread_id.clone(),
+                        );
                         crate::openhuman::agent_orchestration::subagent_events::publish_subagent_failed(
                             background_parent_session,
                             outcome.task_id.clone(),
@@ -699,6 +711,18 @@ impl Tool for SpawnAsyncSubagentTool {
                     let _ = status_tx.send(SubagentStatus::Failed {
                         error: error.clone(),
                     });
+                    // #4896: a detached child that errors previously only
+                    // published an event — nothing reached chat, so the parent
+                    // turn finalized on "Accepted" and the failure was lost.
+                    // Queue a framed failure notice so background_delivery
+                    // surfaces it as a follow-up chat turn.
+                    crate::openhuman::agent_orchestration::background_completions::record_failure(
+                        background_parent_session.clone(),
+                        background_task_id.clone(),
+                        background_agent_id.clone(),
+                        &error,
+                        background_parent_thread_id.clone(),
+                    );
                     crate::openhuman::agent_orchestration::subagent_events::publish_subagent_failed(
                         background_parent_session,
                         background_task_id.clone(),

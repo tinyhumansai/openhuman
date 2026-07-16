@@ -261,6 +261,16 @@ fn flow_connection_fields() -> Vec<FieldSchema> {
                       `bearer` | `basic` | `header`.",
             required: false,
         },
+        FieldSchema {
+            name: "platform_user_id",
+            ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+            comment: "Connected account's own platform user id (kind `composio` only), \
+                      e.g. Slack `U123ABC`. Non-secret identity metadata — lets the \
+                      workflow builder wire a self-targeted action (e.g. \"DM me\") to \
+                      the user's own account instead of guessing a public channel. \
+                      `None` when no identity has synced yet.",
+            required: false,
+        },
     ]
 }
 
@@ -576,9 +586,11 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "list_connections",
             description: "List the connection sources a flow node's `connection_ref` can attach \
                           to: Composio connected accounts (kind `composio`) and stored HTTP \
-                          credentials (kind `http`). Returns ids + display labels + kind ONLY — \
-                          never any secret material (OAuth/bearer tokens, passwords, and API \
-                          keys stay server-side and are injected only at execution time).",
+                          credentials (kind `http`). Returns only non-secret metadata — ids, \
+                          display labels, kind, and (for Composio) the connected account's own \
+                          `platform_user_id` — never any secret material (OAuth/bearer tokens, \
+                          passwords, and API keys stay server-side and are injected only at \
+                          execution time).",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "connections",
@@ -1793,7 +1805,14 @@ mod tests {
                 let names: Vec<_> = fields.iter().map(|f| f.name).collect();
                 assert_eq!(
                     names,
-                    vec!["connection_ref", "kind", "display", "toolkit", "scheme"]
+                    vec![
+                        "connection_ref",
+                        "kind",
+                        "display",
+                        "toolkit",
+                        "scheme",
+                        "platform_user_id"
+                    ]
                 );
                 for f in fields {
                     let n = f.name.to_ascii_lowercase();

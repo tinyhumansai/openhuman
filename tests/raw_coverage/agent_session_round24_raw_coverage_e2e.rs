@@ -484,13 +484,16 @@ async fn max_iteration_checkpoint_uses_deterministic_fallback_and_hooks() {
     while let Ok(event) = progress_rx.try_recv() {
         streamed.push(event);
     }
-    assert!(!streamed.iter().any(|event| matches!(
-        event,
-        openhuman_core::openhuman::agent::progress::AgentProgress::TextDelta {
-            delta,
-            iteration: 2
-        } if delta == "checkpoint delta"
-    )), "rejected checkpoint deltas must not leak to progress consumers");
+    assert!(
+        !streamed.iter().any(|event| matches!(
+            event,
+            openhuman_core::openhuman::agent::progress::AgentProgress::TextDelta {
+                iteration: 2,
+                ..
+            }
+        )),
+        "wrap-up deltas must stay buffered when the completed response contains an invalid tool call"
+    );
 }
 
 #[tokio::test]

@@ -169,6 +169,7 @@ fn seed_topic_summary(
         id: format!("tree:{summary_id}"),
         kind: TreeKind::Topic,
         scope: entity_id.to_string(),
+        ask: None,
         root_id: Some(summary_id.to_string()),
         max_level: 2,
         status: TreeStatus::Active,

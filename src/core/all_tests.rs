@@ -234,6 +234,52 @@ fn voice_and_audio_controllers_absent_when_feature_off() {
     );
 }
 
+/// With the `web3` feature on (the default), the wallet + web3 + x402
+/// controllers are compiled in and registered, and the high-level web3 agent
+/// tools (swap/bridge/dapp) are present — the desktop build is byte-identical.
+#[test]
+#[cfg(feature = "web3")]
+fn wallet_web3_x402_controllers_registered_when_feature_on() {
+    let schemas = all_controller_schemas();
+    assert!(
+        schemas.iter().any(|s| s.namespace == "wallet"),
+        "wallet controllers must be registered when the `web3` feature is on"
+    );
+    assert!(
+        schemas.iter().any(|s| s.namespace.starts_with("web3_")),
+        "web3 (swap/bridge/dapp) controllers must be registered when the `web3` feature is on"
+    );
+    assert!(
+        schemas.iter().any(|s| s.namespace == "x402"),
+        "x402 controllers must be registered when the `web3` feature is on"
+    );
+    assert!(
+        !crate::openhuman::web3::all_web3_agent_tools().is_empty(),
+        "web3 agent tools must be present when the `web3` feature is on"
+    );
+}
+
+/// With the `web3` feature off, all three domains are compiled out: their
+/// controllers never enter the registry (wallet/web3/x402 RPC methods are
+/// unknown-method and absent from `/schema`) and the web3 agent tools are
+/// gone. This is the compile-time stub-facade correctness gate (see
+/// `openhuman::{wallet,web3,x402}::stub`).
+#[test]
+#[cfg(not(feature = "web3"))]
+fn wallet_web3_x402_controllers_absent_when_feature_off() {
+    let schemas = all_controller_schemas();
+    assert!(
+        !schemas.iter().any(|s| s.namespace == "wallet"
+            || s.namespace.starts_with("web3_")
+            || s.namespace == "x402"),
+        "wallet/web3/x402 controllers must be compiled out when the `web3` feature is off"
+    );
+    assert!(
+        crate::openhuman::web3::all_web3_agent_tools().is_empty(),
+        "web3 agent tools must be gone when the `web3` feature is off"
+    );
+}
+
 #[test]
 fn schema_for_rpc_method_finds_known_method() {
     let schema = schema_for_rpc_method("openhuman.health_snapshot");
@@ -861,6 +907,7 @@ fn group_mapping_smoke() {
     assert_eq!(group_for_namespace("flows"), Some(DomainGroup::Flows));
     assert_eq!(group_for_namespace("skills"), Some(DomainGroup::Skills));
     assert_eq!(group_for_namespace("voice"), Some(DomainGroup::Voice));
+    #[cfg(feature = "web3")]
     assert_eq!(group_for_namespace("wallet"), Some(DomainGroup::Web3));
     assert_eq!(group_for_namespace("meet"), Some(DomainGroup::Meet));
     // Internal-only registry is grouped too (mcp_audit → Mcp).

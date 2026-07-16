@@ -23,7 +23,7 @@ OpenHuman runs on **macOS, Windows and Linux** desktops. 4 GB+ RAM is recommende
 
 ### Permissions
 
-The first time you launch OpenHuman, the OS will prompt for the permissions the app needs (Accessibility on macOS, Input Monitoring for the voice hotkey, Camera/Microphone if you plan to use the [Meeting Agent](../features/mascot/meeting-agents.md)). You can review and adjust these any time under **Settings → Automation & Channels**.
+The first time you launch OpenHuman, the OS will prompt for the permissions the app needs (Accessibility on macOS, Input Monitoring for the voice hotkey, Camera/Microphone if you plan to use the [Meeting Agent](../features/mascot/meeting-agents.md)). You can review and adjust these any time under **Settings**.
 
 ***
 

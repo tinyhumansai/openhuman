@@ -47,7 +47,7 @@ Each integration shows its current status:
 * **Connected**. integration is active and being synced.
 * **Manage**. active integration with options to reconfigure or disconnect.
 
-You can revoke any connection at any time from the Skills tab.
+You can revoke any connection at any time from the **Connections** page.
 
 ## Messaging channels
 
@@ -57,14 +57,14 @@ Three integrations are special. OpenHuman uses them to _talk back_ to you, not j
 * **Discord**. send and receive messages via Discord. Connect your account to receive OpenHuman messages there.
 * **Web**. a browser-based chat interface within the desktop app. Messages stay entirely local.
 
-Set your default under **Settings → Automation & Channels → Messaging Channels**. The active route status shows which channel is currently in use. Telegram offers two credential modes: connect via OpenHuman (one-click, encrypted) or provide your own credentials for maximum control.
+Set your default under **Connections → Channels**. The active route status shows which channel is currently in use. Telegram offers two credential modes: connect via OpenHuman (one-click, encrypted) or provide your own credentials for maximum control.
 
 ## Beyond the curated catalog: MCP & Skills
 
 The 118+ OAuth connectors are the curated path. Beyond them, OpenHuman opens up the wider open-tooling ecosystem:
 
 * **MCP servers**: a built-in registry browses thousands of [Model Context Protocol](https://modelcontextprotocol.io) servers (Smithery + the official registry) that install locally as new agent tools.
-* **Skills**: a browsable, ~90,000-entry catalog of `SKILL.md` capability bundles aggregated from HermesHub, ClawHub, LobeHub and more. (Note: the old in-app skills runtime has been removed; Skills are now a metadata catalog you install from the Skills tab.)
+* **Skills**: a browsable, ~90,000-entry catalog of `SKILL.md` capability bundles aggregated from HermesHub, ClawHub, LobeHub and more. (Note: the old in-app skills runtime has been removed; Skills are now a metadata catalog you install from the **Connections → Skills** tab.)
 
 See [MCP Servers & Skills](mcp-and-skills.md) for the full picture.
 

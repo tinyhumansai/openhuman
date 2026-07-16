@@ -301,6 +301,15 @@ pub struct FlowConnection {
     /// `"bearer"` | `"basic"` | `"header"`. Not a secret.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scheme: Option<String>,
+    /// The connected account's own platform user id (`kind = "composio"`
+    /// only), e.g. Slack's `"U123ABC"` — resolved from the provider profile
+    /// synced via `SLACK_TEST_AUTH`/auth.test on connection sync (see
+    /// `memory_sync::composio::providers::profile::load_connected_identities`).
+    /// Non-secret identity metadata: lets the workflow builder wire a
+    /// self-targeted action (e.g. "DM me") to the user's own account instead
+    /// of guessing a public channel. `None` when no identity has synced yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform_user_id: Option<String>,
 }
 
 /// A persisted record of one `flows_run` / `flows_resume` invocation, for the

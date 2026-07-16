@@ -29,6 +29,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { BubbleMarkdown } from '../../features/conversations/components/AgentMessageBubble';
 import { ToolTimelineBlock } from '../../features/conversations/components/ToolTimelineBlock';
+import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { useWorkflowBuilderChat } from '../../hooks/useWorkflowBuilderChat';
 import { unwrapToolCallEnvelope } from '../../lib/flows/copilotMessageSanitizer';
 import { diffGraphs } from '../../lib/flows/graphDiff';
@@ -177,7 +178,6 @@ export default function WorkflowCopilotPanel({
   const textInputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isComposingTextRef = useRef(false);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // Surface each NEW proposal to the host exactly once (enter preview overlay).
   const lastSurfacedRef = useRef<WorkflowProposal | null>(null);
@@ -312,11 +312,35 @@ export default function WorkflowCopilotPanel({
     onPrefillSeedConsumed?.();
   }, [prefillSeed, onPrefillSeedConsumed]);
 
-  // Keep the transcript pinned to the newest message / streamed activity.
-  // `scrollTo` is optional-chained: jsdom (tests) doesn't implement it.
+  // Keep the transcript pinned to the newest message / streamed activity —
+  // but ONLY while the user is already at (or near) the bottom. The previous
+  // implementation here was an unconditional `scrollTo(bottom)` effect keyed
+  // on every streaming dependency (messages, tool timeline, live text, …):
+  // it fired on every streamed token and force-scrolled regardless of where
+  // the user was reading, which is what made the transcript feel "stuck" —
+  // any attempt to scroll up got yanked back down by the very next token.
+  // `useStickToBottom` is the same pinning hook the main chat surfaces use:
+  // it only auto-scrolls while `stickingRef` is true (user at/near bottom),
+  // and permanently disengages the moment the user scrolls away, so reading
+  // history is never fought. `resetKey` is a stable constant here — this
+  // panel is fully unmounted/remounted on close/reopen (see the seed refs
+  // above), so there's no in-place "navigation" case to reset for.
+  const { containerRef: scrollRef } = useStickToBottom(
+    displayMessages,
+    threadId,
+    'workflow-copilot'
+  );
   useEffect(() => {
-    scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight });
-  }, [displayMessages, sending, proposal, toolTimeline, liveResponse]);
+    log(
+      'scroll: stick-to-bottom deps changed messages=%d thread=%s sending=%s hasProposal=%s timeline=%d liveTextLen=%d',
+      displayMessages.length,
+      threadId ?? 'null',
+      sending,
+      Boolean(proposal),
+      toolTimeline.length,
+      liveResponse.length
+    );
+  }, [displayMessages, threadId, sending, proposal, toolTimeline, liveResponse]);
 
   const submit = useCallback(
     async (raw?: string) => {

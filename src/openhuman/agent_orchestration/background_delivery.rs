@@ -70,8 +70,17 @@ impl EventHandler for BackgroundDeliveryHandler {
                 busy().lock().expect("busy poisoned").remove(session_id);
                 schedule_delivery(session_id.clone(), Duration::from_millis(300));
             }
-            DomainEvent::SubagentCompleted { parent_session, .. } => {
-                // Debounce so a burst of completions batches into a single turn.
+            // Any subagent terminal state — completed, failed, or awaiting-user —
+            // can arrive after the parent turn already went idle. Schedule a
+            // debounced drain for all three so the pending result is delivered
+            // promptly instead of sitting until some unrelated later turn. Only
+            // `SubagentCompleted` used to trigger a drain, so a failure (or an
+            // awaiting-user pause) after the parent turn went idle left the chat
+            // stuck on the original "Accepted" response (#4896). Debounce so a
+            // burst batches into a single turn.
+            DomainEvent::SubagentCompleted { parent_session, .. }
+            | DomainEvent::SubagentFailed { parent_session, .. }
+            | DomainEvent::SubagentAwaitingUser { parent_session, .. } => {
                 schedule_delivery(parent_session.clone(), DEBOUNCE);
             }
             _ => {}
@@ -107,12 +116,15 @@ fn plan_delivery(session: &str) -> Option<Vec<background_completions::CompletedB
 /// idle drain rather than being lost.
 fn requeue(session: &str, batch: Vec<background_completions::CompletedBackgroundAgent>) {
     for c in batch {
-        background_completions::record_completion(
+        // Preserve the terminal outcome on requeue so a failed / awaiting-input
+        // result isn't downgraded to a success when a delivery turn fails (#4896).
+        background_completions::record_outcome(
             session,
             c.task_id,
             c.agent_id,
             c.summary,
             c.parent_thread_id,
+            c.outcome,
         );
     }
 }
@@ -300,5 +312,66 @@ mod tests {
         })
         .await;
         assert!(!is_busy(&sid));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn every_subagent_terminal_event_schedules_a_drain() {
+        // #4896 regression: EVERY subagent terminal event must schedule a drain
+        // for the parent — not just `SubagentCompleted`. Before the fix,
+        // `SubagentFailed` / `SubagentAwaitingUser` fell through to `_ => {}`, so
+        // a failure/pause recorded after the parent turn went idle was never
+        // delivered. Prove behaviour, not just acceptance: queue a headless
+        // result (no thread → drains without a delivery sink) per session, fire
+        // the event, advance past the debounce, and assert the pending item was
+        // consumed. The paused clock elapses the debounce with no wall-clock wait.
+        let h = BackgroundDeliveryHandler;
+
+        background_completions::record_completion("bd-term-completed", "t", "a", "s", None);
+        background_completions::record_completion("bd-term-failed", "t", "a", "s", None);
+        background_completions::record_completion("bd-term-awaiting", "t", "a", "s", None);
+
+        h.handle(&DomainEvent::SubagentCompleted {
+            parent_session: "bd-term-completed".into(),
+            task_id: "t".into(),
+            agent_id: "a".into(),
+            elapsed_ms: 0,
+            output_chars: 0,
+            iterations: 0,
+        })
+        .await;
+        h.handle(&DomainEvent::SubagentFailed {
+            parent_session: "bd-term-failed".into(),
+            task_id: "t".into(),
+            agent_id: "a".into(),
+            error: "boom".into(),
+        })
+        .await;
+        h.handle(&DomainEvent::SubagentAwaitingUser {
+            parent_session: "bd-term-awaiting".into(),
+            task_id: "t".into(),
+            agent_id: "a".into(),
+            question: "?".into(),
+        })
+        .await;
+
+        // Advance the virtual clock past the debounce so every scheduled drain
+        // runs; the headless `try_deliver` completes synchronously (no sink).
+        tokio::time::sleep(DEBOUNCE + Duration::from_millis(50)).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+
+        assert!(
+            !background_completions::has_pending("bd-term-completed"),
+            "SubagentCompleted must schedule a drain that consumes the pending result"
+        );
+        assert!(
+            !background_completions::has_pending("bd-term-failed"),
+            "SubagentFailed must schedule a drain (regression #4896)"
+        );
+        assert!(
+            !background_completions::has_pending("bd-term-awaiting"),
+            "SubagentAwaitingUser must schedule a drain (regression #4896)"
+        );
     }
 }

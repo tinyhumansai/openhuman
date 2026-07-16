@@ -110,7 +110,16 @@ impl Tool for MemoryHybridSearchTool {
             ));
         }
 
-        let profile = WeightProfile::by_name(&parsed.mode);
+        let profile = WeightProfile::by_name(&parsed.mode).ok_or_else(|| {
+            log::warn!(
+                "[tool][memory_hybrid_search] rejected unknown mode={}",
+                parsed.mode
+            );
+            anyhow::anyhow!(
+                "memory_hybrid_search: unknown mode '{}'; expected balanced, semantic, lexical, or graph_first",
+                parsed.mode
+            )
+        })?;
         let limit = parsed.limit.clamp(1, 50);
 
         log::debug!(
@@ -207,5 +216,28 @@ impl Tool for MemoryHybridSearchTool {
         );
 
         Ok(ToolResult::success(output))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn rejects_unknown_mode_before_opening_external_search_resources() {
+        let error = MemoryHybridSearchTool
+            .execute(json!({
+                "query": "release checklist",
+                "namespace": "global",
+                "mode": "mystery"
+            }))
+            .await
+            .expect_err("an unknown mode must fail validation");
+
+        let message = error.to_string();
+        assert!(message.contains("unknown mode 'mystery'"), "{message}");
+        // Validation runs before config, provider, and store setup. Reaching any
+        // external search path would replace this precise validation error.
+        assert!(!message.contains("load config failed"), "{message}");
     }
 }

@@ -287,6 +287,16 @@ export interface ToolTimelineEntry {
   id: string;
   name: string;
   round: number;
+  /**
+   * Monotonic per-thread issue-order index, assigned once when the row is
+   * FIRST created (by `toolCallReceived`, `toolArgsDeltaReceived`, or
+   * `subagentSpawned`) from {@link ChatRuntimeState.toolTimelineSeqByThread}.
+   * Unlike arrival order — which a `tool_args_delta` for a later parallel
+   * call can race ahead of — `seq` reflects the order the agent actually
+   * issued the calls, so the timeline can be sorted deterministically
+   * (see `ToolTimelineBlock`) regardless of socket delivery order.
+   */
+  seq: number;
   status: ToolTimelineEntryStatus;
   argsBuffer?: string;
   displayName?: string;
@@ -613,6 +623,15 @@ interface ChatRuntimeState {
   parallelRequestThreads: Record<string, string>;
   toolTimelineByThread: Record<string, ToolTimelineEntry[]>;
   /**
+   * Per-thread monotonic counter backing {@link ToolTimelineEntry.seq}. Bumped
+   * once per NEW row created in {@link toolTimelineByThread} (never on an
+   * update to an existing row), so `seq` always reflects issue order even
+   * when socket events for parallel tool calls arrive out of order. Reset
+   * alongside the timeline itself so a new turn/thread starts counting from
+   * zero.
+   */
+  toolTimelineSeqByThread: Record<string, number>;
+  /**
    * Per-turn tool timelines for *past* (settled) turns of a thread, keyed
    * `threadId -> requestId -> entries`. Hydrated from `turn_state_history` on
    * thread open so each past answer keeps its own process trail (Phase 4/5),
@@ -705,6 +724,7 @@ const initialState: ChatRuntimeState = {
   parallelStreamsByThread: {},
   parallelRequestThreads: {},
   toolTimelineByThread: {},
+  toolTimelineSeqByThread: {},
   turnTimelinesByThread: {},
   processingByThread: {},
   taskBoardByThread: {},
@@ -841,11 +861,23 @@ function subagentActivityFromPersisted(activity: PersistedSubagentActivity): Sub
   };
 }
 
-function toolTimelineFromPersisted(entry: PersistedToolTimelineEntry): ToolTimelineEntry {
+/**
+ * `seq` defaults to the array index the caller maps over — persisted
+ * `toolTimeline` order IS issue order (the core appends rows as it issues
+ * calls), so the index is a faithful stand-in for the live monotonic
+ * counter. Callers that hydrate the *live* timeline (as opposed to a past,
+ * settled turn) additionally seed {@link ChatRuntimeState.toolTimelineSeqByThread}
+ * with the row count so subsequent live events keep counting up from there.
+ */
+function toolTimelineFromPersisted(
+  entry: PersistedToolTimelineEntry,
+  seq: number
+): ToolTimelineEntry {
   return {
     id: entry.id,
     name: entry.name,
     round: entry.round,
+    seq,
     status: entry.status,
     argsBuffer: entry.argsBuffer,
     displayName: entry.displayName,
@@ -917,7 +949,7 @@ function timelineStatusFromRun(status: AgentRun['status']): ToolTimelineEntrySta
   }
 }
 
-function timelineEntryFromRun(run: AgentRun): ToolTimelineEntry | null {
+function timelineEntryFromRun(run: AgentRun, seq: number): ToolTimelineEntry | null {
   if (!['subagent', 'worker_thread', 'workflow_child', 'team_member'].includes(run.kind)) {
     return null;
   }
@@ -931,6 +963,7 @@ function timelineEntryFromRun(run: AgentRun): ToolTimelineEntry | null {
     id: `subagent:${run.id}`,
     name: `subagent:${agentId}`,
     round: 0,
+    seq,
     status: timelineStatusFromRun(run.status),
     displayName,
     detail: run.summary ?? run.error ?? undefined,
@@ -1035,6 +1068,7 @@ const chatRuntimeSlice = createSlice({
     },
     clearToolTimelineForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.toolTimelineByThread[action.payload.threadId];
+      delete state.toolTimelineSeqByThread[action.payload.threadId];
       delete state.processingByThread[action.payload.threadId];
     },
     /**
@@ -1122,11 +1156,14 @@ const chatRuntimeSlice = createSlice({
           detail: displayDetail ?? prev.detail,
         });
       } else {
+        const seq = state.toolTimelineSeqByThread[threadId] ?? 0;
+        state.toolTimelineSeqByThread[threadId] = seq + 1;
         entries.push(
           decorateEntry({
             id: rowId,
             name: toolName,
             round,
+            seq,
             status: 'running',
             displayName: displayLabel,
             detail: displayDetail,
@@ -1176,7 +1213,14 @@ const chatRuntimeSlice = createSlice({
           return;
         }
       }
-      for (let i = entries.length - 1; i >= 0; i -= 1) {
+      // FIFO, not LIFO: entries are appended in `seq` (issue) order and never
+      // reordered in place, so scanning forward from index 0 finds the OLDEST
+      // still-running row of this name+round — settling the call that was
+      // actually issued first. A backward (newest-first) scan mis-pairs a
+      // result with the wrong row when 2+ calls with the same name are
+      // in-flight in parallel (e.g. `get_tool_contract` ×2) and results land
+      // out of order.
+      for (let i = 0; i < entries.length; i += 1) {
         const entry = entries[i];
         if (entry.status === 'running' && entry.name === toolName && entry.round === round) {
           entry.status = status;
@@ -1272,11 +1316,14 @@ const chatRuntimeSlice = createSlice({
           name: prev.name.length === 0 && toolName ? toolName : prev.name,
         });
       } else {
+        const seq = state.toolTimelineSeqByThread[threadId] ?? 0;
+        state.toolTimelineSeqByThread[threadId] = seq + 1;
         entries.push(
           decorateEntry({
             id: toolCallId ?? '',
             name: toolName ?? '',
             round,
+            seq,
             status: 'running',
             argsBuffer: delta,
           })
@@ -1326,11 +1373,14 @@ const chatRuntimeSlice = createSlice({
         const spawnIdx = entries.findIndex(e => e.id === pending.spawnEntryId);
         if (spawnIdx >= 0) entries.splice(spawnIdx, 1);
       }
+      const seq = state.toolTimelineSeqByThread[threadId] ?? 0;
+      state.toolTimelineSeqByThread[threadId] = seq + 1;
       entries.push(
         decorateEntry({
           id: rowId,
           name: `subagent:${agentId}`,
           round,
+          seq,
           status: 'running',
           detail: pending.prompt,
           sourceToolName: pending.sourceToolName,
@@ -1818,6 +1868,7 @@ const chatRuntimeSlice = createSlice({
         delete state.parallelStreamsByThread[action.payload.threadId];
       }
       delete state.toolTimelineByThread[action.payload.threadId];
+      delete state.toolTimelineSeqByThread[action.payload.threadId];
       delete state.processingByThread[action.payload.threadId];
       delete state.taskBoardByThread[action.payload.threadId];
       delete state.inferenceTurnLifecycleByThread[action.payload.threadId];
@@ -1840,6 +1891,7 @@ const chatRuntimeSlice = createSlice({
       state.parallelStreamsByThread = {};
       state.parallelRequestThreads = {};
       state.toolTimelineByThread = {};
+      state.toolTimelineSeqByThread = {};
       state.turnTimelinesByThread = {};
       state.processingByThread = {};
       state.taskBoardByThread = {};
@@ -2009,8 +2061,14 @@ const chatRuntimeSlice = createSlice({
           // (no-op for an already-completed snapshot whose rows are terminal).
           state.toolTimelineByThread[threadId] = preserveLiveSubagentProse(
             state.toolTimelineByThread[threadId],
-            snapshot.toolTimeline.map(toolTimelineFromPersisted).map(settleOrphanedTimelineEntry)
+            snapshot.toolTimeline
+              .map((e, seq) => toolTimelineFromPersisted(e, seq))
+              .map(settleOrphanedTimelineEntry)
           );
+          // Persisted order is issue order — seed the live counter with the
+          // row count so events arriving after this hydration keep counting
+          // up rather than restarting at 0 and colliding with existing seqs.
+          state.toolTimelineSeqByThread[threadId] = snapshot.toolTimeline.length;
         }
         state.processingByThread[threadId] = snapshot.transcript ?? [];
         return;
@@ -2040,8 +2098,11 @@ const chatRuntimeSlice = createSlice({
 
       state.toolTimelineByThread[threadId] = preserveLiveSubagentProse(
         state.toolTimelineByThread[threadId],
-        snapshot.toolTimeline.map(toolTimelineFromPersisted)
+        snapshot.toolTimeline.map((e, seq) => toolTimelineFromPersisted(e, seq))
       );
+      // Persisted order is issue order — seed the live counter with the row
+      // count so events arriving after this hydration keep counting up.
+      state.toolTimelineSeqByThread[threadId] = snapshot.toolTimeline.length;
       state.processingByThread[threadId] = snapshot.transcript ?? [];
     },
     /**
@@ -2065,8 +2126,13 @@ const chatRuntimeSlice = createSlice({
         existing.map(entry => entry.subagent?.taskId).filter(Boolean) as string[]
       );
       for (const run of runs) {
-        const entry = timelineEntryFromRun(run);
+        // Ledger rows are historical/durable, not live-issued — assign the
+        // next counter value like any other newly-created row so they still
+        // get a stable, monotonically increasing `seq` for sorting.
+        const seq = state.toolTimelineSeqByThread[threadId] ?? 0;
+        const entry = timelineEntryFromRun(run, seq);
         if (!entry || byId.has(entry.id) || liveTaskIds.has(run.id)) continue;
+        state.toolTimelineSeqByThread[threadId] = seq + 1;
         byId.set(entry.id, entry);
       }
       state.toolTimelineByThread[threadId] = Array.from(byId.values());
@@ -2200,7 +2266,9 @@ export const fetchAndHydrateTurnHistory = createAsyncThunk(
       for (const turn of history.slice(1)) {
         if (turn.lifecycle !== 'completed' && turn.lifecycle !== 'interrupted') continue;
         if (!turn.requestId || turn.toolTimeline.length === 0) continue;
-        timelines[turn.requestId] = turn.toolTimeline.map(toolTimelineFromPersisted);
+        timelines[turn.requestId] = turn.toolTimeline.map((e, seq) =>
+          toolTimelineFromPersisted(e, seq)
+        );
       }
       turnStateLog(
         'hydrated turn history thread=%s turns=%d',

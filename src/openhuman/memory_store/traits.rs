@@ -252,6 +252,7 @@ mod tests {
             id: "tree-1".into(),
             kind: crate::openhuman::memory_store::trees::TreeKind::Topic,
             scope: "topic:phoenix".into(),
+            ask: None,
             root_id: Some("summary-root".into()),
             max_level: 2,
             status: crate::openhuman::memory_store::trees::TreeStatus::Active,

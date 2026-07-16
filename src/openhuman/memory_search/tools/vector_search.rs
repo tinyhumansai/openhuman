@@ -152,6 +152,7 @@ impl Tool for MemoryVectorSearchTool {
             since_ms,
             until_ms: None,
             limit: Some(1000),
+            offset: None,
             source_scope: crate::openhuman::memory::source_scope::current_source_scope(),
             exclude_dropped: false,
         };

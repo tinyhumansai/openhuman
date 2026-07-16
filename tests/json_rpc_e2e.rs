@@ -1114,6 +1114,51 @@ fn ensure_test_rpc_auth() {
 }
 
 #[tokio::test]
+async fn json_rpc_discovers_codex_and_claude_sessions_for_memory_ingestion() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let claude_home = tmp.path().join("claude");
+    let codex_home = tmp.path().join("codex");
+    let claude_root = claude_home.join("projects/repo");
+    let codex_root = codex_home.join("sessions/2026/07/14");
+    std::fs::create_dir_all(&claude_root).expect("claude fixture root");
+    std::fs::create_dir_all(&codex_root).expect("codex fixture root");
+    std::fs::write(
+        claude_root.join("session.jsonl"),
+        "{\"type\":\"user\",\"timestamp\":\"2026-07-14T00:00:00Z\",\"message\":{\"content\":\"Prefer focused tests\"}}\n",
+    )
+    .expect("claude fixture");
+    std::fs::write(
+        codex_root.join("rollout-session.jsonl"),
+        "{\"type\":\"response_item\",\"timestamp\":\"2026-07-14T00:00:00Z\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Prefer small modules\"}]}}\n",
+    )
+    .expect("codex fixture");
+
+    let _claude_guard = EnvVarGuard::set_to_path("CLAUDE_CONFIG_DIR", &claude_home);
+    let _codex_guard = EnvVarGuard::set_to_path("CODEX_HOME", &codex_home);
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let response = post_json_rpc(
+        &rpc_base,
+        4_914_001,
+        "openhuman.memory_sources_coding_session_status",
+        json!({}),
+    )
+    .await;
+    let result = peel_logs_envelope(assert_no_jsonrpc_error(
+        &response,
+        "memory_sources_coding_session_status",
+    ));
+    let sources = result["sources"].as_array().expect("sources array");
+    assert_eq!(sources.len(), 2);
+    assert!(sources.iter().all(|source| source["session_files"] == 1));
+    assert!(sources.iter().all(|source| source["evidence_units"] == 1));
+
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_config_update_browser_settings_persists_backend() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");

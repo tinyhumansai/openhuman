@@ -166,7 +166,7 @@ async fn memory_sources_registry_persists_crud_and_composio_upserts() {
         MemorySourcePatch {
             label: Some("Renamed notes".to_string()),
             enabled: Some(false),
-            glob: Some("*.txt".to_string()),
+            glob: Some(Some("*.txt".to_string())),
             ..MemorySourcePatch::default()
         },
     )
