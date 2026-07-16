@@ -71,6 +71,7 @@ pub mod mcp_registry;
 pub mod mcp_server;
 #[cfg(feature = "media")]
 pub mod media_generation;
+#[cfg(feature = "meet")]
 pub mod meet;
 pub mod meet_agent;
 pub mod memory;
