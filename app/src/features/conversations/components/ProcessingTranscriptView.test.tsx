@@ -16,6 +16,7 @@ function failedEntry(overrides: Partial<ToolTimelineEntry> = {}): ToolTimelineEn
     id: 'call-1',
     name: 'read_file',
     round: 1,
+    seq: 0,
     status: 'error',
     failure: {
       class: 'MissingPermission',

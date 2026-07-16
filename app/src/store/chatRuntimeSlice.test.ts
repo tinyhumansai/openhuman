@@ -417,6 +417,7 @@ describe('chatRuntimeSlice queue status', () => {
             id: 't-dup:subagent:run-1:spawn_subagent',
             name: 'subagent:tinyplace_agent',
             round: 1,
+            seq: 0,
             status: 'running',
             subagent: { taskId: 'run-1', agentId: 'tinyplace_agent', toolCalls: [] },
           },
@@ -499,6 +500,7 @@ describe('hydrateRuntimeFromSnapshot — sub-agent prose persistence', () => {
             id: 't9:subagent:task-x:spawn_subagent',
             name: 'subagent:researcher',
             round: 1,
+            seq: 0,
             status: 'running',
             subagent: {
               taskId: 'task-x',
@@ -655,8 +657,15 @@ describe('hydrateRuntimeFromSnapshot — live-driver guard', () => {
       setToolTimelineForThread({
         threadId: 't-live',
         entries: [
-          { id: 'c1', name: 'web_search', round: 1, status: 'success', result: 'found 3 hits' },
-          { id: 'c2', name: 'read_file', round: 2, status: 'running' },
+          {
+            id: 'c1',
+            name: 'web_search',
+            round: 1,
+            seq: 0,
+            status: 'success',
+            result: 'found 3 hits',
+          },
+          { id: 'c2', name: 'read_file', round: 2, seq: 0, status: 'running' },
         ],
       })
     );
@@ -803,7 +812,7 @@ describe('hydrateRuntimeFromSnapshot — streaming/timeline race guard', () => {
     store.dispatch(
       setToolTimelineForThread({
         threadId: 't-settled',
-        entries: [{ id: 'c-live', name: 'read_file', round: 1, status: 'success' }],
+        entries: [{ id: 'c-live', name: 'read_file', round: 1, seq: 0, status: 'success' }],
       })
     );
 
@@ -830,7 +839,7 @@ describe('hydrateRuntimeFromSnapshot — streaming/timeline race guard', () => {
     store.dispatch(
       setToolTimelineForThread({
         threadId: 't-crashed',
-        entries: [{ id: 'c-stale', name: 'read_file', round: 1, status: 'running' }],
+        entries: [{ id: 'c-stale', name: 'read_file', round: 1, seq: 0, status: 'running' }],
       })
     );
 
