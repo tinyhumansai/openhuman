@@ -591,6 +591,36 @@ pub(crate) async fn push_observations(
     Ok(())
 }
 
+/// Build a Langfuse `/api/public/ingestion` batch for a single `score-create`
+/// event. Extracted from [`push_score`] so the batch shape is independently
+/// testable.
+pub(crate) fn build_score_batch(
+    trace_id: &str,
+    name: &str,
+    value: f64,
+    comment: Option<&str>,
+) -> Value {
+    let score_id = new_event_id();
+    let event_id = new_event_id();
+    let mut body = json!({
+        "id": score_id,
+        "traceId": trace_id,
+        "name": name,
+        "value": value,
+    });
+    if let Some(c) = comment {
+        body["comment"] = json!(c);
+    }
+    json!({
+        "batch": [{
+            "id": event_id,
+            "type": "score-create",
+            "timestamp": iso_millis(chrono::Utc::now().timestamp_millis() as u64),
+            "body": body,
+        }]
+    })
+}
+
 /// Push `spans` to the co-hosted Langfuse server. Resolves the endpoint from the
 /// current backend host and authenticates with the live session bearer. Returns
 /// `Err` (for the caller to log + fall back) when there is no live session, the
@@ -656,6 +686,78 @@ pub(crate) async fn push_spans(config: &Config, spans: &[TraceSpan]) -> Result<(
         tracing::debug!(
             target: LOG_TARGET,
             "[agent-tracing] pushed {span_count} spans to Langfuse ({status})"
+        );
+    }
+    Ok(())
+}
+
+/// Push a single `score-create` event to Langfuse, attaching it to an existing
+/// trace. Follows the same privacy gate, resolution, and error handling patterns
+/// as `push_spans`.
+pub(crate) async fn push_score(
+    config: &Config,
+    trace_id: &str,
+    name: &str,
+    value: f64,
+    comment: Option<&str>,
+) -> Result<(), String> {
+    if !config.observability.share_usage_data {
+        return Ok(());
+    }
+
+    let url = ingestion_url(config);
+    if !url.starts_with("http") {
+        return Err(format!(
+            "could not resolve Langfuse ingestion URL from backend host (got {url:?})"
+        ));
+    }
+
+    let token = require_live_session_token(config)?;
+    let batch = build_score_batch(trace_id, name, value, comment);
+
+    tracing::debug!(
+        target: LOG_TARGET,
+        "[agent-tracing] pushing score {name}={value} to Langfuse at {url}"
+    );
+
+    let response = reqwest::Client::new()
+        .post(&url)
+        .header(
+            reqwest::header::AUTHORIZATION,
+            bearer_authorization_value(&token),
+        )
+        .timeout(PUSH_TIMEOUT)
+        .json(&batch)
+        .send()
+        .await
+        .map_err(|err| format!("POST {url} failed: {err}"))?;
+
+    let status = response.status();
+    let body_text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let excerpt: String = body_text.chars().take(200).collect();
+        return Err(format!("Langfuse ingestion returned {status}: {excerpt}"));
+    }
+
+    let rejected = serde_json::from_str::<Value>(&body_text)
+        .ok()
+        .and_then(|v| v.get("errors").and_then(Value::as_array).cloned())
+        .filter(|errs| !errs.is_empty());
+
+    if let Some(errs) = rejected {
+        let excerpt: String = serde_json::to_string(&errs)
+            .unwrap_or_default()
+            .chars()
+            .take(400)
+            .collect();
+        tracing::warn!(
+            target: LOG_TARGET,
+            "[agent-tracing] Langfuse ({status}) rejected score event: {excerpt}"
+        );
+    } else {
+        tracing::debug!(
+            target: LOG_TARGET,
+            "[agent-tracing] pushed score to Langfuse ({status})"
         );
     }
     Ok(())
@@ -1085,6 +1187,33 @@ mod tests {
     }
 
     #[test]
+    fn test_score_to_langfuse_batch() {
+        // Batch shape with name/value.
+        let batch = build_score_batch("trace-req-42", "user-feedback", 1.0, None);
+        let events = batch["batch"].as_array().expect("batch array");
+        assert_eq!(events.len(), 1, "exactly one score event");
+        let event = &events[0];
+        assert_eq!(event["type"], "score-create");
+        assert!(event["id"].as_str().is_some(), "event id present");
+        assert!(event["timestamp"].as_str().is_some(), "timestamp present");
+        let body = &event["body"];
+        assert_eq!(body["traceId"], "trace-req-42");
+        assert_eq!(body["name"], "user-feedback");
+        assert_eq!(body["value"], 1.0);
+        assert!(body["id"].as_str().is_some(), "score id present");
+        assert!(body.get("comment").is_none(), "no comment when omitted");
+
+        // With comment.
+        let batch = build_score_batch("trace-abc", "quality", 0.5, Some("Great response"));
+        let event = &batch["batch"][0];
+        assert_eq!(event["body"]["comment"], "Great response");
+
+        // Binary thumbs down (value = 0).
+        let batch = build_score_batch("trace-xyz", "user-feedback", 0.0, None);
+        assert_eq!(batch["batch"][0]["body"]["value"], 0.0);
+    }
+
+    #[test]
     fn trace_create_carries_user_and_session_grouping() {
         // The turn span's user.id / thread.id attributes are promoted onto the
         // trace-create as Langfuse userId / sessionId so per-turn traces group
@@ -1361,5 +1490,26 @@ mod tests {
         let config = Config::default();
         // Empty batch short-circuits before any host/token resolution or network.
         assert!(push_spans(&config, &[]).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn push_score_respects_privacy_gate() {
+        let mut config = Config::default();
+        config.observability.share_usage_data = false;
+        // Privacy gate returns Ok(()) before any host/token resolution.
+        assert!(push_score(&config, "trace-1", "user-feedback", 1.0, None)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn push_score_returns_error_for_unresolvable_url() {
+        let mut config = Config::default();
+        config.observability.share_usage_data = true;
+        config.api_url = Some("not-a-valid-url".to_string());
+        // Without a valid scheme prefix, ingestion_url fails the http check.
+        assert!(push_score(&config, "trace-1", "user-feedback", 1.0, None)
+            .await
+            .is_err());
     }
 }

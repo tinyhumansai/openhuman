@@ -1159,6 +1159,39 @@ async fn json_rpc_discovers_codex_and_claude_sessions_for_memory_ingestion() {
 }
 
 #[tokio::test]
+async fn json_rpc_observability_submit_score_succeeds_when_privacy_gate_off() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let home = tempdir().expect("tempdir");
+    let openhuman_home = home.path().join(".openhuman");
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home.path());
+    // No score events are emitted when share_usage_data is off, so the handler
+    // returns ok without performing any network call to Langfuse.
+    std::env::set_var("OPENHUMAN_SHARE_USAGE_DATA", "false");
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let response = post_json_rpc(
+        &rpc_base,
+        4_914_002,
+        "openhuman.observability_submit_score",
+        json!({
+            "trace_id": "e2e-session:req-1",
+            "name": "user-feedback",
+            "value": 1.0,
+            "comment": "e2e"
+        }),
+    )
+    .await;
+
+    assert_no_jsonrpc_error(&response, "observability_submit_score");
+    assert_eq!(response["result"]["ok"], true);
+
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_config_update_browser_settings_persists_backend() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");

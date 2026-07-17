@@ -232,7 +232,12 @@ pub(crate) async fn run_chat_task(
     // wrappers below hold a pointer rather than inlining the whole future into
     // this already-large `run_chat_task` frame (which otherwise overflows the
     // default test-thread stack — see the channels web-turn coverage tests).
-    let turn = Box::pin(agent.run_single(message));
+    use crate::openhuman::agent::progress_tracing::{trace_session_id, TURN_TRACE_ID};
+    let trace_id = {
+        let base = trace_session_id(metadata.session_id, thread_id);
+        format!("{base}:{request_id}")
+    };
+    let turn = Box::pin(TURN_TRACE_ID.scope(trace_id, agent.run_single(message)));
     let result = match crate::openhuman::inference::provider::thread_context::with_thread_id(
         thread_id.to_string(),
         crate::openhuman::memory::source_scope::with_source_scope(

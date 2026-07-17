@@ -852,6 +852,16 @@ fn build_internal_only_controllers() -> Vec<GroupedController> {
         DomainGroup::Agent,
         crate::openhuman::orchestration::all_registered_controllers(),
     );
+    // observability_submit_score: renderer-only feedback score submission.
+    // Deliberately NOT in build_registered_controllers() so agents cannot
+    // discover or fabricate Langfuse scores. Reachable by the renderer via the
+    // internal_registry() chain in try_invoke_registered_rpc.
+    push(
+        &mut controllers,
+        DomainGroup::Agent,
+        crate::openhuman::agent::progress_tracing::rpc::all_progress_tracing_registered_controllers(
+        ),
+    );
     controllers
 }
 
@@ -1049,6 +1059,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "tinyplace" => Some(
             "tiny.place A2A social-network integration: directory, explorer, and search over the agent network.",
+        ),
+        "observability" => Some(
+            "Submit observability feedback such as quality scores to the active trace.",
         ),
         _ => None,
     }

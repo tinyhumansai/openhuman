@@ -2664,6 +2664,8 @@ const messages: TranslationMap = {
   'chat.failedToLoadMessages': 'Gagal memuat pesan',
   'chat.thinkingIteration': 'Berpikir... ({n})',
   'chat.thinkingDots': 'Berpikir...',
+  'chat.feedback.goodResponse': 'Respons baik',
+  'chat.feedback.badResponse': 'Respons buruk',
   'chat.approachingLimit': 'Mendekati batas pemakaian',
   'chat.approachingLimitMsg': 'Anda telah memakai {pct}% dari kuota yang tersedia.',
   'chat.upgrade': 'Tingkatkan',

@@ -2590,6 +2590,8 @@ const messages: TranslationMap = {
   'chat.failedToLoadMessages': 'فشل تحميل الرسائل',
   'chat.thinkingIteration': 'جارٍ التفكير... ({n})',
   'chat.thinkingDots': 'جارٍ التفكير...',
+  'chat.feedback.goodResponse': 'استجابة جيدة',
+  'chat.feedback.badResponse': 'استجابة سيئة',
   'chat.approachingLimit': 'الاقتراب من حد الاستخدام',
   'chat.approachingLimitMsg': 'لقد استخدمت {pct}% من حصتك المتاحة.',
   'chat.upgrade': 'الترقية',

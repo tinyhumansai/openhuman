@@ -64,6 +64,7 @@ use crate::openhuman::config::Config;
 pub(crate) mod journal_projection;
 /// Langfuse ingestion exporter (remote push to the co-hosted staging server).
 pub(crate) mod langfuse;
+pub mod rpc;
 
 #[cfg(test)]
 mod journal_projection_tests;
@@ -159,6 +160,13 @@ pub struct TraceContext {
     /// exported as the `root_run_id` metadata key so Langfuse can thread a whole
     /// spawn tree under one root.
     pub root_run_id: Option<String>,
+}
+
+tokio::task_local! {
+    /// Trace ID of the currently executing turn, set by the web-chat runner
+    /// so tool implementations can stamp the Langfuse trace ID onto message
+    /// extra_metadata for feedback-score correlation.
+    pub(crate) static TURN_TRACE_ID: String;
 }
 
 impl TraceContext {

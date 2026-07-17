@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{json, Map, Value};
 
 use crate::openhuman::agent::task_board::{
     board_for_thread, TaskBoard, TaskBoardCard, TaskBoardStore,
@@ -443,7 +443,21 @@ impl Tool for ThreadMessageAppendTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][threads] message_append invoked");
-        let req: AppendConversationMessageRequest = parse_req(args, "thread_message_append")?;
+        let mut req: AppendConversationMessageRequest = parse_req(args, "thread_message_append")?;
+        // Stamp the Langfuse trace ID onto the message so the frontend feedback
+        // buttons can attach scores to the correct trace. No-op when the turn is
+        // not being traced (e.g. non-interactive / no share_usage_data).
+        if let Ok(id) =
+            crate::openhuman::agent::progress_tracing::TURN_TRACE_ID.try_with(|id| id.clone())
+        {
+            if let Some(meta) = req.message.extra_metadata.as_object_mut() {
+                meta.insert("traceId".to_string(), Value::String(id));
+            } else {
+                let mut meta = Map::new();
+                meta.insert("traceId".to_string(), Value::String(id));
+                req.message.extra_metadata = Value::Object(meta);
+            }
+        }
         let outcome = ops::message_append(req)
             .await
             .map_err(|e| anyhow::anyhow!("thread_message_append: {e}"))?;
@@ -898,5 +912,47 @@ mod tests {
             .await
             .expect_err("missing thread_id");
         assert!(err.to_string().contains("thread_id"));
+    }
+
+    #[tokio::test]
+    async fn message_append_injects_trace_id() {
+        use crate::openhuman::agent::progress_tracing::TURN_TRACE_ID;
+        use crate::openhuman::memory::CreateConversationThreadRequest;
+        use crate::openhuman::threads::ops;
+
+        // Create a real thread so ops::message_append succeeds
+        let req = CreateConversationThreadRequest {
+            labels: None,
+            personality_id: None,
+        };
+        let created = ops::thread_create_new(req).await.unwrap().value;
+        let thread_id = created.data.unwrap().id;
+
+        let tool_args = json!({
+            "thread_id": thread_id,
+            "message": {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": "Testing trace",
+                "type": "text",
+                "sender": "assistant",
+                "createdAt": chrono::Utc::now().to_rfc3339()
+            }
+        });
+
+        // Run the tool within a TURN_TRACE_ID scope
+        let tool = ThreadMessageAppendTool;
+        let result = TURN_TRACE_ID
+            .scope("trace-abc-123".to_string(), tool.execute(tool_args))
+            .await
+            .expect("tool execution should succeed");
+
+        let content_str = match &result.content[0] {
+            crate::openhuman::tools::ToolContent::Text { text } => text,
+            _ => panic!("Expected text content"),
+        };
+        let outcome: serde_json::Value = serde_json::from_str(content_str).unwrap();
+        let meta = &outcome["data"]["extraMetadata"];
+        assert_eq!(meta["traceId"].as_str(), Some("trace-abc-123"));
     }
 }
