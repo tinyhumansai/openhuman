@@ -112,8 +112,12 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
     setError(null);
   };
 
-  const removeRow = (id: string) =>
+  const removeRow = (id: string) => {
     setEnvRows(rows => (rows.length > 1 ? rows.filter(r => r.id !== id) : [newRow()]));
+    // A "listed twice — remove one row" error names removal as the fix, so a
+    // removal has to clear it rather than leave the now-contradictory message up.
+    setError(null);
+  };
 
   /**
    * Switch transport, re-scoping the env rows.

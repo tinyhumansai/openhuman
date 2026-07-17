@@ -161,13 +161,14 @@ fn infer_command_kind(command: &str) -> CommandKind {
 fn resolve_env(
     submitted: &HashMap<String, String>,
     stored: &HashMap<String, String>,
+    is_http_remote: bool,
 ) -> HashMap<String, String> {
     let mut resolved: HashMap<String, String> = HashMap::new();
     for (key, value) in submitted {
         let key = key.trim().to_string();
         if !value.trim().is_empty() {
             resolved.insert(key, value.clone());
-        } else if let Some(existing) = stored.get(&key) {
+        } else if let Some(existing) = lookup_stored(stored, &key, is_http_remote) {
             resolved.insert(key, existing.clone());
         }
         // Blank value with nothing stored: there is no secret to keep, so the
@@ -181,6 +182,31 @@ fn resolve_env(
     resolved
 }
 
+/// Look up a submitted key against the stored map for the blank-means-keep rule.
+///
+/// On `http_remote` the keys are HTTP header names (case-insensitive, RFC 9110),
+/// so a user who only re-cased a header (`Authorization` → `authorization`) and
+/// left the value blank still means "keep" — a case-sensitive `HashMap::get`
+/// would miss the stored value and silently drop the credential. stdio keys are
+/// subprocess env vars, case-sensitive on Unix, so they match exactly.
+fn lookup_stored<'a>(
+    stored: &'a HashMap<String, String>,
+    key: &str,
+    is_http_remote: bool,
+) -> Option<&'a String> {
+    if let Some(v) = stored.get(key) {
+        return Some(v);
+    }
+    if is_http_remote {
+        let lower = key.to_ascii_lowercase();
+        return stored
+            .iter()
+            .find(|(k, _)| k.to_ascii_lowercase() == lower)
+            .map(|(_, v)| v);
+    }
+    None
+}
+
 /// Where a stored credential is authorised to go. Two edits share a scope only
 /// if the credential still means the same thing afterwards.
 ///
@@ -190,22 +216,37 @@ fn resolve_env(
 /// - http_remote: the credentials are request headers and, for OAuth, a refresh
 ///   bundle minted against a *specific* endpoint. The scope is the endpoint's
 ///   **origin** (scheme + host + port). A different origin is a different service.
-#[derive(PartialEq, Eq)]
 enum CredentialScope {
     Stdio,
-    /// Origin string, or `None` when the URL doesn't parse — an unparseable URL
-    /// is never treated as sharing a scope with anything, so it forces re-entry.
-    HttpOrigin(Option<String>),
+    HttpOrigin(String),
+    /// The URL didn't parse. `build_custom_transport` rejects such URLs before a
+    /// `Transport` is built, so this is unreachable via the real callers — but it
+    /// must still *never* compare equal (see the manual `PartialEq`), so a
+    /// corrupt stored URL can only force re-entry, never keep credentials by
+    /// accident.
+    Unparseable,
+}
+
+// Hand-written rather than derived so `Unparseable` is never equal to anything,
+// including another `Unparseable` — the derived `Eq` would make two corrupt URLs
+// compare equal and *keep* the stored credentials, the opposite of the intent.
+impl PartialEq for CredentialScope {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Stdio, Self::Stdio) => true,
+            (Self::HttpOrigin(a), Self::HttpOrigin(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 fn credential_scope(transport: &Transport) -> CredentialScope {
     match transport {
         Transport::Stdio => CredentialScope::Stdio,
-        Transport::HttpRemote { url } => CredentialScope::HttpOrigin(
-            url::Url::parse(url)
-                .ok()
-                .map(|u| u.origin().ascii_serialization()),
-        ),
+        Transport::HttpRemote { url } => match url::Url::parse(url) {
+            Ok(u) => CredentialScope::HttpOrigin(u.origin().ascii_serialization()),
+            Err(_) => CredentialScope::Unparseable,
+        },
     }
 }
 
@@ -237,10 +278,12 @@ fn resolve_env_for_transport(
     previous: &Transport,
     next: &Transport,
 ) -> HashMap<String, String> {
+    // The submitted keys are interpreted under the *new* transport.
+    let is_http_remote = next.is_http_remote();
     if credential_scope(previous) != credential_scope(next) {
-        return resolve_env(submitted, &HashMap::new());
+        return resolve_env(submitted, &HashMap::new(), is_http_remote);
     }
-    resolve_env(submitted, stored)
+    resolve_env(submitted, stored, is_http_remote)
 }
 
 /// Sorted key list for the install record, matching what `update_env` persists.
@@ -397,7 +440,7 @@ pub async fn mcp_clients_add_custom(
     validate_env(&input.env, transport.is_http_remote())?;
 
     // Nothing is stored yet, so this only drops blank-valued keys.
-    let env = resolve_env(&input.env, &HashMap::new());
+    let env = resolve_env(&input.env, &HashMap::new(), transport.is_http_remote());
 
     let server_id = Uuid::new_v4().to_string();
     let qualified_name = allocate_qualified_name(config, &display_name, &server_id)?;
@@ -876,7 +919,7 @@ mod tests {
     /// A retyped value wins over the stored one.
     #[test]
     fn resolve_env_takes_supplied_values() {
-        let resolved = resolve_env(&env(&[("KEY", "new")]), &env(&[("KEY", "old")]));
+        let resolved = resolve_env(&env(&[("KEY", "new")]), &env(&[("KEY", "old")]), false);
         assert_eq!(resolved.get("KEY").map(String::as_str), Some("new"));
     }
 
@@ -885,7 +928,7 @@ mod tests {
     /// would erase the credential on an unrelated rename.
     #[test]
     fn resolve_env_blank_value_keeps_stored_secret() {
-        let resolved = resolve_env(&env(&[("KEY", "")]), &env(&[("KEY", "stored")]));
+        let resolved = resolve_env(&env(&[("KEY", "")]), &env(&[("KEY", "stored")]), false);
         assert_eq!(resolved.get("KEY").map(String::as_str), Some("stored"));
     }
 
@@ -897,6 +940,7 @@ mod tests {
         let resolved = resolve_env(
             &env(&[("KEEP", "v")]),
             &env(&[("KEEP", "v"), ("GONE", "x")]),
+            false,
         );
         assert!(resolved.contains_key("KEEP"));
         assert!(
@@ -913,6 +957,7 @@ mod tests {
         let resolved = resolve_env(
             &env(&[("Authorization", "Bearer new")]),
             &env(&[("__oauth__", "{\"refresh_token\":\"r\"}")]),
+            true,
         );
         assert_eq!(
             resolved.get("__oauth__").map(String::as_str),
@@ -924,10 +969,38 @@ mod tests {
         );
     }
 
+    /// http_remote header names are case-insensitive, so re-casing a header and
+    /// leaving the value blank still means "keep" — a case-sensitive lookup would
+    /// miss the stored value and silently erase the credential.
+    #[test]
+    fn resolve_env_blank_keeps_stored_header_across_case_change() {
+        let resolved = resolve_env(
+            &env(&[("authorization", "")]),
+            &env(&[("Authorization", "Bearer keep")]),
+            true,
+        );
+        assert_eq!(
+            resolved.get("authorization").map(String::as_str),
+            Some("Bearer keep"),
+            "a re-cased header with a blank value must keep the stored secret"
+        );
+    }
+
+    /// stdio env var names are case-sensitive, so the same blank re-cased key is
+    /// a *different* key with nothing stored — not a keep.
+    #[test]
+    fn resolve_env_blank_recased_key_is_dropped_on_stdio() {
+        let resolved = resolve_env(&env(&[("path", "")]), &env(&[("PATH", "/usr/bin")]), false);
+        assert!(
+            resolved.is_empty(),
+            "a case-different env var is a new key, not a keep: {resolved:?}"
+        );
+    }
+
     /// On add there is nothing stored, so a blank row is simply not a value.
     #[test]
     fn resolve_env_drops_blank_value_with_nothing_stored() {
-        let resolved = resolve_env(&env(&[("KEY", "  ")]), &HashMap::new());
+        let resolved = resolve_env(&env(&[("KEY", "  ")]), &HashMap::new(), false);
         assert!(resolved.is_empty());
     }
 

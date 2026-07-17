@@ -469,48 +469,12 @@ fn map_server_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledServer> 
     })
 }
 
-/// Overwrite the user-editable connection fields of an existing row.
-///
-/// Only the fields the custom-server form owns are touched — `server_id`,
-/// `qualified_name`, `installed_at` and `provenance` are identity/provenance and
-/// stay put, so a rename cannot orphan the row's env values or silently
-/// relabel a registry install as custom. `insert_server` would collide on the
-/// primary key, and `update_server_env_keys` covers only the key-name list.
-pub fn update_server_custom_fields(
-    config: &Config,
-    server_id: &str,
-    server: &InstalledServer,
-) -> Result<()> {
-    with_connection(config, |conn| {
-        update_server_custom_fields_conn(conn, server_id, server)
-    })
-}
-
-/// Apply a custom-server edit — row fields and env values — as one transaction.
-///
-/// These two writes must not be able to land separately. A transport switch
-/// changes what the env map *means*, so a row updated to `http_remote` whose env
-/// still holds the stdio secrets is a state that leaks: the supervisor's next
-/// tick dials it and `build_http_auth` sends those secrets to the endpoint as
-/// headers — even though the RPC returned an error and the user believes the
-/// save failed.
-pub fn update_custom_server_and_env(
-    config: &Config,
-    server_id: &str,
-    server: &InstalledServer,
-    env: &HashMap<String, String>,
-) -> Result<()> {
-    with_connection(config, |conn| {
-        let tx = conn.unchecked_transaction()?;
-        update_server_custom_fields_conn(&tx, server_id, server)?;
-        set_env_values_conn(&tx, server_id, env)?;
-        tx.commit()?;
-        Ok(())
-    })
-}
-
 /// Apply a custom-server edit whose env depends on what is currently stored, as
 /// one serializable read-modify-write.
+///
+/// Writes only the fields the custom-server form owns — `server_id`,
+/// `qualified_name`, `installed_at` and `provenance` stay put, so a rename can't
+/// orphan the row's env or relabel a registry install as custom.
 ///
 /// The caller's `build` closure receives the stored env read *inside* the
 /// transaction and returns the row to write plus the resolved env. Reading
@@ -531,6 +495,21 @@ where
     with_connection(config, |conn| {
         conn.execute_batch("BEGIN IMMEDIATE")?;
         let outcome = (|| {
+            // The row was read before this transaction (to check provenance), so
+            // a concurrent uninstall could have removed it in the gap. Confirm it
+            // still exists inside the lock: otherwise the UPDATE below hits zero
+            // rows and — for an empty env — the whole edit would commit as a
+            // fabricated success for a server that no longer exists.
+            let exists: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM mcp_servers WHERE server_id = ?1",
+                    [server_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if exists.is_none() {
+                anyhow::bail!("server `{server_id}` no longer exists");
+            }
             let stored = load_env_values_conn(conn, server_id)?;
             let (server, env) = build(stored);
             update_server_custom_fields_conn(conn, server_id, &server)?;
