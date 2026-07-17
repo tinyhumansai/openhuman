@@ -446,6 +446,7 @@ jobs:
           core/cli_tests.rs
           core/jsonrpc_tests.rs
           core/legacy_aliases.rs
+          core/runtime/context.rs
           openhuman/agent/harness/builtin_definitions.rs
           openhuman/agent/harness/definition_tests.rs
           openhuman/agent/harness/session/tests.rs
@@ -462,7 +463,7 @@ jobs:
           openhuman/x402/stub.rs
           EOF
           )
-          ACTUAL=$(grep -rlE '#\[cfg\((not\()?feature = "(voice|media|web3|meet|mcp|skills|flows)"' src --include='*.rs' \
+          ACTUAL=$(grep -rlE '#\[cfg\((not\()?feature = "(voice|media|web3|meet|mcp|skills|flows|channels)"' src --include='*.rs' \
             | xargs grep -lE '#\[test\]|#\[tokio::test\]|fn .*_test' 2>/dev/null | sed 's|^src/||' | sort -u)
           if ! diff <(echo "$EXPECTED" | sed 's/^ *//' | sort -u) <(echo "$ACTUAL"); then
             echo "::error::Gated-test file set changed. Update the EXPECTED allowlist in the rust-feature-gate-smoke lane, and extend the scoped 'cargo test' filter if the new module can carry an ungated-assert regression (see #5022)."
