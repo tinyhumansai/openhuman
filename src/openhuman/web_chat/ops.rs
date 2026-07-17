@@ -474,7 +474,7 @@ pub async fn start_chat(
     let prompt_decision = enforce_prompt_input(
         &message,
         PromptEnforcementContext {
-            source: "channels.providers.web.start_chat",
+            source: "web_chat.start_chat",
             request_id: Some(&request_id),
             user_id: Some(&client_id),
             session_id: Some(&thread_id),
