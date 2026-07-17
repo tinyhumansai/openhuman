@@ -1990,6 +1990,15 @@ fn register_domain_subscribers(
             // peer-status events, and register acks. Must be live before any
             // tunnel:frame events can arrive.
             crate::openhuman::devices::bus::register_device_tunnel_subscriber();
+            // Always-on learning subscribers (email-signature producer, rebuild
+            // trigger + periodic loop, ProfileMdRenderer). Previously wired only
+            // in `channels::runtime::startup::start_channels`, which is skipped
+            // when no channel is configured — silently dropping ALL learning for
+            // channel-less users (#5003). Registered here on the unconditional
+            // Platform boot path; idempotent, so it never double-registers.
+            crate::openhuman::learning::startup::register_learning_subscribers(
+                workspace_dir.clone(),
+            );
         }
     } else {
         log::debug!(
