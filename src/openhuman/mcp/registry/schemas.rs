@@ -20,6 +20,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("registry_get"),
         schemas("installed_list"),
         schemas("install"),
+        schemas("add_custom"),
+        schemas("update_custom"),
         schemas("update_env"),
         schemas("uninstall"),
         schemas("detect_auth"),
@@ -59,6 +61,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("install"),
             handler: handle_install,
+        },
+        RegisteredController {
+            schema: schemas("add_custom"),
+            handler: handle_add_custom,
+        },
+        RegisteredController {
+            schema: schemas("update_custom"),
+            handler: handle_update_custom,
         },
         RegisteredController {
             schema: schemas("update_env"),
@@ -248,6 +258,132 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "server",
                 ty: TypeSchema::Ref("InstalledServer"),
                 comment: "The newly installed server record.",
+                required: true,
+            }],
+        },
+
+        "add_custom" => ControllerSchema {
+            namespace: "mcp_clients",
+            function: "add_custom",
+            description: "Add an MCP server by hand, for servers that are not published in any registry. `stdio` runs a local command; `http_remote` dials a URL. The record is created disconnected — call `connect` afterwards.",
+            inputs: vec![
+                FieldSchema {
+                    name: "display_name",
+                    ty: TypeSchema::String,
+                    comment: "Human-readable name shown in the UI.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "transport",
+                    ty: TypeSchema::Enum {
+                        variants: vec!["stdio", "http_remote"],
+                    },
+                    comment: "`stdio` for a local subprocess, `http_remote` for a hosted endpoint.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "command",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Launch binary for stdio servers (`npx`, `uvx`, an absolute path, …). Required when transport=stdio, ignored otherwise.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "args",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Arguments passed to `command`. Ignored when transport=http_remote.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "url",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Absolute http(s) endpoint. Required when transport=http_remote, ignored otherwise.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "env",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Map(Box::new(TypeSchema::String)))),
+                    comment: "stdio: subprocess environment variables. http_remote: request headers (key = header name). Values are stored locally and never returned. Keys starting with `__` are reserved.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "description",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional note shown alongside the server.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "server",
+                ty: TypeSchema::Ref("InstalledServer"),
+                comment: "The newly added server record (env values omitted).",
+                required: true,
+            }],
+        },
+
+        "update_custom" => ControllerSchema {
+            namespace: "mcp_clients",
+            function: "update_custom",
+            description: "Replace the connection details of a hand-added server. Rejects registry installs, whose command and endpoint come from the catalog listing. Drops any live connection so the next connect uses the new settings.",
+            inputs: vec![
+                FieldSchema {
+                    name: "server_id",
+                    ty: TypeSchema::String,
+                    comment: "UUID of the custom server to edit.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "display_name",
+                    ty: TypeSchema::String,
+                    comment: "Human-readable name shown in the UI.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "transport",
+                    ty: TypeSchema::Enum {
+                        variants: vec!["stdio", "http_remote"],
+                    },
+                    comment: "`stdio` for a local subprocess, `http_remote` for a hosted endpoint.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "command",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Launch binary for stdio servers. Required when transport=stdio.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "args",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Arguments passed to `command`. Ignored when transport=http_remote.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "url",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Absolute http(s) endpoint. Required when transport=http_remote.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "env",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Map(Box::new(TypeSchema::String)))),
+                    comment: "Replacement env/header map — omitted keys are removed. Values are stored locally and never returned.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "description",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional note shown alongside the server.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "server",
+                ty: TypeSchema::Ref("InstalledServer"),
+                comment: "The updated server record (env values omitted).",
                 required: true,
             }],
         },
@@ -720,6 +856,47 @@ fn handle_install(params: Map<String, Value>) -> ControllerFuture {
                 qualified_name,
                 env,
                 config_value,
+            )
+            .await?,
+        )
+    })
+}
+
+/// Shared param reader for `add_custom` / `update_custom` — both take the same
+/// user-editable body, so a single reader keeps their validation identical.
+fn read_custom_input(
+    params: &Map<String, Value>,
+) -> Result<crate::openhuman::mcp_registry::custom::CustomServerInput, String> {
+    Ok(crate::openhuman::mcp_registry::custom::CustomServerInput {
+        display_name: read_required::<String>(params, "display_name")?,
+        transport: read_required::<String>(params, "transport")?,
+        command: read_optional_string(params, "command")?,
+        args: read_optional::<Vec<String>>(params, "args")?.unwrap_or_default(),
+        url: read_optional_string(params, "url")?,
+        env: read_optional::<std::collections::HashMap<String, String>>(params, "env")?
+            .unwrap_or_default(),
+        description: read_optional_string(params, "description")?,
+    })
+}
+
+fn handle_add_custom(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let input = read_custom_input(&params)?;
+        to_json(
+            crate::openhuman::mcp_registry::custom::mcp_clients_add_custom(&config, input).await?,
+        )
+    })
+}
+
+fn handle_update_custom(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let server_id = read_required::<String>(&params, "server_id")?;
+        let input = read_custom_input(&params)?;
+        to_json(
+            crate::openhuman::mcp_registry::custom::mcp_clients_update_custom(
+                &config, server_id, input,
             )
             .await?,
         )

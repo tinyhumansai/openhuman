@@ -16,7 +16,7 @@ use crate::rpc::RpcOutcome;
 use super::connections;
 use super::registry;
 use super::store;
-use super::types::{CommandKind, ConnStatus, InstalledServer};
+use super::types::{CommandKind, ConnStatus, InstalledServer, ServerProvenance};
 
 // ── registry_search ───────────────────────────────────────────────────────────
 
@@ -254,6 +254,7 @@ pub async fn mcp_clients_install(
         last_connected_at: None,
         transport,
         enabled: true,
+        provenance: ServerProvenance::Registry,
     };
 
     // Insert only if no row for this canonical name exists yet, atomically — the

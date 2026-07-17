@@ -30,7 +30,7 @@ use crate::rpc::RpcOutcome;
 
 use super::ops::resolve_command;
 use super::setup::{self, SecretRef};
-use super::types::{CommandKind, InstalledServer, SmitheryConnection, Transport};
+use super::types::{CommandKind, InstalledServer, ServerProvenance, SmitheryConnection, Transport};
 use super::{connections, registry, store};
 
 // ── search ───────────────────────────────────────────────────────────────────
@@ -304,6 +304,7 @@ pub async fn mcp_setup_install_and_connect(
         last_connected_at: None,
         transport,
         enabled: true,
+        provenance: ServerProvenance::Registry,
     };
 
     store::insert_server(config, &server).map_err(|e| e.to_string())?;

@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::openhuman::config::Config;
 
-use super::types::{CommandKind, InstalledServer, Transport};
+use super::types::{CommandKind, InstalledServer, ServerProvenance, Transport};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -111,6 +111,16 @@ fn init_schema(conn: &Connection) -> Result<()> {
             "enabled column to mcp_servers",
         )?;
     }
+    // Distinguishes catalog installs from hand-entered ones. Every row that
+    // predates this column arrived through `mcp_clients_install`, i.e. from a
+    // registry, so the default backfills existing installs correctly.
+    if !existing_cols.iter().any(|c| c == "provenance") {
+        add_column_idempotent(
+            conn,
+            "ALTER TABLE mcp_servers ADD COLUMN provenance TEXT NOT NULL DEFAULT 'registry'",
+            "provenance column to mcp_servers",
+        )?;
+    }
 
     Ok(())
 }
@@ -176,8 +186,9 @@ pub fn insert_server_conn(conn: &Connection, server: &InstalledServer) -> Result
         "INSERT INTO mcp_servers
              (server_id, qualified_name, display_name, description, icon_url,
               command_kind, command, args_json, env_keys_json, config_json,
-              installed_at, last_connected_at, transport, deployment_url, enabled)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+              installed_at, last_connected_at, transport, deployment_url, enabled,
+              provenance)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             server.server_id,
             server.qualified_name,
@@ -194,6 +205,7 @@ pub fn insert_server_conn(conn: &Connection, server: &InstalledServer) -> Result
             server.transport.dispatch_kind(),
             server.transport.deployment_url(),
             server.enabled as i64,
+            server.provenance.as_str(),
         ],
     )
     .context("Failed to insert mcp_server")?;
@@ -225,8 +237,9 @@ pub fn insert_server_if_absent_conn(conn: &Connection, server: &InstalledServer)
             "INSERT INTO mcp_servers
                      (server_id, qualified_name, display_name, description, icon_url,
                       command_kind, command, args_json, env_keys_json, config_json,
-                      installed_at, last_connected_at, transport, deployment_url, enabled)
-                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+                      installed_at, last_connected_at, transport, deployment_url, enabled,
+                      provenance)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
                  WHERE NOT EXISTS (SELECT 1 FROM mcp_servers WHERE qualified_name = ?2)",
             params![
                 server.server_id,
@@ -244,6 +257,7 @@ pub fn insert_server_if_absent_conn(conn: &Connection, server: &InstalledServer)
                 server.transport.dispatch_kind(),
                 server.transport.deployment_url(),
                 server.enabled as i64,
+                server.provenance.as_str(),
             ],
         )
         .context("Failed to insert mcp_server (if absent)")?;
@@ -303,7 +317,8 @@ pub fn list_servers_conn(conn: &Connection) -> Result<Vec<InstalledServer>> {
     let mut stmt = conn.prepare(
         "SELECT server_id, qualified_name, display_name, description, icon_url,
                 command_kind, command, args_json, env_keys_json, config_json,
-                installed_at, last_connected_at, transport, deployment_url, enabled
+                installed_at, last_connected_at, transport, deployment_url, enabled,
+                provenance
          FROM mcp_servers ORDER BY installed_at ASC",
     )?;
     let rows = stmt.query_map([], map_server_row)?;
@@ -334,7 +349,8 @@ pub fn find_server_by_qualified_name_conn(
     let mut stmt = conn.prepare(
         "SELECT server_id, qualified_name, display_name, description, icon_url,
                 command_kind, command, args_json, env_keys_json, config_json,
-                installed_at, last_connected_at, transport, deployment_url, enabled
+                installed_at, last_connected_at, transport, deployment_url, enabled,
+                provenance
          FROM mcp_servers WHERE qualified_name = ?1
          ORDER BY installed_at ASC LIMIT 1",
     )?;
@@ -353,7 +369,8 @@ pub fn get_server_conn(conn: &Connection, server_id: &str) -> Result<InstalledSe
     let mut stmt = conn.prepare(
         "SELECT server_id, qualified_name, display_name, description, icon_url,
                 command_kind, command, args_json, env_keys_json, config_json,
-                installed_at, last_connected_at, transport, deployment_url, enabled
+                installed_at, last_connected_at, transport, deployment_url, enabled,
+                provenance
          FROM mcp_servers WHERE server_id = ?1",
     )?;
     let mut rows = stmt.query(params![server_id])?;
@@ -419,6 +436,12 @@ fn map_server_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledServer> 
     // any row that predates the column so legacy installs keep auto-connecting.
     let enabled: i64 = row.get::<_, Option<i64>>(14)?.unwrap_or(1);
 
+    // `provenance` is likewise post-migration; an absent value means the row was
+    // written before custom servers existed, so it can only be a registry
+    // install.
+    let provenance_raw: String = row.get::<_, Option<String>>(15)?.unwrap_or_default();
+    let provenance = ServerProvenance::parse(&provenance_raw);
+
     Ok(InstalledServer {
         server_id: row.get(0)?,
         qualified_name: row.get(1)?,
@@ -434,7 +457,54 @@ fn map_server_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledServer> 
         last_connected_at: row.get(11)?,
         transport,
         enabled: enabled != 0,
+        provenance,
     })
+}
+
+/// Overwrite the user-editable connection fields of an existing row.
+///
+/// Only the fields the custom-server form owns are touched — `server_id`,
+/// `qualified_name`, `installed_at` and `provenance` are identity/provenance and
+/// stay put, so a rename cannot orphan the row's env values or silently
+/// relabel a registry install as custom. `insert_server` would collide on the
+/// primary key, and `update_server_env_keys` covers only the key-name list.
+pub fn update_server_custom_fields(
+    config: &Config,
+    server_id: &str,
+    server: &InstalledServer,
+) -> Result<()> {
+    with_connection(config, |conn| {
+        update_server_custom_fields_conn(conn, server_id, server)
+    })
+}
+
+pub fn update_server_custom_fields_conn(
+    conn: &Connection,
+    server_id: &str,
+    server: &InstalledServer,
+) -> Result<()> {
+    let args_json = serde_json::to_string(&server.args)?;
+    let env_keys_json = serde_json::to_string(&server.env_keys)?;
+    conn.execute(
+        "UPDATE mcp_servers
+            SET display_name = ?1, description = ?2, command_kind = ?3,
+                command = ?4, args_json = ?5, env_keys_json = ?6,
+                transport = ?7, deployment_url = ?8
+          WHERE server_id = ?9",
+        params![
+            server.display_name,
+            server.description,
+            server.command_kind.as_str(),
+            server.command,
+            args_json,
+            env_keys_json,
+            server.transport.dispatch_kind(),
+            server.transport.deployment_url(),
+            server_id,
+        ],
+    )
+    .context("Failed to update custom mcp_server fields")?;
+    Ok(())
 }
 
 pub fn update_enabled(config: &Config, server_id: &str, enabled: bool) -> Result<()> {
@@ -578,6 +648,7 @@ mod tests {
             last_connected_at: None,
             transport: Transport::Stdio,
             enabled: true,
+            provenance: ServerProvenance::Registry,
         }
     }
 
@@ -599,7 +670,102 @@ mod tests {
                 url: url.to_string(),
             },
             enabled: true,
+            provenance: ServerProvenance::Registry,
         }
+    }
+
+    /// A hand-added server persists `provenance = 'custom'` and reads back as such,
+    /// which is what keeps `update_custom` from editing a catalog install.
+    #[test]
+    fn custom_provenance_round_trips() {
+        let (_f, conn) = open_test_conn();
+        let mut server = sample_server("srv-custom");
+        server.qualified_name = "custom/my-server".to_string();
+        server.provenance = ServerProvenance::Custom;
+        insert_server_conn(&conn, &server).unwrap();
+        let loaded = get_server_conn(&conn, "srv-custom").unwrap();
+        assert_eq!(loaded.provenance, ServerProvenance::Custom);
+        // The registry fixture must not drift into the custom bucket.
+        insert_server_conn(&conn, &sample_http_server("srv-reg", "https://x.io/mcp")).unwrap();
+        assert_eq!(
+            get_server_conn(&conn, "srv-reg").unwrap().provenance,
+            ServerProvenance::Registry
+        );
+    }
+
+    /// A row written before the `provenance` column existed must re-hydrate as a
+    /// registry install — `ADD COLUMN … DEFAULT 'registry'` backfills it, and
+    /// mislabelling an existing catalog install as custom would expose it to
+    /// hand-editing that the next catalog re-resolve would silently revert.
+    #[test]
+    fn pre_migration_rows_backfill_to_registry_provenance() {
+        let (_f, conn) = open_test_conn();
+        // Simulate the pre-migration shape by dropping the column back off.
+        conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN provenance;")
+            .expect("drop provenance column to emulate a pre-migration DB");
+        assert!(!mcp_servers_columns(&conn)
+            .unwrap()
+            .iter()
+            .any(|c| c == "provenance"));
+
+        // Re-running init_schema is what happens on the next launch.
+        init_schema(&conn).unwrap();
+        assert!(mcp_servers_columns(&conn)
+            .unwrap()
+            .iter()
+            .any(|c| c == "provenance"));
+
+        insert_server_conn(&conn, &sample_server("srv-legacy")).unwrap();
+        assert_eq!(
+            get_server_conn(&conn, "srv-legacy").unwrap().provenance,
+            ServerProvenance::Registry
+        );
+    }
+
+    /// The edit path replaces connection details while leaving identity and
+    /// provenance alone — a rename must not re-key the row (which would orphan
+    /// its env values) or relabel where it came from.
+    #[test]
+    fn update_server_custom_fields_preserves_identity() {
+        let (_f, conn) = open_test_conn();
+        let mut original = sample_server("srv-edit");
+        original.qualified_name = "custom/original".to_string();
+        original.provenance = ServerProvenance::Custom;
+        insert_server_conn(&conn, &original).unwrap();
+
+        let mut edited = original.clone();
+        edited.display_name = "Renamed".to_string();
+        edited.command = "uvx".to_string();
+        edited.args = vec!["thing".to_string()];
+        edited.transport = Transport::HttpRemote {
+            url: "https://x.io/mcp".to_string(),
+        };
+        edited.command_kind = CommandKind::Python;
+        // Fields the caller must not be able to move.
+        edited.qualified_name = "custom/renamed".to_string();
+        edited.installed_at = 999;
+
+        update_server_custom_fields_conn(&conn, "srv-edit", &edited).unwrap();
+
+        let loaded = get_server_conn(&conn, "srv-edit").unwrap();
+        assert_eq!(loaded.display_name, "Renamed");
+        assert_eq!(loaded.command, "uvx");
+        assert_eq!(loaded.args, vec!["thing".to_string()]);
+        assert_eq!(
+            loaded.transport,
+            Transport::HttpRemote {
+                url: "https://x.io/mcp".to_string()
+            }
+        );
+        assert_eq!(
+            loaded.qualified_name, "custom/original",
+            "identity is immutable"
+        );
+        assert_eq!(
+            loaded.installed_at, 1_700_000_000_000,
+            "install time is immutable"
+        );
+        assert_eq!(loaded.provenance, ServerProvenance::Custom);
     }
 
     #[test]

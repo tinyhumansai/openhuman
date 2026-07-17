@@ -1333,6 +1333,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_CREDENTIALS,
     },
     Capability {
+        id: "channels.mcp_server_custom",
+        name: "Add Custom MCP Servers",
+        domain: "channels",
+        category: CapabilityCategory::Channels,
+        description: "Add an MCP server that no registry lists, by entering its launch command (local stdio) or endpoint URL (HTTP-remote) directly. Env vars and request headers are stored locally and never returned in responses.",
+        how_to: "Skills > MCP > Custom servers > Add",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_CREDENTIALS,
+    },
+    Capability {
         id: "channels.mcp_server_connect",
         name: "Connect / Reconfigure MCP Servers",
         domain: "channels",

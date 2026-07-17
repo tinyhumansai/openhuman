@@ -63,6 +63,7 @@ const INTENTIONAL_ENGLISH = new Set([
   "intelligence.agents.subagentCountOne",
   "intelligence.diagram.skillInstallCommand",
   "intelligence.memoryChunk.detail.embeddingInfo",
+  "mcp.custom.form.argsPlaceholder", // Example CLI args for a custom server launch command
   "mcp.playground.argsLabel",
   "mcp.tab.source.smithery",
   "memorySources.globPatternPlaceholder",

@@ -67,10 +67,10 @@ fn schemas_unknown_function_returns_placeholder() {
 #[test]
 fn all_controller_schemas_covers_expected_methods() {
     let schemas = all_controller_schemas();
-    // 16 mcp_clients (incl. update_env + registry_settings_get/set from #3039,
-    // set_enabled from #3196, and detect_auth + oauth_begin from #3495) +
-    // 6 mcp_setup.
-    assert_eq!(schemas.len(), 22);
+    // 18 mcp_clients (incl. update_env + registry_settings_get/set from #3039,
+    // set_enabled from #3196, detect_auth + oauth_begin from #3495, and
+    // add_custom + update_custom for hand-entered servers) + 6 mcp_setup.
+    assert_eq!(schemas.len(), 24);
     let mcp_clients_count = schemas
         .iter()
         .filter(|s| s.namespace == "mcp_clients")
@@ -79,7 +79,7 @@ fn all_controller_schemas_covers_expected_methods() {
         .iter()
         .filter(|s| s.namespace == "mcp_setup")
         .count();
-    assert_eq!(mcp_clients_count, 16);
+    assert_eq!(mcp_clients_count, 18);
     assert_eq!(mcp_setup_count, 6);
     // The #3039 + #3196 additions are present.
     let functions: Vec<_> = schemas.iter().map(|s| s.function).collect();
@@ -90,12 +90,15 @@ fn all_controller_schemas_covers_expected_methods() {
     // The #3495 OAuth/auth-detection additions are present.
     assert!(functions.contains(&"detect_auth"));
     assert!(functions.contains(&"oauth_begin"));
+    // Custom (hand-entered) server add/edit.
+    assert!(functions.contains(&"add_custom"));
+    assert!(functions.contains(&"update_custom"));
 }
 
 #[test]
 fn all_registered_controllers_has_handler_per_schema() {
     let controllers = all_registered_controllers();
-    assert_eq!(controllers.len(), 22);
+    assert_eq!(controllers.len(), 24);
 }
 
 #[test]
