@@ -177,7 +177,7 @@ async function renderWithFeedback() {
     socket: socketState('connected'),
   });
 
-  const { default: Conversations } = await import('../Conversations');
+  const { default: Conversations } = await import('../../features/conversations/Conversations');
 
   await act(async () => {
     render(
@@ -283,7 +283,7 @@ describe('Conversations — feedback buttons', () => {
       socket: socketState('connected'),
     });
 
-    const { default: Conversations } = await import('../Conversations');
+    const { default: Conversations } = await import('../../features/conversations/Conversations');
     await act(async () => {
       render(
         <Provider store={store}>
@@ -328,7 +328,7 @@ describe('Conversations — feedback buttons', () => {
       socket: socketState('connected'),
     });
 
-    const { default: Conversations } = await import('../Conversations');
+    const { default: Conversations } = await import('../../features/conversations/Conversations');
     await act(async () => {
       render(
         <Provider store={store}>

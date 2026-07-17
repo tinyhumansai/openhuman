@@ -65,7 +65,10 @@ pub fn all_progress_tracing_controller_schemas() -> Vec<ControllerSchema> {
 
 pub fn all_progress_tracing_registered_controllers() -> Vec<RegisteredController> {
     vec![RegisteredController {
-        schema: all_progress_tracing_controller_schemas().into_iter().next().unwrap(),
+        schema: all_progress_tracing_controller_schemas()
+            .into_iter()
+            .next()
+            .unwrap(),
         handler: handle_submit_score,
     }]
 }
@@ -74,7 +77,7 @@ fn handle_submit_score(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let req = serde_json::from_value::<SubmitScoreRequest>(Value::Object(params))
             .map_err(|e| format!("Invalid SubmitScoreRequest: {}", e))?;
-        
+
         let config = Config::load_or_init().await.map_err(|e| e.to_string())?;
         if let Err(e) = langfuse::push_score(
             &config,

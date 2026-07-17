@@ -859,7 +859,8 @@ fn build_internal_only_controllers() -> Vec<GroupedController> {
     push(
         &mut controllers,
         DomainGroup::Agent,
-        crate::openhuman::agent::progress_tracing::rpc::all_progress_tracing_registered_controllers(),
+        crate::openhuman::agent::progress_tracing::rpc::all_progress_tracing_registered_controllers(
+        ),
     );
     controllers
 }

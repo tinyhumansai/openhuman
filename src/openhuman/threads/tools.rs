@@ -447,8 +447,8 @@ impl Tool for ThreadMessageAppendTool {
         // Stamp the Langfuse trace ID onto the message so the frontend feedback
         // buttons can attach scores to the correct trace. No-op when the turn is
         // not being traced (e.g. non-interactive / no share_usage_data).
-        if let Ok(id) = crate::openhuman::agent::progress_tracing::TURN_TRACE_ID
-            .try_with(|id| id.clone())
+        if let Ok(id) =
+            crate::openhuman::agent::progress_tracing::TURN_TRACE_ID.try_with(|id| id.clone())
         {
             if let Some(meta) = req.message.extra_metadata.as_object_mut() {
                 meta.insert("traceId".to_string(), Value::String(id));
