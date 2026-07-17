@@ -193,6 +193,13 @@ async function renderWithFeedback() {
   });
 }
 
+// Asserts the feedback warning is emitted on *some* console.warn call. We cannot
+// use toHaveBeenCalledWith because other components (e.g. ChatFilesChip) emit
+// their own console.warn during render, so the feedback line is never the sole call.
+function expectWarnCalledWith(warnSpy: ReturnType<typeof vi.spyOn>, message: string) {
+  expect(warnSpy.mock.calls.some((call: unknown[]) => call[0] === message)).toBe(true);
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 describe('Conversations — feedback buttons', () => {
@@ -251,6 +258,38 @@ describe('Conversations — feedback buttons', () => {
       method: 'openhuman.observability_submit_score',
       params: { trace_id: 'feedback-thread:backend-trace-123', name: 'user-feedback', value: 0.0 },
     });
+  });
+
+  it('warns when the good-response score submission fails', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockCallCoreRpc.mockRejectedValue(new Error('submit failed'));
+    await renderWithFeedback();
+
+    const thumbsUp = await screen.findByTitle('Good response');
+    await act(async () => {
+      thumbsUp.click();
+    });
+
+    await waitFor(() =>
+      expectWarnCalledWith(warnSpy, '[feedback] failed to submit good-response score')
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('warns when the bad-response score submission fails', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockCallCoreRpc.mockRejectedValue(new Error('submit failed'));
+    await renderWithFeedback();
+
+    const thumbsDown = await screen.findByTitle('Bad response');
+    await act(async () => {
+      thumbsDown.click();
+    });
+
+    await waitFor(() =>
+      expectWarnCalledWith(warnSpy, '[feedback] failed to submit bad-response score')
+    );
+    warnSpy.mockRestore();
   });
 
   it('uses extraMetadata.traceId when available instead of fallback', async () => {
