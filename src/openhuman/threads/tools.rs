@@ -926,7 +926,7 @@ mod tests {
             personality_id: None,
         };
         let created = ops::thread_create_new(req).await.unwrap().value;
-        let thread_id = created.data.id;
+        let thread_id = created.data.unwrap().id;
 
         let tool_args = json!({
             "thread_id": thread_id,
@@ -935,7 +935,8 @@ mod tests {
                 "role": "assistant",
                 "content": "Testing trace",
                 "type": "text",
-                "created_at": chrono::Utc::now().to_rfc3339()
+                "sender": "assistant",
+                "createdAt": chrono::Utc::now().to_rfc3339()
             }
         });
 
@@ -947,11 +948,11 @@ mod tests {
             .expect("tool execution should succeed");
 
         let content_str = match &result.content[0] {
-            crate::openhuman::workflows::types::ToolContent::Text { text } => text,
+            crate::openhuman::tools::ToolContent::Text { text } => text,
             _ => panic!("Expected text content"),
         };
         let outcome: serde_json::Value = serde_json::from_str(content_str).unwrap();
-        let meta = &outcome["extra_metadata"];
+        let meta = &outcome["data"]["extraMetadata"];
         assert_eq!(meta["traceId"].as_str(), Some("trace-abc-123"));
     }
 }
