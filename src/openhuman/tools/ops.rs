@@ -458,8 +458,13 @@ pub fn all_tools_with_runtime(
         // The matching `whatsapp_data_ingest` write-path stays internal-only
         // (registered in `src/core/all.rs::build_internal_only_controllers`)
         // and is intentionally NOT wrapped here.
+        // Gated behind the `channels` feature (the tool types live in the
+        // gated `whatsapp_data` domain).
+        #[cfg(feature = "channels")]
         Box::new(WhatsAppDataListChatsTool),
+        #[cfg(feature = "channels")]
         Box::new(WhatsAppDataListMessagesTool),
+        #[cfg(feature = "channels")]
         Box::new(WhatsAppDataSearchMessagesTool),
         Box::new(ScheduleTool::new(security.clone(), root_config.clone())),
         Box::new(ProxyConfigTool::new(config.clone(), security.clone())),
