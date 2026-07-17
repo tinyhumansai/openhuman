@@ -313,7 +313,6 @@ fn new_event_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-<<<<<<< HEAD
 /// Enrich `trace_ctx` with the run lineage (`run_id` / `parent_run_id` /
 /// `root_run_id`) carried by the run's journalled `observations` (#4657).
 ///
