@@ -154,6 +154,10 @@ pub fn spawn_cron_service() {
 /// `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` is set to `1`/`true`, and returns early
 /// when no channel integrations are configured.
 pub fn spawn_channels_service() {
+    // Compile-time `channels` gate: the body names `channels::start_channels`,
+    // so the whole thing is `#[cfg]`-gated. With the feature off there are no
+    // realtime listeners to spawn.
+    #[cfg(feature = "channels")]
     if std::env::var("OPENHUMAN_DISABLE_CHANNEL_LISTENERS")
         .ok()
         .filter(|s| s == "1" || s.eq_ignore_ascii_case("true"))
@@ -181,6 +185,8 @@ pub fn spawn_channels_service() {
     } else {
         log::info!("[channels] OPENHUMAN_DISABLE_CHANNEL_LISTENERS set — skipping start_channels");
     }
+    #[cfg(not(feature = "channels"))]
+    log::debug!("[channels] channels feature disabled at compile time — not spawning listeners");
 }
 
 /// Starts legacy bootstrap loops that predate [`ServiceSet`].

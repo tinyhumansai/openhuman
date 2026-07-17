@@ -2007,6 +2007,12 @@ fn register_domain_subscribers(
     }
 
     // Channels: inbound dispatch + web-only proactive messaging.
+    // The `plan.channels` runtime guard cannot stand in for the compile-time
+    // gate: the `channels::bus::ChannelInboundSubscriber` +
+    // `channels::proactive` type paths below must still resolve for this to
+    // compile, so the whole block is `#[cfg]`-gated too (mirrors the flows
+    // dual-gate below).
+    #[cfg(feature = "channels")]
     if plan.channels {
         if group_first_time(DomainGroup::Channels) {
             if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
@@ -2027,6 +2033,10 @@ fn register_domain_subscribers(
             "[event_bus] Channels subscribers (inbound + web-only proactive) SKIPPED — Channels domain disabled"
         );
     }
+    #[cfg(not(feature = "channels"))]
+    log::debug!(
+        "[event_bus] Channels subscribers (inbound + web-only proactive) SKIPPED — channels feature disabled at compile time"
+    );
 
     // Flows trigger dispatch (issue B2): maps FlowScheduleTick /
     // ComposioTriggerReceived / WebhookIncomingRequest onto enabled flows and

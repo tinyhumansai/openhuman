@@ -376,6 +376,10 @@ pub async fn init_stores(
     }
     // Initialize the WhatsApp data store so scanner ingest calls
     // can write data without requiring a lazy-init fallback.
+    // Compile-time `channels` gate: the body names `whatsapp_data::global`,
+    // which is compiled out with the feature off, so the block is `#[cfg]`-gated.
+    // The `plan.whatsapp_data` field + its runtime tests stay.
+    #[cfg(feature = "channels")]
     if plan.whatsapp_data {
         match crate::openhuman::whatsapp_data::global::init(cfg.workspace_dir.clone()) {
             Ok(_) => log::info!(
@@ -387,6 +391,10 @@ pub async fn init_stores(
     } else {
         log::debug!("[boot] whatsapp_data::global init SKIPPED — Channels domain disabled");
     }
+    #[cfg(not(feature = "channels"))]
+    log::debug!(
+        "[boot] whatsapp_data::global init SKIPPED — channels feature disabled at compile time"
+    );
     // Seed the people store so people controllers + `people_*`
     // tools can read/write. Without this the process-global stays
     // empty and every call fails with "people store not
