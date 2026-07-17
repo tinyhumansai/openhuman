@@ -4773,6 +4773,9 @@ const en: TranslationMap = {
   'flows.runs.empty': 'No runs yet',
   'flows.runs.sidebarTitle': 'Runs',
   'flows.runs.refresh': 'Refresh runs',
+  // ── Runs rail flyout (Piece 3) ─────────────────────────────────────────
+  'flows.runs.expand': 'Show all runs',
+  'flows.runs.collapse': 'Hide run list',
 
   // ── Phase 5c: prompt-first authoring + canvas copilot ────────────────────
   // The Flows prompt bar (describe a workflow → builder agent proposes it) and
@@ -4849,6 +4852,20 @@ const en: TranslationMap = {
   // The palette tab is labelled "Manual" (build by hand) as the counterpart to
   // the AI "Copilot" tab; the key name stays `legendTab` for the node palette.
   'flows.canvas.legendTab': 'Manual',
+
+  // ── Docked Copilot | Run panel (Workflows UI redesign, Piece 1) ──────────
+  'flows.dock.copilotTab': 'Copilot',
+  'flows.dock.runTab': 'Run',
+  'flows.dock.collapse': 'Collapse panel',
+  'flows.dock.expand': 'Expand panel',
+  'flows.dock.resizeHandle': 'Resize panel',
+  'flows.dock.tablistLabel': 'Workflow panel',
+  'flows.dock.runEmpty': 'Select a run from the rail to see its details.',
+  // ── Node run-status badge (Piece 2) ───────────────────────────────────────
+  'flows.runStatus.success': 'Completed',
+  'flows.runStatus.failed': 'Failed',
+  'flows.runStatus.running': 'Running',
+  'flows.runStatus.notRun': 'Not run',
   'flows.nodeKind.trigger': 'Trigger',
   'flows.nodeKind.agent': 'Agent',
   'flows.nodeKind.tool_call': 'Tool call',

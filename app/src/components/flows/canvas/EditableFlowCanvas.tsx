@@ -45,7 +45,11 @@ import {
   useState,
 } from 'react';
 
-import { FLOW_RUN_NODE_STATUS_CLASS, useFlowRunProgress } from '../../../hooks/useFlowRunProgress';
+import {
+  FLOW_RUN_NODE_STATUS_CLASS,
+  type FlowRunProgressMap,
+  useFlowRunProgress,
+} from '../../../hooks/useFlowRunProgress';
 import { erroredNodeIds } from '../../../lib/flows/flowValidation';
 import {
   createFlowNode,
@@ -145,6 +149,33 @@ export interface EditableFlowCanvasProps {
    */
   activeRunId?: string | null;
   /**
+   * Piece 2 (redesign) — a pre-computed `node_id -> status` map to overlay
+   * INSTEAD of the live `activeRunId` socket feed, for viewing a
+   * selected/completed historical run (built via `stepsToProgressMap` from
+   * its durable `steps[]`). When provided, this wins over the live overlay
+   * derived from `activeRunId` — the host is expected to pass `activeRunId`
+   * as `null`/absent in that case (no point subscribing live to a run that
+   * isn't the one being viewed). `undefined` (the default) means "no
+   * override — use the live `activeRunId` feed as before", so every existing
+   * caller is unaffected.
+   */
+  runProgressOverride?: FlowRunProgressMap;
+  /**
+   * Piece 2 (redesign) — fired when the user clicks a node that currently
+   * carries a run status (live or overridden), so the host can select the
+   * matching step in the Run tab. Never fires for a node with no status —
+   * the plain node-config-drawer click behavior is unaffected either way.
+   */
+  onNodeRunClick?: (nodeId: string) => void;
+  /**
+   * Piece 2 (redesign) — node id to visually focus (a distinct ring,
+   * `flow-node-focused`) when a step is selected from the Run tab. The host
+   * drives the actual pan/zoom via the `focusNode` imperative handle method
+   * below; this prop only controls the highlight, which must survive
+   * independent of any single `fitView` call (e.g. after further panning).
+   */
+  focusedNodeId?: string | null;
+  /**
    * Reports the canvas's live graph on every edit (Phase 5c) so the host can
    * feed the current draft to the copilot as context and diff a proposal
    * against it. Fires with the same serialization Save uses.
@@ -228,9 +259,31 @@ export interface EditableFlowCanvasHandle {
    * do that. Call this after such an out-of-band persist succeeds to sync it.
    */
   clearForcedDirty: () => void;
+  /**
+   * Piece 2 (redesign) — center the viewport on a single node by id (best-
+   * effort no-op if the node isn't in the current graph), for the Run tab's
+   * "select a step -> center the node" direction. Does not itself change
+   * selection/highlight state — pair with the `focusedNodeId` prop for the
+   * visual ring.
+   */
+  focusNode: (nodeId: string) => void;
 }
 
 const EMPTY_ID_SET: ReadonlySet<string> = new Set();
+
+/**
+ * Normalizes a raw live/overridden progress status (`FlowNodeRunStatus` —
+ * `'running' | 'success' | 'error' | (string & {})`, since the live feed's
+ * type stays forward-compatible with unrecognized values) down to the badge's
+ * closed set. `'failed'` collapses onto `'error'` — {@link FLOW_RUN_NODE_STATUS_CLASS}
+ * treats them identically for the ring class, and the badge does the same.
+ * Anything else unrecognized reads as `'not-run'` rather than throwing/blank.
+ */
+function normalizeBadgeStatus(raw: string | undefined): NonNullable<FlowNode['data']['runStatus']> {
+  if (raw === 'running' || raw === 'success') return raw;
+  if (raw === 'error' || raw === 'failed') return 'error';
+  return 'not-run';
+}
 
 function EditableFlowCanvas(
   {
@@ -241,6 +294,9 @@ function EditableFlowCanvas(
     onInvalidConnection,
     onDirtyChange,
     activeRunId = null,
+    runProgressOverride,
+    onNodeRunClick,
+    focusedNodeId = null,
     onGraphChange,
     addedNodeIds = EMPTY_ID_SET,
     removedNodeIds = EMPTY_ID_SET,
@@ -412,7 +468,12 @@ function EditableFlowCanvas(
   // each node id to a live-status ring class. This CLOSES Phase 1's deferred
   // "frontend consumes FlowRunProgress" follow-up. The 2s poller in
   // `useFlowRunPoller` stays as the durable fallback; this just makes it live.
-  const runProgress = useFlowRunProgress(activeRunId);
+  const liveRunProgress = useFlowRunProgress(activeRunId);
+  // Piece 2 (redesign): a host-supplied override (a selected/completed
+  // historical run's `stepsToProgressMap`) wins over the live feed — the host
+  // only ever supplies one or the other at a time (see `runProgressOverride`'s
+  // doc comment above).
+  const runProgress = runProgressOverride ?? liveRunProgress;
 
   // Derive the render array (never stored in draft, so it can't dirty the graph):
   // tag errored nodes with the `flow-node-error` class the canvas CSS rings, and
@@ -420,7 +481,7 @@ function EditableFlowCanvas(
   const hasRunOverlay = Object.keys(runProgress).length > 0;
   const hasDiffOverlay = addedNodeIds.size > 0 || removedNodeIds.size > 0;
   const displayNodes = useMemo(() => {
-    if (erroredIds.size === 0 && !hasRunOverlay && !hasDiffOverlay) return nodes;
+    if (erroredIds.size === 0 && !hasRunOverlay && !hasDiffOverlay && !focusedNodeId) return nodes;
     return nodes.map(n => {
       const extra: string[] = [];
       if (erroredIds.has(n.id)) extra.push('flow-node-error');
@@ -429,12 +490,31 @@ function EditableFlowCanvas(
       // Copilot diff overlay (Phase 5c): sage ring on added, ghost on removed.
       if (addedNodeIds.has(n.id)) extra.push('flow-node-added');
       if (removedNodeIds.has(n.id)) extra.push('flow-node-removed');
-      if (extra.length === 0) return n;
-      return { ...n, className: `${n.className ?? ''} ${extra.join(' ')}`.trim() };
+      // Piece 2 (redesign): a step selected in the Run tab rings its node.
+      if (focusedNodeId === n.id) extra.push('flow-node-focused');
+      const withClassName =
+        extra.length === 0
+          ? n
+          : { ...n, className: `${n.className ?? ''} ${extra.join(' ')}`.trim() };
+      // Piece 2 (redesign): while a run is being viewed (live or overridden),
+      // every node gets a badge status — 'not-run' for one with no step yet,
+      // so "hasn't executed" is as visible as "done"/"failed".
+      if (!hasRunOverlay) return withClassName;
+      const status = normalizeBadgeStatus(runProgress[n.id]);
+      return { ...withClassName, data: { ...withClassName.data, runStatus: status } };
     });
     // `runProgress` is a stable-enough dependency (new object only on a real
     // status change, see the hook's setState guard).
-  }, [nodes, erroredIds, runProgress, hasRunOverlay, hasDiffOverlay, addedNodeIds, removedNodeIds]);
+  }, [
+    nodes,
+    erroredIds,
+    runProgress,
+    hasRunOverlay,
+    hasDiffOverlay,
+    addedNodeIds,
+    removedNodeIds,
+    focusedNodeId,
+  ]);
 
   // Load the secret-free credential refs once for the node-config credential
   // picker (http_request / tool_call). Guarded: outside Tauri (or if the RPC
@@ -651,6 +731,17 @@ function EditableFlowCanvas(
         setBaseline({ nodes, edges });
         setForcedDirty(false);
       },
+      focusNode: (nodeId: string) => {
+        const instance = rfRef.current;
+        if (!instance) return;
+        const target = instance.getNode(nodeId);
+        if (!target) {
+          log('focusNode: id=%s not found in current graph — no-op', nodeId);
+          return;
+        }
+        log('focusNode: id=%s', nodeId);
+        void instance.fitView({ nodes: [{ id: nodeId }], duration: 400, maxZoom: 1.2 });
+      },
     }),
     [dirty, hasErrors, saving, saveDisabled, handleSave, handleDiscard, nodes, edges]
   );
@@ -672,10 +763,20 @@ function EditableFlowCanvas(
   // fire `onNodeClick` for a drag (dragging emits drag events instead), so
   // grabbing a node to move it no longer pops the drawer open — the fix for
   // "dragging the card opens the sidebar".
-  const onNodeClick = useCallback((_event: React.MouseEvent, node: FlowNode) => {
-    log('nodeClick: id=%s — opening config', node.id);
-    setConfigNodeId(node.id);
-  }, []);
+  const onNodeClick = useCallback(
+    (_event: React.MouseEvent, node: FlowNode) => {
+      log('nodeClick: id=%s — opening config', node.id);
+      setConfigNodeId(node.id);
+      // Piece 2 (redesign): a node carrying a run status also selects its
+      // step in the Run tab. Never fires for a node with no status (no run
+      // is being viewed, or this node hasn't executed in the one that is).
+      if (runProgress[node.id] !== undefined) {
+        log('nodeClick: id=%s has run status=%s — notifying host', node.id, runProgress[node.id]);
+        onNodeRunClick?.(node.id);
+      }
+    },
+    [runProgress, onNodeRunClick]
+  );
 
   const onSelectionChange = useCallback(
     ({ nodes: selNodes, edges: selEdges }: { nodes: FlowNode[]; edges: FlowEdge[] }) => {

@@ -9,7 +9,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useFlowRunProgress } from './useFlowRunProgress';
+import { stepsToProgressMap, useFlowRunProgress } from './useFlowRunProgress';
 
 const handlers = vi.hoisted(() => new Map<string, Set<(data: unknown) => void>>());
 const on = vi.hoisted(() =>
@@ -87,5 +87,38 @@ describe('useFlowRunProgress', () => {
     unmount();
     expect(off).toHaveBeenCalledWith('flow:run_progress', expect.any(Function));
     expect(off).toHaveBeenCalledWith('flow_run_progress', expect.any(Function));
+  });
+});
+
+// -----------------------------------------------------------------------------
+// stepsToProgressMap (Piece 2 — inline node run-status on the canvas): a
+// selected/completed durable run must overlay the canvas identically to a
+// live one, so this must produce the same shape `useFlowRunProgress` does.
+// -----------------------------------------------------------------------------
+describe('stepsToProgressMap', () => {
+  it('maps a successful step to success', () => {
+    expect(stepsToProgressMap([{ node_id: 'a', status: 'success' }])).toEqual({ a: 'success' });
+  });
+
+  it('maps a failed step to error', () => {
+    expect(stepsToProgressMap([{ node_id: 'a', status: 'error' }])).toEqual({ a: 'error' });
+  });
+
+  it('treats a step with no observed status (e.g. a reconstructed trigger) as success', () => {
+    expect(stepsToProgressMap([{ node_id: 't' }])).toEqual({ t: 'success' });
+  });
+
+  it('returns an empty map for no steps', () => {
+    expect(stepsToProgressMap([])).toEqual({});
+  });
+
+  it('keeps the LAST outcome when a node is visited more than once (loop)', () => {
+    expect(
+      stepsToProgressMap([
+        { node_id: 'a', status: 'success' },
+        { node_id: 'b', status: 'success' },
+        { node_id: 'a', status: 'error' },
+      ])
+    ).toEqual({ a: 'error', b: 'success' });
   });
 });

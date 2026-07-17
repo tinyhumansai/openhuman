@@ -4102,6 +4102,9 @@ const messages: TranslationMap = {
   'flowRuns.inspector.diagnosticResolvedNull': 'تم حله إلى null',
   'flows.runs.sidebarTitle': 'التشغيلات',
   'flows.runs.refresh': 'تحديث التشغيلات',
+  // -- Runs rail flyout (Piece 3) --
+  'flows.runs.expand': 'إظهار كل التشغيلات',
+  'flows.runs.collapse': 'إخفاء قائمة التشغيلات',
   'flows.palette.appAction': 'إجراء تطبيق',
   'flows.palette.ohTool': 'أداة',
   'flows.editor.deleteNode': 'حذف',
@@ -7144,6 +7147,19 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': 'اللوحة الجانبية',
   'flows.canvas.legendTab': 'يدوي',
 
+  // -- Docked Copilot | Run panel (Workflows UI redesign, Piece 1) --
+  'flows.dock.copilotTab': 'المساعد',
+  'flows.dock.runTab': 'تشغيل',
+  'flows.dock.collapse': 'طي اللوحة',
+  'flows.dock.expand': 'توسيع اللوحة',
+  'flows.dock.resizeHandle': 'تغيير حجم اللوحة',
+  'flows.dock.tablistLabel': 'لوحة سير العمل',
+  'flows.dock.runEmpty': 'اختر تشغيلاً من الشريط لعرض تفاصيله.',
+  // -- Node run-status badge (Piece 2) --
+  'flows.runStatus.success': 'مكتمل',
+  'flows.runStatus.failed': 'فشل',
+  'flows.runStatus.running': 'قيد التشغيل',
+  'flows.runStatus.notRun': 'لم يتم التشغيل',
   // Emergency stop (#4255)
   'safety.emergencyStop': 'إيقاف الطوارئ',
   'safety.stopFailed': 'تعذّر إيقاف الأتمتة. أعد المحاولة.',

@@ -27,6 +27,11 @@ import type {
   EditorSaveMeta,
 } from '../components/flows/canvas/EditableFlowCanvas';
 import FlowCanvas from '../components/flows/canvas/FlowCanvas';
+import FlowDockPanel, { type FlowDockTab } from '../components/flows/FlowDockPanel';
+import {
+  type FlowRepairRequest,
+  FlowRunInspectorPanel,
+} from '../components/flows/FlowRunInspectorDrawer';
 import FlowRunsSidebar from '../components/flows/FlowRunsSidebar';
 import WorkflowCopilotPanel, {
   type RepairPromptContext,
@@ -39,12 +44,20 @@ import { ToastContainer } from '../components/intelligence/Toast';
 import PanelPage from '../components/layout/PanelPage';
 import Button from '../components/ui/Button';
 import { CenteredLoadingState, ErrorBanner } from '../components/ui/LoadingState';
+import { stepsToProgressMap } from '../hooks/useFlowRunProgress';
 import { asFlowCanvasDraftState } from '../lib/flows/canvasDraft';
 import { workflowGraphToXyflow } from '../lib/flows/graphAdapter';
 import { buildPreviewGraph, diffGraphs } from '../lib/flows/graphDiff';
 import type { WorkflowGraph } from '../lib/flows/types';
 import { useT } from '../lib/i18n/I18nContext';
-import { createFlow, type Flow, getFlow, runFlow, updateFlow } from '../services/api/flowsApi';
+import {
+  createFlow,
+  type Flow,
+  type FlowRun,
+  getFlow,
+  runFlow,
+  updateFlow,
+} from '../services/api/flowsApi';
 import type { WorkflowProposal } from '../store/chatRuntimeSlice';
 import type { ToastNotification } from '../types/intelligence';
 
@@ -309,6 +322,21 @@ function FlowEditor({
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+
+  // ── Runs rail + docked Run tab (Workflows UI redesign, Pieces 1-3) ────────
+  // `selectedRunId` used to live inside `FlowRunsSidebar`; lifted here (Piece
+  // 1) so the rail and the dock's Run tab share it. Selecting a run from the
+  // rail shows it in the Run tab; `viewedRun` is reported up by
+  // `FlowRunInspectorPanel` (which already polls it) so the canvas can derive
+  // an identical overlay for a selected/completed historical run via
+  // `stepsToProgressMap` (Piece 2), without a second poll subscription.
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [viewedRun, setViewedRun] = useState<FlowRun | null>(null);
+  // The node id whose step is centered/highlighted, synced both ways between
+  // the canvas (a click on a node with a run status) and the Run tab (a click
+  // on a step row) — see `handleNodeRunClick`/`handleSelectStep` below.
+  const [selectedStepNodeId, setSelectedStepNodeId] = useState<string | null>(null);
+  const [dockTab, setDockTab] = useState<FlowDockTab>('copilot');
 
   const { flowId, graph, requireApproval } = editorFlow;
   // Draft (unsaved) canvases have no persisted id yet; Save creates the flow
@@ -763,6 +791,84 @@ function FlowEditor({
     }
   }, [flowId]);
 
+  // Selecting a run from the rail (Piece 3) shows it in the dock's Run tab
+  // (Piece 1) — opening the dock (in case it was collapsed/on Legend) and
+  // switching to the Run tab. Resets any previously-selected step, which
+  // belonged to whatever run was viewed before.
+  const handleSelectRun = useCallback((runId: string) => {
+    log('select run from rail: %s', runId);
+    setSelectedRunId(runId);
+    setSelectedStepNodeId(null);
+    setSidePanel('copilot');
+    setDockTab('run');
+  }, []);
+
+  // "Fix with agent" (Phase 5c, moved here from `FlowRunsSidebar` — it no
+  // longer owns run selection/inspection) — re-navigates to this SAME
+  // `/flows/:id` route with a fresh `copilotRepair` state so the copilot
+  // panel (still mounted, see `FlowDockPanel`'s doc comment) picks it up via
+  // the `locationKey`-keyed remount below, same mechanism as before.
+  const handleFixWithAgent = useCallback(
+    (request: FlowRepairRequest) => {
+      log('fix with agent: flow=%s run=%s', request.flowId, request.runId);
+      setSelectedRunId(null);
+      navigate(`/flows/${request.flowId}`, {
+        replace: true,
+        state: {
+          copilotRepair: {
+            runId: request.runId,
+            error: request.error,
+            failingNodeIds: request.failingNodeIds,
+          },
+        },
+      });
+    },
+    [navigate]
+  );
+
+  // Run tab -> canvas: centering/highlighting the node a selected step
+  // belongs to (Piece 2).
+  const handleSelectStep = useCallback((_index: number, nodeId: string) => {
+    log('select step: node=%s', nodeId);
+    setSelectedStepNodeId(nodeId);
+    canvasRef.current?.focusNode(nodeId);
+  }, []);
+
+  // Canvas -> Run tab: clicking a node that currently carries a run status
+  // (live or historical) reveals it in the Run tab (Piece 2). If no run is
+  // being viewed yet (rail untouched, nothing selected), falls back to the
+  // live `activeRunId` so a click on a still-running node opens straight to
+  // it.
+  const handleNodeRunClick = useCallback(
+    (nodeId: string) => {
+      const targetRunId = selectedRunId ?? activeRunId;
+      if (!targetRunId) return;
+      log('node run click: node=%s run=%s', nodeId, targetRunId);
+      if (selectedRunId !== targetRunId) setSelectedRunId(targetRunId);
+      setSelectedStepNodeId(nodeId);
+      setSidePanel('copilot');
+      setDockTab('run');
+    },
+    [selectedRunId, activeRunId]
+  );
+
+  // Piece 2: the canvas overlays LIVE progress for `activeRunId` by default
+  // (unchanged behavior when the rail hasn't been touched). Once a DIFFERENT,
+  // historical run is selected from the rail, switch the canvas to that run's
+  // durable `stepsToProgressMap` instead — and stop the live subscription for
+  // it (there's nothing "live" about a run that isn't the active one).
+  const viewingHistoricalRun = selectedRunId !== null && selectedRunId !== activeRunId;
+  const canvasActiveRunId = viewingHistoricalRun ? null : activeRunId;
+  const runProgressOverride = useMemo(
+    () => (viewingHistoricalRun && viewedRun ? stepsToProgressMap(viewedRun.steps) : undefined),
+    [viewingHistoricalRun, viewedRun]
+  );
+  const selectedStepIndex = useMemo(() => {
+    if (!viewedRun || !selectedStepNodeId) return null;
+    const idx = viewedRun.steps.findIndex(s => s.node_id === selectedStepNodeId);
+    return idx >= 0 ? idx : null;
+  }, [viewedRun, selectedStepNodeId]);
+
   // Return to wherever the user came from rather than always the list. React
   // Router stamps the initial history entry with key 'default', so when this
   // page was the first thing loaded (deep link / fresh load) there's nothing to
@@ -937,12 +1043,17 @@ function FlowEditor({
       action={headerActions}
       contentClassName="h-full p-0">
       <div className="flex h-full w-full">
-        {/* Run history + "Fix with agent" as an inline left rail (persisted flows
-            only). The app sidebar is hidden on this route (chromeless), so this
-            can't use the shell `SidebarContent` slot — render it in-page. */}
+        {/* Runs rail (Piece 3) + "Fix with agent" reachable via a rail dot's
+            selection landing in the docked Run tab (persisted flows only). The
+            app sidebar is hidden on this route (chromeless), so this can't use
+            the shell `SidebarContent` slot — render it in-page. */}
         {!isDraft && flowId && (
-          <div className="hidden h-full w-60 flex-shrink-0 border-r border-line lg:flex">
-            <FlowRunsSidebar flowId={flowId} />
+          <div className="hidden h-full flex-shrink-0 lg:flex">
+            <FlowRunsSidebar
+              flowId={flowId}
+              selectedRunId={selectedRunId}
+              onSelectRun={handleSelectRun}
+            />
           </div>
         )}
         <div className={`relative h-full flex-1 ${hideGraph ? 'hidden' : ''}`}>
@@ -956,7 +1067,10 @@ function FlowEditor({
             onSave={onCanvasSave}
             onDirtyChange={setDirty}
             onSaveMetaChange={setSaveMeta}
-            activeRunId={activeRunId}
+            activeRunId={canvasActiveRunId}
+            runProgressOverride={runProgressOverride}
+            onNodeRunClick={handleNodeRunClick}
+            focusedNodeId={selectedStepNodeId}
             onGraphChange={handleGraphChange}
             addedNodeIds={preview?.addedNodeIds}
             removedNodeIds={preview?.removedNodeIds}
@@ -1015,29 +1129,66 @@ function FlowEditor({
         </div>
 
         {copilotOpen && (
-          <WorkflowCopilotPanel
-            // Stable ('copilot') across manual open/close and build-seed
-            // navigations (unaffected — those always land on a fresh
-            // `FlowEditor` mount already, see `locationKey`'s doc comment).
-            // Repair seeds fold in `locationKey` so a same-route "Fix with
-            // agent" click (no `FlowEditor` remount) still forces a fresh
-            // panel mount, resetting the once-per-mount `repairSentRef` guard
-            // so the repair turn actually (re)fires (issue B22).
-            key={initialCopilotSeed ? `copilot-repair-${locationKey}` : 'copilot'}
-            graph={preview?.base ?? draftGraph}
-            flowId={flowId}
-            onProposal={handleProposal}
-            onAccept={handleAcceptProposal}
-            onReject={handleRejectProposal}
-            onClose={() => setSidePanel(null)}
-            repairSeed={copilotRepairSeed}
-            buildSeed={initialBuildSeed}
-            onBuildSeedConsumed={onBuildSeedConsumed}
-            prefillSeed={initialPrefillSeed}
-            onPrefillSeedConsumed={onPrefillSeedConsumed}
-            seedThreadId={copilotThreadId}
-            onThreadIdChange={handleCopilotThreadId}
+          <FlowDockPanel
+            activeTab={dockTab}
+            onTabChange={setDockTab}
+            onCollapse={() => setSidePanel(null)}
+            runTabDisabled={isDraft}
             fullWidth={hideGraph}
+            copilotContent={
+              <WorkflowCopilotPanel
+                // Stable ('copilot') across manual open/close and build-seed
+                // navigations (unaffected — those always land on a fresh
+                // `FlowEditor` mount already, see `locationKey`'s doc comment).
+                // Repair seeds fold in `locationKey` so a same-route "Fix with
+                // agent" click (no `FlowEditor` remount) still forces a fresh
+                // panel mount, resetting the once-per-mount `repairSentRef`
+                // guard so the repair turn actually (re)fires (issue B22).
+                //
+                // CRITICAL: this element is passed down unconditionally
+                // regardless of `dockTab` — `FlowDockPanel` only toggles
+                // `display:none` on the inactive tab, never unmounts this —
+                // so the agentic-task panel's sticky expand (#4942) and the
+                // sub-agent `turnActive` flicker fix (#5008/#5010) survive
+                // switching to the Run tab and back.
+                key={initialCopilotSeed ? `copilot-repair-${locationKey}` : 'copilot'}
+                graph={preview?.base ?? draftGraph}
+                flowId={flowId}
+                onProposal={handleProposal}
+                onAccept={handleAcceptProposal}
+                onReject={handleRejectProposal}
+                onClose={() => setSidePanel(null)}
+                repairSeed={copilotRepairSeed}
+                buildSeed={initialBuildSeed}
+                onBuildSeedConsumed={onBuildSeedConsumed}
+                prefillSeed={initialPrefillSeed}
+                onPrefillSeedConsumed={onPrefillSeedConsumed}
+                seedThreadId={copilotThreadId}
+                onThreadIdChange={handleCopilotThreadId}
+                // The dock now owns overall width/border chrome; always fill
+                // it (no internal `max-w-sm` cap) rather than fighting the
+                // dock's own resize.
+                fullWidth
+              />
+            }
+            runContent={
+              !isDraft && (
+                <FlowRunInspectorPanel
+                  runId={selectedRunId}
+                  onFixWithAgent={handleFixWithAgent}
+                  onRunChange={setViewedRun}
+                  selectedStepIndex={selectedStepIndex}
+                  onSelectStep={handleSelectStep}
+                  emptyState={
+                    <div
+                      className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center"
+                      data-testid="flow-dock-run-empty">
+                      <p className="text-xs text-content-muted">{t('flows.dock.runEmpty')}</p>
+                    </div>
+                  }
+                />
+              )
+            }
           />
         )}
 

@@ -4205,6 +4205,9 @@ const messages: TranslationMap = {
   'flowRuns.inspector.diagnosticResolvedNull': 'null হিসেবে সমাধান হয়েছে',
   'flows.runs.sidebarTitle': 'রান',
   'flows.runs.refresh': 'রান রিফ্রেশ করুন',
+  // -- Runs rail flyout (Piece 3) --
+  'flows.runs.expand': 'সব রান দেখান',
+  'flows.runs.collapse': 'রান তালিকা লুকান',
   'flows.palette.appAction': 'অ্যাপ অ্যাকশন',
   'flows.palette.ohTool': 'টুল',
   'flows.editor.deleteNode': 'মুছুন',
@@ -7312,6 +7315,19 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': 'সাইড প্যানেল',
   'flows.canvas.legendTab': 'ম্যানুয়াল',
 
+  // -- Docked Copilot | Run panel (Workflows UI redesign, Piece 1) --
+  'flows.dock.copilotTab': 'কো-পাইলট',
+  'flows.dock.runTab': 'চালান',
+  'flows.dock.collapse': 'প্যানেল সংকুচিত করুন',
+  'flows.dock.expand': 'প্যানেল প্রসারিত করুন',
+  'flows.dock.resizeHandle': 'প্যানেলের আকার পরিবর্তন করুন',
+  'flows.dock.tablistLabel': 'ওয়ার্কফ্লো প্যানেল',
+  'flows.dock.runEmpty': 'বিস্তারিত দেখতে রেল থেকে একটি রান নির্বাচন করুন।',
+  // -- Node run-status badge (Piece 2) --
+  'flows.runStatus.success': 'সম্পন্ন',
+  'flows.runStatus.failed': 'ব্যর্থ',
+  'flows.runStatus.running': 'চলছে',
+  'flows.runStatus.notRun': 'চালানো হয়নি',
   // Emergency stop (#4255)
   'safety.emergencyStop': 'জরুরি বন্ধ',
   'safety.stopFailed': 'অটোমেশন থামানো যায়নি। আবার চেষ্টা করুন।',

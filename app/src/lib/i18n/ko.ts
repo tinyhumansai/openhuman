@@ -4155,6 +4155,9 @@ const messages: TranslationMap = {
   'flowRuns.inspector.diagnosticResolvedNull': 'null로 확인됨',
   'flows.runs.sidebarTitle': '실행',
   'flows.runs.refresh': '실행 새로고침',
+  // -- Runs rail flyout (Piece 3) --
+  'flows.runs.expand': '모든 실행 표시',
+  'flows.runs.collapse': '실행 목록 숨기기',
   'flows.palette.appAction': '앱 작업',
   'flows.palette.ohTool': '도구',
   'flows.editor.deleteNode': '삭제',
@@ -7224,6 +7227,19 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': '사이드 패널',
   'flows.canvas.legendTab': '수동',
 
+  // -- Docked Copilot | Run panel (Workflows UI redesign, Piece 1) --
+  'flows.dock.copilotTab': '코파일럿',
+  'flows.dock.runTab': '실행',
+  'flows.dock.collapse': '패널 접기',
+  'flows.dock.expand': '패널 펼치기',
+  'flows.dock.resizeHandle': '패널 크기 조절',
+  'flows.dock.tablistLabel': '워크플로 패널',
+  'flows.dock.runEmpty': '레일에서 실행을 선택하면 세부 정보를 볼 수 있습니다.',
+  // -- Node run-status badge (Piece 2) --
+  'flows.runStatus.success': '완료됨',
+  'flows.runStatus.failed': '실패',
+  'flows.runStatus.running': '실행 중',
+  'flows.runStatus.notRun': '실행 안 됨',
   // Emergency stop (#4255)
   'safety.emergencyStop': '긴급 정지',
   'safety.stopFailed': '자동화를 중지할 수 없습니다. 다시 시도하세요.',

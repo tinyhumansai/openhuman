@@ -1,12 +1,16 @@
 /**
- * FlowRunInspectorDrawer (issue B3b)
- * ----------------------------------
+ * FlowRunInspectorDrawer / FlowRunInspectorPanel (issue B3b, extracted for the
+ * Workflows UI redesign's docked Run tab)
+ * ----------------------------------------------------------------------------
  *
- * Right-side drawer showing a single durable `tinyflows` run's status + step
- * timeline, opened from the "View run" action on {@link FlowApprovalCard}.
- * Drawer chrome mirrors `features/conversations/components/SubagentDrawer.tsx`
- * (fixed overlay + backdrop-click-to-close + Escape-to-close) so it renders
- * as a fixed overlay regardless of where the parent mounts it in the DOM.
+ * {@link FlowRunInspectorPanel} is a single durable `tinyflows` run's status +
+ * step timeline — the reusable BODY, with no positioning/backdrop opinion of
+ * its own. {@link FlowRunInspectorDrawer} wraps it as a right-side fixed
+ * overlay drawer (backdrop-click-to-close + Escape-to-close, chrome mirroring
+ * `features/conversations/components/SubagentDrawer.tsx`) — used by
+ * `FlowApprovalCard`'s "View run" action and the runs-list page's
+ * {@link ../flows/FlowRunsDrawer}. The Workflows UI redesign's `FlowDockPanel`
+ * Run tab instead renders the Panel directly, inline, with no overlay at all.
  *
  * Data comes from {@link useFlowRunPoller}, which polls
  * `openhuman.flows_get_run` every 2s until the run reaches a terminal status
@@ -22,6 +26,7 @@
  * dots, not progress bars (project rule).
  */
 import debug from 'debug';
+import { type ReactNode, useEffect } from 'react';
 
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useFlowPendingApprovals } from '../../hooks/useFlowPendingApprovals';
@@ -30,7 +35,7 @@ import { type FlowNodeRunStatus, useFlowRunProgress } from '../../hooks/useFlowR
 import { type FlowRunItem, normalizeItems } from '../../lib/flows/runItems';
 import { summarizeStep } from '../../lib/flows/runStepSummary';
 import { useT } from '../../lib/i18n/I18nContext';
-import type { FlowRunStatus, FlowRunStep } from '../../services/api/flowsApi';
+import type { FlowRun, FlowRunStatus, FlowRunStep } from '../../services/api/flowsApi';
 import Button from '../ui/Button';
 import { FlowRunPendingApprovalCard } from './FlowRunPendingApprovalCard';
 import { RunItemDataBrowser } from './RunItemDataBrowser';
@@ -140,6 +145,8 @@ function StepRow({
   index,
   liveStatus,
   inputItems,
+  isSelected = false,
+  onSelect,
 }: {
   step: FlowRunStep;
   index: number;
@@ -150,6 +157,17 @@ function StepRow({
    * Omitted for the first step, which has no upstream producer here.
    */
   inputItems?: FlowRunItem[];
+  /**
+   * Piece 2 (redesign) — true when this step is the one the canvas currently
+   * has centered/highlighted (set by a node click). Purely visual.
+   */
+  isSelected?: boolean;
+  /**
+   * Piece 2 (redesign) — fired on click with this step's node id, so the host
+   * can center/highlight the matching canvas node. Omitted (no click
+   * affordance at all) outside the dock's Run tab.
+   */
+  onSelect?: () => void;
 }) {
   const { t } = useT();
   const items = normalizeItems(step.output);
@@ -165,7 +183,24 @@ function StepRow({
   return (
     <li
       data-testid={`flow-run-step-${index}`}
-      className="rounded-lg border border-line bg-surface-muted p-2.5 text-xs">
+      role={onSelect ? 'button' : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+      onClick={onSelect}
+      onKeyDown={
+        onSelect
+          ? event => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onSelect();
+              }
+            }
+          : undefined
+      }
+      className={`rounded-lg border p-2.5 text-xs ${
+        isSelected
+          ? 'border-primary-400 bg-primary-50 dark:border-primary-500/50 dark:bg-primary-500/10'
+          : 'border-line bg-surface-muted'
+      } ${onSelect ? 'cursor-pointer hover:border-primary-300' : ''}`}>
       <div className="flex flex-wrap items-center gap-1.5">
         <span
           data-testid={`flow-run-step-dot-${index}`}
@@ -230,24 +265,59 @@ function StepRow({
   );
 }
 
-interface Props {
-  /** Run id (== thread_id) to inspect. Renders `null` (nothing) when absent. */
+export interface FlowRunInspectorPanelProps {
+  /** Run id (== thread_id) to inspect. Renders `emptyState` (or `null`) when absent. */
   runId: string | null;
-  onClose: () => void;
   /**
    * "Fix with agent" (Phase 5c) — when provided and the run failed, a repair
    * action surfaces that hands the run context up so the host can open the
    * canvas copilot preloaded. Omitted where there's no copilot to route to.
    */
   onFixWithAgent?: (request: FlowRepairRequest) => void;
+  /**
+   * Renders a close (✕) button in the header when provided (the
+   * `FlowRunInspectorDrawer` overlay use). Omitted for the dock's inline Run
+   * tab, which has no "close" concept of its own — switching tabs or picking
+   * a different run is how you leave it.
+   */
+  onClose?: () => void;
+  /**
+   * Piece 2 (redesign) — reports the fetched run (or `null`) up on every
+   * poll tick, so the host can derive a canvas overlay (`stepsToProgressMap`)
+   * from the SAME data this panel is already polling, without a second
+   * subscription.
+   */
+  onRunChange?: (run: FlowRun | null) => void;
+  /**
+   * Piece 2 (redesign) — step index to highlight (set by the host when a
+   * canvas node with a run status is clicked). `null`/absent highlights none.
+   */
+  selectedStepIndex?: number | null;
+  /**
+   * Piece 2 (redesign) — fired when a step row is clicked, with its index and
+   * node id, so the host can center/highlight the matching canvas node. Steps
+   * render as plain (non-interactive) rows when omitted.
+   */
+  onSelectStep?: (index: number, nodeId: string) => void;
+  /** Rendered instead of the run view when `runId` is `null` (dock idle state). `null` (nothing) by default. */
+  emptyState?: ReactNode;
 }
 
 /**
- * Renders `null` when `runId` is `null` so the parent can mount this
- * unconditionally and just flip `runId` (same convention as
- * `SubagentDrawer`).
+ * The run inspector's reusable body: header (title/status/ids) + timing +
+ * error banner + "Fix with agent" + pending approvals + step timeline. No
+ * positioning/backdrop/close-key handling of its own — see
+ * {@link FlowRunInspectorDrawer} for the fixed-overlay wrapper.
  */
-export function FlowRunInspectorDrawer({ runId, onClose, onFixWithAgent }: Props) {
+export function FlowRunInspectorPanel({
+  runId,
+  onFixWithAgent,
+  onClose,
+  onRunChange,
+  selectedStepIndex = null,
+  onSelectStep,
+  emptyState = null,
+}: FlowRunInspectorPanelProps) {
   const { t } = useT();
   const { run, loading, error } = useFlowRunPoller(runId);
   // Live per-node status overlay (Phase 3e): the socket feed makes the poller's
@@ -266,6 +336,13 @@ export function FlowRunInspectorDrawer({ runId, onClose, onFixWithAgent }: Props
     isActiveRun && run ? run.flow_id : null,
     isActiveRun && run ? run.thread_id : null
   );
+
+  // Piece 2 (redesign): report the fetched run up on every change so the host
+  // can derive a canvas overlay from the same poll this panel already runs.
+  useEffect(() => {
+    onRunChange?.(run ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run]);
 
   const handleFixWithAgent = () => {
     if (!run || !onFixWithAgent) return;
@@ -287,15 +364,213 @@ export function FlowRunInspectorDrawer({ runId, onClose, onFixWithAgent }: Props
     });
   };
 
+  if (!runId) return <>{emptyState}</>;
+
+  const startedAt = formatTimestamp(run?.started_at);
+  const finishedAt = formatTimestamp(run?.finished_at);
+
+  return (
+    <div className="flex h-full flex-col" data-testid="flow-run-inspector-panel">
+      {/* Header */}
+      <header className="flex items-start gap-2.5 border-b border-line px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate font-semibold text-content">
+              {t('flowRuns.inspector.title')}
+            </span>
+            {run && (
+              <span
+                data-testid="flow-run-status-dot"
+                className={`h-2 w-2 shrink-0 rounded-full ${FLOW_RUN_STATUS_DOT[run.status]}`}
+              />
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-content-muted">
+            {run && (
+              <span
+                data-testid="flow-run-status-pill"
+                className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${FLOW_RUN_STATUS_ACCENT[run.status]}`}>
+                {t(FLOW_RUN_STATUS_KEY[run.status])}
+              </span>
+            )}
+            {/* Internal ids are dev/debug info, not primary-view content (issue
+                B20) — shown short-form only, full value on hover via `title`,
+                matching `FlowRunsDrawer`'s row-level `run.id.slice(0, 8)`. */}
+            {run && (
+              <span className="truncate font-mono" title={run.flow_id}>
+                {run.flow_id.slice(0, 8)}
+              </span>
+            )}
+            {run && (
+              <span className="truncate font-mono" title={run.thread_id}>
+                {run.thread_id.slice(0, 8)}
+              </span>
+            )}
+          </div>
+        </div>
+        {onClose && (
+          <button
+            type="button"
+            data-testid="flow-run-inspector-close"
+            onClick={onClose}
+            aria-label={t('conversations.subagent.close')}
+            className="shrink-0 rounded-full p-1.5 text-content-faint hover:bg-surface-hover hover:text-content-secondary">
+            ✕
+          </button>
+        )}
+      </header>
+
+      <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+        {loading && !run && (
+          <div
+            className="flex items-center gap-2 py-8 text-content-faint"
+            data-testid="flow-run-inspector-loading">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-ocean-500 border-t-transparent" />
+            <span className="text-sm">{t('flowRuns.inspector.loading')}</span>
+          </div>
+        )}
+
+        {error && (
+          <div
+            role="alert"
+            data-testid="flow-run-inspector-error"
+            className="rounded-xl border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
+            {t('flowRuns.inspector.loadError')}: {error}
+          </div>
+        )}
+
+        {run && (
+          <>
+            {/* Timing */}
+            <div className="text-xs text-content-muted" data-testid="flow-run-timing">
+              {startedAt && (
+                <div>
+                  {t('flowRuns.inspector.startedAt')}: {startedAt}
+                </div>
+              )}
+              {finishedAt ? (
+                <div>
+                  {t('flowRuns.inspector.finishedAt')}: {finishedAt}
+                </div>
+              ) : run.status === 'running' || run.status === 'pending_approval' ? (
+                <div className="animate-pulse">{t('flowRuns.inspector.running')}</div>
+              ) : null}
+            </div>
+
+            {/* Error banner */}
+            {run.error && (
+              <div
+                role="alert"
+                data-testid="flow-run-error-banner"
+                className="rounded-xl border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
+                {t('flowRuns.inspector.error')}: {run.error}
+              </div>
+            )}
+
+            {/* Repair entry point (Phase 5c): open the canvas copilot preloaded
+                with this failed run so the workflow builder can propose a fix. */}
+            {run.status === 'failed' && onFixWithAgent && (
+              <div>
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  data-testid="flow-run-fix-with-agent"
+                  onClick={handleFixWithAgent}>
+                  {t('flowRuns.inspector.fixWithAgent')}
+                </Button>
+              </div>
+            )}
+
+            {/* Actionable pending-approval gates for this run (flow-approval
+                surface). Replaces the old read-only "N node(s) awaiting
+                approval" banner — Approve once / Approve always / Deny
+                resolve the gate in place via `openhuman.approval_decide`;
+                the run poller above picks up the resulting steps on its
+                own 2s cadence once the gate clears. */}
+            {isActiveRun && pendingApprovals.length > 0 && (
+              <div className="space-y-2" data-testid="flow-run-pending-approvals">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-content-muted">
+                  {t('flowRuns.inspector.pendingApprovals')}
+                </h3>
+                {pendingApprovals.map(approval => (
+                  <FlowRunPendingApprovalCard
+                    key={approval.request_id}
+                    approval={approval}
+                    deciding={decidingApprovalId === approval.request_id}
+                    onDecide={decision => decideApproval(approval.request_id, decision)}
+                  />
+                ))}
+                {pendingApprovalsError && (
+                  <p
+                    role="alert"
+                    data-testid="flow-run-pending-approvals-error"
+                    className="text-xs text-coral-600 dark:text-coral-400">
+                    {t('flowRuns.inspector.approval.loadError')}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Steps timeline */}
+            <div>
+              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-content-muted">
+                {t('flowRuns.inspector.steps')}
+              </h3>
+              {run.steps.length === 0 ? (
+                <p className="text-xs italic text-content-faint">
+                  {t('flowRuns.inspector.noSteps')}
+                </p>
+              ) : (
+                <ol className="space-y-2" data-testid="flow-run-steps">
+                  {run.steps.map((step, idx) => (
+                    <StepRow
+                      key={`${step.node_id}-${idx}`}
+                      step={step}
+                      index={idx}
+                      liveStatus={liveStatuses[step.node_id]}
+                      inputItems={idx > 0 ? normalizeItems(run.steps[idx - 1].output) : undefined}
+                      isSelected={selectedStepIndex === idx}
+                      onSelect={onSelectStep ? () => onSelectStep(idx, step.node_id) : undefined}
+                    />
+                  ))}
+                </ol>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface Props {
+  /** Run id (== thread_id) to inspect. Renders `null` (nothing) when absent. */
+  runId: string | null;
+  onClose: () => void;
+  /**
+   * "Fix with agent" (Phase 5c) — when provided and the run failed, a repair
+   * action surfaces that hands the run context up so the host can open the
+   * canvas copilot preloaded. Omitted where there's no copilot to route to.
+   */
+  onFixWithAgent?: (request: FlowRepairRequest) => void;
+}
+
+/**
+ * Renders `null` when `runId` is `null` so the parent can mount this
+ * unconditionally and just flip `runId` (same convention as
+ * `SubagentDrawer`). Fixed-overlay wrapper around {@link FlowRunInspectorPanel}
+ * — backdrop-click-to-close + Escape-to-close.
+ */
+export function FlowRunInspectorDrawer({ runId, onClose, onFixWithAgent }: Props) {
+  const { t } = useT();
+
   useEscapeKey(() => {
     log('escape: closing runId=%s', runId);
     onClose();
   }, runId !== null);
 
   if (!runId) return null;
-
-  const startedAt = formatTimestamp(run?.started_at);
-  const finishedAt = formatTimestamp(run?.finished_at);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" data-testid="flow-run-inspector-drawer">
@@ -308,171 +583,7 @@ export function FlowRunInspectorDrawer({ runId, onClose, onFixWithAgent }: Props
         onClick={onClose}
       />
       <aside className="relative flex h-full w-full max-w-md flex-col bg-surface shadow-xl">
-        {/* Header */}
-        <header className="flex items-start gap-2.5 border-b border-line px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate font-semibold text-content">
-                {t('flowRuns.inspector.title')}
-              </span>
-              {run && (
-                <span
-                  data-testid="flow-run-status-dot"
-                  className={`h-2 w-2 shrink-0 rounded-full ${FLOW_RUN_STATUS_DOT[run.status]}`}
-                />
-              )}
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-content-muted">
-              {run && (
-                <span
-                  data-testid="flow-run-status-pill"
-                  className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${FLOW_RUN_STATUS_ACCENT[run.status]}`}>
-                  {t(FLOW_RUN_STATUS_KEY[run.status])}
-                </span>
-              )}
-              {/* Internal ids are dev/debug info, not primary-view content (issue
-                  B20) — shown short-form only, full value on hover via `title`,
-                  matching `FlowRunsDrawer`'s row-level `run.id.slice(0, 8)`. */}
-              {run && (
-                <span className="truncate font-mono" title={run.flow_id}>
-                  {run.flow_id.slice(0, 8)}
-                </span>
-              )}
-              {run && (
-                <span className="truncate font-mono" title={run.thread_id}>
-                  {run.thread_id.slice(0, 8)}
-                </span>
-              )}
-            </div>
-          </div>
-          <button
-            type="button"
-            data-testid="flow-run-inspector-close"
-            onClick={onClose}
-            aria-label={t('conversations.subagent.close')}
-            className="shrink-0 rounded-full p-1.5 text-content-faint hover:bg-surface-hover hover:text-content-secondary">
-            ✕
-          </button>
-        </header>
-
-        <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-          {loading && !run && (
-            <div
-              className="flex items-center gap-2 py-8 text-content-faint"
-              data-testid="flow-run-inspector-loading">
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-ocean-500 border-t-transparent" />
-              <span className="text-sm">{t('flowRuns.inspector.loading')}</span>
-            </div>
-          )}
-
-          {error && (
-            <div
-              role="alert"
-              data-testid="flow-run-inspector-error"
-              className="rounded-xl border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
-              {t('flowRuns.inspector.loadError')}: {error}
-            </div>
-          )}
-
-          {run && (
-            <>
-              {/* Timing */}
-              <div className="text-xs text-content-muted" data-testid="flow-run-timing">
-                {startedAt && (
-                  <div>
-                    {t('flowRuns.inspector.startedAt')}: {startedAt}
-                  </div>
-                )}
-                {finishedAt ? (
-                  <div>
-                    {t('flowRuns.inspector.finishedAt')}: {finishedAt}
-                  </div>
-                ) : run.status === 'running' || run.status === 'pending_approval' ? (
-                  <div className="animate-pulse">{t('flowRuns.inspector.running')}</div>
-                ) : null}
-              </div>
-
-              {/* Error banner */}
-              {run.error && (
-                <div
-                  role="alert"
-                  data-testid="flow-run-error-banner"
-                  className="rounded-xl border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
-                  {t('flowRuns.inspector.error')}: {run.error}
-                </div>
-              )}
-
-              {/* Repair entry point (Phase 5c): open the canvas copilot preloaded
-                  with this failed run so the workflow builder can propose a fix. */}
-              {run.status === 'failed' && onFixWithAgent && (
-                <div>
-                  <Button
-                    type="button"
-                    variant="primary"
-                    size="sm"
-                    data-testid="flow-run-fix-with-agent"
-                    onClick={handleFixWithAgent}>
-                    {t('flowRuns.inspector.fixWithAgent')}
-                  </Button>
-                </div>
-              )}
-
-              {/* Actionable pending-approval gates for this run (flow-approval
-                  surface). Replaces the old read-only "N node(s) awaiting
-                  approval" banner — Approve once / Approve always / Deny
-                  resolve the gate in place via `openhuman.approval_decide`;
-                  the run poller above picks up the resulting steps on its
-                  own 2s cadence once the gate clears. */}
-              {isActiveRun && pendingApprovals.length > 0 && (
-                <div className="space-y-2" data-testid="flow-run-pending-approvals">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-content-muted">
-                    {t('flowRuns.inspector.pendingApprovals')}
-                  </h3>
-                  {pendingApprovals.map(approval => (
-                    <FlowRunPendingApprovalCard
-                      key={approval.request_id}
-                      approval={approval}
-                      deciding={decidingApprovalId === approval.request_id}
-                      onDecide={decision => decideApproval(approval.request_id, decision)}
-                    />
-                  ))}
-                  {pendingApprovalsError && (
-                    <p
-                      role="alert"
-                      data-testid="flow-run-pending-approvals-error"
-                      className="text-xs text-coral-600 dark:text-coral-400">
-                      {t('flowRuns.inspector.approval.loadError')}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Steps timeline */}
-              <div>
-                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-content-muted">
-                  {t('flowRuns.inspector.steps')}
-                </h3>
-                {run.steps.length === 0 ? (
-                  <p className="text-xs italic text-content-faint">
-                    {t('flowRuns.inspector.noSteps')}
-                  </p>
-                ) : (
-                  <ol className="space-y-2" data-testid="flow-run-steps">
-                    {run.steps.map((step, idx) => (
-                      <StepRow
-                        key={`${step.node_id}-${idx}`}
-                        step={step}
-                        index={idx}
-                        liveStatus={liveStatuses[step.node_id]}
-                        inputItems={idx > 0 ? normalizeItems(run.steps[idx - 1].output) : undefined}
-                      />
-                    ))}
-                  </ol>
-                )}
-              </div>
-            </>
-          )}
-        </div>
+        <FlowRunInspectorPanel runId={runId} onFixWithAgent={onFixWithAgent} onClose={onClose} />
       </aside>
     </div>
   );

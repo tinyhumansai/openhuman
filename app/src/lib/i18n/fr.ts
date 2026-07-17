@@ -4304,6 +4304,9 @@ const messages: TranslationMap = {
   'flowRuns.inspector.diagnosticResolvedNull': 'résolu en null',
   'flows.runs.sidebarTitle': 'Exécutions',
   'flows.runs.refresh': 'Actualiser les exécutions',
+  // -- Runs rail flyout (Piece 3) --
+  'flows.runs.expand': 'Afficher toutes les exécutions',
+  'flows.runs.collapse': 'Masquer la liste des exécutions',
   'flows.palette.appAction': "Action d'app",
   'flows.palette.ohTool': 'Outil',
   'flows.editor.deleteNode': 'Supprimer',
@@ -7500,6 +7503,19 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': 'Panneau latéral',
   'flows.canvas.legendTab': 'Manuel',
 
+  // -- Docked Copilot | Run panel (Workflows UI redesign, Piece 1) --
+  'flows.dock.copilotTab': 'Copilote',
+  'flows.dock.runTab': 'Exécuter',
+  'flows.dock.collapse': 'Réduire le panneau',
+  'flows.dock.expand': 'Développer le panneau',
+  'flows.dock.resizeHandle': 'Redimensionner le panneau',
+  'flows.dock.tablistLabel': 'Panneau du flux de travail',
+  'flows.dock.runEmpty': 'Sélectionnez une exécution dans la barre pour voir ses détails.',
+  // -- Node run-status badge (Piece 2) --
+  'flows.runStatus.success': 'Terminé',
+  'flows.runStatus.failed': 'Échoué',
+  'flows.runStatus.running': 'En cours',
+  'flows.runStatus.notRun': 'Non exécuté',
   // Emergency stop (#4255)
   'safety.emergencyStop': "Arrêt d'urgence",
   'safety.stopFailed': "Impossible d'arrêter l'automatisation. Réessayez.",

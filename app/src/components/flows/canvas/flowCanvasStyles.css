@@ -195,6 +195,19 @@
   opacity: 0.45;
 }
 
+/*
+ * Focused-step highlight (Piece 2, redesign): the node whose step is
+ * currently selected in the Run tab gets a distinct dashed primary ring, on
+ * top of whatever run/validation/diff ring it already carries, so "this is
+ * the one the Run tab is showing" reads even when the run/diff ring is
+ * already the same accent color.
+ */
+.flow-canvas .react-flow__node.flow-node-focused {
+  outline: 3px solid rgb(var(--primary-500));
+  outline-offset: 5px;
+  border-radius: 0.85rem;
+}
+
 @keyframes flow-node-run-pulse {
   0%,
   100% {

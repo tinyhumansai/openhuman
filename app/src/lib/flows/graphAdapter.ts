@@ -45,6 +45,17 @@ export interface FlowNodeData extends Record<string, unknown> {
   inputPorts: string[];
   /** Effective output port names: declared `ports` ∪ outgoing edges' `from_port` (`['main']` if neither). */
   outputPorts: string[];
+  /**
+   * Live/historical per-node run status (Piece 2 — inline node run-status on
+   * the canvas), overlaid by `EditableFlowCanvas`'s `displayNodes` derivation
+   * — NEVER set on the controlled `nodes` state itself, so it's purely
+   * cosmetic and is not read by {@link xyflowToWorkflowGraph} (it only reads
+   * `kind`/`type_version`/`name`/`config`/`ports`). `undefined` means no run
+   * is currently being viewed for this canvas at all (no badge renders);
+   * `'not-run'` means a run IS being viewed but this node has no step in it
+   * yet/at all.
+   */
+  runStatus?: 'running' | 'success' | 'error' | 'not-run';
 }
 
 export type FlowNode = Node<FlowNodeData>;

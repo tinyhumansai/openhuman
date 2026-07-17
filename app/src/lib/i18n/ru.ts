@@ -4243,6 +4243,9 @@ const messages: TranslationMap = {
   'flowRuns.inspector.diagnosticResolvedNull': 'разрешилось в null',
   'flows.runs.sidebarTitle': 'Запуски',
   'flows.runs.refresh': 'Обновить запуски',
+  // -- Runs rail flyout (Piece 3) --
+  'flows.runs.expand': 'Показать все запуски',
+  'flows.runs.collapse': 'Скрыть список запусков',
   'flows.palette.appAction': 'Действие приложения',
   'flows.palette.ohTool': 'Инструмент',
   'flows.editor.deleteNode': 'Удалить',
@@ -7394,6 +7397,19 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': 'Боковая панель',
   'flows.canvas.legendTab': 'Вручную',
 
+  // -- Docked Copilot | Run panel (Workflows UI redesign, Piece 1) --
+  'flows.dock.copilotTab': 'Второй пилот',
+  'flows.dock.runTab': 'Запустить',
+  'flows.dock.collapse': 'Свернуть панель',
+  'flows.dock.expand': 'Развернуть панель',
+  'flows.dock.resizeHandle': 'Изменить размер панели',
+  'flows.dock.tablistLabel': 'Панель воркфлоу',
+  'flows.dock.runEmpty': 'Выберите запуск на панели, чтобы увидеть детали.',
+  // -- Node run-status badge (Piece 2) --
+  'flows.runStatus.success': 'Завершено',
+  'flows.runStatus.failed': 'Не удалось',
+  'flows.runStatus.running': 'Выполняется',
+  'flows.runStatus.notRun': 'Не запускался',
   // Emergency stop (#4255)
   'safety.emergencyStop': 'Аварийная остановка',
   'safety.stopFailed': 'Не удалось остановить автоматизацию. Попробуйте ещё раз.',

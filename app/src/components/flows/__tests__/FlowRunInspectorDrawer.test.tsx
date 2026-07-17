@@ -82,7 +82,10 @@ describe('FlowRunInspectorDrawer', () => {
     useFlowRunPoller.mockReturnValue({ run: null, loading: false, error: null });
     const { container } = renderDrawer(null, vi.fn());
     expect(container).toBeEmptyDOMElement();
-    expect(useFlowRunPoller).toHaveBeenCalledWith(null);
+    // The Drawer wrapper now short-circuits BEFORE mounting the extracted
+    // `FlowRunInspectorPanel` (whose `useFlowRunPoller(runId)` call this used
+    // to assert on) — with no run to show, the panel never mounts at all.
+    expect(useFlowRunPoller).not.toHaveBeenCalled();
   });
 
   it('shows a loading state before data resolves', () => {

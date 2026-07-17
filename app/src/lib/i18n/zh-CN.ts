@@ -3982,6 +3982,9 @@ const messages: TranslationMap = {
   'flowRuns.inspector.diagnosticResolvedNull': '解析为 null',
   'flows.runs.sidebarTitle': '运行记录',
   'flows.runs.refresh': '刷新运行记录',
+  // -- Runs rail flyout (Piece 3) --
+  'flows.runs.expand': '显示所有运行',
+  'flows.runs.collapse': '隐藏运行列表',
   'flows.palette.appAction': '应用操作',
   'flows.palette.ohTool': '工具',
   'flows.editor.deleteNode': '删除',
@@ -6911,6 +6914,19 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': '侧边栏',
   'flows.canvas.legendTab': '手动',
 
+  // -- Docked Copilot | Run panel (Workflows UI redesign, Piece 1) --
+  'flows.dock.copilotTab': '副驾驶',
+  'flows.dock.runTab': '运行',
+  'flows.dock.collapse': '收起面板',
+  'flows.dock.expand': '展开面板',
+  'flows.dock.resizeHandle': '调整面板大小',
+  'flows.dock.tablistLabel': '工作流面板',
+  'flows.dock.runEmpty': '从侧栏选择一次运行以查看详情。',
+  // -- Node run-status badge (Piece 2) --
+  'flows.runStatus.success': '已完成',
+  'flows.runStatus.failed': '失败',
+  'flows.runStatus.running': '运行中',
+  'flows.runStatus.notRun': '未运行',
   // Emergency stop (#4255)
   'safety.emergencyStop': '紧急停止',
   'safety.stopFailed': '无法停止自动化，请重试。',

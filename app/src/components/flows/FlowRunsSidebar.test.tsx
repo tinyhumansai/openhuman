@@ -1,21 +1,15 @@
 /**
- * FlowRunsSidebar — the flow canvas's projected run-history sidebar. Asserts
- * the run list renders, a run row opens the {@link FlowRunInspectorDrawer},
- * and (issue B22) the drawer's "Fix with agent" action navigates to this same
- * flow's canvas seeded with a `copilotRepair` state and closes the sidebar's
- * own drawer — this sidebar is only ever mounted while the user is ALREADY on
- * the failing run's own `/flows/:id` canvas (`FlowCanvasPage` projects it into
- * the shell sidebar), so re-navigating to the SAME route with a fresh repair
- * seed is the fix (see `FlowCanvasPage.tsx`'s `locationKey`-based copilot
- * panel remount, which reacts to exactly this navigation).
+ * FlowRunsSidebar (Workflows UI redesign, Piece 3 — "runs rail") — asserts the
+ * compact rail renders one dot per run, a click calls the controlled
+ * `onSelectRun` (selection now lives in the host, not this component), the
+ * selected run's dot is visually marked, the flyout expander reveals the full
+ * list and a flyout row also calls `onSelectRun` (then auto-collapses), and
+ * the empty/loading states.
  */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { Provider } from 'react-redux';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FlowRun } from '../../services/api/flowsApi';
-import { store } from '../../store';
 import FlowRunsSidebar from './FlowRunsSidebar';
 
 const listFlowRuns = vi.hoisted(() => vi.fn());
@@ -23,45 +17,6 @@ vi.mock('../../services/api/flowsApi', () => ({ listFlowRuns }));
 
 const fetchPendingApprovals = vi.hoisted(() => vi.fn());
 vi.mock('../../services/api/approvalApi', () => ({ fetchPendingApprovals }));
-
-// Capture the props handed to the drawer so "Fix with agent" can be invoked
-// directly without standing up the drawer's own run-polling machinery
-// (mirrors `FlowApprovalCard.test.tsx`'s stub pattern).
-const inspectorDrawerProps = vi.hoisted(() => ({
-  current: null as Record<string, unknown> | null,
-}));
-vi.mock('./FlowRunInspectorDrawer', () => ({
-  FLOW_RUN_STATUS_ACCENT: {
-    running: '',
-    completed: '',
-    completed_with_warnings: '',
-    pending_approval: '',
-    failed: '',
-    cancelled: '',
-  },
-  FLOW_RUN_STATUS_DOT: {
-    running: '',
-    completed: '',
-    completed_with_warnings: '',
-    pending_approval: '',
-    failed: '',
-    cancelled: '',
-  },
-  FLOW_RUN_STATUS_KEY: {
-    running: 'flowRuns.status.running',
-    completed: 'flowRuns.status.completed',
-    completed_with_warnings: 'flowRuns.status.completed_with_warnings',
-    pending_approval: 'flowRuns.status.pending_approval',
-    failed: 'flowRuns.status.failed',
-    cancelled: 'flowRuns.status.cancelled',
-  },
-  FlowRunInspectorDrawer: (props: Record<string, unknown>) => {
-    inspectorDrawerProps.current = props;
-    return props.runId ? (
-      <div data-testid="flow-run-inspector-drawer-stub">{props.runId as string}</div>
-    ) : null;
-  },
-}));
 
 function makeRun(overrides: Partial<FlowRun> = {}): FlowRun {
   return {
@@ -78,103 +33,55 @@ function makeRun(overrides: Partial<FlowRun> = {}): FlowRun {
   };
 }
 
-/** Renders whatever `location.state` a navigation landed with, for assertions. */
-function LocationStateProbe() {
-  const location = useLocation();
-  return <div data-testid="location-state-probe">{JSON.stringify(location.state)}</div>;
-}
-
-function renderSidebar(flowId = 'flow-1') {
-  return render(
-    <Provider store={store}>
-      <MemoryRouter initialEntries={[`/flows/${flowId}`]}>
-        <Routes>
-          <Route path="/flows/:id" element={<FlowRunsSidebar flowId={flowId} />} />
-        </Routes>
-      </MemoryRouter>
-    </Provider>
-  );
+function renderSidebar(props: Partial<React.ComponentProps<typeof FlowRunsSidebar>> = {}) {
+  const onSelectRun = props.onSelectRun ?? vi.fn();
+  return {
+    onSelectRun,
+    ...render(
+      <FlowRunsSidebar flowId="flow-1" selectedRunId={null} onSelectRun={onSelectRun} {...props} />
+    ),
+  };
 }
 
 describe('FlowRunsSidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    inspectorDrawerProps.current = null;
     fetchPendingApprovals.mockResolvedValue([]);
   });
 
-  it('lists runs and opens the inspector drawer for the clicked run', async () => {
-    listFlowRuns.mockResolvedValue([makeRun()]);
+  it('renders one dot per run in the compact rail', async () => {
+    listFlowRuns.mockResolvedValue([makeRun(), makeRun({ id: 'run-2', thread_id: 'run-2' })]);
     renderSidebar();
 
-    const row = await screen.findByTestId('flow-runs-sidebar-run-run-1');
-    expect(screen.queryByTestId('flow-run-inspector-drawer-stub')).not.toBeInTheDocument();
-
-    fireEvent.click(row);
-
-    expect(screen.getByTestId('flow-run-inspector-drawer-stub')).toHaveTextContent('run-1');
+    expect(await screen.findByTestId('flow-runs-sidebar-run-run-1')).toBeInTheDocument();
+    expect(screen.getByTestId('flow-runs-sidebar-run-run-2')).toBeInTheDocument();
   });
 
-  it('passes onFixWithAgent through to the run inspector drawer', async () => {
+  it('calls onSelectRun (controlled — no internal selection/drawer) when a dot is clicked', async () => {
     listFlowRuns.mockResolvedValue([makeRun()]);
-    renderSidebar();
+    const { onSelectRun } = renderSidebar();
 
     fireEvent.click(await screen.findByTestId('flow-runs-sidebar-run-run-1'));
 
-    expect(inspectorDrawerProps.current?.onFixWithAgent).toBeInstanceOf(Function);
+    expect(onSelectRun).toHaveBeenCalledWith('run-1');
+    // This component no longer renders any inspector/drawer itself — that's
+    // the host's job now (Piece 1: lifted `selectedRunId`).
+    expect(screen.queryByTestId('flow-run-inspector-drawer')).not.toBeInTheDocument();
   });
 
-  it('"Fix with agent" closes the drawer and navigates to the same flow seeded with the repair context (B22)', async () => {
-    listFlowRuns.mockResolvedValue([makeRun()]);
-    render(
-      <Provider store={store}>
-        <MemoryRouter initialEntries={['/flows/flow-1']}>
-          <Routes>
-            <Route
-              path="/flows/:id"
-              element={
-                <>
-                  <FlowRunsSidebar flowId="flow-1" />
-                  <LocationStateProbe />
-                </>
-              }
-            />
-          </Routes>
-        </MemoryRouter>
-      </Provider>
+  it('marks the selected run pressed via aria-pressed', async () => {
+    listFlowRuns.mockResolvedValue([makeRun(), makeRun({ id: 'run-2', thread_id: 'run-2' })]);
+    renderSidebar({ selectedRunId: 'run-2' });
+
+    await screen.findByTestId('flow-runs-sidebar-run-run-1');
+    expect(screen.getByTestId('flow-runs-sidebar-run-run-1')).toHaveAttribute(
+      'aria-pressed',
+      'false'
     );
-
-    fireEvent.click(await screen.findByTestId('flow-runs-sidebar-run-run-1'));
-    expect(screen.getByTestId('flow-run-inspector-drawer-stub')).toBeInTheDocument();
-
-    act(() => {
-      (
-        inspectorDrawerProps.current?.onFixWithAgent as (request: {
-          flowId: string;
-          runId: string;
-          error?: string | null;
-          failingNodeIds?: string[];
-        }) => void
-      )({
-        flowId: 'flow-1',
-        runId: 'run-1',
-        error: 'GMAIL_SEND_EMAIL: empty body',
-        failingNodeIds: ['send_summary'],
-      });
-    });
-
-    // The sidebar's own run-inspector drawer closes (repair takes over).
-    await waitFor(() =>
-      expect(screen.queryByTestId('flow-run-inspector-drawer-stub')).not.toBeInTheDocument()
+    expect(screen.getByTestId('flow-runs-sidebar-run-run-2')).toHaveAttribute(
+      'aria-pressed',
+      'true'
     );
-    const probe = screen.getByTestId('location-state-probe');
-    expect(JSON.parse(probe.textContent ?? 'null')).toEqual({
-      copilotRepair: {
-        runId: 'run-1',
-        error: 'GMAIL_SEND_EMAIL: empty body',
-        failingNodeIds: ['send_summary'],
-      },
-    });
   });
 
   it('shows the empty state when there are no runs', async () => {
@@ -184,7 +91,44 @@ describe('FlowRunsSidebar', () => {
     expect(await screen.findByTestId('flow-runs-sidebar-empty')).toBeInTheDocument();
   });
 
-  it('shows "Awaiting approval" for a running run halted at an approval gate', async () => {
+  it('opens a flyout with the full run list on demand, and collapses it again', async () => {
+    listFlowRuns.mockResolvedValue([makeRun()]);
+    renderSidebar();
+    await screen.findByTestId('flow-runs-sidebar-run-run-1');
+
+    expect(screen.queryByTestId('flow-runs-sidebar-flyout')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('flow-runs-sidebar-expand'));
+    expect(screen.getByTestId('flow-runs-sidebar-flyout')).toBeInTheDocument();
+    expect(screen.getByTestId('flow-runs-flyout-run-run-1')).toHaveTextContent('Failed');
+
+    fireEvent.click(screen.getByTestId('flow-runs-sidebar-expand'));
+    expect(screen.queryByTestId('flow-runs-sidebar-flyout')).not.toBeInTheDocument();
+  });
+
+  it('selecting a run from the flyout calls onSelectRun and auto-collapses the flyout', async () => {
+    listFlowRuns.mockResolvedValue([makeRun()]);
+    const { onSelectRun } = renderSidebar();
+    await screen.findByTestId('flow-runs-sidebar-run-run-1');
+
+    fireEvent.click(screen.getByTestId('flow-runs-sidebar-expand'));
+    fireEvent.click(screen.getByTestId('flow-runs-flyout-run-run-1'));
+
+    expect(onSelectRun).toHaveBeenCalledWith('run-1');
+    expect(screen.queryByTestId('flow-runs-sidebar-flyout')).not.toBeInTheDocument();
+  });
+
+  it('refetches when the refresh button is clicked', async () => {
+    listFlowRuns.mockResolvedValue([makeRun()]);
+    renderSidebar();
+    await screen.findByTestId('flow-runs-sidebar-run-run-1');
+    expect(listFlowRuns).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId('flow-runs-sidebar-refresh'));
+    await waitFor(() => expect(listFlowRuns).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows an "Awaiting approval" tooltip title for a running run halted at an approval gate', async () => {
     listFlowRuns.mockResolvedValue([makeRun({ status: 'running' })]);
     fetchPendingApprovals.mockResolvedValue([
       {
@@ -200,16 +144,10 @@ describe('FlowRunsSidebar', () => {
     ]);
     renderSidebar();
 
-    const runRow = await screen.findByTestId('flow-runs-sidebar-run-run-1');
-    await waitFor(() => expect(runRow).toHaveTextContent('Awaiting approval'));
-  });
-
-  it('leaves a running run without a matching approval labeled "Running"', async () => {
-    listFlowRuns.mockResolvedValue([makeRun({ status: 'running' })]);
-    fetchPendingApprovals.mockResolvedValue([]);
-    renderSidebar();
-
-    const runRow = await screen.findByTestId('flow-runs-sidebar-run-run-1');
-    await waitFor(() => expect(runRow).toHaveTextContent('Running'));
+    const dot = await screen.findByTestId('flow-runs-sidebar-run-run-1');
+    // Tooltip label rides the native `title` fallback (see `ui/Tooltip.tsx`).
+    await waitFor(() =>
+      expect(dot).toHaveAttribute('title', expect.stringContaining('Awaiting approval'))
+    );
   });
 });

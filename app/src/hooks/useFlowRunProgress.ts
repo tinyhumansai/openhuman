@@ -60,6 +60,43 @@ interface FlowRunProgressPayload {
   status: string;
 }
 
+/**
+ * A single reconstructed step of a durable `FlowRun` — the subset
+ * {@link stepsToProgressMap} needs. Mirrors `FlowRunStep`
+ * (`services/api/flowsApi.ts`) without importing it here, keeping this hook
+ * dependency-free of the API client (matches the file's existing style).
+ */
+export interface FlowRunStepLike {
+  node_id: string;
+  status?: 'success' | 'error';
+}
+
+/**
+ * Derives the SAME `node_id -> status` shape {@link useFlowRunProgress} yields
+ * from live socket events, but from a durable run's already-finished
+ * `steps[]` (Piece 2 — "inline node run-status on the canvas"). Lets the
+ * canvas overlay a selected/completed historical run identically to how it
+ * overlays a live one, via {@link FLOW_RUN_NODE_STATUS_CLASS} /
+ * `EditableFlowCanvas`'s badge rendering — the caller decides which of the
+ * two maps (live vs. this one) is authoritative for the run currently being
+ * viewed.
+ *
+ * A step's `status` is only ever observed as `'success'`/`'error'`
+ * (`FlowRunStep`'s doc comment) — a step reconstructed post-hoc (e.g. the
+ * trigger) carries no `status` at all, but its mere presence in `steps[]`
+ * means it executed, so it's mapped to `'success'` too (best-effort, not a
+ * false negative). When a node id appears more than once (a loop re-visiting
+ * the same node), the LAST occurrence wins, matching how the live socket feed
+ * would have overwritten it with each subsequent event.
+ */
+export function stepsToProgressMap(steps: readonly FlowRunStepLike[]): FlowRunProgressMap {
+  const map: FlowRunProgressMap = {};
+  for (const step of steps) {
+    map[step.node_id] = step.status === 'error' ? 'error' : 'success';
+  }
+  return map;
+}
+
 function parsePayload(data: unknown): FlowRunProgressPayload | null {
   if (!data || typeof data !== 'object') return null;
   const obj = data as Record<string, unknown>;

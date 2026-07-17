@@ -21,10 +21,11 @@
 import { Handle, type NodeProps, Position } from '@xyflow/react';
 import { type CSSProperties, memo } from 'react';
 
-import type { FlowNode } from '../../../lib/flows/graphAdapter';
+import type { FlowNode, FlowNodeData } from '../../../lib/flows/graphAdapter';
 import { COLOR_CLASSES, nodeKindMeta } from '../../../lib/flows/nodeKindMeta';
 import { describeNode } from '../../../lib/flows/nodeSummary';
 import { useT } from '../../../lib/i18n/I18nContext';
+import { CheckIcon, CloseIcon, Spinner } from '../../ui/icons';
 import { useCanvasActions } from './canvasActions';
 
 /**
@@ -43,6 +44,51 @@ const INLINE_HANDLE_STYLE: CSSProperties = {
 
 /** The implicit single port; shown as a bare dot with no redundant label. */
 const IMPLICIT_PORT = 'main';
+
+/**
+ * Piece 2 (inline node run-status): background color per `data.runStatus`,
+ * for the small badge rendered on the node card's top-right corner. Distinct
+ * from — and additive to — the outline ring `EditableFlowCanvas` already
+ * applies via `flow-node-running`/`-success`/`-failed` classes; the badge
+ * gives an explicit iconographic status (done/running/failed/not-run) that
+ * reads at a glance even before the eye picks up the ring color.
+ */
+const RUN_STATUS_BADGE_CLASS: Record<NonNullable<FlowNodeData['runStatus']>, string> = {
+  running: 'bg-ocean-500',
+  success: 'bg-sage-500',
+  error: 'bg-coral-500',
+  'not-run': 'bg-content-faint/40',
+};
+
+/** i18n key per `data.runStatus`, for the badge's `aria-label`/`title`. */
+const RUN_STATUS_LABEL_KEY: Record<NonNullable<FlowNodeData['runStatus']>, string> = {
+  running: 'flows.runStatus.running',
+  success: 'flows.runStatus.success',
+  error: 'flows.runStatus.failed',
+  'not-run': 'flows.runStatus.notRun',
+};
+
+/** One badge per `data.runStatus` — check/spinner/X, or a dim dot for "not run". */
+function RunStatusBadge({
+  status,
+  label,
+}: {
+  status: NonNullable<FlowNodeData['runStatus']>;
+  label: string;
+}) {
+  return (
+    <span
+      data-testid="flow-node-status-badge"
+      data-run-status={status}
+      title={label}
+      aria-label={label}
+      className={`absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-surface ${RUN_STATUS_BADGE_CLASS[status]}`}>
+      {status === 'success' && <CheckIcon className="h-2.5 w-2.5 text-white" />}
+      {status === 'running' && <Spinner className="h-2.5 w-2.5 text-white" />}
+      {status === 'error' && <CloseIcon className="h-2.5 w-2.5 text-white" />}
+    </span>
+  );
+}
 
 /** Semantic colours for the well-known branch ports so routing reads at a glance. */
 function portPillClass(port: string): string {
@@ -88,6 +134,9 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNode>) {
       className={`relative min-w-[180px] max-w-[240px] rounded-xl border-2 bg-surface shadow-sm ${colors.border} ${
         selected ? 'ring-2 ring-primary-500/40' : ''
       }`}>
+      {data.runStatus && (
+        <RunStatusBadge status={data.runStatus} label={t(RUN_STATUS_LABEL_KEY[data.runStatus])} />
+      )}
       <div className={`flex items-center gap-2 rounded-t-[10px] px-3 py-2 ${colors.chip}`}>
         <span className="text-base leading-none" aria-hidden="true">
           {meta.emoji}

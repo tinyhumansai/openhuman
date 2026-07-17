@@ -23,6 +23,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { forwardRef, memo, useMemo } from 'react';
 
+import type { FlowRunProgressMap } from '../../../hooks/useFlowRunProgress';
 import {
   FLOW_NODE_TYPE,
   type FlowEdge,
@@ -53,6 +54,12 @@ export interface FlowCanvasProps {
   onDirtyChange?: (dirty: boolean) => void;
   /** Active run id (== thread_id) to overlay live per-node status on the canvas (editable only, Phase 3e). */
   activeRunId?: string | null;
+  /** Overrides the live overlay with a pre-computed status map (editable only, Piece 2 redesign). See `EditableFlowCanvasProps`. */
+  runProgressOverride?: FlowRunProgressMap;
+  /** Fired when a node carrying a run status is clicked (editable only, Piece 2 redesign). */
+  onNodeRunClick?: (nodeId: string) => void;
+  /** Node id to ring-highlight as the Run tab's currently-selected step (editable only, Piece 2 redesign). */
+  focusedNodeId?: string | null;
   /** Reports the live graph on every edit so the copilot has the current draft (editable only, Phase 5c). */
   onGraphChange?: (graph: WorkflowGraph) => void;
   /** Node ids the copilot proposal adds — ringed as a diff highlight (editable only, Phase 5c). */
@@ -138,6 +145,9 @@ const FlowCanvas = forwardRef<EditableFlowCanvasHandle, FlowCanvasProps>(
       onSave,
       onDirtyChange,
       activeRunId,
+      runProgressOverride,
+      onNodeRunClick,
+      focusedNodeId,
       onGraphChange,
       addedNodeIds,
       removedNodeIds,
@@ -160,6 +170,9 @@ const FlowCanvas = forwardRef<EditableFlowCanvasHandle, FlowCanvasProps>(
           onSave={onSave}
           onDirtyChange={onDirtyChange}
           activeRunId={activeRunId}
+          runProgressOverride={runProgressOverride}
+          onNodeRunClick={onNodeRunClick}
+          focusedNodeId={focusedNodeId}
           onGraphChange={onGraphChange}
           addedNodeIds={addedNodeIds}
           removedNodeIds={removedNodeIds}

@@ -4219,6 +4219,9 @@ const messages: TranslationMap = {
   'flowRuns.inspector.diagnosticResolvedNull': 'diselesaikan menjadi null',
   'flows.runs.sidebarTitle': 'Jalankan',
   'flows.runs.refresh': 'Segarkan daftar jalan',
+  // -- Runs rail flyout (Piece 3) --
+  'flows.runs.expand': 'Tampilkan semua proses',
+  'flows.runs.collapse': 'Sembunyikan daftar proses',
   'flows.palette.appAction': 'Aksi aplikasi',
   'flows.palette.ohTool': 'Alat',
   'flows.editor.deleteNode': 'Hapus',
@@ -7347,6 +7350,19 @@ const messages: TranslationMap = {
   'flows.canvas.sidePanelToggle': 'Panel samping',
   'flows.canvas.legendTab': 'Manual',
 
+  // -- Docked Copilot | Run panel (Workflows UI redesign, Piece 1) --
+  'flows.dock.copilotTab': 'Kopilot',
+  'flows.dock.runTab': 'Jalankan',
+  'flows.dock.collapse': 'Ciutkan panel',
+  'flows.dock.expand': 'Perluas panel',
+  'flows.dock.resizeHandle': 'Ubah ukuran panel',
+  'flows.dock.tablistLabel': 'Panel alur kerja',
+  'flows.dock.runEmpty': 'Pilih proses dari bilah untuk melihat detailnya.',
+  // -- Node run-status badge (Piece 2) --
+  'flows.runStatus.success': 'Selesai',
+  'flows.runStatus.failed': 'Gagal',
+  'flows.runStatus.running': 'Berjalan',
+  'flows.runStatus.notRun': 'Belum dijalankan',
   // Emergency stop (#4255)
   'safety.emergencyStop': 'Hentikan darurat',
   'safety.stopFailed': 'Tidak dapat menghentikan otomasi. Coba lagi.',

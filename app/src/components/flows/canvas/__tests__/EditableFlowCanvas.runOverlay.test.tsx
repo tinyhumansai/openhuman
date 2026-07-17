@@ -78,8 +78,28 @@ function renderCanvas(props: Partial<React.ComponentProps<typeof FlowCanvas>> = 
   );
 }
 
+function secondNode(): FlowNode {
+  return {
+    id: 'a',
+    type: 'flowNode',
+    position: { x: 200, y: 0 },
+    data: {
+      kind: 'agent',
+      name: 'Reply',
+      config: {},
+      ports: [],
+      inputPorts: ['main'],
+      outputPorts: ['main'],
+    },
+  };
+}
+
 function nodeWrapper(container: HTMLElement): Element | null {
   return container.querySelector('.react-flow__node[data-id="t"]');
+}
+
+function statusBadge(node: Element | null): Element | null | undefined {
+  return node?.querySelector('[data-testid="flow-node-status-badge"]');
 }
 
 describe('EditableFlowCanvas — live run overlay', () => {
@@ -143,5 +163,50 @@ describe('EditableFlowCanvas — live run overlay', () => {
     unmount();
     expect(socketOff).toHaveBeenCalledWith('flow:run_progress', expect.any(Function));
     expect(socketOff).toHaveBeenCalledWith('flow_run_progress', expect.any(Function));
+  });
+
+  // ── Piece 2: inline node run-status badge ─────────────────────────────────
+  describe('node status badge', () => {
+    it('renders no badge on any node when no run is being viewed', async () => {
+      const { container } = renderCanvas();
+      await waitFor(() => expect(nodeWrapper(container)).toBeInTheDocument());
+      expect(statusBadge(nodeWrapper(container))).toBeNull();
+    });
+
+    it('shows a running badge, then a done badge, then a failed badge, as progress events arrive', async () => {
+      const { container } = renderCanvas({ activeRunId: 'run_1' });
+      await waitFor(() => expect(socketOn).toHaveBeenCalled());
+
+      emitProgress({ run_id: 'run_1', node_id: 't', status: 'running' });
+      await waitFor(() =>
+        expect(statusBadge(nodeWrapper(container))).toHaveAttribute('data-run-status', 'running')
+      );
+
+      emitProgress({ run_id: 'run_1', node_id: 't', status: 'success' });
+      await waitFor(() =>
+        expect(statusBadge(nodeWrapper(container))).toHaveAttribute('data-run-status', 'success')
+      );
+
+      emitProgress({ run_id: 'run_1', node_id: 't', status: 'error' });
+      await waitFor(() =>
+        expect(statusBadge(nodeWrapper(container))).toHaveAttribute('data-run-status', 'error')
+      );
+    });
+
+    it('badges an untouched node "not-run" once ANY node in the graph has a status (a run is being viewed)', async () => {
+      const { container } = renderCanvas({
+        nodes: [triggerNode(), secondNode()],
+        activeRunId: 'run_1',
+      });
+      await waitFor(() => expect(socketOn).toHaveBeenCalled());
+
+      emitProgress({ run_id: 'run_1', node_id: 't', status: 'success' });
+
+      const untouchedWrapper = () => container.querySelector('.react-flow__node[data-id="a"]');
+      await waitFor(() =>
+        expect(statusBadge(untouchedWrapper())).toHaveAttribute('data-run-status', 'not-run')
+      );
+      expect(statusBadge(nodeWrapper(container))).toHaveAttribute('data-run-status', 'success');
+    });
   });
 });
