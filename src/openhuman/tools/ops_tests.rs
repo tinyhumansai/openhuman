@@ -149,6 +149,88 @@ fn all_tools_includes_spawn_subagent() {
     );
 }
 
+/// The three read-only WhatsApp-data agent tools are registered when the
+/// `channels` feature is on (#4801). Paired with the absent-variant below to
+/// pin both directions of the compile-time gate.
+#[cfg(feature = "channels")]
+#[test]
+fn whatsapp_data_tools_present_when_channels_on() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem = test_memory(&tmp);
+    let browser = BrowserConfig {
+        enabled: false,
+        allowed_domains: vec![],
+        session_name: None,
+        ..BrowserConfig::default()
+    };
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let cfg = test_config(&tmp);
+    let tools = all_tools(
+        Arc::new(Config::default()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names = tool_names(&tools);
+    for expected in [
+        "whatsapp_data_list_chats",
+        "whatsapp_data_list_messages",
+        "whatsapp_data_search_messages",
+    ] {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "`{expected}` must be registered when the `channels` feature is on; got: {names:?}"
+        );
+    }
+}
+
+/// With `channels` compiled out the three WhatsApp-data agent tools are absent
+/// from the registry (not degraded to an error) — the tool types live in the
+/// gated `whatsapp_data` domain (#4801).
+#[cfg(not(feature = "channels"))]
+#[test]
+fn whatsapp_data_tools_absent_when_channels_off() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem = test_memory(&tmp);
+    let browser = BrowserConfig {
+        enabled: false,
+        allowed_domains: vec![],
+        session_name: None,
+        ..BrowserConfig::default()
+    };
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let cfg = test_config(&tmp);
+    let tools = all_tools(
+        Arc::new(Config::default()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names = tool_names(&tools);
+    for absent in [
+        "whatsapp_data_list_chats",
+        "whatsapp_data_list_messages",
+        "whatsapp_data_search_messages",
+    ] {
+        assert!(
+            !names.iter().any(|n| n == absent),
+            "`{absent}` must be absent when the `channels` feature is off; got: {names:?}"
+        );
+    }
+}
+
 #[test]
 fn all_tools_includes_spawn_async_subagent() {
     let tmp = TempDir::new().unwrap();

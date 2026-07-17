@@ -827,6 +827,8 @@ async fn harness_excludes_gated_namespaces() {
     // convention; gate it like its siblings so the disabled build passes (#5022).
     #[cfg(feature = "voice")]
     assert!(full_ns.contains("voice"), "full() must expose voice");
+    #[cfg(feature = "channels")]
+    assert!(full_ns.contains("channels"), "full() must expose channels");
 
     let ctx = CoreContext::for_test(DomainSet::harness(), None);
     let harness_ns: BTreeSet<&'static str> =
@@ -850,6 +852,7 @@ async fn harness_excludes_gated_namespaces() {
         "skills",
         "wallet",
         "meet",
+        "channels",
         "mcp_clients",
         "health",
     ] {
@@ -1094,4 +1097,61 @@ fn meet_controllers_absent_when_feature_off() {
             "`{ns}` must not register when the `meet` feature is off"
         );
     }
+}
+
+/// The channel + webview-bridge namespaces register when the `channels` feature
+/// is on (#4801).
+///
+/// Paired with `channels_controllers_absent_when_feature_off` below to pin both
+/// directions of the compile-time gate. `webview_notifications` has no
+/// controllers (v1 toggle lives shell-side), so it is not asserted here.
+#[cfg(feature = "channels")]
+#[test]
+fn channels_controllers_registered_when_feature_on() {
+    let namespaces: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.namespace)
+        .collect();
+    for ns in ["channels", "webview_apis", "whatsapp_data"] {
+        assert!(
+            namespaces.contains(&ns),
+            "with the `channels` feature ON the `{ns}` controllers must be registered"
+        );
+    }
+}
+
+/// With `channels` compiled out the channel + webview-bridge domains leave zero
+/// trace in the registry (#4801) — while the in-app web chat (`channel`
+/// namespace) stays present, pinning the #5002 decoupling: turning off external
+/// messaging must NOT take down core in-app chat.
+///
+/// This is the half that proves the gate does something. The 3 `whatsapp_data`
+/// agent tools are pinned separately in `tools::ops_tests` (that module has the
+/// full-tool-list machinery); here we assert the controller surface.
+#[cfg(not(feature = "channels"))]
+#[test]
+fn channels_controllers_absent_when_feature_off() {
+    let namespaces: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.namespace)
+        .collect();
+    for ns in [
+        "channels",
+        "webview_apis",
+        "webview_notifications",
+        "whatsapp_data",
+    ] {
+        assert!(
+            !namespaces.contains(&ns),
+            "with the `channels` feature OFF the `{ns}` controllers must be absent \
+             (unknown-method over /rpc, omitted from /schema)"
+        );
+    }
+    // #5002 decoupling: the in-app web chat controllers (RPC namespace `channel`)
+    // are core product surface and must survive the `channels` gate being off.
+    assert!(
+        namespaces.contains(&"channel"),
+        "the in-app web_chat controllers (`channel` namespace) must stay registered \
+         even with the `channels` feature OFF (#5002 decoupling)"
+    );
 }
