@@ -205,6 +205,18 @@ pub async fn mcp_clients_install(
     if let Some(existing) =
         store::find_server_by_qualified_name(config, canonical_name).map_err(|e| e.to_string())?
     {
+        // A hand-added server is not a catalog listing that happens to share a
+        // name — there is no listing behind it at all. Refreshing one here would
+        // merge caller-supplied env onto connection details the user typed, which
+        // this path never resolved and cannot re-derive. Since `install` takes
+        // `qualified_name` as a free-form string (and is reachable as an agent
+        // tool), that would let a caller inject env into a user's local command.
+        // Custom rows are edited through `mcp_clients_update_custom` only.
+        if existing.provenance == ServerProvenance::Custom {
+            return Err(format!(
+                "`{canonical_name}` is a custom server you added by hand; edit it from Custom servers instead of installing over it"
+            ));
+        }
         return refresh_existing_install(config, existing, &env, &config_value, canonical_name);
     }
 

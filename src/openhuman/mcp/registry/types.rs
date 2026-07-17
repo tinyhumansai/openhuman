@@ -104,8 +104,13 @@ impl Transport {
 /// A `Registry` row was resolved from an upstream catalog, so its
 /// command/args/url can always be re-derived from `qualified_name` by
 /// re-fetching the listing. A `Custom` row was typed in by the user: there is
-/// no catalog entry behind it, so the stored fields are the only copy and the
-/// registry-refresh paths must leave them alone.
+/// no catalog entry behind it, so the stored fields are the only copy.
+///
+/// Two paths read this, and both refuse to cross the boundary rather than
+/// silently doing the wrong thing: `mcp_clients_install` will not refresh a
+/// `Custom` row (it has no listing to re-resolve from), and
+/// `mcp_clients_update_custom` will not edit a `Registry` row (the next
+/// re-resolve would revert the edit).
 ///
 /// Persisted in the `mcp_servers.provenance` column. Every row written before that
 /// column existed was a catalog install, which is why both [`Self::parse`] and
@@ -187,8 +192,8 @@ pub struct InstalledServer {
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     /// Whether this record came from a registry listing or was entered by the
-    /// user. Registry-refresh paths key off this to avoid clobbering
-    /// hand-entered connection details. Defaults to `Registry` for legacy rows
+    /// user. `install` and `update_custom` both gate on it so neither edits a
+    /// row it cannot correctly re-derive. Defaults to `Registry` for legacy rows
     /// persisted before the column existed.
     #[serde(default = "default_provenance")]
     pub provenance: ServerProvenance,

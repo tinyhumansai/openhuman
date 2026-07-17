@@ -186,9 +186,15 @@ fn env_key_list(env: &HashMap<String, String>) -> Vec<String> {
 }
 
 /// Reject env keys that are empty or claim the reserved `__` namespace.
+///
+/// Validates the key **as `resolve_env` will store it** — i.e. trimmed. Checking
+/// the raw key would let `"  __oauth__"` through here and then land as
+/// `__oauth__` after the trim, defeating the guard by the normalisation applied
+/// downstream.
 fn validate_env(env: &HashMap<String, String>) -> Result<(), String> {
-    for key in env.keys() {
-        if key.trim().is_empty() {
+    for raw_key in env.keys() {
+        let key = raw_key.trim();
+        if key.is_empty() {
             return Err("env keys must not be empty".to_string());
         }
         if key.starts_with(RESERVED_ENV_PREFIX) {
@@ -379,7 +385,16 @@ pub async fn mcp_clients_update_custom(
 
     let (transport, command_kind, command, args) = build_custom_transport(&input)?;
 
-    let stored_env = store::load_env_values(config, &server_id).unwrap_or_default();
+    // Propagate a failed env read rather than treating it as an empty base, the
+    // same rule `refresh_existing_install` follows. It matters more here: this
+    // path treats the submitted key set as authoritative, so an empty base does
+    // not merely fail to merge — every blank-valued key resolves to nothing, the
+    // reserved carry-over finds nothing to carry, and the `set_env_values` below
+    // deletes the row's entire env (secrets and the `__oauth__` bundle) while
+    // still returning Ok.
+    let stored_env = store::load_env_values(config, &server_id).map_err(|e| {
+        format!("failed to read stored env for `{server_id}`; refusing to update: {e}")
+    })?;
     let env = resolve_env(&input.env, &stored_env);
 
     tracing::debug!(
@@ -550,6 +565,20 @@ mod tests {
     fn ordinary_env_keys_are_accepted() {
         let env = HashMap::from([("Authorization".to_string(), "Bearer t".to_string())]);
         assert!(validate_env(&env).is_ok());
+    }
+
+    /// `resolve_env` trims before storing, so validating the raw key would let a
+    /// padded `"  __oauth__"` through and land it as `__oauth__` — a caller
+    /// could then plant a refresh bundle pointing at a token endpoint of their
+    /// choosing. Validate what actually gets stored.
+    #[test]
+    fn reserved_env_keys_are_rejected_despite_padding() {
+        for padded in ["  __oauth__", "__oauth__  ", "\t__oauth__"] {
+            let env = HashMap::from([(padded.to_string(), "{}".to_string())]);
+            let err = validate_env(&env)
+                .expect_err(&format!("padded reserved key `{padded}` must be rejected"));
+            assert!(err.contains("reserved"), "got: {err}");
+        }
     }
 
     #[test]

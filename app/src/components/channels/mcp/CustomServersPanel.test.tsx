@@ -100,6 +100,14 @@ describe('CustomServersPanel', () => {
   it('renders the live status and transport of each custom server', () => {
     renderPanel([server()], [statusFor('srv-1')]);
     expect(screen.getByText('Local')).toBeInTheDocument();
+    // The status must come from the `statuses` prop, not the default: without
+    // this the whole status wiring could be dead and the test would still pass.
+    expect(screen.getByText('Connected')).toBeInTheDocument();
+  });
+
+  it('falls back to disconnected when the server has no status entry', () => {
+    renderPanel([server()], []);
+    expect(screen.queryByText('Connected')).not.toBeInTheDocument();
   });
 
   it('labels an http_remote server as remote', () => {

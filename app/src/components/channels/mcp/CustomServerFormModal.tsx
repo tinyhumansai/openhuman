@@ -106,6 +106,23 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
     setEnvRows(rows => (rows.length > 1 ? rows.filter(r => r.id !== id) : [newRow()]));
 
   /**
+   * Switch transport, clearing the env rows.
+   *
+   * These rows mean different things per transport: on `stdio` they are the
+   * subprocess's environment, on `http_remote` they are headers sent to the
+   * endpoint. Carrying them across a switch would silently re-scope a secret —
+   * and because values are write-only, blank-means-keep would ship a stored
+   * local token to a remote host with the user seeing only an empty box. Blank
+   * means "unchanged" only while the map's meaning is unchanged, so a transport
+   * change is exactly where the rows cannot be carried.
+   */
+  const changeTransport = (next: TransportKind) => {
+    if (next === transport) return;
+    setTransport(next);
+    setEnvRows([newRow()]);
+  };
+
+  /**
    * Collapse the editor rows into the wire map.
    *
    * A keyed row is always sent, blank value included: the core reads a blank as
@@ -113,6 +130,9 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
    * authoritative. Dropping a blank row here would therefore delete the
    * credential rather than preserve it — the whole point of the blank-means-keep
    * rule. Removing a row in the UI is what deletes a key.
+   *
+   * Duplicate keys are rejected by the caller rather than collapsed here: a map
+   * would silently keep the last row and drop the earlier one's value.
    */
   const buildEnv = (): Record<string, string> => {
     const env: Record<string, string> = {};
@@ -124,7 +144,26 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
     return env;
   };
 
+  /** First key entered on more than one row, if any. */
+  const duplicateEnvKey = (): string | null => {
+    const seen = new Set<string>();
+    for (const row of envRows) {
+      const key = row.key.trim();
+      if (!key) continue;
+      if (seen.has(key)) return key;
+      seen.add(key);
+    }
+    return null;
+  };
+
   const handleSubmit = async () => {
+    // Collapsing rows into a map would make a duplicate key silently win and
+    // drop the other row's value — say so instead of quietly picking one.
+    const dupe = duplicateEnvKey();
+    if (dupe) {
+      setError(t('mcp.custom.form.duplicateKey').replace('{key}', dupe));
+      return;
+    }
     setSaving(true);
     setError(null);
     const params: CustomServerParams = {
@@ -170,6 +209,11 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
       subtitle={t('mcp.custom.form.subtitle')}
       maxWidthClassName="max-w-lg"
       contentClassName="px-5 py-4 max-h-[70vh] overflow-y-auto"
+      // Every dismissal path is suppressed while a submit is in flight. Escape,
+      // backdrop, and the ✕ all read as "cancel" but none can abort the request:
+      // the mutation still lands, and its result — including an error — has
+      // nowhere to render once the host unmounts the modal.
+      closePolicy={{ escape: !saving, backdrop: !saving, button: !saving }}
       onClose={onClose}>
       <div className="space-y-4" data-testid="custom-server-form">
         <div>
@@ -187,14 +231,17 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
 
         <div>
           <span className={labelClass}>{t('mcp.custom.form.transport')}</span>
-          <div className="flex gap-2" role="radiogroup" aria-label={t('mcp.custom.form.transport')}>
+          {/* `group` + `aria-pressed`, not `radiogroup` + `radio`: these are plain
+              buttons, and the radio pattern would promise one tab stop with
+              arrow-key navigation that isn't implemented. Same shape and same
+              choice as the transport filter in `McpServersTab`. */}
+          <div className="flex gap-2" role="group" aria-label={t('mcp.custom.form.transport')}>
             {(['stdio', 'http_remote'] as const).map(kind => (
               <button
                 key={kind}
                 type="button"
-                role="radio"
-                aria-checked={transport === kind}
-                onClick={() => setTransport(kind)}
+                aria-pressed={transport === kind}
+                onClick={() => changeTransport(kind)}
                 className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
                   transport === kind
                     ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-500/10'
