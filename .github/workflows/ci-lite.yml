@@ -380,11 +380,16 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs['rust-core'] == 'true' || needs.changes.outputs['rust-tauri'] == 'true'
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    # Was 25; raised because the lane now links (--all-targets) and runs a test
+    # binary, not just `cargo check`.
+    timeout-minutes: 40
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
       CARGO_INCREMENTAL: "0"
+      # Deep-async-stack belt (same as the coverage lanes) — virtual reservation,
+      # zero cost. Keeps a gate-contract test with a deep stack from tripping.
+      RUST_MIN_STACK: "67108864"
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -402,7 +407,67 @@ jobs:
           shared-key: pr-rust-feature-gate-smoke
 
       - name: Check core builds with the default domain gates disabled
+        # Lib-scoped on purpose. `--all-targets` would additionally compile the
+        # `tests/` integration crates, which today name gated symbols
+        # (voice::reply_speech::test_seam, mcp_registry::store, x402::tools) without
+        # a #[cfg] and so do not compile with the gates off. That cleanup is tracked
+        # in #5021 alongside running the full gates-off suite; until it lands, this
+        # lane checks the lib and RUNS the gate-contract lib tests below.
         run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tokenjuice-treesitter
+
+      - name: Run the gate-contract tests with the default domain gates disabled
+        # `cargo check` (even --all-targets) never RUNS tests, so a gated family that
+        # is asserted WITHOUT a matching #[cfg] compiles fine and only fails at
+        # runtime — exactly how the two ungated `voice` asserts sat red on main
+        # (#5022). This step executes the gate-contract test modules so that class of
+        # regression fails CI, not just a local pre-push.
+        #
+        # Scope is deliberate: the full gates-off `--lib` run aborts on a pre-existing
+        # task_local stack overflow (`agent::harness::session::tests::
+        # turn_dispatches_spawn_subagent_through_full_path`) that reproduces in the
+        # gates-ON build too, and also OOMs unscoped. These filters route AROUND that
+        # test by scope, not by skip. Running the full suite is tracked in #5021.
+        run: |
+          bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
+            --no-default-features --features tokenjuice-treesitter --lib -- \
+            core::all:: core::cli:: core::jsonrpc:: core::legacy_aliases:: agent_registry::agents::loader::
+
+      - name: Guard — new feature-gated test modules must be acknowledged
+        # Self-maintaining coverage: the set of source files that #[cfg]-gate a test on
+        # a domain feature must equal the allowlist below. When a new gate (or a new
+        # test in an existing gate's domain) adds a gated test file, this fails — the
+        # author then adds it here AND, if it can hold an ungated-assert regression of
+        # the #5022 class, extends the scoped `cargo test` filter above. Prevents the
+        # smoke lane from silently under-covering as the gate surface grows.
+        run: |
+          set -euo pipefail
+          EXPECTED=$(cat <<'EOF'
+          core/all_tests.rs
+          core/cli_tests.rs
+          core/jsonrpc_tests.rs
+          core/legacy_aliases.rs
+          openhuman/agent/harness/builtin_definitions.rs
+          openhuman/agent/harness/definition_tests.rs
+          openhuman/agent/harness/session/tests.rs
+          openhuman/agent/harness/subagent_runner/tool_prep.rs
+          openhuman/agent_registry/agents/loader.rs
+          openhuman/inference/local/mod.rs
+          openhuman/tool_registry/ops_tests.rs
+          openhuman/tool_registry/schemas.rs
+          openhuman/tools/ops_tests.rs
+          openhuman/voice/compile_status.rs
+          openhuman/wallet/stub.rs
+          openhuman/web3/stub.rs
+          openhuman/x402/stub.rs
+          EOF
+          )
+          ACTUAL=$(grep -rlE '#\[cfg\((not\()?feature = "(voice|media|web3|meet|mcp|skills|flows)"' src --include='*.rs' \
+            | xargs grep -lE '#\[test\]|#\[tokio::test\]|fn .*_test' 2>/dev/null | sed 's|^src/||' | sort -u)
+          if ! diff <(echo "$EXPECTED" | sed 's/^ *//' | sort -u) <(echo "$ACTUAL"); then
+            echo "::error::Gated-test file set changed. Update the EXPECTED allowlist in the rust-feature-gate-smoke lane, and extend the scoped 'cargo test' filter if the new module can carry an ungated-assert regression (see #5022)."
+            exit 1
+          fi
+          echo "gate-contract test coverage allowlist is current"
 
   rust-core-coverage:
     name: Rust Core Coverage (cargo-llvm-cov)
