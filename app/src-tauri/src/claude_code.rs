@@ -43,7 +43,7 @@ end tell"#;
             .args(["-e", script])
             .spawn()
             .map_err(|e| format!("failed to open Terminal.app: {e}"))?;
-        return Ok("Terminal.app".into());
+        Ok("Terminal.app".into())
     }
 
     #[cfg(target_os = "linux")]
