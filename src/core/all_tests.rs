@@ -823,6 +823,9 @@ async fn harness_excludes_gated_namespaces() {
         .collect();
     #[cfg(feature = "flows")]
     assert!(full_ns.contains("flows"), "full() must expose flows");
+    // `voice` was the pathfinder gate (#4803) and predates this per-assert cfg
+    // convention; gate it like its siblings so the disabled build passes (#5022).
+    #[cfg(feature = "voice")]
     assert!(full_ns.contains("voice"), "full() must expose voice");
 
     let ctx = CoreContext::for_test(DomainSet::harness(), None);
@@ -958,6 +961,9 @@ fn group_mapping_smoke() {
     // has no controller to map. Skip when its Cargo feature is off.
     #[cfg(feature = "skills")]
     assert_eq!(group_for_namespace("skills"), Some(DomainGroup::Skills));
+    // `voice` predates the per-assert cfg convention (#4803); registry-derived, so
+    // it has no entry to map when the feature is off. Gate like its siblings (#5022).
+    #[cfg(feature = "voice")]
     assert_eq!(group_for_namespace("voice"), Some(DomainGroup::Voice));
     #[cfg(feature = "web3")]
     assert_eq!(group_for_namespace("wallet"), Some(DomainGroup::Web3));
