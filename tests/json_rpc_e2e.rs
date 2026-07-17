@@ -1174,7 +1174,7 @@ async fn json_rpc_observability_submit_score_succeeds_when_privacy_gate_off() {
 
     let response = post_json_rpc(
         &rpc_base,
-        "submit-score-1",
+        4_914_002,
         "openhuman.observability_submit_score",
         json!({
             "trace_id": "e2e-session:req-1",
