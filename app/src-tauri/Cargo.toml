@@ -161,6 +161,7 @@ cef = { version = "=146.4.1", default-features = false }
 # `scripts/ci/check-feature-forwarding.mjs` fails CI when this list drifts from
 # the core's `[features] default` (#4919) — do not hand-maintain it from memory.
 openhuman_core = { path = "../..", package = "openhuman", default-features = false, features = [
+    "channels",
     "media",
     "tokenjuice-treesitter",
     "voice",
