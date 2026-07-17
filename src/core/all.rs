@@ -258,6 +258,8 @@ fn build_registered_controllers() -> Vec<GroupedController> {
     );
     // Webview APIs bridge — proxies connector calls (Gmail, …) through
     // a WebSocket to the Tauri shell so curl reaches the live webview.
+    // Gated behind the `channels` feature.
+    #[cfg(feature = "channels")]
     push(
         &mut controllers,
         DomainGroup::Channels,
@@ -384,6 +386,11 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Channels,
         crate::openhuman::web_chat::all_web_channel_registered_controllers(),
     );
+    // External messaging channels (Telegram, Discord, Slack, …).
+    // Gated behind the `channels` feature. NOTE: the web_chat push above stays
+    // ungated — the in-app chat is core product surface (decoupled in #5002),
+    // even though its runtime tag is DomainGroup::Channels.
+    #[cfg(feature = "channels")]
     push(
         &mut controllers,
         DomainGroup::Channels,
@@ -702,7 +709,8 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Threads,
         crate::openhuman::todos::all_todos_registered_controllers(),
     );
-    // Embedded webview native notifications
+    // Embedded webview native notifications. Gated behind the `channels` feature.
+    #[cfg(feature = "channels")]
     push(
         &mut controllers,
         DomainGroup::Channels,
@@ -748,6 +756,8 @@ fn build_registered_controllers() -> Vec<GroupedController> {
     // The write-path ingest controller is registered separately in build_internal_only_controllers.
     // Classified Channels (WhatsApp Web messaging surface) — not enumerated in the
     // spec Platform list; grouped with the other channel/webview domains.
+    // Gated behind the `channels` feature.
+    #[cfg(feature = "channels")]
     push(
         &mut controllers,
         DomainGroup::Channels,
@@ -812,6 +822,8 @@ fn build_internal_only_controllers() -> Vec<GroupedController> {
     let mut controllers = Vec::new();
     // whatsapp_data ingest: scanner-side write path.  Callable over RPC by the
     // Tauri scanner but excluded from agent-facing schema discovery.
+    // Gated behind the `channels` feature.
+    #[cfg(feature = "channels")]
     push(
         &mut controllers,
         DomainGroup::Channels,
