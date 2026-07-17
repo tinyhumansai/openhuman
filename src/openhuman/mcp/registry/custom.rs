@@ -181,21 +181,52 @@ fn resolve_env(
     resolved
 }
 
-/// Resolve the env for an edit that may also change the transport.
+/// Where a stored credential is authorised to go. Two edits share a scope only
+/// if the credential still means the same thing afterwards.
 ///
-/// Nothing stored carries across a transport change, reserved keys included.
-/// Both of [`resolve_env`]'s rules assume the map keeps its meaning, and a
-/// transport change is exactly where it doesn't:
+/// - stdio: the credentials are subprocess env vars; the process is spawned from
+///   the launch command, but env is not command-specific, so all stdio shares
+///   one scope. (A command change is not a credential re-scope.)
+/// - http_remote: the credentials are request headers and, for OAuth, a refresh
+///   bundle minted against a *specific* endpoint. The scope is the endpoint's
+///   **origin** (scheme + host + port). A different origin is a different service.
+#[derive(PartialEq, Eq)]
+enum CredentialScope {
+    Stdio,
+    /// Origin string, or `None` when the URL doesn't parse — an unparseable URL
+    /// is never treated as sharing a scope with anything, so it forces re-entry.
+    HttpOrigin(Option<String>),
+}
+
+fn credential_scope(transport: &Transport) -> CredentialScope {
+    match transport {
+        Transport::Stdio => CredentialScope::Stdio,
+        Transport::HttpRemote { url } => CredentialScope::HttpOrigin(
+            url::Url::parse(url)
+                .ok()
+                .map(|u| u.origin().ascii_serialization()),
+        ),
+    }
+}
+
+/// Resolve the env for an edit that may also re-scope the credentials.
+///
+/// Nothing stored carries across a scope change, reserved keys included. Both of
+/// [`resolve_env`]'s rules assume the map keeps its meaning, and a scope change
+/// is exactly where it doesn't:
 ///
 /// - Ordinary keys are the subprocess environment on stdio and request headers
-///   on `http_remote` ([`connections::build_http_auth`]). Keeping them ships a
-///   token that only ever reached a local process to a remote host — and since
-///   values are write-only, blank-means-keep makes that invisible.
+///   on `http_remote` ([`connections::build_http_auth`]). Carrying them across a
+///   transport switch ships a token that only ever reached a local process to a
+///   remote host; carrying them to a different **origin** ships one service's
+///   bearer token to another. Values are write-only, so blank-means-keep makes
+///   either invisible.
 /// - `__oauth__` is a refresh bundle (refresh token + client secret + token
-///   endpoint) for a *specific* endpoint. It is meaningless to a subprocess, and
-///   `McpStdioClient` hands the whole env to the child with no `__` filter of its
-///   own — so carrying it would hand the user's refresh token to whatever command
-///   they typed.
+///   endpoint) minted for one origin. On a subprocess `McpStdioClient` hands the
+///   whole env to the child with no `__` filter; on a new origin the next
+///   `refresh_if_expired` mints a token against the *old* endpoint and sends it
+///   to the *new* host. Either way the secret crosses the scope it was issued
+///   for.
 ///
 /// A re-scoped credential must be re-entered. This lives here, not in the form:
 /// `/rpc`, the CLI and the iOS client all reach this function without touching
@@ -206,7 +237,7 @@ fn resolve_env_for_transport(
     previous: &Transport,
     next: &Transport,
 ) -> HashMap<String, String> {
-    if previous.dispatch_kind() != next.dispatch_kind() {
+    if credential_scope(previous) != credential_scope(next) {
         return resolve_env(submitted, &HashMap::new());
     }
     resolve_env(submitted, stored)
@@ -219,13 +250,22 @@ fn env_key_list(env: &HashMap<String, String>) -> Vec<String> {
     keys
 }
 
-/// Reject env keys that are empty or claim the reserved `__` namespace.
+/// Reject env keys that are empty, claim the reserved `__` namespace, or — on
+/// `http_remote` — collide case-insensitively.
 ///
 /// Validates the key **as `resolve_env` will store it** — i.e. trimmed. Checking
 /// the raw key would let `"  __oauth__"` through here and then land as
 /// `__oauth__` after the trim, defeating the guard by the normalisation applied
 /// downstream.
-fn validate_env(env: &HashMap<String, String>) -> Result<(), String> {
+///
+/// `is_http_remote` gates the case-duplicate check: those keys are HTTP header
+/// names, which RFC 9110 defines as case-insensitive, so `Authorization` and
+/// `authorization` are the *same* header — storing both sends a duplicate the
+/// server resolves arbitrarily. The UI blocks this, but the rule has to hold
+/// for `/rpc` / CLI / iOS callers too. stdio keys are subprocess env vars,
+/// case-sensitive on Unix, so they are left exact.
+fn validate_env(env: &HashMap<String, String>, is_http_remote: bool) -> Result<(), String> {
+    let mut seen_headers: std::collections::HashSet<String> = std::collections::HashSet::new();
     for raw_key in env.keys() {
         let key = raw_key.trim();
         if key.is_empty() {
@@ -234,6 +274,11 @@ fn validate_env(env: &HashMap<String, String>) -> Result<(), String> {
         if key.starts_with(RESERVED_ENV_PREFIX) {
             return Err(format!(
                 "env key `{key}` is reserved — keys starting with `{RESERVED_ENV_PREFIX}` hold internal connection state"
+            ));
+        }
+        if is_http_remote && !seen_headers.insert(key.to_ascii_lowercase()) {
+            return Err(format!(
+                "header `{key}` is listed more than once (header names are case-insensitive)"
             ));
         }
     }
@@ -287,8 +332,11 @@ fn slugify(raw: &str) -> Option<String> {
 /// server_id. The fallback is per-server so two differently-named non-Latin
 /// servers get different slugs instead of both collapsing to one constant.
 fn base_slug(display_name: &str, server_id: &str) -> String {
+    // `char`-based, not a byte slice: the production server_id is an ASCII uuid,
+    // but a byte slice would panic on a char boundary if that ever changes. This
+    // is only a label — uniqueness comes from the DB-checked suffix loop.
     slugify(display_name)
-        .unwrap_or_else(|| format!("server-{}", &server_id[..server_id.len().min(8)]))
+        .unwrap_or_else(|| format!("server-{}", server_id.chars().take(8).collect::<String>()))
 }
 
 fn allocate_qualified_name(
@@ -345,8 +393,8 @@ pub async fn mcp_clients_add_custom(
     if display_name.is_empty() {
         return Err("display_name must not be empty".to_string());
     }
-    validate_env(&input.env)?;
     let (transport, command_kind, command, args) = build_custom_transport(&input)?;
+    validate_env(&input.env, transport.is_http_remote())?;
 
     // Nothing is stored yet, so this only drops blank-valued keys.
     let env = resolve_env(&input.env, &HashMap::new());
@@ -431,7 +479,6 @@ pub async fn mcp_clients_update_custom(
     if display_name.is_empty() {
         return Err("display_name must not be empty".to_string());
     }
-    validate_env(&input.env)?;
 
     let existing = store::get_server(config, &server_id).map_err(|e| e.to_string())?;
     if existing.provenance != ServerProvenance::Custom {
@@ -441,60 +488,55 @@ pub async fn mcp_clients_update_custom(
     }
 
     let (transport, command_kind, command, args) = build_custom_transport(&input)?;
+    validate_env(&input.env, transport.is_http_remote())?;
+    let scope_changed = credential_scope(&existing.transport) != credential_scope(&transport);
 
-    // Propagate a failed env read rather than treating it as an empty base, the
-    // same rule `refresh_existing_install` follows. It matters more here: this
-    // path treats the submitted key set as authoritative, so an empty base does
-    // not merely fail to merge — every blank-valued key resolves to nothing, the
-    // reserved carry-over finds nothing to carry, and the `set_env_values` below
-    // deletes the row's entire env (secrets and the `__oauth__` bundle) while
-    // still returning Ok.
-    let stored_env = store::load_env_values(config, &server_id).map_err(|e| {
-        format!("failed to read stored env for `{server_id}`; refusing to update: {e}")
-    })?;
-    let transport_changed = existing.transport.dispatch_kind() != transport.dispatch_kind();
-    let env = resolve_env_for_transport(&input.env, &stored_env, &existing.transport, &transport);
+    // Read stored env, resolve, and write both tables as one serializable
+    // transaction (see `store::update_custom_server_rmw`). Resolving off a
+    // snapshot read *outside* the write would race a concurrent OAuth refresh and
+    // silently revert a just-rotated token. The submitted key set is
+    // authoritative, so a lost read isn't a merge miss — it deletes the row's
+    // env; the store helper surfaces a failed read rather than treating it as
+    // empty.
+    let updated = store::update_custom_server_rmw(config, &server_id, |stored_env| {
+        let env =
+            resolve_env_for_transport(&input.env, &stored_env, &existing.transport, &transport);
+        let record = InstalledServer {
+            // Identity and provenance survive an edit untouched — re-deriving
+            // `qualified_name` from the new display name would orphan this row's
+            // env values.
+            server_id: existing.server_id.clone(),
+            qualified_name: existing.qualified_name.clone(),
+            installed_at: existing.installed_at,
+            provenance: existing.provenance,
+            icon_url: existing.icon_url.clone(),
+            config: existing.config.clone(),
+            enabled: existing.enabled,
+            last_connected_at: existing.last_connected_at,
+
+            display_name: display_name.clone(),
+            description: clean_description(input.description.clone()),
+            command_kind,
+            command: command.clone(),
+            args: args.clone(),
+            env_keys: env_key_list(&env),
+            transport: transport.clone(),
+        };
+        (record, env)
+    })
+    .map_err(|e| e.to_string())?;
 
     tracing::debug!(
         "[mcp-custom] update server_id={} transport={}{} env_keys={:?}",
         server_id,
-        transport.dispatch_kind(),
-        if transport_changed {
-            " (changed — stored env dropped)"
+        updated.transport.dispatch_kind(),
+        if scope_changed {
+            " (re-scoped — stored env dropped)"
         } else {
             ""
         },
-        env.keys().collect::<Vec<_>>()
+        updated.env_keys
     );
-
-    let updated = InstalledServer {
-        // Identity and provenance survive an edit untouched — re-deriving
-        // `qualified_name` from the new display name would orphan this row's
-        // env values.
-        server_id: existing.server_id.clone(),
-        qualified_name: existing.qualified_name.clone(),
-        installed_at: existing.installed_at,
-        provenance: existing.provenance,
-        icon_url: existing.icon_url.clone(),
-        config: existing.config.clone(),
-        enabled: existing.enabled,
-        last_connected_at: existing.last_connected_at,
-
-        display_name,
-        description: clean_description(input.description.clone()),
-        command_kind,
-        command,
-        args,
-        env_keys: env_key_list(&env),
-        transport,
-    };
-
-    // One transaction for both tables. Split across two connections, a failure
-    // between them leaves the row on the new transport with the old transport's
-    // secrets still attached — and the supervisor's next tick would dial that
-    // state and ship them, even though the RPC reported failure.
-    store::update_custom_server_and_env(config, &server_id, &updated, &env)
-        .map_err(|e| e.to_string())?;
 
     // Only now drop the live connection: it was dialed with the previous command
     // or URL, so leaving it up would keep serving tools from the old
@@ -628,8 +670,30 @@ mod tests {
     #[test]
     fn reserved_env_keys_are_rejected() {
         let env = HashMap::from([("__oauth__".to_string(), "{}".to_string())]);
-        let err = validate_env(&env).expect_err("reserved key rejected");
+        let err = validate_env(&env, false).expect_err("reserved key rejected");
         assert!(err.contains("reserved"), "got: {err}");
+    }
+
+    /// Header names are case-insensitive (RFC 9110), so the core rejects a
+    /// case-variant duplicate over /rpc even though the form also blocks it.
+    #[test]
+    fn case_variant_headers_are_rejected_on_http_remote() {
+        let env = HashMap::from([
+            ("Authorization".to_string(), "a".to_string()),
+            ("authorization".to_string(), "b".to_string()),
+        ]);
+        let err = validate_env(&env, true).expect_err("case-variant header rejected");
+        assert!(err.contains("more than once"), "got: {err}");
+    }
+
+    /// Env var names are case-sensitive on Unix, so stdio keeps both.
+    #[test]
+    fn case_variant_env_vars_are_allowed_on_stdio() {
+        let env = HashMap::from([
+            ("Path".to_string(), "a".to_string()),
+            ("PATH".to_string(), "b".to_string()),
+        ]);
+        assert!(validate_env(&env, false).is_ok());
     }
 
     /// The rows mean subprocess env on stdio and request headers on
@@ -703,9 +767,10 @@ mod tests {
         assert_eq!(resolved.get("__oauth__"), Some(&"{}".to_string()));
     }
 
-    /// Changing only the URL is not a transport change.
+    /// A URL edit that keeps the same origin (path/query only) keeps the env —
+    /// the bearer token and OAuth bundle are still valid for that origin.
     #[test]
-    fn url_change_within_http_remote_keeps_stored_env() {
+    fn same_origin_url_change_keeps_stored_env() {
         let stored = HashMap::from([("Authorization".to_string(), "Bearer t".to_string())]);
         let submitted = HashMap::from([("Authorization".to_string(), String::new())]);
 
@@ -713,20 +778,72 @@ mod tests {
             &submitted,
             &stored,
             &Transport::HttpRemote {
-                url: "https://old.io/mcp".to_string(),
+                url: "https://svc.io/mcp".to_string(),
             },
             &Transport::HttpRemote {
-                url: "https://new.io/mcp".to_string(),
+                url: "https://svc.io/mcp/v2".to_string(),
             },
         );
 
         assert_eq!(resolved.get("Authorization"), Some(&"Bearer t".to_string()));
     }
 
+    /// Pointing the server at a *different origin* re-scopes the credentials: a
+    /// token minted for one service must not be sent to another. `__oauth__`
+    /// would otherwise re-mint against the old endpoint and ship the result to
+    /// the new host.
+    #[test]
+    fn cross_origin_url_change_drops_stored_env() {
+        let stored = HashMap::from([
+            ("Authorization".to_string(), "Bearer for-a".to_string()),
+            (
+                "__oauth__".to_string(),
+                "{\"refresh_token\":\"r\"}".to_string(),
+            ),
+        ]);
+        let submitted = HashMap::from([("Authorization".to_string(), String::new())]);
+
+        let resolved = resolve_env_for_transport(
+            &submitted,
+            &stored,
+            &Transport::HttpRemote {
+                url: "https://a.com/mcp".to_string(),
+            },
+            &Transport::HttpRemote {
+                url: "https://b.com/mcp".to_string(),
+            },
+        );
+
+        assert!(
+            resolved.is_empty(),
+            "a token for a.com must not carry to b.com: {resolved:?}"
+        );
+    }
+
+    /// A different port is a different origin.
+    #[test]
+    fn port_change_drops_stored_env() {
+        let stored = HashMap::from([("Authorization".to_string(), "Bearer t".to_string())]);
+        let resolved = resolve_env_for_transport(
+            &HashMap::new(),
+            &stored,
+            &Transport::HttpRemote {
+                url: "https://svc.io:8443/mcp".to_string(),
+            },
+            &Transport::HttpRemote {
+                url: "https://svc.io:9443/mcp".to_string(),
+            },
+        );
+        assert!(
+            resolved.is_empty(),
+            "different port re-scopes: {resolved:?}"
+        );
+    }
+
     #[test]
     fn ordinary_env_keys_are_accepted() {
         let env = HashMap::from([("Authorization".to_string(), "Bearer t".to_string())]);
-        assert!(validate_env(&env).is_ok());
+        assert!(validate_env(&env, true).is_ok());
     }
 
     /// `resolve_env` trims before storing, so validating the raw key would let a
@@ -737,7 +854,7 @@ mod tests {
     fn reserved_env_keys_are_rejected_despite_padding() {
         for padded in ["  __oauth__", "__oauth__  ", "\t__oauth__"] {
             let env = HashMap::from([(padded.to_string(), "{}".to_string())]);
-            let err = validate_env(&env)
+            let err = validate_env(&env, false)
                 .expect_err(&format!("padded reserved key `{padded}` must be rejected"));
             assert!(err.contains("reserved"), "got: {err}");
         }
@@ -746,7 +863,7 @@ mod tests {
     #[test]
     fn empty_env_key_is_rejected() {
         let env = HashMap::from([("  ".to_string(), "v".to_string())]);
-        assert!(validate_env(&env).is_err());
+        assert!(validate_env(&env, false).is_err());
     }
 
     fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {

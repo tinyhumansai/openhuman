@@ -10,7 +10,7 @@
  * surface the core's message verbatim.
  */
 import createDebug from 'debug';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { CustomServerParams } from '../../../services/api/mcpClientsApi';
@@ -89,6 +89,12 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The rows the user has built up for the *other* transport, kept so a toggle
+  // away and back preserves their edits (a deleted key stays deleted) instead of
+  // reverting to the stored set. Keyed by transport; the value is what to show
+  // when that transport becomes active again.
+  const stashedRows = useRef<Partial<Record<TransportKind, EnvRow[]>>>({});
+
   const isEdit = mode === 'edit';
 
   // Mirrors the core's required-field rules so the button reflects them. The
@@ -119,20 +125,25 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
    * local token to a remote host with the user seeing only an empty box. Blank
    * means "unchanged" only while the map's meaning is unchanged.
    *
-   * So the rows track whether the *stored* credentials still apply: back on the
-   * transport this server is saved with, they do, and the seeded blank rows mean
-   * "keep" again. Anywhere else they don't, and the rows start empty. Clearing
-   * unconditionally would turn a there-and-back toggle into a silent wipe of
-   * every credential — the user changed nothing, but the submitted key set is
-   * authoritative, so the core would delete them all.
+   * So each transport keeps its own rows. Leaving a transport stashes whatever
+   * the user built there; returning restores it — a key they deleted stays
+   * deleted, a rename stays renamed. The first time a transport is shown it
+   * seeds from the stored set if this server is saved on it (blank rows meaning
+   * "keep"), otherwise empty. Re-seeding from the stored set on every return
+   * would silently resurrect a just-deleted credential.
    *
-   * The core enforces this too (`resolve_env_for_transport`); this only keeps
-   * the form honest about what it is about to submit.
+   * The core enforces the cross-scope rule too (`resolve_env_for_transport`);
+   * this only keeps the form honest about what it is about to submit.
    */
   const changeTransport = (next: TransportKind) => {
     if (next === transport) return;
+    stashedRows.current[transport] = envRows;
     setTransport(next);
-    setEnvRows(next === seedTransport(server) ? seedEnvRows(server) : [newRow()]);
+    setEnvRows(
+      stashedRows.current[next] ??
+        (next === seedTransport(server) ? seedEnvRows(server) : [newRow()])
+    );
+    setError(null);
   };
 
   /**
@@ -162,11 +173,11 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
    *
    * On `http_remote` the comparison is case-insensitive, because that is what
    * the rows are: HTTP header names, which RFC 9110 defines as case-insensitive.
-   * `Authorization` and `authorization` would both be stored and both sent, and
-   * since the core hands `build_http_auth` a `HashMap` — whose iteration order
-   * Rust randomises per process — which of the two survives into the request
-   * would differ between runs. Subprocess env vars are case-sensitive on Unix,
-   * so stdio keeps the exact comparison.
+   * `Authorization` and `authorization` would both be stored and both sent as
+   * separate headers — a duplicate the server may reject or resolve arbitrarily.
+   * Subprocess env vars are case-sensitive on Unix, so stdio keeps the exact
+   * comparison. The core enforces the same rule (`validate_env`) so non-UI
+   * callers can't slip a case-variant duplicate past this.
    */
   const duplicateEnvKey = (): string | null => {
     const seen = new Set<string>();

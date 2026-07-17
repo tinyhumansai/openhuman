@@ -214,6 +214,38 @@ describe('CustomServerFormModal', () => {
     expect(onSubmit.mock.calls[0][0].env).toEqual({ GITHUB_TOKEN: '' });
   });
 
+  /**
+   * A key deleted before toggling must stay deleted when the transport comes
+   * back — the rows are stashed per transport, not re-seeded from the stored
+   * set. Re-seeding would silently resurrect a credential the user just revoked.
+   */
+  it('does not resurrect a deleted key across a transport toggle', async () => {
+    const { onSubmit } = renderForm('edit', server({ env_keys: ['API_KEY', 'OLD_KEY'] }));
+    // Delete OLD_KEY (the second row).
+    fireEvent.click(screen.getByRole('button', { name: 'Remove OLD_KEY' }));
+    // Toggle away and back.
+    fireEvent.click(screen.getByRole('button', { name: 'Remote URL' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Local command' }));
+
+    const keys = (screen.getAllByLabelText('Key') as HTMLInputElement[]).map(i => i.value);
+    expect(keys).toEqual(['API_KEY']);
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].env).toEqual({ API_KEY: '' });
+  });
+
+  /** Rows built on the remote transport survive a toggle away and back too. */
+  it('preserves in-progress rows for each transport independently', async () => {
+    renderForm();
+    // Add a header on remote.
+    fireEvent.click(screen.getByRole('button', { name: 'Remote URL' }));
+    fireEvent.change(screen.getAllByLabelText('Key')[0], { target: { value: 'X-Header' } });
+    // Toggle to local and back to remote.
+    fireEvent.click(screen.getByRole('button', { name: 'Local command' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remote URL' }));
+    expect((screen.getAllByLabelText('Key')[0] as HTMLInputElement).value).toBe('X-Header');
+  });
+
   /** A map would silently keep the last row and drop the other's value. */
   it('rejects duplicate env keys instead of silently clobbering', async () => {
     const { onSubmit } = renderForm();

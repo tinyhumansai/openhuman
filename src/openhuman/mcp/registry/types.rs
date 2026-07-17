@@ -73,6 +73,11 @@ impl Transport {
         }
     }
 
+    /// Whether this transport's env is HTTP headers (vs subprocess env vars).
+    pub fn is_http_remote(&self) -> bool {
+        matches!(self, Self::HttpRemote { .. })
+    }
+
     /// Inverse of `dispatch_kind`. Unknown / missing values fall back to
     /// `Stdio` so pre-migration rows (where the column didn't exist and
     /// every record was implicitly stdio) keep working with no behaviour

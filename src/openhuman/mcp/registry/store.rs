@@ -509,6 +509,47 @@ pub fn update_custom_server_and_env(
     })
 }
 
+/// Apply a custom-server edit whose env depends on what is currently stored, as
+/// one serializable read-modify-write.
+///
+/// The caller's `build` closure receives the stored env read *inside* the
+/// transaction and returns the row to write plus the resolved env. Reading
+/// outside the transaction (load, then a separate write) races a concurrent
+/// `persist_tokens`: an OAuth refresh that rotates `__oauth__`/`Authorization`
+/// between the read and the write is silently reverted by the stale snapshot,
+/// signing the user out. `BEGIN IMMEDIATE` takes the write lock up front, so the
+/// read can't be undercut and two concurrent edits serialize at BEGIN rather
+/// than deadlocking on a `SHARED`→`RESERVED` upgrade.
+pub fn update_custom_server_rmw<F>(
+    config: &Config,
+    server_id: &str,
+    build: F,
+) -> Result<InstalledServer>
+where
+    F: FnOnce(HashMap<String, String>) -> (InstalledServer, HashMap<String, String>),
+{
+    with_connection(config, |conn| {
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let outcome = (|| {
+            let stored = load_env_values_conn(conn, server_id)?;
+            let (server, env) = build(stored);
+            update_server_custom_fields_conn(conn, server_id, &server)?;
+            set_env_values_conn(conn, server_id, &env)?;
+            Ok::<InstalledServer, anyhow::Error>(server)
+        })();
+        match outcome {
+            Ok(server) => {
+                conn.execute_batch("COMMIT")?;
+                Ok(server)
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    })
+}
+
 /// Insert a new custom-server row and its env values as one transaction.
 ///
 /// Returns `false` when the `qualified_name` was taken between allocation and
