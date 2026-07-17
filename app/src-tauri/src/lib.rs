@@ -1195,7 +1195,7 @@ fn mascot_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[mascot-window] show requested");
     #[cfg(target_os = "macos")]
     {
-        return mascot_native_window::show(&app);
+        mascot_native_window::show(&app)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1258,11 +1258,11 @@ fn notch_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[notch-window] show requested");
     #[cfg(target_os = "macos")]
     {
-        return dispatch_notch_on_main(app, |app| {
+        dispatch_notch_on_main(app, |app| {
             if let Err(e) = notch_window::show(app) {
                 log::warn!("[notch-window] show failed: {e}");
             }
-        });
+        })
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1277,7 +1277,7 @@ fn notch_window_hide(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[notch-window] hide requested");
     #[cfg(target_os = "macos")]
     {
-        return dispatch_notch_on_main(app, |_app| notch_window::hide());
+        dispatch_notch_on_main(app, |_app| notch_window::hide())
     }
     #[cfg(not(target_os = "macos"))]
     {
