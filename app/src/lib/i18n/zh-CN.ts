@@ -6902,6 +6902,8 @@ const messages: TranslationMap = {
   'mcp.custom.form.envKeyPlaceholder': 'API_KEY',
   'mcp.custom.form.headerKeyPlaceholder': 'Authorization',
   'mcp.custom.form.envValuePlaceholder': '值',
+  'mcp.custom.form.envValueForAria': '{key} 的值',
+  'mcp.custom.form.envRemoveForAria': '删除 {key}',
   'mcp.custom.form.envValueKeepPlaceholder': '留空则保持不变',
   'mcp.custom.form.envKeyAria': '键',
   'mcp.custom.form.envValueAria': '值',

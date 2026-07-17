@@ -7500,6 +7500,8 @@ const messages: TranslationMap = {
   'mcp.custom.form.envKeyPlaceholder': 'API_KEY',
   'mcp.custom.form.headerKeyPlaceholder': 'Authorization',
   'mcp.custom.form.envValuePlaceholder': 'Wert',
+  'mcp.custom.form.envValueForAria': 'Wert für {key}',
+  'mcp.custom.form.envRemoveForAria': '{key} entfernen',
   'mcp.custom.form.envValueKeepPlaceholder': 'Leer lassen zum Beibehalten',
   'mcp.custom.form.envKeyAria': 'Schlüssel',
   'mcp.custom.form.envValueAria': 'Wert',

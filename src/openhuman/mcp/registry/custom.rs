@@ -155,6 +155,9 @@ fn infer_command_kind(command: &str) -> CommandKind {
 /// Reserved `__`-prefixed entries are carried over unconditionally: the form
 /// never submits them, so without this an unrelated rename would drop
 /// `__oauth__` and silently sign the user out of an OAuth'd server.
+///
+/// Both rules are scoped to *one* transport — see [`resolve_env_for_transport`],
+/// which is what callers should use.
 fn resolve_env(
     submitted: &HashMap<String, String>,
     stored: &HashMap<String, String>,
@@ -176,6 +179,37 @@ fn resolve_env(
         }
     }
     resolved
+}
+
+/// Resolve the env for an edit that may also change the transport.
+///
+/// Nothing stored carries across a transport change, reserved keys included.
+/// Both of [`resolve_env`]'s rules assume the map keeps its meaning, and a
+/// transport change is exactly where it doesn't:
+///
+/// - Ordinary keys are the subprocess environment on stdio and request headers
+///   on `http_remote` ([`connections::build_http_auth`]). Keeping them ships a
+///   token that only ever reached a local process to a remote host — and since
+///   values are write-only, blank-means-keep makes that invisible.
+/// - `__oauth__` is a refresh bundle (refresh token + client secret + token
+///   endpoint) for a *specific* endpoint. It is meaningless to a subprocess, and
+///   `McpStdioClient` hands the whole env to the child with no `__` filter of its
+///   own — so carrying it would hand the user's refresh token to whatever command
+///   they typed.
+///
+/// A re-scoped credential must be re-entered. This lives here, not in the form:
+/// `/rpc`, the CLI and the iOS client all reach this function without touching
+/// the React layer.
+fn resolve_env_for_transport(
+    submitted: &HashMap<String, String>,
+    stored: &HashMap<String, String>,
+    previous: &Transport,
+    next: &Transport,
+) -> HashMap<String, String> {
+    if previous.dispatch_kind() != next.dispatch_kind() {
+        return resolve_env(submitted, &HashMap::new());
+    }
+    resolve_env(submitted, stored)
 }
 
 /// Sorted key list for the install record, matching what `update_env` persists.
@@ -206,13 +240,18 @@ fn validate_env(env: &HashMap<String, String>) -> Result<(), String> {
     Ok(())
 }
 
-/// ASCII slug for the `custom/<slug>` identity.
+/// ASCII slug for the `custom/<slug>` identity, or `None` when the name has no
+/// ASCII alphanumerics to build one from.
 ///
 /// Deliberately ASCII-only: `qualified_name` is an internal identifier that
 /// flows into logs and dedupe lookups, while the UI always renders
-/// `display_name`. A name with no ASCII alphanumerics (e.g. all-CJK) collapses
-/// to `server`, and the caller's collision suffix makes it unique.
-fn slugify(raw: &str) -> String {
+/// `display_name`. Returning `None` rather than a constant `"server"` lets the
+/// caller fall back to a per-server unique fragment — otherwise every server
+/// named purely in a non-Latin script (CJK, Cyrillic, Arabic, …) would collapse
+/// to the *same* slug, so a user with such names would exhaust the collision
+/// suffix at 100 *distinct* servers, and every log line would read
+/// `custom/server-N` with no diagnostic value.
+fn slugify(raw: &str) -> Option<String> {
     let mut slug = String::new();
     let mut pending_dash = false;
     for ch in raw.trim().chars() {
@@ -227,9 +266,9 @@ fn slugify(raw: &str) -> String {
         }
     }
     if slug.is_empty() {
-        "server".to_string()
+        None
     } else {
-        slug
+        Some(slug)
     }
 }
 
@@ -243,8 +282,24 @@ fn slugify(raw: &str) -> String {
 /// A collision gets a numeric suffix rather than an error: two servers can
 /// legitimately share a display name (same tool, different args or
 /// credentials), and the user should not have to invent a unique label.
-fn allocate_qualified_name(config: &Config, display_name: &str) -> Result<String, String> {
-    let base = format!("{CUSTOM_QUALIFIED_PREFIX}{}", slugify(display_name));
+/// The slug for a server's base `qualified_name`: the display name's slug, or —
+/// when the name has no ASCII to build one from — a fragment of the (unique)
+/// server_id. The fallback is per-server so two differently-named non-Latin
+/// servers get different slugs instead of both collapsing to one constant.
+fn base_slug(display_name: &str, server_id: &str) -> String {
+    slugify(display_name)
+        .unwrap_or_else(|| format!("server-{}", &server_id[..server_id.len().min(8)]))
+}
+
+fn allocate_qualified_name(
+    config: &Config,
+    display_name: &str,
+    server_id: &str,
+) -> Result<String, String> {
+    let base = format!(
+        "{CUSTOM_QUALIFIED_PREFIX}{}",
+        base_slug(display_name, server_id)
+    );
     for attempt in 0..MAX_SLUG_ATTEMPTS {
         let candidate = if attempt == 0 {
             base.clone()
@@ -296,8 +351,8 @@ pub async fn mcp_clients_add_custom(
     // Nothing is stored yet, so this only drops blank-valued keys.
     let env = resolve_env(&input.env, &HashMap::new());
 
-    let qualified_name = allocate_qualified_name(config, &display_name)?;
     let server_id = Uuid::new_v4().to_string();
+    let qualified_name = allocate_qualified_name(config, &display_name, &server_id)?;
 
     tracing::debug!(
         "[mcp-custom] add display_name={} qualified_name={} transport={} env_keys={:?}",
@@ -330,12 +385,14 @@ pub async fn mcp_clients_add_custom(
     // refreshing onto the winner the way `mcp_clients_install` does: two custom
     // rows sharing a name are *different servers*, so silently attaching this
     // request's command and credentials to someone else's row would be wrong.
-    if !store::insert_server_if_absent(config, &server).map_err(|e| e.to_string())? {
+    // Row and env commit together: a row that lands without its env is a server
+    // the caller was told did not save, holding the name and relaunched by the
+    // supervisor every tick with no credentials.
+    if !store::insert_custom_server_with_env(config, &server, &env).map_err(|e| e.to_string())? {
         return Err(format!(
             "the name `{qualified_name}` was taken by a concurrent add; please retry"
         ));
     }
-    store::set_env_values(config, &server_id, &env).map_err(|e| e.to_string())?;
 
     tracing::debug!(
         "[mcp-custom] add ok server_id={} qualified_name={}",
@@ -395,19 +452,20 @@ pub async fn mcp_clients_update_custom(
     let stored_env = store::load_env_values(config, &server_id).map_err(|e| {
         format!("failed to read stored env for `{server_id}`; refusing to update: {e}")
     })?;
-    let env = resolve_env(&input.env, &stored_env);
+    let transport_changed = existing.transport.dispatch_kind() != transport.dispatch_kind();
+    let env = resolve_env_for_transport(&input.env, &stored_env, &existing.transport, &transport);
 
     tracing::debug!(
-        "[mcp-custom] update server_id={} transport={} env_keys={:?}",
+        "[mcp-custom] update server_id={} transport={}{} env_keys={:?}",
         server_id,
         transport.dispatch_kind(),
+        if transport_changed {
+            " (changed — stored env dropped)"
+        } else {
+            ""
+        },
         env.keys().collect::<Vec<_>>()
     );
-
-    // Drop the live connection first: it was dialed with the previous command
-    // or URL, so leaving it up would keep serving tools from the old
-    // configuration until something unrelated happened to reconnect.
-    connections::disconnect(&server_id).await;
 
     let updated = InstalledServer {
         // Identity and provenance survive an edit untouched — re-deriving
@@ -431,8 +489,21 @@ pub async fn mcp_clients_update_custom(
         transport,
     };
 
-    store::update_server_custom_fields(config, &server_id, &updated).map_err(|e| e.to_string())?;
-    store::set_env_values(config, &server_id, &env).map_err(|e| e.to_string())?;
+    // One transaction for both tables. Split across two connections, a failure
+    // between them leaves the row on the new transport with the old transport's
+    // secrets still attached — and the supervisor's next tick would dial that
+    // state and ship them, even though the RPC reported failure.
+    store::update_custom_server_and_env(config, &server_id, &updated, &env)
+        .map_err(|e| e.to_string())?;
+
+    // Only now drop the live connection: it was dialed with the previous command
+    // or URL, so leaving it up would keep serving tools from the old
+    // configuration. Disconnecting *before* the write (as this used to) races the
+    // supervisor, which redials from a snapshot taken before the write landed and
+    // pins the server to the pre-edit command indefinitely — it stays healthy, so
+    // no later tick reconnects it. `update_env` persists first for the same
+    // reason.
+    connections::disconnect(&server_id).await;
 
     tracing::debug!("[mcp-custom] update ok server_id={}", server_id);
 
@@ -561,6 +632,97 @@ mod tests {
         assert!(err.contains("reserved"), "got: {err}");
     }
 
+    /// The rows mean subprocess env on stdio and request headers on
+    /// http_remote, so nothing stored survives a switch — a blank submitted key
+    /// resolves to nothing rather than to the stored secret.
+    #[test]
+    fn transport_change_drops_stored_env() {
+        let stored = HashMap::from([
+            ("GITHUB_TOKEN".to_string(), "ghp_live".to_string()),
+            (
+                "__oauth__".to_string(),
+                "{\"refresh_token\":\"r\"}".to_string(),
+            ),
+        ]);
+        let submitted = HashMap::from([("GITHUB_TOKEN".to_string(), String::new())]);
+
+        let resolved = resolve_env_for_transport(
+            &submitted,
+            &stored,
+            &Transport::Stdio,
+            &Transport::HttpRemote {
+                url: "https://x.io/mcp".to_string(),
+            },
+        );
+
+        assert!(
+            resolved.is_empty(),
+            "a stdio secret must not become a header on the new endpoint: {resolved:?}"
+        );
+    }
+
+    /// `__oauth__` is a refresh bundle for one endpoint. `McpStdioClient` hands
+    /// the whole env to the child process with no `__` filter, so carrying it
+    /// into stdio would give a user-typed command the refresh token.
+    #[test]
+    fn transport_change_drops_the_oauth_bundle() {
+        let stored = HashMap::from([(
+            "__oauth__".to_string(),
+            "{\"refresh_token\":\"r\",\"client_secret\":\"s\"}".to_string(),
+        )]);
+
+        let resolved = resolve_env_for_transport(
+            &HashMap::new(),
+            &stored,
+            &Transport::HttpRemote {
+                url: "https://x.io/mcp".to_string(),
+            },
+            &Transport::Stdio,
+        );
+
+        assert!(
+            !resolved.contains_key("__oauth__"),
+            "the OAuth bundle must not reach a subprocess: {resolved:?}"
+        );
+    }
+
+    /// Same transport: the blank-means-keep contract holds, so an unrelated
+    /// rename doesn't wipe the credentials.
+    #[test]
+    fn same_transport_keeps_stored_env() {
+        let stored = HashMap::from([
+            ("API_KEY".to_string(), "secret".to_string()),
+            ("__oauth__".to_string(), "{}".to_string()),
+        ]);
+        let submitted = HashMap::from([("API_KEY".to_string(), String::new())]);
+
+        let resolved =
+            resolve_env_for_transport(&submitted, &stored, &Transport::Stdio, &Transport::Stdio);
+
+        assert_eq!(resolved.get("API_KEY"), Some(&"secret".to_string()));
+        assert_eq!(resolved.get("__oauth__"), Some(&"{}".to_string()));
+    }
+
+    /// Changing only the URL is not a transport change.
+    #[test]
+    fn url_change_within_http_remote_keeps_stored_env() {
+        let stored = HashMap::from([("Authorization".to_string(), "Bearer t".to_string())]);
+        let submitted = HashMap::from([("Authorization".to_string(), String::new())]);
+
+        let resolved = resolve_env_for_transport(
+            &submitted,
+            &stored,
+            &Transport::HttpRemote {
+                url: "https://old.io/mcp".to_string(),
+            },
+            &Transport::HttpRemote {
+                url: "https://new.io/mcp".to_string(),
+            },
+        );
+
+        assert_eq!(resolved.get("Authorization"), Some(&"Bearer t".to_string()));
+    }
+
     #[test]
     fn ordinary_env_keys_are_accepted() {
         let env = HashMap::from([("Authorization".to_string(), "Bearer t".to_string())]);
@@ -662,16 +824,36 @@ mod tests {
 
     #[test]
     fn slugify_normalises_punctuation_and_case() {
-        assert_eq!(slugify("My Cool Server"), "my-cool-server");
-        assert_eq!(slugify("  @scope/thing!  "), "scope-thing");
-        assert_eq!(slugify("a---b"), "a-b");
+        assert_eq!(slugify("My Cool Server").as_deref(), Some("my-cool-server"));
+        assert_eq!(slugify("  @scope/thing!  ").as_deref(), Some("scope-thing"));
+        assert_eq!(slugify("a---b").as_deref(), Some("a-b"));
     }
 
-    /// A name with no ASCII alphanumerics still needs an identity; the caller's
-    /// collision suffix keeps repeats unique.
+    /// A name with no ASCII alphanumerics yields no slug; the caller substitutes
+    /// a per-server fragment so distinct non-Latin names don't collide.
     #[test]
-    fn slugify_falls_back_for_non_ascii_names() {
-        assert_eq!(slugify("한글 서버"), "server");
-        assert_eq!(slugify(""), "server");
+    fn slugify_is_none_for_non_ascii_names() {
+        assert_eq!(slugify("한글 서버"), None);
+        assert_eq!(slugify("日本語"), None);
+        assert_eq!(slugify(""), None);
+    }
+
+    /// The whole point of the `Option` return: two differently-named all-CJK
+    /// servers get *different* base slugs from their unique server_ids, instead
+    /// of both collapsing onto one constant and racing the collision suffix. The
+    /// suffix loop itself needs the DB and is covered in `json_rpc_e2e`.
+    #[test]
+    fn base_slug_is_distinct_for_distinct_non_ascii_names() {
+        let a = base_slug("한글 서버", "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        let b = base_slug("日本語サーバー", "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        assert_ne!(a, b, "distinct non-Latin names collided on `{a}`");
+        assert_eq!(a, "server-11111111");
+        assert_eq!(b, "server-22222222");
+    }
+
+    /// An ASCII name ignores the server_id and uses its own slug.
+    #[test]
+    fn base_slug_prefers_the_display_name_slug() {
+        assert_eq!(base_slug("My Server", "unused-id"), "my-server");
     }
 }

@@ -121,6 +121,14 @@ const SendCryptoModal = ({ balance, onClose, onSuccess }: SendCryptoModalProps) 
   return (
     <ModalShell
       onClose={onClose}
+      // Dismissing mid-broadcast cannot recall the transaction — it only throws
+      // away the result. The funds move either way; the user would just never
+      // learn the hash, or that it failed.
+      closePolicy={{
+        escape: step !== 'sending',
+        backdrop: step !== 'sending',
+        button: step !== 'sending',
+      }}
       titleId="wallet-send-title"
       title={t('walletBalances.send')}
       subtitle={`${networkLabel} · ${balance.assetSymbol}`}>

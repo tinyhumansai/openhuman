@@ -7332,6 +7332,8 @@ const messages: TranslationMap = {
   'mcp.custom.form.envKeyPlaceholder': 'API_KEY',
   'mcp.custom.form.headerKeyPlaceholder': 'Authorization',
   'mcp.custom.form.envValuePlaceholder': 'Nilai',
+  'mcp.custom.form.envValueForAria': 'Nilai untuk {key}',
+  'mcp.custom.form.envRemoveForAria': 'Hapus {key}',
   'mcp.custom.form.envValueKeepPlaceholder': 'Biarkan kosong untuk mempertahankan',
   'mcp.custom.form.envKeyAria': 'Kunci',
   'mcp.custom.form.envValueAria': 'Nilai',

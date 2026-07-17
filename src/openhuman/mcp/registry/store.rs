@@ -10,6 +10,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension as _};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,6 +34,13 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
     let db_path = db_dir.join("mcp_clients.db");
     let conn = Connection::open(&db_path)
         .with_context(|| format!("Failed to open mcp_clients DB: {}", db_path.display()))?;
+    // SQLite's default busy handler is null: a writer that finds the DB locked
+    // fails immediately with SQLITE_BUSY. Several writers share this file — the
+    // 60s supervisor tick's `update_last_connected`, OAuth refresh's
+    // `persist_tokens`, and the custom-server RPCs — so the default turns routine
+    // contention into a surfaced error. Wait instead.
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .context("Failed to set busy_timeout on mcp_clients DB")?;
     init_schema(&conn)?;
     f(&conn)
 }
@@ -478,6 +486,52 @@ pub fn update_server_custom_fields(
     })
 }
 
+/// Apply a custom-server edit — row fields and env values — as one transaction.
+///
+/// These two writes must not be able to land separately. A transport switch
+/// changes what the env map *means*, so a row updated to `http_remote` whose env
+/// still holds the stdio secrets is a state that leaks: the supervisor's next
+/// tick dials it and `build_http_auth` sends those secrets to the endpoint as
+/// headers — even though the RPC returned an error and the user believes the
+/// save failed.
+pub fn update_custom_server_and_env(
+    config: &Config,
+    server_id: &str,
+    server: &InstalledServer,
+    env: &HashMap<String, String>,
+) -> Result<()> {
+    with_connection(config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        update_server_custom_fields_conn(&tx, server_id, server)?;
+        set_env_values_conn(&tx, server_id, env)?;
+        tx.commit()?;
+        Ok(())
+    })
+}
+
+/// Insert a new custom-server row and its env values as one transaction.
+///
+/// Returns `false` when the `qualified_name` was taken between allocation and
+/// insert. Splitting the two writes would let the row commit and the env fail,
+/// leaving a server the caller was told did not save: it holds the name, so a
+/// retry allocates `-2`, and it is `enabled`, so the supervisor keeps launching
+/// the user's command every 60s with no credentials.
+pub fn insert_custom_server_with_env(
+    config: &Config,
+    server: &InstalledServer,
+    env: &HashMap<String, String>,
+) -> Result<bool> {
+    with_connection(config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        if !insert_server_if_absent_conn(&tx, server)? {
+            return Ok(false);
+        }
+        set_env_values_conn(&tx, &server.server_id, env)?;
+        tx.commit()?;
+        Ok(true)
+    })
+}
+
 pub fn update_server_custom_fields_conn(
     conn: &Connection,
     server_id: &str,
@@ -708,6 +762,22 @@ mod tests {
             .iter()
             .any(|c| c == "provenance"));
 
+        // Write the legacy row *while the column is absent* — that is the only
+        // way the DDL default is what supplies the value. Inserting after the
+        // migration would bind provenance explicitly and pass no matter what the
+        // default says: flip it to 'custom' and every existing catalog install
+        // would re-hydrate as Custom, which `refresh_existing_install` now
+        // refuses — breaking token rotation for every installed server.
+        conn.execute(
+            "INSERT INTO mcp_servers
+                (server_id, qualified_name, display_name, command_kind, command,
+                 args_json, env_keys_json, installed_at)
+             VALUES ('srv-legacy', 'ai.acme/legacy', 'Legacy', 'node', 'npx',
+                     '[]', '[]', 0)",
+            [],
+        )
+        .expect("insert a row with no provenance column, as a pre-migration build would");
+
         // Re-running init_schema is what happens on the next launch.
         init_schema(&conn).unwrap();
         assert!(mcp_servers_columns(&conn)
@@ -715,7 +785,6 @@ mod tests {
             .iter()
             .any(|c| c == "provenance"));
 
-        insert_server_conn(&conn, &sample_server("srv-legacy")).unwrap();
         assert_eq!(
             get_server_conn(&conn, "srv-legacy").unwrap().provenance,
             ServerProvenance::Registry

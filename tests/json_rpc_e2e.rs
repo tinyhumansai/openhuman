@@ -9802,12 +9802,61 @@ async fn mcp_clients_lifecycle() {
             .is_some_and(|q| q.starts_with("custom/")),
         "custom servers get a `custom/` identity: {server}"
     );
+    assert_eq!(
+        server.get("qualified_name").and_then(Value::as_str),
+        Some("custom/my-local-server"),
+        "the first server slugs its display name: {server}"
+    );
     // Env values are write-only — key names come back, secrets never do.
     let serialized = server.to_string();
     assert!(
         !serialized.contains("secret-value"),
         "add_custom response must not echo env values: {serialized}"
     );
+
+    // ── 8b. a second server with the same display name gets a numeric suffix ──
+    // Two servers may legitimately share a name (same tool, different args), so
+    // the collision resolves to `-2` rather than erroring. Nothing else exercises
+    // this suffix path — the unit tests can't reach the DB dedup lookup.
+    let add_custom_dupe = post_json_rpc(
+        &rpc_base,
+        9918,
+        "openhuman.mcp_clients_add_custom",
+        json!({
+            "display_name": "My Local Server",
+            "transport": "stdio",
+            "command": "echo",
+            "args": ["hello"],
+            "env": {},
+        }),
+    )
+    .await;
+    let dupe_body = peel_logs_envelope(assert_no_jsonrpc_error(
+        &add_custom_dupe,
+        "add_custom (dupe name)",
+    ));
+    assert_eq!(
+        dupe_body
+            .get("server")
+            .and_then(|s| s.get("qualified_name"))
+            .and_then(Value::as_str),
+        Some("custom/my-local-server-2"),
+        "a shared display name must suffix, not error or collide: {dupe_body}"
+    );
+    // Clean it up so the later installed-list count stays deterministic.
+    let dupe_id = dupe_body
+        .get("server")
+        .and_then(|s| s.get("server_id"))
+        .and_then(Value::as_str)
+        .expect("dupe server_id")
+        .to_string();
+    let _ = post_json_rpc(
+        &rpc_base,
+        9919,
+        "openhuman.mcp_clients_uninstall",
+        json!({ "server_id": dupe_id }),
+    )
+    .await;
 
     // ── 9. the custom server shows up in installed_list ──────────────────────
     let list2 = post_json_rpc(
@@ -9858,7 +9907,10 @@ async fn mcp_clients_lifecycle() {
             "display_name": "Renamed Server",
             "transport": "http_remote",
             "url": "http://127.0.0.1:9/mcp",
-            // Blank value = keep the stored secret rather than erase it.
+            // Blank value = keep the stored secret — but only within a transport.
+            // This call also switches stdio -> http_remote, which re-scopes the
+            // map from subprocess env to request headers, so the stored value
+            // must NOT be kept.
             "env": { "API_KEY": "" },
         }),
     )
@@ -9877,14 +9929,19 @@ async fn mcp_clients_lifecycle() {
         Some("http_remote"),
         "an edit must be able to switch transport: {updated}"
     );
-    // The blank value kept the key — a rename must not drop stored credentials.
+    // `API_KEY` was added at step 8 as a *subprocess env var*. Carrying it across
+    // the switch would make `build_http_auth` send it to the endpoint as a
+    // header — a secret that only ever reached a local process, now on the wire,
+    // and invisible to the user because values are write-only. The core, not the
+    // form, has to enforce this: /rpc, the CLI and the iOS client never touch the
+    // React layer.
     let kept_keys = updated
         .get("env_keys")
         .and_then(Value::as_array)
         .expect("env_keys");
     assert!(
-        kept_keys.iter().any(|k| k.as_str() == Some("API_KEY")),
-        "a blank submitted value must keep the stored secret: {updated}"
+        !kept_keys.iter().any(|k| k.as_str() == Some("API_KEY")),
+        "a transport switch must not carry a stdio secret into request headers: {updated}"
     );
     // Identity is immutable across an edit.
     assert_eq!(

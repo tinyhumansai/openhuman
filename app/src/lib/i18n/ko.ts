@@ -7213,6 +7213,8 @@ const messages: TranslationMap = {
   'mcp.custom.form.envKeyPlaceholder': 'API_KEY',
   'mcp.custom.form.headerKeyPlaceholder': 'Authorization',
   'mcp.custom.form.envValuePlaceholder': '값',
+  'mcp.custom.form.envValueForAria': '{key}의 값',
+  'mcp.custom.form.envRemoveForAria': '{key} 삭제',
   'mcp.custom.form.envValueKeepPlaceholder': '비워 두면 유지됩니다',
   'mcp.custom.form.envKeyAria': '키',
   'mcp.custom.form.envValueAria': '값',

@@ -113,7 +113,7 @@ describe('CustomServerFormModal', () => {
 
   it('sends a retyped env value', async () => {
     const { onSubmit } = renderForm('edit', server({ env_keys: ['API_KEY'] }));
-    fireEvent.change(screen.getAllByLabelText('Value')[0], { target: { value: 'fresh' } });
+    fireEvent.change(screen.getByLabelText('Value for API_KEY'), { target: { value: 'fresh' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     expect(onSubmit.mock.calls[0][0].env).toEqual({ API_KEY: 'fresh' });
@@ -122,10 +122,41 @@ describe('CustomServerFormModal', () => {
   /** Removing the row is the delete gesture — the key must stop being sent. */
   it('drops a removed env row from the payload', async () => {
     const { onSubmit } = renderForm('edit', server({ env_keys: ['API_KEY', 'OTHER'] }));
-    fireEvent.click(screen.getAllByRole('button', { name: 'Remove this row' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove API_KEY' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     expect(onSubmit.mock.calls[0][0].env).toEqual({ OTHER: '' });
+  });
+
+  /**
+   * Rows are otherwise indistinguishable by ear — every key input is "Key" and
+   * every value "Value". Naming the value and remove controls after their row's
+   * key is what makes the editor usable with a screen reader.
+   */
+  it('names each env row control after its key', () => {
+    renderForm('edit', server({ env_keys: ['API_KEY', 'OTHER'] }));
+    expect(screen.getByLabelText('Value for API_KEY')).toBeInTheDocument();
+    expect(screen.getByLabelText('Value for OTHER')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove API_KEY' })).toBeInTheDocument();
+    // A row with no key yet falls back to the bare label.
+    fireEvent.click(screen.getByRole('button', { name: 'Add row' }));
+    expect(screen.getByLabelText('Value')).toBeInTheDocument();
+  });
+
+  /**
+   * The env label is the only thing distinguishing "local subprocess
+   * environment" from "headers sent to a remote host" — it has to be exposed,
+   * not just drawn.
+   */
+  it('exposes the env section label and hint to assistive tech', () => {
+    renderForm();
+    const group = screen.getByRole('group', { name: 'Environment variables' });
+    expect(group).toHaveAccessibleDescription('Passed to the command when it starts.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remote URL' }));
+    expect(screen.getByRole('group', { name: 'Request headers' })).toHaveAccessibleDescription(
+      'Sent with every request. Use Authorization for a bearer token.'
+    );
   });
 
   /** `__oauth__` is the core's, not the user's — showing it would invite an
@@ -165,20 +196,72 @@ describe('CustomServerFormModal', () => {
     expect((screen.getAllByLabelText('Key')[0] as HTMLInputElement).value).toBe('API_KEY');
   });
 
+  /**
+   * Toggling away and back changed nothing, so it must not delete anything. The
+   * stored keys apply again once the transport matches what the server is saved
+   * with — and since the submitted key set is authoritative, failing to re-seed
+   * them would have the core drop every credential.
+   */
+  it('restores the stored env keys when the transport is toggled back', async () => {
+    const { onSubmit } = renderForm('edit', server({ env_keys: ['GITHUB_TOKEN'] }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remote URL' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Local command' }));
+
+    expect((screen.getAllByLabelText('Key')[0] as HTMLInputElement).value).toBe('GITHUB_TOKEN');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    // Blank value = keep, so the credential survives a round trip untouched.
+    expect(onSubmit.mock.calls[0][0].env).toEqual({ GITHUB_TOKEN: '' });
+  });
+
   /** A map would silently keep the last row and drop the other's value. */
   it('rejects duplicate env keys instead of silently clobbering', async () => {
     const { onSubmit } = renderForm();
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'S' } });
     fireEvent.change(screen.getByLabelText('Command'), { target: { value: 'npx' } });
     fireEvent.change(screen.getAllByLabelText('Key')[0], { target: { value: 'API_KEY' } });
-    fireEvent.change(screen.getAllByLabelText('Value')[0], { target: { value: 'one' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add row' }));
     fireEvent.change(screen.getAllByLabelText('Key')[1], { target: { value: 'API_KEY' } });
-    fireEvent.change(screen.getAllByLabelText('Value')[1], { target: { value: 'two' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('API_KEY');
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The rows are HTTP header names on this transport, and RFC 9110 makes those
+   * case-insensitive. Both would be stored and both sent, and the core hands
+   * them to `build_http_auth` as a `HashMap` — whose iteration order Rust
+   * randomises per process — so which one reached the wire would vary run to run.
+   */
+  it('rejects header names differing only by case on the remote transport', async () => {
+    const { onSubmit } = renderForm();
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'S' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Remote URL' }));
+    fireEvent.change(screen.getByLabelText('Server URL'), {
+      target: { value: 'https://x.io/mcp' },
+    });
+    fireEvent.change(screen.getAllByLabelText('Key')[0], { target: { value: 'Authorization' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add row' }));
+    fireEvent.change(screen.getAllByLabelText('Key')[1], { target: { value: 'authorization' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('authorization');
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  /** Env var names are case-sensitive on Unix, so stdio must not over-reject. */
+  it('allows env vars differing only by case on the local transport', async () => {
+    const { onSubmit } = renderForm();
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'S' } });
+    fireEvent.change(screen.getByLabelText('Command'), { target: { value: 'npx' } });
+    fireEvent.change(screen.getAllByLabelText('Key')[0], { target: { value: 'Path' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add row' }));
+    fireEvent.change(screen.getAllByLabelText('Key')[1], { target: { value: 'PATH' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(Object.keys(onSubmit.mock.calls[0][0].env).sort()).toEqual(['PATH', 'Path']);
   });
 
   /** The transport picker is a button group, not an ARIA radiogroup — it has no
@@ -194,6 +277,29 @@ describe('CustomServerFormModal', () => {
       'aria-pressed',
       'false'
     );
+  });
+
+  /**
+   * Escape / backdrop / ✕ read as "cancel", but nothing aborts an in-flight
+   * request — the mutation lands regardless, and once the host unmounts the
+   * modal its error has nowhere to render. Gate the dismissals instead.
+   */
+  it('ignores dismissal while a save is in flight', async () => {
+    let release: (() => void) | undefined;
+    const onSubmit = vi.fn(() => new Promise<void>(resolve => (release = resolve)));
+    const { onClose } = renderForm('create', undefined, onSubmit);
+
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'S' } });
+    fireEvent.change(screen.getByLabelText('Command'), { target: { value: 'npx' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled());
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+
+    release?.();
+    // Once the request settles the form closes itself, as normal.
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
   it('surfaces the core error message verbatim on submit failure', async () => {

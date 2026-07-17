@@ -577,10 +577,22 @@ const McpServersTab = () => {
   }
 
   // Home view — registry catalog on the left, hand-added servers on the right.
-  // Stacks to one column below `lg`, where a 320px side pane would squeeze the
-  // table's horizontal scroll into uselessness.
+  // Side-by-side only from `xl` (1280px — the app's default window width), and
+  // with a fixed-width pane.
+  //
+  // The table needs 640px (`min-w-[640px]` below) before it starts scrolling.
+  // Splitting at `lg` left it ~511px at a 1100px window, and the pane growing to
+  // 384px at `xl` made the table *shrink* by 63px as the window crossed
+  // 1279→1280 — widen the window by a pixel, get a scrollbar. One breakpoint and
+  // one pane width, chosen so the default window clears 640px, avoids both.
+  //
+  // This is still approximate: these are viewport queries, but the real
+  // constraint is the content pane, which the user can resize independently via
+  // the app sidebar. A container query would be exact; the plugin isn't
+  // installed, and pulling it in for one panel isn't this PR's business. A very
+  // wide sidebar can still scroll the table, which is the graceful outcome.
   return (
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+    <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
       <div className="min-w-0 flex-1 space-y-3">
         {/* Search + filter chips */}
         <div className="flex items-center gap-3">
@@ -840,7 +852,7 @@ const McpServersTab = () => {
         </div>
       </div>
 
-      <aside className="w-full shrink-0 lg:w-80 xl:w-96">
+      <aside className="w-full shrink-0 xl:w-80">
         <CustomServersPanel
           servers={servers}
           statuses={statuses}

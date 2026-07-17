@@ -130,6 +130,19 @@ fn refresh_existing_install(
     config_value: &Option<Value>,
     canonical_name: &str,
 ) -> Result<RpcOutcome<Value>, String> {
+    // Both callers funnel through here, so the provenance rule lives here rather
+    // than at either call site. A hand-added server is not a catalog listing that
+    // happens to share a name — there is no listing behind it. Merging
+    // caller-supplied env onto connection details the user typed (and that this
+    // path cannot re-derive) would let `install`, which takes `qualified_name` as
+    // a free-form string and is reachable as an agent tool, inject env into a
+    // user's local command. Custom rows are edited via `update_custom` only.
+    if existing.provenance == ServerProvenance::Custom {
+        return Err(format!(
+            "`{canonical_name}` is a custom server you added by hand; edit it from Custom servers instead of installing over it"
+        ));
+    }
+
     let mut refreshed = false;
     if !env.is_empty() {
         let mut merged = store::load_env_values(config, &existing.server_id)
@@ -205,18 +218,8 @@ pub async fn mcp_clients_install(
     if let Some(existing) =
         store::find_server_by_qualified_name(config, canonical_name).map_err(|e| e.to_string())?
     {
-        // A hand-added server is not a catalog listing that happens to share a
-        // name — there is no listing behind it at all. Refreshing one here would
-        // merge caller-supplied env onto connection details the user typed, which
-        // this path never resolved and cannot re-derive. Since `install` takes
-        // `qualified_name` as a free-form string (and is reachable as an agent
-        // tool), that would let a caller inject env into a user's local command.
-        // Custom rows are edited through `mcp_clients_update_custom` only.
-        if existing.provenance == ServerProvenance::Custom {
-            return Err(format!(
-                "`{canonical_name}` is a custom server you added by hand; edit it from Custom servers instead of installing over it"
-            ));
-        }
+        // The Custom-provenance guard lives inside `refresh_existing_install`, the
+        // single function this and the race-loss path below both funnel into.
         return refresh_existing_install(config, existing, &env, &config_value, canonical_name);
     }
 

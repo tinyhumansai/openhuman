@@ -99,27 +99,40 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
     return Boolean(url.trim());
   }, [displayName, transport, command, url]);
 
-  const updateRow = (id: string, patch: Partial<EnvRow>) =>
+  const updateRow = (id: string, patch: Partial<EnvRow>) => {
     setEnvRows(rows => rows.map(r => (r.id === id ? { ...r, ...patch } : r)));
+    // Validation errors name a specific row; editing any row can be the fix, so
+    // stop asserting the old complaint while the user works on it.
+    setError(null);
+  };
 
   const removeRow = (id: string) =>
     setEnvRows(rows => (rows.length > 1 ? rows.filter(r => r.id !== id) : [newRow()]));
 
   /**
-   * Switch transport, clearing the env rows.
+   * Switch transport, re-scoping the env rows.
    *
    * These rows mean different things per transport: on `stdio` they are the
    * subprocess's environment, on `http_remote` they are headers sent to the
    * endpoint. Carrying them across a switch would silently re-scope a secret —
    * and because values are write-only, blank-means-keep would ship a stored
    * local token to a remote host with the user seeing only an empty box. Blank
-   * means "unchanged" only while the map's meaning is unchanged, so a transport
-   * change is exactly where the rows cannot be carried.
+   * means "unchanged" only while the map's meaning is unchanged.
+   *
+   * So the rows track whether the *stored* credentials still apply: back on the
+   * transport this server is saved with, they do, and the seeded blank rows mean
+   * "keep" again. Anywhere else they don't, and the rows start empty. Clearing
+   * unconditionally would turn a there-and-back toggle into a silent wipe of
+   * every credential — the user changed nothing, but the submitted key set is
+   * authoritative, so the core would delete them all.
+   *
+   * The core enforces this too (`resolve_env_for_transport`); this only keeps
+   * the form honest about what it is about to submit.
    */
   const changeTransport = (next: TransportKind) => {
     if (next === transport) return;
     setTransport(next);
-    setEnvRows([newRow()]);
+    setEnvRows(next === seedTransport(server) ? seedEnvRows(server) : [newRow()]);
   };
 
   /**
@@ -144,14 +157,25 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
     return env;
   };
 
-  /** First key entered on more than one row, if any. */
+  /**
+   * First key entered on more than one row, if any.
+   *
+   * On `http_remote` the comparison is case-insensitive, because that is what
+   * the rows are: HTTP header names, which RFC 9110 defines as case-insensitive.
+   * `Authorization` and `authorization` would both be stored and both sent, and
+   * since the core hands `build_http_auth` a `HashMap` — whose iteration order
+   * Rust randomises per process — which of the two survives into the request
+   * would differ between runs. Subprocess env vars are case-sensitive on Unix,
+   * so stdio keeps the exact comparison.
+   */
   const duplicateEnvKey = (): string | null => {
     const seen = new Set<string>();
     for (const row of envRows) {
       const key = row.key.trim();
       if (!key) continue;
-      if (seen.has(key)) return key;
-      seen.add(key);
+      const identity = transport === 'http_remote' ? key.toLowerCase() : key;
+      if (seen.has(identity)) return key;
+      seen.add(identity);
     }
     return null;
   };
@@ -304,8 +328,16 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
           </div>
         )}
 
-        <div>
-          <span className={labelClass}>{envLabel}</span>
+        {/* The section label carries the whole security distinction — the same
+            rows are a local subprocess's environment on stdio and headers sent
+            to a remote host on http_remote. As a bare <span> it was decorative:
+            a screen-reader user heard only "Key"/"Value" and had no way to tell
+            which of the two they were typing into. Expose it as the group's name
+            and tie the hint in as its description. */}
+        <div role="group" aria-labelledby="custom-env-label" aria-describedby="custom-env-hint">
+          <span id="custom-env-label" className={labelClass}>
+            {envLabel}
+          </span>
           <div className="space-y-2">
             {envRows.map(row => (
               <div key={row.id} className="flex items-center gap-2">
@@ -320,6 +352,10 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
                   }
                   aria-label={t('mcp.custom.form.envKeyAria')}
                 />
+                {/* Name the value and remove controls after their row's key, so
+                    rows are distinguishable by ear. Falls back to the bare label
+                    while the key is still empty — same interpolation the server
+                    rows in `CustomServersPanel` already use. */}
                 <input
                   className={`${inputClass} flex-1`}
                   type="password"
@@ -330,13 +366,21 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
                       ? t('mcp.custom.form.envValueKeepPlaceholder')
                       : t('mcp.custom.form.envValuePlaceholder')
                   }
-                  aria-label={t('mcp.custom.form.envValueAria')}
+                  aria-label={
+                    row.key.trim()
+                      ? t('mcp.custom.form.envValueForAria').replace('{key}', row.key.trim())
+                      : t('mcp.custom.form.envValueAria')
+                  }
                 />
                 <Button
                   variant="tertiary"
                   size="sm"
                   onClick={() => removeRow(row.id)}
-                  aria-label={t('mcp.custom.form.envRemoveAria')}>
+                  aria-label={
+                    row.key.trim()
+                      ? t('mcp.custom.form.envRemoveForAria').replace('{key}', row.key.trim())
+                      : t('mcp.custom.form.envRemoveAria')
+                  }>
                   ✕
                 </Button>
               </div>
@@ -347,7 +391,9 @@ const CustomServerFormModal = ({ mode, server, onClose, onSubmit }: CustomServer
               {t('mcp.custom.form.envAdd')}
             </Button>
           </div>
-          <p className="mt-1 text-xs text-content-muted">{envHint}</p>
+          <p id="custom-env-hint" className="mt-1 text-xs text-content-muted">
+            {envHint}
+          </p>
         </div>
 
         <div>
