@@ -4,10 +4,10 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use lettre::message::{header::ContentType, Attachment, Mailbox, MultiPart, SinglePart};
 use lettre::Message;
 
-use crate::openhuman::channels::email_channel::EmailChannel;
 use crate::openhuman::config::Config;
 use crate::openhuman::voice::{create_tts_provider, DEFAULT_PIPER_VOICE};
 use crate::rpc::RpcOutcome;
+use tinychannels::providers::email_channel::EmailChannel;
 
 use super::types::{
     AudioEmailDeliveryResult, AudioFormat, AudioGenerateRequest, AudioGeneratedArtifact,

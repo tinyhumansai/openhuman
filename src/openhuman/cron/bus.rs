@@ -7,10 +7,10 @@
 //! channel construction out of the scheduler.
 
 use crate::core::event_bus::{DomainEvent, EventHandler};
-use crate::openhuman::channels::{Channel, SendMessage};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tinychannels::{Channel, SendMessage};
 
 /// Subscribes to `CronDeliveryRequested` events and dispatches
 /// the output to the named channel.
@@ -98,8 +98,8 @@ impl EventHandler for CronDeliverySubscriber {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::channels::traits::ChannelMessage;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tinychannels::ChannelMessage;
     use tokio::sync::mpsc;
 
     /// Minimal mock channel that tracks send() calls.

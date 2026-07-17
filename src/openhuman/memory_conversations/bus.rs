@@ -10,8 +10,8 @@ use chrono::Utc;
 use serde_json::json;
 
 use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
-use crate::openhuman::channels::context::conversation_history_key;
-use crate::openhuman::channels::traits::ChannelMessage;
+use tinychannels::context::conversation_history_key;
+use tinychannels::ChannelMessage;
 
 use super::{
     append_message, ensure_thread, get_messages, ConversationMessage, CreateConversationThread,
