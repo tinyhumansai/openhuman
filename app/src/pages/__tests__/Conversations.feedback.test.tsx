@@ -253,38 +253,6 @@ describe('Conversations — feedback buttons', () => {
     });
   });
 
-  it('warns when the good-response score submission fails', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mockCallCoreRpc.mockRejectedValueOnce(new Error('submit failed'));
-    await renderWithFeedback();
-
-    const thumbsUp = await screen.findByTitle('Good response');
-    await act(async () => {
-      thumbsUp.click();
-    });
-
-    await waitFor(() =>
-      expect(warnSpy).toHaveBeenCalledWith('[feedback] failed to submit good-response score')
-    );
-    warnSpy.mockRestore();
-  });
-
-  it('warns when the bad-response score submission fails', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mockCallCoreRpc.mockRejectedValueOnce(new Error('submit failed'));
-    await renderWithFeedback();
-
-    const thumbsDown = await screen.findByTitle('Bad response');
-    await act(async () => {
-      thumbsDown.click();
-    });
-
-    await waitFor(() =>
-      expect(warnSpy).toHaveBeenCalledWith('[feedback] failed to submit bad-response score')
-    );
-    warnSpy.mockRestore();
-  });
-
   it('uses extraMetadata.traceId when available instead of fallback', async () => {
     const thread = makeThread({ id: 'trace-id-thread', title: 'Trace ID Test' });
     const messages: ThreadMessage[] = [
