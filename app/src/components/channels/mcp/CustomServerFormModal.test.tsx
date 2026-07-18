@@ -34,7 +34,16 @@ const renderForm = (
 ) => {
   const onClose = vi.fn();
   render(
-    <CustomServerFormModal mode={mode} server={target} onClose={onClose} onSubmit={onSubmit} />
+    mode === 'edit' ? (
+      <CustomServerFormModal
+        mode="edit"
+        server={target as InstalledServer}
+        onClose={onClose}
+        onSubmit={onSubmit}
+      />
+    ) : (
+      <CustomServerFormModal mode="create" onClose={onClose} onSubmit={onSubmit} />
+    )
   );
   return { onSubmit, onClose };
 };

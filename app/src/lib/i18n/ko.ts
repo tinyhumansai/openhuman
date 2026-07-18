@@ -7197,7 +7197,7 @@ const messages: TranslationMap = {
   'mcp.custom.form.transportLocal': '로컬 명령',
   'mcp.custom.form.transportRemote': '원격 URL',
   'mcp.custom.form.transportLocalHint': '이 컴퓨터에서 명령을 실행하고 stdio로 통신합니다.',
-  'mcp.custom.form.transportRemoteHint': '호스팅된 엔드포인트에 HTTP로 연결합니다.',
+  'mcp.custom.form.transportRemoteHint': '엔드포인트에 HTTP 또는 HTTPS로 연결합니다.',
   'mcp.custom.form.command': '명령',
   'mcp.custom.form.commandPlaceholder': 'npx',
   'mcp.custom.form.args': '인자',

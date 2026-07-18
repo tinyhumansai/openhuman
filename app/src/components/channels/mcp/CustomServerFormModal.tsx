@@ -30,13 +30,18 @@ interface EnvRow {
   value: string;
 }
 
-export interface CustomServerFormModalProps {
-  mode: 'create' | 'edit';
-  /** The row being edited. Required when `mode === 'edit'`. */
-  server?: InstalledServer;
+interface CustomServerFormModalSharedProps {
   onClose: () => void;
   onSubmit: (params: CustomServerParams) => Promise<void>;
 }
+
+/**
+ * Discriminated on `mode` so `edit` requires the row being edited and `create`
+ * forbids it — the type can't express "edit with no server", which would render
+ * a blank edit form.
+ */
+export type CustomServerFormModalProps = CustomServerFormModalSharedProps &
+  ({ mode: 'create'; server?: undefined } | { mode: 'edit'; server: InstalledServer });
 
 let rowSeq = 0;
 const newRow = (key = '', value = ''): EnvRow => ({ id: `row-${rowSeq++}`, key, value });

@@ -7357,7 +7357,7 @@ const messages: TranslationMap = {
   'mcp.custom.form.transportRemote': 'Удалённый URL',
   'mcp.custom.form.transportLocalHint':
     'Запускает команду на этом компьютере и общается через stdio.',
-  'mcp.custom.form.transportRemoteHint': 'Подключается к размещённой точке доступа по HTTP.',
+  'mcp.custom.form.transportRemoteHint': 'Подключается к точке доступа по HTTP или HTTPS.',
   'mcp.custom.form.command': 'Команда',
   'mcp.custom.form.commandPlaceholder': 'npx',
   'mcp.custom.form.args': 'Аргументы',

@@ -432,10 +432,18 @@ const McpServersTab = () => {
   );
 
   /** Re-read installed servers + statuses. Handed to the custom-servers pane so
-   *  its mutations refresh the same arrays the table renders from. */
+   *  its mutations refresh the same arrays the table renders from.
+   *
+   *  `loadInstalled`/`fetchStatuses` catch their own errors (they update
+   *  `loadError`/leave the last-known arrays), so this resolves even on a failed
+   *  reload — the caller's mutation has already committed and must not be
+   *  reported as failed by a refresh miss. Log the outcome so a silent reload
+   *  failure is still visible. */
   const refreshInstalled = useCallback(async () => {
+    log('refreshInstalled: begin');
     await loadInstalled();
     await fetchStatuses();
+    log('refreshInstalled: done');
   }, [loadInstalled, fetchStatuses]);
 
   const handleLoadMore = () => {

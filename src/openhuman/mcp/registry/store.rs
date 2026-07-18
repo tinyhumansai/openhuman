@@ -476,42 +476,36 @@ fn map_server_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledServer> 
 /// `qualified_name`, `installed_at` and `provenance` stay put, so a rename can't
 /// orphan the row's env or relabel a registry install as custom.
 ///
-/// The caller's `build` closure receives the stored env read *inside* the
-/// transaction and returns the row to write plus the resolved env. Reading
-/// outside the transaction (load, then a separate write) races a concurrent
-/// `persist_tokens`: an OAuth refresh that rotates `__oauth__`/`Authorization`
-/// between the read and the write is silently reverted by the stale snapshot,
-/// signing the user out. `BEGIN IMMEDIATE` takes the write lock up front, so the
-/// read can't be undercut and two concurrent edits serialize at BEGIN rather
-/// than deadlocking on a `SHARED`→`RESERVED` upgrade.
+/// The caller's `build` closure receives the current record **and** the stored
+/// env, both read *inside* the transaction, and returns the row to write plus
+/// the resolved env (or an error, e.g. a provenance rejection). Everything the
+/// edit decides on — provenance, the previous transport for credential-scope,
+/// the env — is read under the lock. Reading any of it outside races a
+/// concurrent edit: an OAuth refresh could rotate a token, or a concurrent
+/// `update_custom` could change the transport and store new-scope credentials,
+/// between a stale read and this write. Using the stale snapshot could revert
+/// the token or mis-classify the scope and carry the new credentials across it.
+/// `BEGIN IMMEDIATE` takes the write lock up front, so the read can't be
+/// undercut and two concurrent edits serialize at BEGIN rather than deadlocking
+/// on a `SHARED`→`RESERVED` upgrade. `get_server_conn` errors if the row was
+/// removed in the gap, so a concurrent uninstall can't produce a phantom write.
 pub fn update_custom_server_rmw<F>(
     config: &Config,
     server_id: &str,
     build: F,
 ) -> Result<InstalledServer>
 where
-    F: FnOnce(HashMap<String, String>) -> (InstalledServer, HashMap<String, String>),
+    F: FnOnce(
+        &InstalledServer,
+        HashMap<String, String>,
+    ) -> Result<(InstalledServer, HashMap<String, String>)>,
 {
     with_connection(config, |conn| {
         conn.execute_batch("BEGIN IMMEDIATE")?;
         let outcome = (|| {
-            // The row was read before this transaction (to check provenance), so
-            // a concurrent uninstall could have removed it in the gap. Confirm it
-            // still exists inside the lock: otherwise the UPDATE below hits zero
-            // rows and — for an empty env — the whole edit would commit as a
-            // fabricated success for a server that no longer exists.
-            let exists: Option<i64> = conn
-                .query_row(
-                    "SELECT 1 FROM mcp_servers WHERE server_id = ?1",
-                    [server_id],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if exists.is_none() {
-                anyhow::bail!("server `{server_id}` no longer exists");
-            }
+            let current = get_server_conn(conn, server_id)?;
             let stored = load_env_values_conn(conn, server_id)?;
-            let (server, env) = build(stored);
+            let (server, env) = build(&current, stored)?;
             update_server_custom_fields_conn(conn, server_id, &server)?;
             set_env_values_conn(conn, server_id, &env)?;
             Ok::<InstalledServer, anyhow::Error>(server)
@@ -704,6 +698,62 @@ mod tests {
         let conn = Connection::open(f.path()).unwrap();
         init_schema(&conn).unwrap();
         (f, conn)
+    }
+
+    /// A `Config` pointing at a throwaway workspace, for the helpers that open
+    /// their own connection via `with_connection`.
+    fn test_config() -> (tempfile::TempDir, Config) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.workspace_dir = dir.path().to_path_buf();
+        (dir, config)
+    }
+
+    /// The RMW closure must see the record as it stands in the DB *now*, read
+    /// inside the transaction — not a snapshot the caller captured earlier. A
+    /// stale `transport` would let the credential-scope check mis-classify and
+    /// carry a concurrent edit's credentials across origins.
+    #[test]
+    fn rmw_passes_the_current_persisted_record_to_the_closure() {
+        let (_dir, config) = test_config();
+        let mut server = sample_server("srv-rmw");
+        server.provenance = ServerProvenance::Custom;
+        server.transport = Transport::Stdio;
+        insert_custom_server_with_env(&config, &server, &HashMap::new()).unwrap();
+
+        let seen_transport = std::cell::Cell::new("");
+        update_custom_server_rmw(&config, "srv-rmw", |current, _stored| {
+            // Read from the DB inside the txn, so it reflects the persisted Stdio.
+            seen_transport.set(current.transport.dispatch_kind());
+            let mut updated = current.clone();
+            updated.transport = Transport::HttpRemote {
+                url: "https://x.io/mcp".to_string(),
+            };
+            Ok((updated, HashMap::new()))
+        })
+        .unwrap();
+
+        assert_eq!(seen_transport.get(), "stdio", "closure saw the DB record");
+        assert_eq!(
+            get_server(&config, "srv-rmw")
+                .unwrap()
+                .transport
+                .dispatch_kind(),
+            "http_remote",
+            "the write landed"
+        );
+    }
+
+    /// A record removed before the RMW acquires its lock errors instead of
+    /// committing a phantom write.
+    #[test]
+    fn rmw_errors_when_the_row_is_gone() {
+        let (_dir, config) = test_config();
+        let err = update_custom_server_rmw(&config, "nope", |current, stored| {
+            Ok((current.clone(), stored))
+        })
+        .expect_err("missing row must error");
+        assert!(err.to_string().contains("not found"), "got: {err}");
     }
 
     fn sample_server(id: &str) -> InstalledServer {

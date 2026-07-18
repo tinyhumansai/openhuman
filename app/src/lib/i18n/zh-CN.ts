@@ -6887,7 +6887,7 @@ const messages: TranslationMap = {
   'mcp.custom.form.transportLocal': '本地命令',
   'mcp.custom.form.transportRemote': '远程 URL',
   'mcp.custom.form.transportLocalHint': '在本机运行命令，并通过 stdio 通信。',
-  'mcp.custom.form.transportRemoteHint': '通过 HTTP 连接到托管的端点。',
+  'mcp.custom.form.transportRemoteHint': '通过 HTTP 或 HTTPS 连接到远程端点。',
   'mcp.custom.form.command': '命令',
   'mcp.custom.form.commandPlaceholder': 'npx',
   'mcp.custom.form.args': '参数',

@@ -7316,7 +7316,7 @@ const messages: TranslationMap = {
   'mcp.custom.form.transportRemote': 'URL jarak jauh',
   'mcp.custom.form.transportLocalHint':
     'Menjalankan perintah di komputer ini dan berkomunikasi lewat stdio.',
-  'mcp.custom.form.transportRemoteHint': 'Menyambung ke endpoint terkelola melalui HTTP.',
+  'mcp.custom.form.transportRemoteHint': 'Menyambung ke endpoint melalui HTTP atau HTTPS.',
   'mcp.custom.form.command': 'Perintah',
   'mcp.custom.form.commandPlaceholder': 'npx',
   'mcp.custom.form.args': 'Argumen',

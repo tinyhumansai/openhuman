@@ -7278,7 +7278,7 @@ const messages: TranslationMap = {
   'mcp.custom.form.transportRemote': 'রিমোট URL',
   'mcp.custom.form.transportLocalHint':
     'এই কম্পিউটারে একটি কমান্ড চালায় এবং stdio দিয়ে যোগাযোগ করে।',
-  'mcp.custom.form.transportRemoteHint': 'HTTP দিয়ে হোস্ট করা এন্ডপয়েন্টে সংযোগ করে।',
+  'mcp.custom.form.transportRemoteHint': 'HTTP বা HTTPS দিয়ে একটি এন্ডপয়েন্টে সংযোগ করে।',
   'mcp.custom.form.command': 'কমান্ড',
   'mcp.custom.form.commandPlaceholder': 'npx',
   'mcp.custom.form.args': 'আর্গুমেন্ট',

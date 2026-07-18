@@ -7386,7 +7386,7 @@ const messages: TranslationMap = {
   'mcp.custom.form.transportRemote': 'Zdalny URL',
   'mcp.custom.form.transportLocalHint':
     'Uruchamia polecenie na tym komputerze i komunikuje się przez stdio.',
-  'mcp.custom.form.transportRemoteHint': 'Łączy się z hostowanym punktem końcowym przez HTTP.',
+  'mcp.custom.form.transportRemoteHint': 'Łączy się z punktem końcowym przez HTTP lub HTTPS.',
   'mcp.custom.form.command': 'Polecenie',
   'mcp.custom.form.commandPlaceholder': 'npx',
   'mcp.custom.form.args': 'Argumenty',

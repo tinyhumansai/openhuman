@@ -7397,7 +7397,7 @@ const messages: TranslationMap = {
   'mcp.custom.form.transportLocal': 'Comando local',
   'mcp.custom.form.transportRemote': 'URL remota',
   'mcp.custom.form.transportLocalHint': 'Executa um comando neste computador e comunica por stdio.',
-  'mcp.custom.form.transportRemoteHint': 'Conecta-se a um endpoint hospedado via HTTP.',
+  'mcp.custom.form.transportRemoteHint': 'Conecta-se a um endpoint via HTTP ou HTTPS.',
   'mcp.custom.form.command': 'Comando',
   'mcp.custom.form.commandPlaceholder': 'npx',
   'mcp.custom.form.args': 'Argumentos',

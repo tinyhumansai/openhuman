@@ -7603,7 +7603,7 @@ const en: TranslationMap = {
   'mcp.custom.form.transportRemote': 'Remote URL',
   'mcp.custom.form.transportLocalHint':
     'Runs a command on this computer and talks to it over stdio.',
-  'mcp.custom.form.transportRemoteHint': 'Connects to a hosted endpoint over HTTP.',
+  'mcp.custom.form.transportRemoteHint': 'Connects to an endpoint over HTTP or HTTPS.',
   'mcp.custom.form.command': 'Command',
   'mcp.custom.form.commandPlaceholder': 'npx',
   'mcp.custom.form.args': 'Arguments',

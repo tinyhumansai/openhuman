@@ -9858,6 +9858,32 @@ async fn mcp_clients_lifecycle() {
     )
     .await;
 
+    // ── 8c. `install` must refuse to clobber a hand-added row ────────────────
+    // `mcp_clients_install` dedupes on a free-form `qualified_name` before it
+    // fetches any listing, so without the provenance guard it would reach the
+    // custom `custom/my-local-server` row and merge caller env onto connection
+    // details the user typed (and it can't re-derive) — reachable as an agent
+    // tool. It must error instead.
+    let install_over_custom = post_json_rpc(
+        &rpc_base,
+        9920,
+        "openhuman.mcp_clients_install",
+        json!({
+            "qualified_name": "custom/my-local-server",
+            "env": { "INJECTED": "x" },
+        }),
+    )
+    .await;
+    let err = assert_jsonrpc_error(&install_over_custom, "install over custom row");
+    let msg = err
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        msg.contains("custom server"),
+        "install must refuse a custom row with a clear message: {err}"
+    );
+
     // ── 9. the custom server shows up in installed_list ──────────────────────
     let list2 = post_json_rpc(
         &rpc_base,

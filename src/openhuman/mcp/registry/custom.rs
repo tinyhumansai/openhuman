@@ -87,6 +87,16 @@ fn build_custom_transport(
                     parsed.scheme()
                 ));
             }
+            // Reject `https://user:pass@host/…`. Unlike env values (write-only),
+            // the URL is stored verbatim in `Transport::HttpRemote { url }` and
+            // echoed back in `InstalledServer`, so a credential in the userinfo
+            // would be persisted in cleartext and returned to the client. Auth
+            // belongs in write-only headers or OAuth.
+            if !parsed.username().is_empty() || parsed.password().is_some() {
+                return Err(
+                    "url must not embed credentials (user:password@) — add auth as a header or use OAuth".to_string(),
+                );
+            }
             Ok((
                 Transport::HttpRemote { url },
                 // Unused for HTTP — matches what build_install_transport stores.
@@ -293,22 +303,28 @@ fn env_key_list(env: &HashMap<String, String>) -> Vec<String> {
     keys
 }
 
-/// Reject env keys that are empty, claim the reserved `__` namespace, or — on
-/// `http_remote` — collide case-insensitively.
+/// Reject env keys that are empty, claim the reserved `__` namespace, or collide
+/// case-insensitively where the target treats names case-insensitively.
 ///
 /// Validates the key **as `resolve_env` will store it** — i.e. trimmed. Checking
 /// the raw key would let `"  __oauth__"` through here and then land as
 /// `__oauth__` after the trim, defeating the guard by the normalisation applied
 /// downstream.
 ///
-/// `is_http_remote` gates the case-duplicate check: those keys are HTTP header
-/// names, which RFC 9110 defines as case-insensitive, so `Authorization` and
-/// `authorization` are the *same* header — storing both sends a duplicate the
-/// server resolves arbitrarily. The UI blocks this, but the rule has to hold
-/// for `/rpc` / CLI / iOS callers too. stdio keys are subprocess env vars,
-/// case-sensitive on Unix, so they are left exact.
+/// The case-duplicate check fires when a case-only duplicate would collapse to
+/// one value in the target:
+/// - **http_remote**: the keys are HTTP header names, case-insensitive by
+///   RFC 9110, so `Authorization` and `authorization` are the same header.
+/// - **stdio on Windows**: subprocess env var names are case-insensitive there
+///   (`Path` == `PATH`); Rust's `Command` dedups them case-insensitively when
+///   spawning, so two rows would silently collapse. On Unix env var names are
+///   case-sensitive, so stdio keys are compared exactly.
+///
+/// `cfg!(windows)` reflects the OS this core (and the subprocess it spawns) runs
+/// on. The rule has to live here, not just the UI, for `/rpc` / CLI / iOS.
 fn validate_env(env: &HashMap<String, String>, is_http_remote: bool) -> Result<(), String> {
-    let mut seen_headers: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let case_insensitive = is_http_remote || cfg!(windows);
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for raw_key in env.keys() {
         let key = raw_key.trim();
         if key.is_empty() {
@@ -319,9 +335,14 @@ fn validate_env(env: &HashMap<String, String>, is_http_remote: bool) -> Result<(
                 "env key `{key}` is reserved — keys starting with `{RESERVED_ENV_PREFIX}` hold internal connection state"
             ));
         }
-        if is_http_remote && !seen_headers.insert(key.to_ascii_lowercase()) {
+        if case_insensitive && !seen.insert(key.to_ascii_lowercase()) {
+            let kind = if is_http_remote {
+                "header"
+            } else {
+                "environment variable"
+            };
             return Err(format!(
-                "header `{key}` is listed more than once (header names are case-insensitive)"
+                "{kind} `{key}` is listed more than once (names are case-insensitive here)"
             ));
         }
     }
@@ -523,39 +544,49 @@ pub async fn mcp_clients_update_custom(
         return Err("display_name must not be empty".to_string());
     }
 
-    let existing = store::get_server(config, &server_id).map_err(|e| e.to_string())?;
-    if existing.provenance != ServerProvenance::Custom {
-        return Err(format!(
-            "server `{server_id}` was installed from a registry; its command and endpoint come from the catalog listing and cannot be edited here"
-        ));
-    }
-
     let (transport, command_kind, command, args) = build_custom_transport(&input)?;
     validate_env(&input.env, transport.is_http_remote())?;
-    let scope_changed = credential_scope(&existing.transport) != credential_scope(&transport);
 
-    // Read stored env, resolve, and write both tables as one serializable
-    // transaction (see `store::update_custom_server_rmw`). Resolving off a
-    // snapshot read *outside* the write would race a concurrent OAuth refresh and
-    // silently revert a just-rotated token. The submitted key set is
-    // authoritative, so a lost read isn't a merge miss — it deletes the row's
-    // env; the store helper surfaces a failed read rather than treating it as
-    // empty.
-    let updated = store::update_custom_server_rmw(config, &server_id, |stored_env| {
+    // Read the current record, resolve env, and write both tables as one
+    // serializable transaction (see `store::update_custom_server_rmw`).
+    // Provenance, the previous transport (for credential-scope), and the stored
+    // env are ALL read inside the lock: reading any of them outside races a
+    // concurrent edit — an OAuth refresh could rotate a token, or another
+    // `update_custom` could switch transport and store new-scope credentials —
+    // and a stale snapshot could revert the token or mis-scope and carry the
+    // new credentials across origins.
+    let updated = store::update_custom_server_rmw(config, &server_id, |current, stored_env| {
+        if current.provenance != ServerProvenance::Custom {
+            anyhow::bail!(
+                "server `{server_id}` was installed from a registry; its command and endpoint come from the catalog listing and cannot be edited here"
+            );
+        }
+        let scope_changed = credential_scope(&current.transport) != credential_scope(&transport);
         let env =
-            resolve_env_for_transport(&input.env, &stored_env, &existing.transport, &transport);
+            resolve_env_for_transport(&input.env, &stored_env, &current.transport, &transport);
+        tracing::debug!(
+            "[mcp-custom] update server_id={} transport={}{} env_keys={:?}",
+            server_id,
+            transport.dispatch_kind(),
+            if scope_changed {
+                " (re-scoped — stored env dropped)"
+            } else {
+                ""
+            },
+            env.keys().collect::<Vec<_>>()
+        );
         let record = InstalledServer {
             // Identity and provenance survive an edit untouched — re-deriving
             // `qualified_name` from the new display name would orphan this row's
             // env values.
-            server_id: existing.server_id.clone(),
-            qualified_name: existing.qualified_name.clone(),
-            installed_at: existing.installed_at,
-            provenance: existing.provenance,
-            icon_url: existing.icon_url.clone(),
-            config: existing.config.clone(),
-            enabled: existing.enabled,
-            last_connected_at: existing.last_connected_at,
+            server_id: current.server_id.clone(),
+            qualified_name: current.qualified_name.clone(),
+            installed_at: current.installed_at,
+            provenance: current.provenance,
+            icon_url: current.icon_url.clone(),
+            config: current.config.clone(),
+            enabled: current.enabled,
+            last_connected_at: current.last_connected_at,
 
             display_name: display_name.clone(),
             description: clean_description(input.description.clone()),
@@ -565,21 +596,9 @@ pub async fn mcp_clients_update_custom(
             env_keys: env_key_list(&env),
             transport: transport.clone(),
         };
-        (record, env)
+        Ok((record, env))
     })
     .map_err(|e| e.to_string())?;
-
-    tracing::debug!(
-        "[mcp-custom] update server_id={} transport={}{} env_keys={:?}",
-        server_id,
-        updated.transport.dispatch_kind(),
-        if scope_changed {
-            " (re-scoped — stored env dropped)"
-        } else {
-            ""
-        },
-        updated.env_keys
-    );
 
     // Only now drop the live connection: it was dialed with the previous command
     // or URL, so leaving it up would keep serving tools from the old
@@ -693,6 +712,27 @@ mod tests {
         );
     }
 
+    /// A URL is stored verbatim and echoed back in `InstalledServer`, so a
+    /// credential in the userinfo would be persisted in cleartext and returned.
+    #[test]
+    fn url_with_embedded_credentials_is_rejected() {
+        for url in [
+            "https://user:pass@host.example/mcp",
+            "https://user@host.example/mcp",
+            "http://alice:secret@127.0.0.1:8080/mcp",
+        ] {
+            let err = build_custom_transport(&http_input(url))
+                .expect_err(&format!("embedded-credential URL `{url}` must be rejected"));
+            assert!(err.contains("must not embed credentials"), "got: {err}");
+        }
+    }
+
+    /// A credential-free URL still passes.
+    #[test]
+    fn url_without_credentials_is_accepted() {
+        assert!(build_custom_transport(&http_input("https://host.example/mcp")).is_ok());
+    }
+
     #[test]
     fn command_kind_is_inferred_from_launcher() {
         assert_eq!(infer_command_kind("npx"), CommandKind::Node);
@@ -730,13 +770,27 @@ mod tests {
     }
 
     /// Env var names are case-sensitive on Unix, so stdio keeps both.
+    #[cfg(not(windows))]
     #[test]
-    fn case_variant_env_vars_are_allowed_on_stdio() {
+    fn case_variant_env_vars_are_allowed_on_stdio_unix() {
         let env = HashMap::from([
             ("Path".to_string(), "a".to_string()),
             ("PATH".to_string(), "b".to_string()),
         ]);
         assert!(validate_env(&env, false).is_ok());
+    }
+
+    /// Env var names are case-insensitive on Windows (`Path` == `PATH`), so a
+    /// case-only stdio duplicate would collapse in the spawned process.
+    #[cfg(windows)]
+    #[test]
+    fn case_variant_env_vars_are_rejected_on_stdio_windows() {
+        let env = HashMap::from([
+            ("Path".to_string(), "a".to_string()),
+            ("PATH".to_string(), "b".to_string()),
+        ]);
+        let err = validate_env(&env, false).expect_err("case-variant env var rejected on Windows");
+        assert!(err.contains("more than once"), "got: {err}");
     }
 
     /// The rows mean subprocess env on stdio and request headers on

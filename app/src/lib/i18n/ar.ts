@@ -7116,7 +7116,7 @@ const messages: TranslationMap = {
   'mcp.custom.form.transportLocal': 'أمر محلي',
   'mcp.custom.form.transportRemote': 'رابط بعيد',
   'mcp.custom.form.transportLocalHint': 'يشغّل أمرًا على هذا الجهاز ويتواصل معه عبر stdio.',
-  'mcp.custom.form.transportRemoteHint': 'يتصل بنقطة نهاية مستضافة عبر HTTP.',
+  'mcp.custom.form.transportRemoteHint': 'يتصل بنقطة نهاية عبر HTTP أو HTTPS.',
   'mcp.custom.form.command': 'الأمر',
   'mcp.custom.form.commandPlaceholder': 'npx',
   'mcp.custom.form.args': 'الوسائط',

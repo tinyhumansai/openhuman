@@ -55,34 +55,54 @@ const CustomServersPanel = ({
   const statusFor = (serverId: string): ServerStatus =>
     statuses.find(s => s.server_id === serverId)?.status ?? 'disconnected';
 
+  // The refresh (`onChanged`) is wrapped everywhere below: persistence has
+  // already committed by the time we refresh, so a reload failure must not
+  // reject back into the form and report the add/edit as failed (letting the
+  // user "retry" an operation that already succeeded). Refresh failures are
+  // logged, not surfaced as mutation failures.
+  const safeRefresh = async (stage: string, serverId: string) => {
+    try {
+      await onChanged();
+    } catch (err) {
+      log('%s refresh failed for %s: %o', stage, serverId, err);
+    }
+  };
+
   const handleAdd = async (params: CustomServerParams) => {
+    log('add: begin transport=%s', params.transport);
     const server = await mcpClientsApi.addCustom(params);
-    log('added server_id=%s', server.server_id);
-    await onChanged();
+    log('add: persisted server_id=%s', server.server_id);
+    // Show the row immediately, then dial.
+    await safeRefresh('post-add', server.server_id);
     // Dial through the ordinary connect path so a bad command or URL surfaces
     // the same status/error the rest of the tab already renders. A failure here
     // is not an add failure — the row exists and is editable — so it must not
     // reject back into the form.
     try {
       await mcpClientsApi.connect(server.server_id);
+      log('add: connected server_id=%s', server.server_id);
     } catch (err) {
-      log('post-add connect failed for %s: %o', server.server_id, err);
+      log('add: post-add connect failed for %s: %o', server.server_id, err);
     }
-    await onChanged();
+    await safeRefresh('post-add-connect', server.server_id);
+    log('add: done server_id=%s', server.server_id);
   };
 
   const handleEdit = async (server: InstalledServer, params: CustomServerParams) => {
+    log('edit: begin server_id=%s transport=%s', server.server_id, params.transport);
     await mcpClientsApi.updateCustom({ ...params, server_id: server.server_id });
-    log('updated server_id=%s', server.server_id);
-    await onChanged();
+    log('edit: persisted server_id=%s', server.server_id);
+    await safeRefresh('post-edit', server.server_id);
     // update_custom drops the live connection so the next dial uses the new
     // settings; re-dial here so the row doesn't sit disconnected after an edit.
     try {
       await mcpClientsApi.connect(server.server_id);
+      log('edit: reconnected server_id=%s', server.server_id);
     } catch (err) {
-      log('post-edit connect failed for %s: %o', server.server_id, err);
+      log('edit: post-edit connect failed for %s: %o', server.server_id, err);
     }
-    await onChanged();
+    await safeRefresh('post-edit-connect', server.server_id);
+    log('edit: done server_id=%s', server.server_id);
   };
 
   const handleRemove = async (server: InstalledServer) => {
@@ -174,17 +194,24 @@ const CustomServersPanel = ({
         </ul>
       )}
 
-      {form ? (
+      {/* Branch on the discriminant so each variant supplies exactly its props
+          (edit → server, create → none). Remount per target (`key`) so the form
+          never shows a previous server's state — same reason CronJobsPanel keys
+          its form modal. */}
+      {form?.mode === 'edit' ? (
         <CustomServerFormModal
-          // Remount per target so the form never shows a previous server's
-          // state — same reason CronJobsPanel keys its form modal.
-          key={form.mode === 'edit' ? form.server.server_id : 'create'}
-          mode={form.mode}
-          server={form.mode === 'edit' ? form.server : undefined}
+          key={form.server.server_id}
+          mode="edit"
+          server={form.server}
           onClose={() => setForm(null)}
-          onSubmit={params =>
-            form.mode === 'edit' ? handleEdit(form.server, params) : handleAdd(params)
-          }
+          onSubmit={params => handleEdit(form.server, params)}
+        />
+      ) : form?.mode === 'create' ? (
+        <CustomServerFormModal
+          key="create"
+          mode="create"
+          onClose={() => setForm(null)}
+          onSubmit={params => handleAdd(params)}
         />
       ) : null}
     </section>
