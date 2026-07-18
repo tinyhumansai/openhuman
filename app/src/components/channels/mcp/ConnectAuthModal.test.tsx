@@ -248,6 +248,38 @@ describe('ConnectAuthModal', () => {
     });
   });
 
+  it('lets the user cancel while waiting for OAuth sign-in', async () => {
+    // Regression: the OAuth wait is `busy`, and gating every dismissal on `busy`
+    // trapped the user in "Waiting for sign-in…" for the full 3-minute poll with
+    // no way out. The wait is abortable, so Cancel must stay usable.
+    mockDetectAuth.mockResolvedValue({ kind: 'oauth', grant_types: ['authorization_code'] });
+    mockOauthBegin.mockResolvedValue('https://auth.example/authorize');
+    mockOpenUrl.mockResolvedValue(undefined);
+    // Never flips to connected — keeps the modal in the waiting/polling state.
+    mockStatus.mockResolvedValue([{ server_id: 'srv-1', status: 'disconnected', tool_count: 0 }]);
+    const onClose = vi.fn();
+    const onConnected = vi.fn();
+    render(<ConnectAuthModal server={BASE_SERVER} onClose={onClose} onConnected={onConnected} />);
+
+    const signIn = await screen.findByRole('button', { name: 'Sign in with browser' });
+    await act(async () => {
+      fireEvent.click(signIn);
+    });
+
+    // The button relabels to the waiting state, and Cancel is still enabled.
+    expect(
+      await screen.findByRole('button', { name: en['mcp.connectAuth.oauthWaiting'] })
+    ).toBeInTheDocument();
+    const cancel = screen.getByRole('button', { name: en['common.cancel'] });
+    expect(cancel).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(cancel);
+    });
+    expect(onClose).toHaveBeenCalled();
+    expect(onConnected).not.toHaveBeenCalled();
+  });
+
   it('closes via the Cancel button', async () => {
     const onClose = vi.fn();
     render(<ConnectAuthModal server={BASE_SERVER} onClose={onClose} onConnected={() => {}} />);

@@ -20,7 +20,7 @@
  * no auth.
  */
 import debug from 'debug';
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
@@ -245,6 +245,11 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
   const [authKind, setAuthKind] = useState<'detecting' | 'none' | 'token' | 'oauth'>('detecting');
   const [oauthWaiting, setOauthWaiting] = useState(false);
   const [showConfigHelp, setShowConfigHelp] = useState(false);
+  // The OAuth wait is a recursive setTimeout poll (up to 3 min). These let the
+  // Cancel path stop it: clear the pending tick, and flag any in-flight poll to
+  // bail before it reschedules.
+  const oauthPollTimer = useRef<number | null>(null);
+  const oauthCancelled = useRef(false);
   // Host of the server's HTTP-remote endpoint (from the registry detail's
   // deployment_url). Surfaced as a "get your token from this provider" hint so
   // the user learns where the credential comes from BEFORE a 401 round-trip —
@@ -276,6 +281,7 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
   // Browser-OAuth: begin (discover + DCR + PKCE), open the authorize URL, then
   // poll until the /oauth/mcp/callback route has stored the token + reconnected.
   const handleOAuth = useCallback(() => {
+    oauthCancelled.current = false;
     setBusy(true);
     setError(null);
     setOauthWaiting(true);
@@ -285,7 +291,11 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
         await openUrl(url);
         const started = Date.now();
         const poll = async (): Promise<void> => {
+          // Cancelled while a tick was pending or a request in flight: stop
+          // without touching state — the Cancel handler already reset it.
+          if (oauthCancelled.current) return;
           const statuses = await mcpClientsApi.status();
+          if (oauthCancelled.current) return;
           const mine = statuses.find(s => s.server_id === server.server_id);
           if (mine?.status === 'connected') {
             const result = await mcpClientsApi.connect(server.server_id);
@@ -296,17 +306,19 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
           if (Date.now() - started > 180000) {
             throw new Error(t('mcp.connectAuth.oauthTimeout'));
           }
-          window.setTimeout(() => {
+          oauthPollTimer.current = window.setTimeout(() => {
             void poll().catch(handlePollError);
           }, 2500);
         };
         const handlePollError = (err: unknown) => {
+          if (oauthCancelled.current) return;
           setError(err instanceof Error ? err.message : String(err));
           setOauthWaiting(false);
           setBusy(false);
         };
         await poll().catch(handlePollError);
       } catch (err) {
+        if (oauthCancelled.current) return;
         const msg = err instanceof Error ? err.message : String(err);
         log('oauth failed: %s', msg);
         setError(msg);
@@ -315,6 +327,29 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
       }
     })();
   }, [server.server_id, onConnected, onClose, t]);
+
+  // Stop an in-progress OAuth wait: clear the pending poll tick and flag any
+  // in-flight request to bail. Idempotent — safe when no OAuth is running.
+  const cancelOAuthWait = useCallback(() => {
+    oauthCancelled.current = true;
+    if (oauthPollTimer.current !== null) {
+      window.clearTimeout(oauthPollTimer.current);
+      oauthPollTimer.current = null;
+    }
+    setOauthWaiting(false);
+    setBusy(false);
+  }, []);
+
+  // Closing the modal must always be possible — including mid-OAuth-wait, which
+  // is not a committed action (the browser sign-in can be abandoned). `busy`
+  // alone would trap the user here for the full 3-minute poll with no way out.
+  const handleClose = useCallback(() => {
+    cancelOAuthWait();
+    onClose();
+  }, [cancelOAuthWait, onClose]);
+
+  // Drop the poll timer if the modal unmounts for any other reason.
+  useEffect(() => () => cancelOAuthWait(), [cancelOAuthWait]);
 
   // Best-effort: pull the registry's declared fields (names + descriptions +
   // secret/required), so a server that labels its auth shows tailored inputs.
@@ -471,7 +506,8 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
       aria-modal="true"
       aria-label={t('mcp.connectAuth.title').replace('{name}', server.display_name)}
       onMouseDown={e => {
-        if (e.target === e.currentTarget && !busy) onClose();
+        // Dismissable when idle, or while waiting on OAuth (which is abortable).
+        if (e.target === e.currentTarget && (!busy || oauthWaiting)) handleClose();
       }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6 overflow-y-auto">
       <div className="w-full max-w-md rounded-xl bg-surface border border-line shadow-xl p-5 space-y-4">
@@ -686,7 +722,13 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
 
         {/* Actions */}
         <div className="flex justify-end gap-2 pt-1">
-          <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>
+          {/* Enabled during the OAuth wait: that state is `busy` but cancellable,
+              and gating Cancel on `busy` alone is what trapped the user. */}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleClose}
+            disabled={busy && !oauthWaiting}>
             {t('common.cancel')}
           </Button>
           <Button variant="primary" size="sm" onClick={handleConnect} disabled={busy}>
