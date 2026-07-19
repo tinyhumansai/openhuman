@@ -579,7 +579,7 @@ pub enum DomainEvent {
     /// flow-approval-surface, PR2/PR3). Unlike `ApprovalRequested`, this
     /// event carries no `thread_id`/`client_id` — a flow run has neither, so
     /// the generic chat-routed socket bridge
-    /// (`channels::providers::web::event_bus::ApprovalSurfaceSubscriber`)
+    /// (`web_chat::event_bus::ApprovalSurfaceSubscriber`)
     /// silently drops it (that gap was the original silent-deadlock bug).
     /// Published by `ApprovalGate::intercept_audited` alongside the existing
     /// `ApprovalRequested`, bridged by `core::socketio` directly to a
@@ -611,7 +611,7 @@ pub enum DomainEvent {
     ///
     /// Bridged to the `external_transfer_pending` web-channel socket event by
     /// `EgressSurfaceSubscriber` (defined in
-    /// `src/openhuman/channels/providers/web/event_bus.rs`) when the emitting
+    /// `src/openhuman/web_chat/event_bus.rs`) when the emitting
     /// turn carries chat routing. `thread_id` / `client_id` come from the
     /// ambient `APPROVAL_CHAT_CONTEXT` and are `None` for CLI / cron /
     /// background transfers (no chat surface to route to).
@@ -1127,6 +1127,22 @@ pub enum DomainEvent {
         overall: String,
         failed_required: bool,
     },
+    /// Emergency stop engaged — all desktop automation is halted and every
+    /// external-effect / accessibility action is refused until resumed.
+    /// Published by `emergency_stop::ops::emergency_stop`; bridged to the
+    /// `automation_halt` web-channel socket event.
+    AutomationHalted {
+        /// Optional human-readable reason (redacted of PII by the caller).
+        reason: Option<String>,
+        /// Who engaged it: `"user"`, `"hotkey"`, or `"system"`.
+        source: String,
+    },
+    /// Emergency stop cleared — automation may resume. Published by
+    /// `emergency_stop::ops::emergency_resume`.
+    AutomationResumed {
+        /// Who cleared it: `"user"`, `"hotkey"`, or `"system"`.
+        source: String,
+    },
 
     // ── Keyring ─────────────────────────────────────────────────────────
     /// The OS keyring is unavailable and no user consent for local fallback
@@ -1454,7 +1470,9 @@ impl DomainEvent {
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. }
             | Self::HarnessInitProgress { .. }
-            | Self::HarnessInitCompleted { .. } => "system",
+            | Self::HarnessInitCompleted { .. }
+            | Self::AutomationHalted { .. }
+            | Self::AutomationResumed { .. } => "system",
 
             Self::KeyringConsentRequired | Self::KeyringDecryptFailed { .. } => "keyring",
 
@@ -1610,6 +1628,8 @@ impl DomainEvent {
             Self::HealthRestarted { .. } => "HealthRestarted",
             Self::HarnessInitProgress { .. } => "HarnessInitProgress",
             Self::HarnessInitCompleted { .. } => "HarnessInitCompleted",
+            Self::AutomationHalted { .. } => "AutomationHalted",
+            Self::AutomationResumed { .. } => "AutomationResumed",
             Self::KeyringConsentRequired => "KeyringConsentRequired",
             Self::KeyringDecryptFailed { .. } => "KeyringDecryptFailed",
             Self::SessionExpired { .. } => "SessionExpired",

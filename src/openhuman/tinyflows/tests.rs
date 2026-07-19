@@ -230,7 +230,12 @@ async fn code_adapter_javascript_passthrough_round_trips_json() {
 // without any global state.
 
 fn tools_adapter(config: Arc<Config>) -> OpenHumanTools {
-    OpenHumanTools { config }
+    let security = Arc::new(SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    ));
+    OpenHumanTools { config, security }
 }
 
 #[tokio::test]

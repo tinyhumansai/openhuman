@@ -88,7 +88,7 @@ const messages: TranslationMap = {
   'connections.welcome.eyebrow': 'Connexions',
   'connections.welcome.title': 'Tout ce que vous utilisez, au même endroit',
   'connections.welcome.body':
-    'Connectez vos applications de messagerie, votre e-mail, votre agenda et vos outils pour que votre agent puisse lire le contexte et agir sur l’ensemble: sans copier-coller entre une douzaine d’onglets. Vous gardez le contrôle de ce qu’il peut toucher.',
+    'Connectez vos applications de messagerie, votre e-mail, votre agenda et vos outils pour que votre agent puisse lire le contexte et agir sur l’ensemble, sans copier-coller entre une douzaine d’onglets. Vous gardez le contrôle de ce qu’il peut toucher.',
   'connections.welcome.ctaChannel': 'Connecter un canal',
   'connections.welcome.ctaApps': 'Connecter des applications',
   'connections.welcome.ctaSkills': 'Parcourir les compétences',
@@ -108,7 +108,7 @@ const messages: TranslationMap = {
   'notifications.welcome.eyebrow': 'Notifications',
   'notifications.welcome.title': 'Seulement ce qui a vraiment besoin de vous',
   'notifications.welcome.body':
-    'Un récapitulatif calme et hiérarchisé de ce que vos agents ont fait et de ce qui exige une décision: pour que l’important remonte et que le bruit reste à l’écart.',
+    'Un récapitulatif calme et hiérarchisé de ce que vos agents ont fait et de ce qui exige une décision, pour que l’important remonte et que le bruit reste à l’écart.',
   'notifications.welcome.ctaView': 'Voir les alertes',
   'notifications.welcome.featsLabel': 'Ce que vous verrez',
   'notifications.welcome.feat1Title': 'Ce qui a besoin de vous',
@@ -125,7 +125,7 @@ const messages: TranslationMap = {
   'rewards.welcome.eyebrow': 'Récompenses',
   'rewards.welcome.title': 'Soyez récompensé de votre présence',
   'rewards.welcome.body':
-    'Gagnez des points à mesure que vous utilisez OpenHuman et invitez d’autres personnes, maintenez votre série en vie et échangez ce que vous avez gagné: le tout suivi au même endroit.',
+    'Gagnez des points à mesure que vous utilisez OpenHuman et invitez d’autres personnes, maintenez votre série en vie et échangez ce que vous avez gagné, le tout suivi au même endroit.',
   'rewards.welcome.ctaView': 'Voir les récompenses',
   'rewards.welcome.featsLabel': 'Comment ça marche',
   'rewards.welcome.feat1Title': 'Gagnez des points',
@@ -140,7 +140,7 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': 'Flux de travail',
   'flows.welcome.title': 'Mettez les tâches répétitives en pilote automatique',
   'flows.welcome.body':
-    'Décrivez quelque chose que vous faites encore et encore: tri, relances, récapitulatifs: et votre agent en fait un flux de travail qu’il peut exécuter de bout en bout, selon un calendrier ou à la demande.',
+    'Décrivez quelque chose que vous faites encore et encore (tri, relances, récapitulatifs) et votre agent en fait un flux de travail qu’il peut exécuter de bout en bout, selon un calendrier ou à la demande.',
   'flows.welcome.ctaNew': 'Nouveau flux de travail',
   'flows.welcome.ctaBrowse': 'Parcourir les flux de travail',
   'flows.welcome.featsLabel': 'Ce que vous pouvez automatiser',
@@ -349,7 +349,7 @@ const messages: TranslationMap = {
   'orchPage.medulla.title': 'Medulla',
   'orchPage.medulla.tagline': "Le modèle d'orchestration d'OpenHuman",
   'orchPage.medulla.body':
-    "Medulla est le LLM développé sur mesure par OpenHuman, conçu pour orchestrer des milliers d'agents à la fois: avec une fenêtre de contexte de 10 millions de tokens et une orchestration à coût radicalement bas.",
+    "Medulla est le LLM développé sur mesure par OpenHuman, conçu pour orchestrer des milliers d'agents à la fois, avec une fenêtre de contexte de 10 millions de tokens et une orchestration à coût radicalement bas.",
   'orchPage.medulla.featAgents': "Des milliers d'agents",
   'orchPage.medulla.featContext': 'Contexte de 10M de tokens',
   'orchPage.medulla.featCost': 'Orchestration à faible coût',
@@ -475,13 +475,53 @@ const messages: TranslationMap = {
   'agentWorld.world.rooms.outside.name': 'Monde',
   'agentWorld.world.rooms.outside.description': 'Une grande place ouverte entourée de bâtiments.',
   'agentWorld.feed': 'Fil',
+  'agentWorld.feed.loadMore': 'Charger plus',
+  'agentWorld.feed.loadingMore': 'Chargement…',
+  'agentWorld.feed.loadMoreError': 'Impossible de charger plus de publications. Réessayez.',
   'agentWorld.ledger': 'Grand livre',
+  'agentWorld.profileViewer.description': 'Profil public',
+  'agentWorld.profileViewer.agentCard': 'Fiche agent',
+  'agentWorld.profileViewer.loading': 'Chargement du profil…',
+  'agentWorld.profileViewer.notFoundTitle': 'Profil introuvable',
+  'agentWorld.profileViewer.notFoundBody': 'Aucun profil publié pour ce handle pour le moment.',
+  'agentWorld.profileViewer.errorTitle': 'Échec du chargement du profil',
+  'agentWorld.profileViewer.follow': 'Suivre',
+  'agentWorld.profileViewer.following': 'Suivi',
+  'agentWorld.profileViewer.copyLink': 'Copier le lien',
+  'agentWorld.profileViewer.linkCopied': 'Lien copié',
+  'agentWorld.profileViewer.skills': 'Compétences',
+  'agentWorld.profileViewer.verifiedAccounts': 'Comptes vérifiés',
+  'agentWorld.profileViewer.handlesOwned': 'Handles détenus',
+  'agentWorld.profileViewer.followers': 'abonnés',
+  'agentWorld.profileViewer.followingCount': 'abonnements',
+  'agentWorld.profileViewer.joined': 'Inscrit le',
+  'agentWorld.profileViewer.ownProfile': 'Ceci est votre profil',
+  'agentWorld.profileViewer.agentBadge': 'Agent',
+  'agentWorld.profileViewer.humanBadge': 'Humain',
+  'agentWorld.ledger.loadMore': 'Charger plus',
+  'agentWorld.ledger.loadingMore': 'Chargement…',
+  'agentWorld.ledger.loadMoreError': 'Impossible de charger plus de transactions. Réessayez.',
   'agentWorld.jobs': 'Missions',
   'agentWorld.bounties': 'Primes',
   'agentWorld.explore': 'Explorer',
   'agentWorld.directory': 'Annuaire',
+  'agentWorld.directory.profile.verified': 'Vérifié',
+  'agentWorld.directory.profile.joined': 'Inscrit le',
+  'agentWorld.directory.profile.noBio': 'Pas encore de bio.',
+  'agentWorld.directory.profile.skills': 'Compétences',
+  'agentWorld.directory.profile.loadError': 'Impossible de charger le profil complet.',
   'agentWorld.identities': 'Identités',
   'agentWorld.profiles': 'Profils',
+  'agentWorld.profile.edit': 'Modifier le profil',
+  'agentWorld.profile.displayName': 'Nom affiché',
+  'agentWorld.profile.bio': 'Bio',
+  'agentWorld.profile.avatarEmail': 'E-mail de l’avatar',
+  'agentWorld.profile.avatarEmailHint': 'Sert à récupérer votre avatar depuis Gravatar.',
+  'agentWorld.profile.save': 'Enregistrer',
+  'agentWorld.profile.nameRequired': 'Le nom affiché ne peut pas être vide.',
+  'agentWorld.profile.cancel': 'Annuler',
+  'agentWorld.profile.saving': 'Enregistrement…',
+  'agentWorld.profile.saveError': 'Impossible d’enregistrer votre profil. Réessayez.',
   'agentWorld.marketplace': 'Marché',
   'agentWorld.messaging': 'Messages',
   'agentWorld.walletNotConfigured': 'Portefeuille non configuré',
@@ -979,6 +1019,7 @@ const messages: TranslationMap = {
   'chat.typeMessage': "Comment puis-je t'aider aujourd'hui ?",
   'chat.send': 'Envoyer le message',
   'chat.stopGeneration': 'Arrêter la génération',
+  'chat.stoppedByUser': 'Arrêté',
   'chat.parallelBranchHint': 'Saisir une branche parallèle: ⌘/Ctrl+Entrée pour envoyer',
   'chat.followupHint':
     'Mettre un suivi en file: envoyé après cette réponse · ⌘/Ctrl+Entrée pour une branche parallèle',
@@ -1129,7 +1170,7 @@ const messages: TranslationMap = {
   'namespaceOverview.truncated': 'Affichage des {shown} premiers espaces de noms sur {total}.',
   'graphCentrality.title': 'Centralité du graphe de connaissances',
   'graphCentrality.intro':
-    "PageRank sur votre graphe de mémoire met en évidence les hubs porteurs de charge: et les entités connectrices qui relient des clusters autrement séparés, ce qu'un simple comptage de fréquence ne peut révéler.",
+    "Le PageRank de votre graphe de mémoire met en évidence les hubs porteurs de charge et les entités connectrices qui relient des clusters autrement séparés, ce qu'un simple comptage de fréquence ne peut révéler.",
   'graphCentrality.loading': 'Calcul de la centralité…',
   'graphCentrality.errorPrefix': 'Impossible de charger le graphique:',
   'graphCentrality.retry': 'Réessayer',
@@ -1155,7 +1196,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': "Associations d'entités",
   'entityAssociations.intro':
-    'Les entités partageant de nombreuses connexions sont associées: même sans lien factuel direct. La similarité de Jaccard révèle ces associations cachées.',
+    'Les entités partageant de nombreuses connexions sont associées, même sans lien factuel direct. La similarité de Jaccard révèle ces associations cachées.',
   'entityAssociations.loading': 'Calcul des associations…',
   'entityAssociations.errorPrefix': 'Impossible de charger le graphe :',
   'entityAssociations.retry': 'Retry',
@@ -1696,7 +1737,7 @@ const messages: TranslationMap = {
   'settings.search.placeholderQuerit': 'Cherche la clé API',
   'settings.search.allowedSitesLabel': 'Sites web autorisés',
   'settings.search.allowedSitesHint':
-    "Hôtes que l'assistant peut ouvrir et lire: via la récupération web et l'outil navigateur: un par ligne, p. ex. reuters.com. Un hôte couvre également ses sous-domaines. La recherche web elle-même n'est pas limitée par cette liste.",
+    "Saisissez les hôtes que l'assistant peut ouvrir et lire (via la récupération web et l'outil navigateur), un hôte par ligne, p. ex. reuters.com. Un hôte couvre également ses sous-domaines. La recherche web elle-même n'est pas limitée par cette liste.",
   'settings.search.allowedSitesAllOn':
     "L'assistant peut ouvrir n'importe quel site public. Les adresses locales et privées restent bloquées.",
   'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
@@ -2921,7 +2962,7 @@ const messages: TranslationMap = {
   'workspace.vaultNotRegisteredHelp':
     "Obsidian n'ouvre que les dossiers que vous avez ajoutés comme coffre. Dans Obsidian, choisissez « Ouvrir le dossier comme coffre » et sélectionnez le dossier ci-dessous: vous ne devez le faire qu'une seule fois. Cliquez ensuite sur Afficher le coffre.",
   'workspace.obsidianNotFoundHelp':
-    "Obsidian est introuvable sur cet appareil. Installez-le, ou: s'il est installé dans un emplacement non standard: définissez son dossier de configuration sous Avancé.",
+    "Obsidian est introuvable sur cet appareil. Installez-le ou, s'il est installé dans un emplacement non standard, définissez son dossier de configuration sous Avancé.",
   'workspace.openAnyway': 'Ouvrir dans Obsidian quand même',
   'workspace.installObsidian': 'Installer Obsidian',
   'workspace.obsidianAdvanced': 'Obsidian installé ailleurs ?',
@@ -3323,6 +3364,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': "Impossible de comprendre l'audio clairement: réessaie",
   'mic.failedToStopRecording': "Échec de l'arrêt de l'enregistrement : {message}",
   'mic.transcriptionFailed': 'Échec de la transcription : {message}',
+  'mic.voiceNotCompiled':
+    "La transcription vocale n'est pas incluse dans cette version de l'application. Mettez à jour OpenHuman pour l'activer.",
   'reflections.kind.retrospective': 'Rétrospective',
   'reflections.kind.derivedFact': 'Fait dérivé',
   'reflections.kind.moodInsight': 'Insight émotionnel',
@@ -3551,6 +3594,13 @@ const messages: TranslationMap = {
   'channels.telegram.remoteControlTitle': 'Télécommande (Telegram)',
   'channels.telegram.remoteControlBody':
     "À partir d'un chat Telegram autorisé, envoyez /status, /sessions, /new ou /help. Le routage de modèles utilise toujours /model et /models.",
+  'channels.connectHelp.title': 'Comment se connecter',
+  'channels.connectHelp.discord':
+    'Choisissez une méthode ci-dessous : reliez votre compte via OpenHuman, installez le bot avec OAuth, ou collez votre propre jeton de bot depuis le portail développeur Discord.',
+  'channels.connectHelp.telegram':
+    'Choisissez une méthode ci-dessous : écrivez au bot OpenHuman géré pour le relier, ou collez votre propre jeton de bot depuis @BotFather.',
+  'channels.connectHelp.slackNote':
+    'Vous cherchez Slack ? Slack se connecte comme une app dans Connexions → OAuth, pas comme un canal de messagerie ici.',
   'channels.web.displayName': 'Web',
   'channels.web.description': "Discutez via l'interface utilisateur Web intégrée.",
   'channels.web.authMode.managed_dm.description':
@@ -4725,6 +4775,9 @@ const messages: TranslationMap = {
   'settings.ai.openRouterOauthDescription':
     "Connectez-vous avec OpenRouter et importez une clé API contrôlée par l'utilisateur en utilisant PKCE.",
   'settings.ai.connecting': 'Connexion...',
+  'settings.ai.codexAuthButton': 'Connecter Codex',
+  'settings.ai.codexAuthHelper':
+    'Utilise la connexion Codex CLI existante depuis ~/.codex/auth.json.',
   'settings.ai.backgroundLoops': 'Boucles de fond',
   'settings.ai.backgroundLoopsDesc':
     "Voyez ce qui s'exécute sans message de discussion, interrompez le travail du battement de cœur et inspectez les lignes récentes du grand livre de crédit.",
@@ -5574,7 +5627,7 @@ const messages: TranslationMap = {
   'settings.agentAccess.accessMode': "Mode d'accès",
   'settings.agentAccess.tier.readonly.title': 'Lecture seule',
   'settings.agentAccess.tier.readonly.desc':
-    "Lit des fichiers et exécute des commandes en lecture seule pour explorer: mais n'écrit jamais, ne modifie jamais, ni n’exécute quoi que ce soit qui change l’état.",
+    "Lit des fichiers et exécute des commandes en lecture seule pour explorer, mais n'écrit jamais, ne modifie jamais ni n’exécute quoi que ce soit qui change l’état.",
   'settings.agentAccess.tier.supervised.title': 'Demandez avant de modifier',
   'settings.agentAccess.tier.supervised.desc':
     'Crée de nouveaux fichiers librement, mais demande votre approbation avant de modifier un fichier existant, d’exécuter une commande, d’accéder au réseau ou d’installer quoi que ce soit.',
@@ -5586,7 +5639,7 @@ const messages: TranslationMap = {
     "⚠ L'accès complet exécute des commandes avec l'accès complet de votre compte et n'est pas isolé. Ne l'activez que lorsque vous faites confiance à l'agent avec cette machine. Les répertoires de systèmes et d'identifiants restent bloqués, et les actions destructrices, réseau et d'installation demandent toujours une approbation.",
   'settings.agentAccess.confine.label': "Confiner à l'espace de travail",
   'settings.agentAccess.confine.desc':
-    "Restreignez l'agent au répertoire de l'espace de travail (plus tous les dossiers accordés), quel que soit le mode d'accès sélectionné. Lorsqu'il est désactivé, il peut accéder à n'importe quel endroit auquel votre utilisateur peut accéder: sauf aux répertoires de crédentiel et système toujours bloqués.",
+    "Restreignez l'agent au répertoire de l'espace de travail (plus tous les dossiers accordés), quel que soit le mode d'accès sélectionné. Lorsqu'il est désactivé, il peut accéder à n'importe quel endroit auquel votre utilisateur peut accéder, sauf aux répertoires d'identifiants et système toujours bloqués.",
   'settings.agentAccess.requireTaskPlanApproval.label': "Exiger l'approbation du plan de tâche",
   'settings.agentAccess.requireTaskPlanApproval.desc':
     "Pause avant qu'un agent assigné n'exécute un briefing de tâche rédigé par un agent.",
@@ -5818,7 +5871,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'Très grande',
   'settings.appearance.fontSizeXLargeDesc': 'Le texte le plus grand, pour une lisibilité maximale.',
   'settings.appearance.fontSizeHelperText':
-    'Ajuste la taille du texte dans toute l’application: chat, paramètres et panneaux: indépendamment du réglage de police de votre système.',
+    'Ajuste la taille du texte dans toute l’application (chat, paramètres et panneaux) indépendamment du réglage de police de votre système.',
   'settings.appearance.fontSizeCustomLabel': 'Taille personnalisée',
   'settings.appearance.fontSizeCustomAria': 'Taille de police personnalisée en pixels',
   'settings.appearance.fontSizeCustomSliderAria':
@@ -5960,7 +6013,7 @@ const messages: TranslationMap = {
     'Valeur par défaut raisonnable: bonne continuité sans consommer de jetons supplémentaires à chaque exécution.',
   'settings.memoryWindow.balanced.label': 'Équilibré',
   'settings.memoryWindow.description':
-    "Quelle quantité de contexte mémorisé OpenHuman injecte dans chaque nouvelle exécution d'agent. Des fenêtres plus larges semblent plus conscientes des conversations passées mais consomment plus de jetons: et coûtent plus cher: à chaque exécution.",
+    "Quelle quantité de contexte mémorisé OpenHuman injecte dans chaque nouvelle exécution d'agent. Des fenêtres plus larges semblent plus conscientes des conversations passées mais consomment plus de jetons (et coûtent plus cher) à chaque exécution.",
   'settings.memoryWindow.extended.badge': 'Plus de contexte',
   'settings.memoryWindow.extended.hint':
     'Plus de mémoire à long terme injectée à chaque exécution. Coût en jetons plus élevé par tour.',
@@ -6997,7 +7050,7 @@ const messages: TranslationMap = {
     "À mesure que l'assistant enregistre des faits connectés à votre sujet, leur structure de regroupement apparaîtra ici.",
   'graphCohesion.errorPrefix': 'Impossible de charger le graphe :',
   'graphCohesion.intro':
-    "À quel point le voisinage de chaque entité est étroitement tissé. Les courtiers: entités dont les voisins ne sont pas liés entre eux: sont les points uniques qui maintiennent ensemble des groupes autrement séparés, ce qu'un tri par fréquence ou PageRank ne peut révéler.",
+    "Cette mesure indique à quel point le voisinage de chaque entité est étroitement tissé. Les courtiers (entités dont les voisins ne sont pas liés entre eux) sont les points uniques qui maintiennent ensemble des groupes autrement séparés, ce qu'un tri par fréquence ou PageRank ne peut révéler.",
   'graphCohesion.loading': 'Calcul de la cohésion…',
   'graphCohesion.metricConnections': 'Connexions',
   'graphCohesion.metricEntities': 'Entités',
@@ -7373,11 +7426,21 @@ const messages: TranslationMap = {
   'agentworld.jobs.applyModal.bidAmountPlaceholder': 'ex. 450 USDC',
   'agentworld.jobs.applyModal.deliveryLabel': 'Délai estimé',
   'agentworld.jobs.applyModal.deliveryPlaceholder': 'ex. 2 semaines',
+  'agentworld.feed.live': 'En direct',
   'agentworld.jobs.applyModal.cancel': 'Annuler',
   'agentworld.jobs.applyModal.submit': 'Soumettre la candidature',
   'agentworld.jobs.applyModal.submitting': 'Envoi en cours…',
+  'agentworld.messaging.live': 'En direct',
   'agentworld.messaging.missingSignalBundle':
     "Cet utilisateur n'a pas encore activé la messagerie chiffrée. Demandez-lui d'ouvrir Agent World et d'activer les messages privés sécurisés avant d'envoyer un message.",
+  'agentworld.messaging.notAContact':
+    "Vous ne pouvez pas écrire à cette personne tant qu'elle n'est pas un contact. Envoyez une demande de contact et réessayez une fois qu'elle l'a acceptée.",
+  'agentworld.messaging.sendContactRequest': 'Envoyer une demande de contact',
+  'agentworld.messaging.contactRequestSending': 'Envoi de la demande…',
+  'agentworld.messaging.contactRequestSent':
+    "Demande de contact envoyée. Vous pourrez lui écrire une fois qu'elle l'aura acceptée.",
+  'agentworld.messaging.contactRequestFailed':
+    "Impossible d'envoyer la demande de contact. Veuillez réessayer.",
 
   // User-actionable runtime errors (#3931)
   'userErrors.title': 'Action requise',
@@ -7453,9 +7516,38 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Supprimer',
   'flows.delete.deleting': 'Suppression…',
   'flows.canvas.renameLabel': 'Renommer le workflow',
+  'memorySources.codingSessions.title': 'Sessions d’agents de programmation',
+  'memorySources.codingSessions.description':
+    'Transformez vos décisions et corrections Codex et Claude Code en mémoire de persona privée.',
+  'memorySources.codingSessions.ingest': 'Ingérer les nouvelles sessions',
+  'memorySources.codingSessions.ingesting': 'Ingestion…',
+  'memorySources.codingSessions.claude': 'Historique Claude Code',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '{files} sessions · {evidence} interventions humaines',
+  'memorySources.codingSessions.notFound': 'Aucun historique local trouvé',
+  'memorySources.codingSessions.scanning': 'Analyse de l’historique local…',
+  'memorySources.codingSessions.truncated':
+    'L’analyse a été limitée aux 1 000 premiers fichiers de session.',
+  'memorySources.codingSessions.complete': 'Sessions de programmation ingérées',
+  'memorySources.codingSessions.completeMessage':
+    '{processed} sessions ont produit {observations} observations de persona.',
+  'memorySources.codingSessions.partialFailure':
+    '{failed} sessions ont échoué tandis que {processed} ont été traitées. Relancez l’ingestion pour réessayer.',
+  'memorySources.codingSessions.moreRemaining':
+    'La limite de sessions du lot a été atteinte. Relancez l’ingestion pour continuer à importer votre historique.',
+  'memorySources.codingSessions.failed': 'Échec de l’ingestion des sessions de programmation',
   'flows.canvas.sidePanelToggle': 'Panneau latéral',
   'flows.canvas.legendTab': 'Manuel',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': "Arrêt d'urgence",
+  'safety.stopFailed': "Impossible d'arrêter l'automatisation. Réessayez.",
+  'safety.resume': "Reprendre l'automatisation",
+  'safety.resumeFailed':
+    "Impossible de reprendre. L'automatisation est toujours suspendue. Réessayez.",
+  'safety.haltedTitle': 'Automatisation suspendue',
+  'safety.haltedBody':
+    "Toute l'automatisation du bureau est arrêtée. Reprenez quand vous êtes prêt.",
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'État de confidentialité',
   'privacy.status.external': 'Hors de l’appareil',

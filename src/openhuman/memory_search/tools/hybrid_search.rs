@@ -110,7 +110,16 @@ impl Tool for MemoryHybridSearchTool {
             ));
         }
 
-        let profile = WeightProfile::by_name(&parsed.mode);
+        let profile = WeightProfile::by_name(&parsed.mode).ok_or_else(|| {
+            log::warn!(
+                "[tool][memory_hybrid_search] rejected unknown mode={}",
+                parsed.mode
+            );
+            anyhow::anyhow!(
+                "memory_hybrid_search: unknown mode '{}'; expected balanced, semantic, lexical, or graph_first",
+                parsed.mode
+            )
+        })?;
         let limit = parsed.limit.clamp(1, 50);
 
         log::debug!(
@@ -137,8 +146,25 @@ impl Tool for MemoryHybridSearchTool {
         )
         .map_err(|e| anyhow::anyhow!("memory_hybrid_search: open store failed: {e}"))?;
 
+        // Self-echo guard (agent-agnostic, mirrors `UnifiedMemory::recall`):
+        // exclude documents auto-saved for the ambient chat thread (set by
+        // the web channel around the turn) so a search issued mid-turn
+        // never retrieves the very request that triggered it. `None`
+        // outside a chat turn — unchanged behavior for cron/CLI/tests.
+        let exclude_session_id =
+            crate::openhuman::inference::provider::thread_context::current_thread_id();
+        if let Some(ref excluded) = exclude_session_id {
+            log::debug!(
+                "[tool][memory_hybrid_search] applying same-session exclusion exclude_session_id={excluded}"
+            );
+        }
         let hits = memory
-            .query_namespace_hits(&parsed.namespace, &parsed.query, limit)
+            .query_namespace_hits_excluding_session(
+                &parsed.namespace,
+                &parsed.query,
+                limit,
+                exclude_session_id.as_deref(),
+            )
             .await
             .map_err(|e| anyhow::anyhow!("memory_hybrid_search: query failed: {e}"))?;
 
@@ -207,5 +233,28 @@ impl Tool for MemoryHybridSearchTool {
         );
 
         Ok(ToolResult::success(output))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn rejects_unknown_mode_before_opening_external_search_resources() {
+        let error = MemoryHybridSearchTool
+            .execute(json!({
+                "query": "release checklist",
+                "namespace": "global",
+                "mode": "mystery"
+            }))
+            .await
+            .expect_err("an unknown mode must fail validation");
+
+        let message = error.to_string();
+        assert!(message.contains("unknown mode 'mystery'"), "{message}");
+        // Validation runs before config, provider, and store setup. Reaching any
+        // external search path would replace this precise validation error.
+        assert!(!message.contains("load config failed"), "{message}");
     }
 }

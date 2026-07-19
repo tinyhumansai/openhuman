@@ -7,6 +7,13 @@
 //! `registry::registry_get`. The transport itself is the same
 //! `test-mcp-stub` binary used by `mcp_registry_e2e.rs`.
 
+// Exercises the gated `mcp_registry::setup` + `mcp_client` surface, so the
+// whole suite is compiled only when the `mcp` feature is on — otherwise the
+// slim build's `cargo test --no-default-features --features
+// tokenjuice-treesitter --tests` fails to compile against the removed APIs
+// (#4799).
+#![cfg(feature = "mcp")]
+
 use std::collections::HashMap;
 use std::time::Duration;
 

@@ -266,7 +266,10 @@ mod tests {
             "critic",
             "archivist",
             "summarizer",
+            // Gated with `flows` (#4797) — absent from a slim build.
+            #[cfg(feature = "flows")]
             "workflow_builder",
+            #[cfg(feature = "flows")]
             "flow_discovery",
         ] {
             assert!(ids.contains(&expected.to_string()), "missing {expected}");

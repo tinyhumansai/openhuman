@@ -107,15 +107,42 @@ pub fn ax_list_elements_filtered(app_name: &str, filter: &str) -> Result<Vec<AXE
                 .unwrap_or("unknown error");
             return Err(err.to_string());
         }
-        let mut elements: Vec<AXElement> = resp
-            .get("elements")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-        let needle = filter.trim().to_lowercase();
-        if !needle.is_empty() {
-            elements.retain(|e| e.label.to_lowercase().contains(&needle));
+        // Parse the helper's element array. A decode failure means malformed
+        // helper output, not "no UI" — surface it in the log instead of silently
+        // collapsing to an empty list (which reads downstream as an app with no
+        // accessible elements). Behavior is unchanged (still degrades to empty).
+        let elements: Vec<AXElement> = match resp.get("elements") {
+            Some(raw) => serde_json::from_value(raw.clone()).unwrap_or_else(|e| {
+                log::warn!(
+                    "[ax_interact] list: failed to decode elements for '{app_name}': {e} — treating as empty"
+                );
+                Vec::new()
+            }),
+            None => {
+                log::debug!("[ax_interact] list: helper returned no 'elements' field for '{app_name}'");
+                Vec::new()
+            }
+        };
+        let needle = filter.trim();
+        if needle.is_empty() {
+            log::debug!(
+                "[ax_interact] list: '{app_name}' unfiltered → {} elements",
+                elements.len()
+            );
+            Ok(elements)
+        } else {
+            // Rank the matches best-first (exact → prefix → substring) instead of
+            // returning raw tree order. Same membership a `contains` filter kept,
+            // but the tool's fixed top-N render cap now keeps the *best* N — the
+            // reliable-selection half of #3202.
+            let total = elements.len();
+            let ranked = super::element_match::filter_and_rank(elements, needle);
+            log::debug!(
+                "[ax_interact] list: '{app_name}' filter={needle:?} → {} of {total} elements matched (ranked best-first)",
+                ranked.len()
+            );
+            Ok(ranked)
         }
-        Ok(elements)
     }
     #[cfg(target_os = "windows")]
     {

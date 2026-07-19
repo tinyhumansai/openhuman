@@ -13,7 +13,7 @@ use axum::{
     Router,
 };
 use openhuman_core::openhuman::channels::providers::telegram::TelegramChannel;
-use openhuman_core::openhuman::channels::providers::web::{
+use openhuman_core::openhuman::web_chat::{
     cancel_chat, start_chat, subscribe_web_channel_events, test_support as web_test_support,
     ChatRequestMetadata,
 };

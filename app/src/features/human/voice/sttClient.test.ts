@@ -93,14 +93,31 @@ describe('transcribeCloud', () => {
     expect(await transcribeCloud(blob)).toBe('');
   });
 
-  // Issue #1289: stale sidecar binaries surface a generic
-  // "unknown method" error. Frontend rewrites it to an actionable
-  // message so users know to restart the desktop app.
-  it('rewrites "unknown method" errors to an actionable restart hint', async () => {
+  // #4901: a core built without the `voice` feature never registers the
+  // `openhuman.voice_*` controllers, so they answer "unknown method". That is a
+  // compile-time property of the binary, so the message must NOT tell users to
+  // restart (the pre-#4901 copy did, which could never work).
+  it('rewrites "unknown method" errors to a not-compiled-in message', async () => {
     const mock = callCoreRpc as ReturnType<typeof vi.fn>;
     mock.mockRejectedValueOnce(new Error('unknown method: openhuman.voice_cloud_transcribe'));
     const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
-    await expect(transcribeCloud(blob)).rejects.toThrow(/Restart the OpenHuman desktop app/i);
+    await expect(transcribeCloud(blob)).rejects.toThrow(/not compiled into the app/i);
+  });
+
+  it('does not advise restarting for a compile-time voice gate', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockRejectedValueOnce(new Error('unknown method: openhuman.voice_cloud_transcribe'));
+    const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
+    await expect(transcribeCloud(blob)).rejects.not.toThrow(/restart the openhuman desktop app/i);
+  });
+
+  // `MicComposer`'s PERMANENT_ERROR_PATTERNS matches this substring to skip the
+  // retry/backoff loop — a compile-time gate can never succeed on retry.
+  it('keeps the "unavailable in this build" substring for retry suppression', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockRejectedValueOnce(new Error('unknown method: openhuman.voice_cloud_transcribe'));
+    const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
+    await expect(transcribeCloud(blob)).rejects.toThrow(/unavailable in this build/i);
   });
 
   it('passes through non-unknown-method errors verbatim', async () => {
@@ -148,11 +165,21 @@ describe('transcribeWithFactory', () => {
     expect(mock).not.toHaveBeenCalled();
   });
 
-  it('rewrites stale-sidecar "unknown method" errors', async () => {
+  // #4901 — same compile-time gate as the cloud path above.
+  it('rewrites "unknown method" errors to a not-compiled-in message', async () => {
     const mock = callCoreRpc as ReturnType<typeof vi.fn>;
     mock.mockRejectedValueOnce(new Error('unknown method: openhuman.voice_stt_dispatch'));
     const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
-    await expect(transcribeWithFactory(blob)).rejects.toThrow(/Restart the OpenHuman desktop app/i);
+    await expect(transcribeWithFactory(blob)).rejects.toThrow(/not compiled into the app/i);
+  });
+
+  it('does not advise restarting for a compile-time voice gate', async () => {
+    const mock = callCoreRpc as ReturnType<typeof vi.fn>;
+    mock.mockRejectedValueOnce(new Error('unknown method: openhuman.voice_stt_dispatch'));
+    const blob = new Blob([new Uint8Array([1])], { type: 'audio/webm' });
+    await expect(transcribeWithFactory(blob)).rejects.not.toThrow(
+      /restart the openhuman desktop app/i
+    );
   });
 
   it('passes through non-unknown-method errors verbatim', async () => {

@@ -18,7 +18,7 @@ use tempfile::{tempdir, TempDir};
 use tokio::time::timeout;
 
 use openhuman_core::core::socketio::WebChannelEvent;
-use openhuman_core::openhuman::channels::providers::web::{
+use openhuman_core::openhuman::web_chat::{
     all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat,
     channel_web_cancel, publish_web_channel_event, schemas as web_channel_schema, start_chat,
     subscribe_web_channel_events, ChatRequestMetadata,

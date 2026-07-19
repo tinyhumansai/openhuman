@@ -367,6 +367,10 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
         ("code_executor", 50),
         ("context_scout", 50),
         ("integrations_agent", 50),
+        // `mcp_agent` is compiled out with the `mcp` feature (#4799).
+        // `mcp_setup` is NOT — only its five tools are gated, so the agent
+        // definition still loads in both builds.
+        #[cfg(feature = "mcp")]
         ("mcp_agent", 50),
         ("mcp_setup", 50),
         ("planner", 50),
@@ -374,8 +378,13 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
         ("skill_creator", 50),
         ("task_manager_agent", 50),
         ("tools_agent", 50),
+        // Gated with `flows` (#4797) — absent from a slim build.
+        #[cfg(feature = "flows")]
         ("flow_discovery", 50),
+        #[cfg(feature = "flows")]
         ("workflow_builder", 50),
+        // Compiled out with the `skills` gate — see `openhuman::skills::stub`.
+        #[cfg(feature = "skills")]
         ("skill_executor", 50),
         ("tinyplace_agent", 50),
         ("subconscious", 30),
@@ -404,6 +413,8 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
         ("vision_agent", 6),
         // Unchanged.
         ("presentation_agent", 10),
+        // Compiled out with the `skills` gate — see `openhuman::skills::stub`.
+        #[cfg(feature = "skills")]
         ("skill_setup", 10),
     ];
 

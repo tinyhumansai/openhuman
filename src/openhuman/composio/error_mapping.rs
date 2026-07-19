@@ -156,7 +156,7 @@ fn format_insufficient_scope_message(tool: &str, detail: &str) -> String {
     let toolkit = derive_toolkit_slug(tool);
     format!(
         "`{tool}` was rejected because the connected {toolkit} account is missing required \
-         permissions ({detail}). Reconnect the integration in Settings → Connections → \
+         permissions ({detail}). Reconnect the integration in Connections → \
          {toolkit} and grant the scopes requested during OAuth."
     )
 }
@@ -170,7 +170,7 @@ fn format_trigger_permission_message(tool: &str) -> String {
     let toolkit = derive_toolkit_slug(tool);
     format!(
         "Couldn't enable this trigger: the connected {toolkit} account doesn't have \
-         permission to manage triggers. Reconnect {toolkit} in Settings → Connections → \
+         permission to manage triggers. Reconnect {toolkit} in Connections → \
          {toolkit} and grant the permissions requested during OAuth, then try again."
     )
 }

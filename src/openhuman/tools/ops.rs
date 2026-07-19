@@ -101,6 +101,11 @@ pub fn all_tools_with_runtime(
     skill_allowlist: Option<&std::collections::HashSet<String>>,
     mcp_allowlist: Option<&[String]>,
 ) -> Vec<Box<dyn Tool>> {
+    // `skill_allowlist` scopes only the `skills`-gated tool registrations
+    // below, so it is genuinely unread when that feature is compiled out.
+    #[cfg(not(feature = "skills"))]
+    let _ = skill_allowlist;
+
     // Build a session-scoped managed Node.js bootstrap once, so ShellTool,
     // NodeExecTool, and NpmExecTool all share the same memoised resolution
     // state. Disabled when `node.enabled = false` — in that case shell skips
@@ -220,7 +225,9 @@ pub fn all_tools_with_runtime(
         // Both wrap `skill_runtime::spawn_workflow_run_background` +
         // `await_run_outcome` — the same spawn path `openhuman.skills_run`
         // JSON-RPC uses, so RPC and tool callers stay in sync.
+        #[cfg(feature = "skills")]
         Box::new(RunWorkflowTool::new().with_skill_allowlist(skill_allowlist.cloned())),
+        #[cfg(feature = "skills")]
         Box::new(AwaitWorkflowTool::new()),
         Box::new(CurrentTimeTool::new()),
         // Reversibility for native tool-output compaction (Stage 1a): when a
@@ -277,6 +284,7 @@ pub fn all_tools_with_runtime(
         // graph and returns a proposal summary — never creates/enables a
         // flow itself. Only the chat UI's WorkflowProposalCard "Save &
         // enable" action calls `flows_create`.
+        #[cfg(feature = "flows")]
         Box::new(ProposeWorkflowTool::new(config.clone())),
         // workflow-builder agent tool belt (Phase 5b). A deliberately narrow,
         // propose-or-read surface: revise a draft (validate-only), read saved
@@ -285,38 +293,53 @@ pub fn all_tools_with_runtime(
         // or enable a flow (only the user's own `flows_create` click does); the
         // read tools are `PermissionLevel::None`, and `dry_run_workflow` is
         // autonomy-tier gated + wired to deterministic mock capabilities.
+        #[cfg(feature = "flows")]
         Box::new(ReviseWorkflowTool::new(config.clone())),
         // Structured incremental edits (F1): apply a small ops[] list to a base
         // graph (saved flow or inline) instead of re-emitting the whole graph,
         // then validate + gate + return a proposal (same contract as revise).
         // Proposal-only — never persists.
+        #[cfg(feature = "flows")]
         Box::new(EditWorkflowTool::new(config.clone())),
         // Standalone validate (F3): run the SAME structural + hard-gate stack
         // the propose/save tools use, without emitting a proposal — a pure
         // check so the agent can self-verify a draft mid-build. Read-only.
+        #[cfg(feature = "flows")]
         Box::new(ValidateWorkflowTool::new(config.clone())),
         // Read a saved flow's revision history (F6) — prior graph snapshots the
         // agent can inspect / pick a rollback target from. Read-only.
+        #[cfg(feature = "flows")]
         Box::new(GetFlowHistoryTool::new(config.clone())),
         // Phase 4 self-debug loop (F4): find a failing run, resume a parked
         // run (approval-gated), or cancel a runaway one.
+        #[cfg(feature = "flows")]
         Box::new(ListFlowRunsTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(ResumeFlowRunTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(CancelFlowRunTool::new(config.clone())),
         // Gated create (F4/F12): create a NEW flow — born disabled, approval
         // gated — and duplicate an existing one (disabled copy) for
         // clone-then-edit. Behind the Phase 3 safety rails.
+        #[cfg(feature = "flows")]
         Box::new(CreateWorkflowTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(DuplicateFlowTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(ListFlowsTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(GetFlowTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(GetFlowRunTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(ListFlowConnectionsTool::new(config.clone())),
+        #[cfg(feature = "flows")]
         Box::new(SearchToolCatalogTool::new(config.clone())),
         // Full live contract (schemas, real required_args/output_fields,
         // primary_array_path) for one action slug found via
         // search_tool_catalog — the grounding step before WIRING a node's
         // args/downstream bindings (systemic tool-contract fix, Part 1).
+        #[cfg(feature = "flows")]
         Box::new(GetToolContractTool::new(config.clone())),
         // B12: ONE bounded, READ-ONLY, REAL Composio call to derive the real
         // primary_array_path/output_fields when the live listing publishes no
@@ -326,44 +349,61 @@ pub fn all_tools_with_runtime(
         // toolkits only — see builder_tools.rs's module doc for the carve-out
         // this makes in the workflow-builder agent's "no composio_execute"
         // invariant.
+        #[cfg(feature = "flows")]
         Box::new(GetToolOutputSampleTool::new(config.clone())),
         // Ground an `agent` node's `agent_ref` in real registered agent-kind ids
         // (researcher / code_executor / …) — the agent analogue of
         // search_tool_catalog. Read-only.
+        #[cfg(feature = "flows")]
         Box::new(ListAgentProfilesTool::new()),
         // Steer toolkit choice toward what's already connected + surface which
         // toolkits a flow still needs (Phase 5, item 19). Read-only.
+        #[cfg(feature = "flows")]
         Box::new(ListConnectableToolkitsTool::new(config.clone())),
         // Queryable DSL schema (F2): enumerate the 12 node kinds and fetch one
         // kind's full config-field/port/example/gotcha contract — the DSL
         // analogue of search_tool_catalog + get_tool_contract, so an agent need
         // not rely on prompt prose or memory for node config shapes. Read-only.
+        #[cfg(feature = "flows")]
         Box::new(ListNodeKindsTool::new()),
+        #[cfg(feature = "flows")]
         Box::new(GetNodeKindContractTool::new()),
+        #[cfg(feature = "flows")]
         Box::new(DryRunWorkflowTool::new(security.clone(), config.clone())),
         // Real end-to-end test run of a SAVED flow (Write / external-effect). The
         // workflow-builder prompt requires it to ask the user for confirmation
         // first, and the flow's own approval gate still pauses outbound nodes.
+        #[cfg(feature = "flows")]
         Box::new(RunFlowTool::new(config.clone())),
         // Persist a built graph onto an EXISTING saved flow (Write). Used only
         // when the USER explicitly asks the agent to save; the seeded build
         // turn from the Flows prompt bar is propose-only (see #4596) — Accept
         // + the canvas's own Save persist the graph. The tool itself can
         // never create a flow or change enabled/require_approval.
+        #[cfg(feature = "flows")]
         Box::new(SaveWorkflowTool::new(config.clone())),
         // Flow Scout discovery: the `flow_discovery` agent's terminal emit
         // sink. Read-only reasoning over the user's data ends by calling
         // `suggest_workflows`, which persists workflow ideas for the Flows page
         // "Suggested for you" section. `PermissionLevel::None`, no external
         // effect — writes only to the agent's own suggestions store.
+        #[cfg(feature = "flows")]
         Box::new(SuggestWorkflowsTool::new(config.clone())),
         // Wallet tools — expose wallet operations to the agent tool-call pipeline
         // so the crypto sub-agent can prepare transfers, check status, etc.
+        // Gated with the `web3` feature (the wallet domain is compiled out when
+        // web3 is disabled; the concrete tool types live under `wallet::tools`).
+        #[cfg(feature = "web3")]
         Box::new(WalletStatusTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletChainStatusTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletPrepareTransferTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletTxStatusTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletTxReceiptTool::new()),
+        #[cfg(feature = "web3")]
         Box::new(WalletLookupTxTool::new()),
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
@@ -464,9 +504,11 @@ pub fn all_tools_with_runtime(
         // above, so it is not duplicated. Reads ship default-ON; the
         // create/install/uninstall mutators ship default-OFF via
         // `tools::user_filter` (install also fetches remote content).
+        #[cfg(feature = "skills")]
         Box::new(
             WorkflowListTool::new(config.clone()).with_skill_allowlist(skill_allowlist.cloned()),
         ),
+        #[cfg(feature = "skills")]
         Box::new(
             WorkflowDescribeTool::new(config.clone())
                 .with_skill_allowlist(skill_allowlist.cloned()),
@@ -474,22 +516,34 @@ pub fn all_tools_with_runtime(
         // Skill registry tools — browse/search/install from remote registries.
         // Browse and search are read-only (default-ON); install is a write
         // operation (fetches remote content and writes to disk).
+        #[cfg(feature = "skills")]
         Box::new(SkillRegistryBrowseTool),
+        #[cfg(feature = "skills")]
         Box::new(SkillRegistrySearchTool),
+        #[cfg(feature = "skills")]
         Box::new(SkillRegistryInstallTool::new(config.clone())),
+        #[cfg(feature = "skills")]
         Box::new(SkillRegistrySourcesTool),
+        #[cfg(feature = "skills")]
         Box::new(SkillRegistryUninstallTool),
         // Skill runtime probes — resolve the reusable Node/Python runtimes
         // that skill execution relies on before a script-backed skill runs.
+        #[cfg(feature = "skills")]
         Box::new(SkillRuntimeResolveRuntimesTool::new(config.clone())),
+        #[cfg(feature = "skills")]
         Box::new(
             WorkflowReadResourceTool::new(config.clone())
                 .with_skill_allowlist(skill_allowlist.cloned()),
         ),
+        #[cfg(feature = "skills")]
         Box::new(WorkflowRecentRunsTool::new(config.clone())),
+        #[cfg(feature = "skills")]
         Box::new(WorkflowReadRunLogTool::new(config.clone())),
+        #[cfg(feature = "skills")]
         Box::new(WorkflowCreateTool::new(config.clone())),
+        #[cfg(feature = "skills")]
         Box::new(WorkflowInstallFromUrlTool::new(config.clone())),
+        #[cfg(feature = "skills")]
         Box::new(WorkflowUninstallTool),
         // Threads (conversation) tools. Read/bounded-write ship default-ON;
         // the destructive thread_delete / thread_purge_all ship default-OFF
@@ -646,16 +700,30 @@ pub fn all_tools_with_runtime(
         Box::new(ScreenGlobeStopTool),
         Box::new(ScreenRequestPermissionsTool),
         Box::new(ScreenRequestPermissionTool),
+        // MCP registry (dynamic, user-installed servers) — compiled out with
+        // the `mcp` feature. Per-element attrs inside the `vec![]` mirror the
+        // voice idiom used earlier in this same literal.
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistrySearchTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryGetTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryInstalledListTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryStatusTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryListToolsTool),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryConnectTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryDisconnectTool),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryToolCallTool),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryConfigAssistTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryInstallTool::new(config.clone())),
+        #[cfg(feature = "mcp")]
         Box::new(McpRegistryUninstallTool::new(config.clone())),
         Box::new(WorkspaceReadPersonaTool::new(config.clone())),
         Box::new(WorkspaceUpdatePersonaTool::new(config.clone())),
@@ -692,6 +760,15 @@ pub fn all_tools_with_runtime(
     // managed Python venv, no first-call install latency. Always
     // registered.
     tools.push(Box::new(PresentationTool::new(
+        root_config.workspace_dir.clone(),
+        security.clone(),
+    )));
+
+    // Document generation (#4847, Problem 3). Native-Rust engine
+    // (docx-rs backed) — no managed runtime, no subprocess — emitting a
+    // real `.docx` through the same byte-agnostic artifact pipeline as
+    // the presentation tool. Always registered; same constructor shape.
+    tools.push(Box::new(DocumentTool::new(
         root_config.workspace_dir.clone(),
         security.clone(),
     )));
@@ -778,7 +855,9 @@ pub fn all_tools_with_runtime(
 
     // x402 — dedicated tool for making paid HTTP requests to x402-enabled
     // APIs (Base USDC / Solana USDC). Handles the 402 challenge, EIP-3009
-    // or SPL payment signing, and ledger recording.
+    // or SPL payment signing, and ledger recording. Gated with the `web3`
+    // feature (the x402 domain is compiled out when web3 is disabled).
+    #[cfg(feature = "web3")]
     tools.push(Box::new(
         crate::openhuman::x402::tools::X402RequestTool::new(),
     ));
@@ -834,6 +913,8 @@ pub fn all_tools_with_runtime(
     // Registered unconditionally — the `mcp_setup` sub-agent filters to just
     // these via its `[tools] named = [...]` allowlist, and the host agent's
     // own tool list is wide enough that the extra five entries are negligible.
+    // Compiled out entirely with the `mcp` feature.
+    #[cfg(feature = "mcp")]
     {
         let cfg = Arc::new(root_config.clone());
         tools.push(Box::new(McpSetupSearchTool::new(Arc::clone(&cfg))));
@@ -847,28 +928,36 @@ pub fn all_tools_with_runtime(
     // Generic remote MCP bridge tools. These let the agent enumerate
     // named MCP servers and forward `tools/call` through the core
     // instead of hardcoding one bespoke MCP integration per server.
-    let mcp_registry = {
-        let base = crate::openhuman::mcp_client::McpServerRegistry::from_config(root_config);
-        // Scope the MCP surface to the active profile's allowlist. `None` keeps
-        // every configured server; `Some(&[])` yields an empty registry.
-        match mcp_allowlist {
-            Some(allowed) => Arc::new(base.retaining_servers(allowed)),
-            None => Arc::new(base),
+    //
+    // Backed by the STATIC, config-declared server set (`[[mcp_client.servers]]`
+    // in TOML) — despite the local binding's name, this is NOT the dynamic
+    // `mcp_registry` domain gated above. Both are compiled out by the `mcp`
+    // feature; see the static-vs-dynamic note in AGENTS.md.
+    #[cfg(feature = "mcp")]
+    {
+        let mcp_registry = {
+            let base = crate::openhuman::mcp_client::McpServerRegistry::from_config(root_config);
+            // Scope the MCP surface to the active profile's allowlist. `None` keeps
+            // every configured server; `Some(&[])` yields an empty registry.
+            match mcp_allowlist {
+                Some(allowed) => Arc::new(base.retaining_servers(allowed)),
+                None => Arc::new(base),
+            }
+        };
+        if !mcp_registry.is_empty() {
+            tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_registry))));
+            tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_registry))));
+            tools.push(Box::new(McpCallTool::new(
+                Arc::clone(&mcp_registry),
+                security.clone(),
+            )));
+            tracing::debug!(
+                count = mcp_registry.list().len(),
+                "[mcp_client] registered generic MCP bridge tools"
+            );
+        } else {
+            tracing::debug!("[mcp_client] no MCP servers registered — bridge tools skipped");
         }
-    };
-    if !mcp_registry.is_empty() {
-        tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_registry))));
-        tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_registry))));
-        tools.push(Box::new(McpCallTool::new(
-            Arc::clone(&mcp_registry),
-            security.clone(),
-        )));
-        tracing::debug!(
-            count = mcp_registry.list().len(),
-            "[mcp_client] registered generic MCP bridge tools"
-        );
-    } else {
-        tracing::debug!("[mcp_client] no MCP servers registered — bridge tools skipped");
     }
 
     tools.extend(crate::openhuman::search::build_search_tools(root_config));
@@ -1072,12 +1161,15 @@ pub fn all_tools_with_runtime(
     // tiers only — dark on `readonly` (it can drive effectful tools/sub-agents)
     // and behind the `OPENHUMAN_RHAI_WORKFLOWS=0` kill switch. Every effectful inner call
     // still re-gates itself in the Rhai bridge, so this surface adds no new
-    // ungated capability.
+    // ungated capability. Gated with `flows` — the whole tool (and the `rhai`
+    // engine behind it, via `tinyagents/repl`) is absent from a slim build.
+    #[cfg(feature = "flows")]
     let rhai_workflows_enabled = std::env::var("OPENHUMAN_RHAI_WORKFLOWS")
         .or_else(|_| std::env::var("OPENHUMAN_RHAI"))
         .or_else(|_| std::env::var("OPENHUMAN_RLM"))
         .map(|v| v != "0")
         .unwrap_or(true);
+    #[cfg(feature = "flows")]
     if rhai_workflows_enabled
         && security.autonomy != crate::openhuman::security::policy::AutonomyLevel::ReadOnly
     {
@@ -1090,6 +1182,10 @@ pub fn all_tools_with_runtime(
             "[rhai_workflows] rhai_workflows tool not registered (readonly tier or OPENHUMAN_RHAI_WORKFLOWS=0)"
         );
     }
+    #[cfg(not(feature = "flows"))]
+    tracing::debug!(
+        "[rhai_workflows] rhai_workflows tool not registered — flows feature disabled at compile time"
+    );
 
     // DomainSet post-filter (#4796): drop tools whose DomainGroup is disabled
     // under the ambient CoreContext. With no active context, or under
@@ -1156,13 +1252,28 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         "skill_registry_uninstall",
         "skill_runtime_resolve_runtimes",
     ];
+    // Flows has no clean tool-name prefix, so it MUST list every flow-owned
+    // tool explicitly — a missing name falls through to `Platform` below and
+    // stays callable under a custom `DomainSet { platform: true, flows: false }`,
+    // leaking the flows surface past the runtime gate (#4808 review; #4797
+    // maintainer review). Keep this in lockstep with the `#[cfg(feature =
+    // "flows")]` registrations in `all_tools_with_runtime` above — the same 26
+    // names asserted by `default_tools_omits_flows_tools_when_feature_off`.
     const FLOWS: &[&str] = &[
         "propose_workflow",
         "revise_workflow",
+        "edit_workflow",
+        "validate_workflow",
+        "get_flow_history",
         "dry_run_workflow",
         "save_workflow",
         "suggest_workflows",
         "run_flow",
+        "list_flow_runs",
+        "resume_flow_run",
+        "cancel_flow_run",
+        "create_workflow",
+        "duplicate_flow",
         "list_flows",
         "get_flow",
         "get_flow_run",
@@ -1171,6 +1282,12 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         "get_tool_contract",
         "get_tool_output_sample",
         "list_agent_profiles",
+        "list_connectable_toolkits",
+        "list_node_kinds",
+        "get_node_kind_contract",
+        // The `rhai_workflows` (.ragsh) tool is compile-gated with `flows` and
+        // belongs to the same runtime domain — drop it when Flows is off too.
+        "rhai_workflows",
     ];
     // Voice family agent tools (audio_toolkit) — no `voice_`/`tts_`/`stt_`
     // prefix, so they must be listed explicitly or they fall through to

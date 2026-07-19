@@ -3,7 +3,13 @@ mod curl;
 mod gitbooks;
 mod gmail_unsubscribe;
 mod http_request;
+// Leaf-gated: the only consumers of these two are the `#[cfg(feature = "mcp")]`
+// blocks in `tools/ops.rs`, so no stub is needed — nothing names them when the
+// feature is off. (`gitbooks` is deliberately NOT gated: it dials `McpHttpClient`
+// but is a docs tool, not MCP-subsystem code. See `mcp_client`'s split facade.)
+#[cfg(feature = "mcp")]
 mod mcp;
+#[cfg(feature = "mcp")]
 mod mcp_setup;
 mod polymarket;
 mod polymarket_orders;
@@ -14,7 +20,9 @@ pub use curl::CurlTool;
 pub use gitbooks::{GitbooksGetPageTool, GitbooksSearchTool};
 pub use gmail_unsubscribe::GmailUnsubscribeTool;
 pub use http_request::HttpRequestTool;
+#[cfg(feature = "mcp")]
 pub use mcp::{McpCallTool, McpListServersTool, McpListToolsTool};
+#[cfg(feature = "mcp")]
 pub use mcp_setup::{
     McpSetupGetTool, McpSetupInstallAndConnectTool, McpSetupRequestSecretTool, McpSetupSearchTool,
     McpSetupTestConnectionTool,

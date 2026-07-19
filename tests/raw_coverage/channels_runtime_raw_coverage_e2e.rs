@@ -9,7 +9,7 @@ use axum::{
     Router,
 };
 use openhuman_core::core::event_bus::{DomainEvent, EventHandler};
-use openhuman_core::openhuman::channels::providers::web::{
+use openhuman_core::openhuman::web_chat::{
     cancel_chat, start_chat, subscribe_web_channel_events, ChatRequestMetadata,
 };
 use openhuman_core::openhuman::channels::providers::yuanbao::{YuanbaoChannel, YuanbaoConfig};

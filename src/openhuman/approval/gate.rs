@@ -71,7 +71,7 @@ const IN_CALL_APPROVAL_TTL: Duration = Duration::from_secs(120);
 
 /// Per-turn chat context for routing a parked approval's yes/no reply back to
 /// the originating thread. The web channel scopes this task-local around the
-/// agent run (`channels::providers::web`); because the `run_turn` handler, the
+/// agent run (`web_chat`); because the `run_turn` handler, the
 /// tool loop, and `intercept` all run inline (`.await`) within that spawned
 /// task, it propagates down to `intercept` with no signature plumbing. Absent
 /// for non-chat callers (CLI, sub-agents) — their approvals are simply not
@@ -815,7 +815,7 @@ impl ApprovalGate {
         // Flow-origin surface bridge (flow-approval-surface, PR3): a flow run
         // has no chat thread/client to route the generic `ApprovalRequested`
         // through (both are `None` above, so the web-channel bridge silently
-        // drops it — see `channels::providers::web::event_bus`'s
+        // drops it — see `web_chat::event_bus`'s
         // `ApprovalSurfaceSubscriber`), which is exactly the silent-deadlock
         // bug this correlation fixes. Broadcast a dedicated
         // `flow_approval_request` socket event (no thread/client required,
@@ -1340,7 +1340,7 @@ mod tests {
 
     /// A matching web-chat origin for the chat context fixture. Tests
     /// exercising the parking flow scope BOTH task-locals — production
-    /// callers in `channels/providers/web` do the same.
+    /// callers in `web_chat` do the same.
     fn web_origin() -> AgentTurnOrigin {
         AgentTurnOrigin::WebChat {
             thread_id: "t-test".into(),

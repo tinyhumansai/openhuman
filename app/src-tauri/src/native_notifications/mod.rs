@@ -37,7 +37,7 @@ use crate::AppRuntime;
 pub fn notification_permission_state() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        return macos::permission_state();
+        macos::permission_state()
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -51,7 +51,7 @@ pub fn notification_permission_state() -> Result<String, String> {
 pub fn notification_permission_request() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        return macos::request_permission();
+        macos::request_permission()
     }
     #[cfg(not(target_os = "macos"))]
     {

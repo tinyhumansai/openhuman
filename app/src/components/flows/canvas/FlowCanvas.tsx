@@ -12,7 +12,14 @@
  * The `editable` prop defaults to `false` so every existing read-only consumer
  * (the `/flows/:id` viewer) keeps its exact behavior — only the builder opts in.
  */
-import { Background, BackgroundVariant, Controls, MiniMap, ReactFlow } from '@xyflow/react';
+import {
+  Background,
+  BackgroundVariant,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  type Viewport,
+} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { forwardRef, memo, useMemo } from 'react';
 
@@ -70,6 +77,14 @@ export interface FlowCanvasProps {
   showPalette?: boolean;
   /** Reports Save-button state up so the host header can render Save/Discard. */
   onSaveMetaChange?: (meta: EditorSaveMeta) => void;
+  /**
+   * The viewport (pan/zoom) to restore on mount (editable only, F4/F5 fix) —
+   * see `EditableFlowCanvas`'s `savedViewport` doc comment. Not threaded to
+   * the read-only viewer, which keeps its unconditional `fitView`.
+   */
+  savedViewport?: Viewport | null;
+  /** Fired on every viewport change (editable only, F4/F5 fix). */
+  onViewportChange?: (viewport: Viewport) => void;
 }
 
 const NODE_TYPES = { [FLOW_NODE_TYPE]: FlowNodeComponent };
@@ -130,6 +145,8 @@ const FlowCanvas = forwardRef<EditableFlowCanvasHandle, FlowCanvasProps>(
       initialDirty,
       showPalette = true,
       onSaveMetaChange,
+      savedViewport,
+      onViewportChange,
     }: FlowCanvasProps,
     ref
   ) => {
@@ -150,6 +167,8 @@ const FlowCanvas = forwardRef<EditableFlowCanvasHandle, FlowCanvasProps>(
           initialDirty={initialDirty}
           showPalette={showPalette}
           onSaveMetaChange={onSaveMetaChange}
+          savedViewport={savedViewport}
+          onViewportChange={onViewportChange}
         />
       );
     }

@@ -33,13 +33,14 @@ function agentMsg(id: string, content: string): ThreadMessage {
   };
 }
 function tool(id: string, name: string, round = 0): ToolTimelineEntry {
-  return { id, name, round, status: 'success' };
+  return { id, name, round, seq: 0, status: 'success' };
 }
 function subagentRow(id: string, taskId: string): ToolTimelineEntry {
   return {
     id,
     name: 'subagent:researcher',
     round: 0,
+    seq: 0,
     status: 'running',
     subagent: { taskId, agentId: 'researcher', toolCalls: [] },
   };

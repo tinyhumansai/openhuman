@@ -78,7 +78,7 @@ const messages: TranslationMap = {
   'connections.welcome.eyebrow': 'Подключения',
   'connections.welcome.title': 'Всё, чем вы пользуетесь, в одном месте',
   'connections.welcome.body':
-    'Подключите свои мессенджеры, почту, календарь и инструменты, чтобы ваш агент мог читать контекст и действовать во всех них: без копирования между десятком вкладок. Вы контролируете, к чему у него есть доступ.',
+    'Подключите свои мессенджеры, почту, календарь и инструменты, чтобы ваш агент мог читать контекст и действовать во всех них без копирования между десятком вкладок. Вы контролируете, к чему у него есть доступ.',
   'connections.welcome.ctaChannel': 'Подключить канал',
   'connections.welcome.ctaApps': 'Подключить приложения',
   'connections.welcome.ctaSkills': 'Смотреть навыки',
@@ -98,7 +98,7 @@ const messages: TranslationMap = {
   'notifications.welcome.eyebrow': 'Уведомления',
   'notifications.welcome.title': 'Только то, что действительно требует вас',
   'notifications.welcome.body':
-    'Спокойная, оценённая по важности сводка того, что сделали ваши агенты и что требует решения: чтобы важное всплывало, а шум не мешал.',
+    'Спокойная, оценённая по важности сводка того, что сделали ваши агенты и что требует решения, чтобы важное всплывало, а шум не мешал.',
   'notifications.welcome.ctaView': 'Смотреть уведомления',
   'notifications.welcome.featsLabel': 'Что вы увидите',
   'notifications.welcome.feat1Title': 'Что требует вас',
@@ -114,7 +114,7 @@ const messages: TranslationMap = {
   'rewards.welcome.eyebrow': 'Награды',
   'rewards.welcome.title': 'Получайте награды за активность',
   'rewards.welcome.body':
-    'Зарабатывайте баллы, пользуясь OpenHuman и приглашая других, поддерживайте свою серию и обменивайте заработанное: всё отслеживается в одном месте.',
+    'Зарабатывайте баллы, пользуясь OpenHuman и приглашая других, поддерживайте свою серию и обменивайте заработанное. Всё отслеживается в одном месте.',
   'rewards.welcome.ctaView': 'Смотреть награды',
   'rewards.welcome.featsLabel': 'Как это работает',
   'rewards.welcome.feat1Title': 'Зарабатывайте баллы',
@@ -128,7 +128,7 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': 'Рабочие процессы',
   'flows.welcome.title': 'Переведите рутину на автопилот',
   'flows.welcome.body':
-    'Опишите то, что вы делаете снова и снова: сортировку, напоминания, сводки: и ваш агент превратит это в рабочий процесс, который сможет выполнять от начала до конца, по расписанию или по запросу.',
+    'Опишите то, что вы делаете снова и снова (сортировку, напоминания, сводки), и ваш агент превратит это в рабочий процесс, который сможет выполнять от начала до конца, по расписанию или по запросу.',
   'flows.welcome.ctaNew': 'Новый рабочий процесс',
   'flows.welcome.ctaBrowse': 'Смотреть рабочие процессы',
   'flows.welcome.featsLabel': 'Что можно автоматизировать',
@@ -337,7 +337,7 @@ const messages: TranslationMap = {
   'orchPage.medulla.title': 'Medulla',
   'orchPage.medulla.tagline': 'Модель оркестрации OpenHuman',
   'orchPage.medulla.body':
-    'Medulla: это собственная большая языковая модель OpenHuman, спроектированная для оркестрации тысяч агентов одновременно: с окном контекста в 10 миллионов токенов и радикально низкой стоимостью оркестрации.',
+    'Medulla представляет собой собственную большую языковую модель OpenHuman, спроектированную для оркестрации тысяч агентов одновременно, с окном контекста в 10 миллионов токенов и радикально низкой стоимостью оркестрации.',
   'orchPage.medulla.featAgents': 'Тысячи агентов',
   'orchPage.medulla.featContext': 'Контекст на 10M токенов',
   'orchPage.medulla.featCost': 'Недорогая оркестрация',
@@ -460,13 +460,54 @@ const messages: TranslationMap = {
   'agentWorld.world.rooms.outside.name': 'Мир',
   'agentWorld.world.rooms.outside.description': 'Большая открытая площадь, окруженная зданиями.',
   'agentWorld.feed': 'Лента',
+  'agentWorld.feed.loadMore': 'Загрузить ещё',
+  'agentWorld.feed.loadingMore': 'Загрузка…',
+  'agentWorld.feed.loadMoreError': 'Не удалось загрузить больше публикаций. Попробуйте ещё раз.',
   'agentWorld.ledger': 'Реестр',
+  'agentWorld.profileViewer.description': 'Публичный профиль',
+  'agentWorld.profileViewer.agentCard': 'Карточка агента',
+  'agentWorld.profileViewer.loading': 'Загрузка профиля…',
+  'agentWorld.profileViewer.notFoundTitle': 'Профиль не найден',
+  'agentWorld.profileViewer.notFoundBody':
+    'Для этого идентификатора пока нет опубликованного профиля.',
+  'agentWorld.profileViewer.errorTitle': 'Не удалось загрузить профиль',
+  'agentWorld.profileViewer.follow': 'Подписаться',
+  'agentWorld.profileViewer.following': 'Вы подписаны',
+  'agentWorld.profileViewer.copyLink': 'Скопировать ссылку',
+  'agentWorld.profileViewer.linkCopied': 'Ссылка скопирована',
+  'agentWorld.profileViewer.skills': 'Навыки',
+  'agentWorld.profileViewer.verifiedAccounts': 'Подтверждённые аккаунты',
+  'agentWorld.profileViewer.handlesOwned': 'Собственные хэндлы',
+  'agentWorld.profileViewer.followers': 'подписчиков',
+  'agentWorld.profileViewer.followingCount': 'подписок',
+  'agentWorld.profileViewer.joined': 'Дата присоединения',
+  'agentWorld.profileViewer.ownProfile': 'Это ваш профиль',
+  'agentWorld.profileViewer.agentBadge': 'Агент',
+  'agentWorld.profileViewer.humanBadge': 'Человек',
+  'agentWorld.ledger.loadMore': 'Загрузить ещё',
+  'agentWorld.ledger.loadingMore': 'Загрузка…',
+  'agentWorld.ledger.loadMoreError': 'Не удалось загрузить больше транзакций. Попробуйте ещё раз.',
   'agentWorld.jobs': 'Вакансии',
   'agentWorld.bounties': 'Награды',
   'agentWorld.explore': 'Исследовать',
   'agentWorld.directory': 'Каталог',
+  'agentWorld.directory.profile.verified': 'Проверен',
+  'agentWorld.directory.profile.joined': 'Присоединился',
+  'agentWorld.directory.profile.noBio': 'Пока нет описания.',
+  'agentWorld.directory.profile.skills': 'Навыки',
+  'agentWorld.directory.profile.loadError': 'Не удалось загрузить полный профиль.',
   'agentWorld.identities': 'Идентичности',
   'agentWorld.profiles': 'Профили',
+  'agentWorld.profile.edit': 'Изменить профиль',
+  'agentWorld.profile.displayName': 'Отображаемое имя',
+  'agentWorld.profile.bio': 'О себе',
+  'agentWorld.profile.avatarEmail': 'Эл. почта аватара',
+  'agentWorld.profile.avatarEmailHint': 'Используется для загрузки аватара из Gravatar.',
+  'agentWorld.profile.save': 'Сохранить',
+  'agentWorld.profile.nameRequired': 'Отображаемое имя не может быть пустым.',
+  'agentWorld.profile.cancel': 'Отмена',
+  'agentWorld.profile.saving': 'Сохранение…',
+  'agentWorld.profile.saveError': 'Не удалось сохранить профиль. Попробуйте ещё раз.',
   'agentWorld.marketplace': 'Маркетплейс',
   'agentWorld.messaging': 'Сообщения',
   'agentWorld.walletNotConfigured': 'Кошелёк не настроен',
@@ -953,6 +994,7 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'Чем я могу помочь тебе сегодня?',
   'chat.send': 'Отправить сообщение',
   'chat.stopGeneration': 'Остановить генерацию',
+  'chat.stoppedByUser': 'Остановлено',
   'chat.parallelBranchHint': 'Введите параллельную ветку: ⌘/Ctrl+Enter для отправки',
   'chat.followupHint':
     'Поставить продолжение в очередь: отправится после этого ответа · ⌘/Ctrl+Enter для параллельной ветки',
@@ -1101,7 +1143,7 @@ const messages: TranslationMap = {
   'namespaceOverview.truncated': 'Показаны топ-{shown} из {total} пространств имён.',
   'graphCentrality.title': 'Централизованность графа знаний',
   'graphCentrality.intro':
-    'PageRank по вашему графику памяти отображает несущие нагрузку концентраторы: и объекты-соединители, которые связывают отдельные кластеры, которые не может выявить необработанный подсчет частоты.',
+    'PageRank по вашему графику памяти отображает несущие нагрузку концентраторы и объекты-соединители, которые связывают отдельные кластеры, которые не может выявить необработанный подсчет частоты.',
   'graphCentrality.loading': 'Вычислительная центральность…',
   'graphCentrality.errorPrefix': 'Не удалось загрузить график:',
   'graphCentrality.retry': 'Повторить попытку',
@@ -1128,7 +1170,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': 'Ассоциации сущностей',
   'entityAssociations.intro':
-    'Сущности, разделяющие множество одинаковых связей, ассоциированы: даже если ни один факт не связывает их напрямую. Сходство Жаккара выявляет эти скрытые связи.',
+    'Сущности, разделяющие множество одинаковых связей, ассоциированы, даже если ни один факт не связывает их напрямую. Сходство Жаккара выявляет эти скрытые связи.',
   'entityAssociations.loading': 'Вычисление ассоциаций…',
   'entityAssociations.errorPrefix': 'Не удалось загрузить граф:',
   'entityAssociations.retry': 'Retry',
@@ -1661,7 +1703,7 @@ const messages: TranslationMap = {
   'settings.search.placeholderQuerit': 'Запросить ключ API',
   'settings.search.allowedSitesLabel': 'Разрешенные веб-сайты',
   'settings.search.allowedSitesHint':
-    'Хосты, которые ассистент может открывать и читать: через веб-запросы и браузерный инструмент: по одному на строку, например reuters.com. Хост также охватывает все его поддомены. Веб-поиск не ограничивается этим списком.',
+    'Хосты, которые ассистент может открывать и читать (через веб-запросы и браузерный инструмент) по одному на строку, например reuters.com. Хост также охватывает все его поддомены. Веб-поиск не ограничивается этим списком.',
   'settings.search.allowedSitesAllOn':
     'Помощник может открыть любой общедоступный веб-сайт. Локальные и частные адреса остаются заблокированными.',
   'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
@@ -2864,7 +2906,7 @@ const messages: TranslationMap = {
   'workspace.vaultNotRegisteredHelp':
     'Obsidian открывает только папки, добавленные как хранилище. В Obsidian выберите «Открыть папку как хранилище» и укажите папку ниже: это нужно сделать только один раз. Затем нажмите «Просмотр хранилища» снова.',
   'workspace.obsidianNotFoundHelp':
-    'Obsidian не найден на этом устройстве. Установите его или: если он установлен в нестандартном месте: укажите папку конфигурации в разделе «Дополнительно».',
+    'Obsidian не найден на этом устройстве. Установите его или (если он установлен в нестандартном месте) укажите папку конфигурации в разделе «Дополнительно».',
   'workspace.openAnyway': 'Всё равно открыть в Obsidian',
   'workspace.installObsidian': 'Установить Obsidian',
   'workspace.obsidianAdvanced': 'Obsidian установлен в другом месте?',
@@ -3264,6 +3306,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'Не удалось чётко распознать аудио: попробуйте ещё раз',
   'mic.failedToStopRecording': 'Не удалось остановить запись: {message}',
   'mic.transcriptionFailed': 'Ошибка транскрипции: {message}',
+  'mic.voiceNotCompiled':
+    'Расшифровка речи не включена в эту версию приложения. Обновите OpenHuman, чтобы включить её.',
   'reflections.kind.retrospective': 'Ретроспектива',
   'reflections.kind.derivedFact': 'Выведенный факт',
   'reflections.kind.moodInsight': 'Инсайт о настроении',
@@ -3490,6 +3534,13 @@ const messages: TranslationMap = {
   'channels.telegram.remoteControlTitle': 'Удаленное управление (Telegram)',
   'channels.telegram.remoteControlBody':
     'Из разрешенного чата Telegram отправьте /status, /sessions, /new или /help. В маршрутизации моделей по-прежнему используются /model и /models.',
+  'channels.connectHelp.title': 'Как подключить',
+  'channels.connectHelp.discord':
+    'Выберите способ ниже: привяжите аккаунт через OpenHuman, установите бота через OAuth или вставьте собственный токен бота из портала разработчика Discord.',
+  'channels.connectHelp.telegram':
+    'Выберите способ ниже: напишите управляемому боту OpenHuman, чтобы привязать его, или вставьте собственный токен бота от @BotFather.',
+  'channels.connectHelp.slackNote':
+    'Ищете Slack? Slack подключается как приложение в разделе Подключения → OAuth, а не как канал сообщений здесь.',
   'channels.web.displayName': 'Интернет',
   'channels.web.description': 'Общайтесь через встроенный веб-интерфейс.',
   'channels.web.authMode.managed_dm.description':
@@ -4660,6 +4711,8 @@ const messages: TranslationMap = {
   'settings.ai.openRouterOauthDescription':
     'Войдите в систему с помощью OpenRouter и импортируйте управляемый пользователем ключ API с помощью PKCE.',
   'settings.ai.connecting': 'Подключение...',
+  'settings.ai.codexAuthButton': 'Подключить Codex',
+  'settings.ai.codexAuthHelper': 'Использует существующий вход Codex CLI из ~/.codex/auth.json.',
   'settings.ai.backgroundLoops': 'Фоновые циклы',
   'settings.ai.backgroundLoopsDesc':
     'Посмотрите, что выполняется без сообщения чата, приостановите работу Heartbeat и проверьте последние строки кредитной книги.',
@@ -5582,7 +5635,7 @@ const messages: TranslationMap = {
     'Выберите, насколько свободен помощник при выполнении действий на вашем компьютере.',
   'settings.permissions.preset.readonly.title': 'Смотреть, не трогать',
   'settings.permissions.preset.readonly.desc':
-    'Помощник может читать файлы и исследовать систему: но никогда не пишет, не редактирует и не запускает ничего, что изменяет состояние.',
+    'Помощник может читать файлы и исследовать систему, но никогда не пишет, не редактирует и не запускает ничего, что изменяет состояние.',
   'settings.permissions.preset.supervised.title': 'Сначала спросить',
   'settings.permissions.preset.supervised.desc':
     'Может свободно создавать новые файлы, но всегда запрашивает ваше одобрение перед редактированием, выполнением команд или доступом к сети.',
@@ -5719,10 +5772,10 @@ const messages: TranslationMap = {
   'settings.appearance.modeDark': 'Темный',
   'settings.appearance.modeDarkDesc':
     'Тусклые поверхности, меньше раздражают глаза после наступления сумерек.',
-  'settings.appearance.modeSystem': 'Система соответствия',
+  'settings.appearance.modeSystem': 'Системный режим',
   'settings.appearance.modeSystemDesc': 'Следуйте настройкам внешнего вида вашей ОС.',
   'settings.appearance.helperText':
-    'Темный режим переключает все приложение: чат, настройки, панели: на тусклую палитру. «Система сопоставления» следит за внешним видом вашей ОС и обновляет ее в реальном времени.',
+    'Темный режим переключает все приложение (чат, настройки, панели) на тусклую палитру. «Системный режим» следит за внешним видом вашей ОС и обновляет ее в реальном времени.',
   'settings.appearance.fontSizeHeading': 'Размер шрифта',
   'settings.appearance.fontSizeAria': 'Размер шрифта',
   'settings.appearance.fontSizeSmall': 'Маленький',
@@ -5734,7 +5787,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'Очень большой',
   'settings.appearance.fontSizeXLargeDesc': 'Самый крупный текст для максимальной читаемости.',
   'settings.appearance.fontSizeHelperText':
-    'Масштабирует текст во всём приложении: чат, настройки и панели: независимо от системных настроек шрифта.',
+    'Масштабирует текст во всём приложении (чат, настройки и панели) независимо от системных настроек шрифта.',
   'settings.appearance.fontSizeCustomLabel': 'Пользовательский размер',
   'settings.appearance.fontSizeCustomAria': 'Пользовательский размер шрифта в пикселях',
   'settings.appearance.fontSizeCustomSliderAria':
@@ -5876,7 +5929,7 @@ const messages: TranslationMap = {
     'Разумное значение по умолчанию: хорошая непрерывность без лишних трат токенов на каждом запуске.',
   'settings.memoryWindow.balanced.label': 'Сбалансированный',
   'settings.memoryWindow.description':
-    'Сколько запомненного контекста OpenHuman добавляет в каждый новый запуск агента. Более широкие окна дают ощущение лучшей памяти о прошлых разговорах, но используют больше токенов: и стоят дороже: на каждом запуске.',
+    'Сколько запомненного контекста OpenHuman добавляет в каждый новый запуск агента. Более широкие окна дают ощущение лучшей памяти о прошлых разговорах, но используют больше токенов (и стоят дороже) на каждом запуске.',
   'settings.memoryWindow.extended.badge': 'Больше контекста',
   'settings.memoryWindow.extended.hint':
     'Больше долгосрочной памяти на каждый запуск. Выше расход токенов за ход.',
@@ -6900,7 +6953,7 @@ const messages: TranslationMap = {
     'По мере того как ассистент фиксирует связанные факты о вас, здесь появится их кластерная структура.',
   'graphCohesion.errorPrefix': 'Не удалось загрузить граф:',
   'graphCohesion.intro':
-    'Насколько плотно сплетено окружение каждой сущности. Брокеры: сущности, чьи соседи не связаны друг с другом,: это единичные точки, удерживающие вместе иначе разделённые кластеры, чего сортировка по частоте или PageRank не вскроет.',
+    'Этот показатель отражает, насколько плотно сплетено окружение каждой сущности. Брокеры (сущности, чьи соседи не связаны друг с другом) представляют собой единичные точки, удерживающие вместе иначе разделённые кластеры, чего сортировка по частоте или PageRank не вскроет.',
   'graphCohesion.loading': 'Вычисление связности…',
   'graphCohesion.metricConnections': 'Связи',
   'graphCohesion.metricEntities': 'Сущности',
@@ -7271,11 +7324,21 @@ const messages: TranslationMap = {
   'agentworld.jobs.applyModal.bidAmountPlaceholder': 'напр. 450 USDC',
   'agentworld.jobs.applyModal.deliveryLabel': 'Ориентировочный срок выполнения',
   'agentworld.jobs.applyModal.deliveryPlaceholder': 'напр. 2 недели',
+  'agentworld.feed.live': 'В эфире',
   'agentworld.jobs.applyModal.cancel': 'Отмена',
   'agentworld.jobs.applyModal.submit': 'Отправить заявку',
   'agentworld.jobs.applyModal.submitting': 'Отправка…',
+  'agentworld.messaging.live': 'В реальном времени',
   'agentworld.messaging.missingSignalBundle':
     'Этот пользователь еще не включил зашифрованные сообщения. Попросите его открыть Agent World и включить безопасные личные сообщения перед отправкой.',
+  'agentworld.messaging.notAContact':
+    'Вы не можете писать этому человеку, пока он не станет контактом. Отправьте запрос в контакты и повторите попытку после того, как он его примет.',
+  'agentworld.messaging.sendContactRequest': 'Отправить запрос в контакты',
+  'agentworld.messaging.contactRequestSending': 'Отправка запроса…',
+  'agentworld.messaging.contactRequestSent':
+    'Запрос в контакты отправлен. Вы сможете написать, когда он его примет.',
+  'agentworld.messaging.contactRequestFailed':
+    'Не удалось отправить запрос в контакты. Попробуйте ещё раз.',
 
   // User-actionable runtime errors (#3931)
   'userErrors.title': 'Требуется действие',
@@ -7348,9 +7411,37 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Удалить',
   'flows.delete.deleting': 'Удаление…',
   'flows.canvas.renameLabel': 'Переименовать рабочий процесс',
+  'memorySources.codingSessions.title': 'Сеансы агентов программирования',
+  'memorySources.codingSessions.description':
+    'Превратите решения и исправления из Codex и Claude Code в приватную память персоны.',
+  'memorySources.codingSessions.ingest': 'Загрузить новые сеансы',
+  'memorySources.codingSessions.ingesting': 'Загрузка…',
+  'memorySources.codingSessions.claude': 'Клод Код',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': 'Сеансы: {files} · Сообщения пользователя: {evidence}',
+  'memorySources.codingSessions.notFound': 'Локальная история не найдена',
+  'memorySources.codingSessions.scanning': 'Сканирование локальной истории…',
+  'memorySources.codingSessions.truncated': 'Сканирование ограничено первыми 1000 файлами сеансов.',
+  'memorySources.codingSessions.complete': 'Сеансы программирования загружены',
+  'memorySources.codingSessions.completeMessage':
+    'Обработано сеансов: {processed}; наблюдений персоны: {observations}.',
+  'memorySources.codingSessions.partialFailure':
+    'Не удалось обработать сеансов: {failed}; обработано: {processed}. Запустите загрузку ещё раз для повтора.',
+  'memorySources.codingSessions.moreRemaining':
+    'Достигнут лимит сеансов в пакете. Запустите загрузку ещё раз, чтобы продолжить импорт истории.',
+  'memorySources.codingSessions.failed': 'Не удалось загрузить сеансы программирования',
   'flows.canvas.sidePanelToggle': 'Боковая панель',
   'flows.canvas.legendTab': 'Вручную',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'Аварийная остановка',
+  'safety.stopFailed': 'Не удалось остановить автоматизацию. Попробуйте ещё раз.',
+  'safety.resume': 'Возобновить автоматизацию',
+  'safety.resumeFailed':
+    'Не удалось возобновить. Автоматизация всё ещё приостановлена. Повторите попытку.',
+  'safety.haltedTitle': 'Автоматизация приостановлена',
+  'safety.haltedBody':
+    'Вся автоматизация рабочего стола остановлена. Возобновите, когда будете готовы.',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'Состояние конфиденциальности',
   'privacy.status.external': 'Вне устройства',

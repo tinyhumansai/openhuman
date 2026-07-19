@@ -9,7 +9,6 @@ mod schemas;
 mod session;
 mod types;
 
-#[path = "../web_errors.rs"]
 mod web_errors;
 pub(crate) use web_errors::classify_inference_error;
 #[cfg(any(test, debug_assertions))]
@@ -23,8 +22,8 @@ pub(crate) use web_errors::{
 // Public API — event bus
 pub use event_bus::{
     publish_web_channel_event, register_approval_surface_subscriber,
-    register_artifact_surface_subscriber, register_egress_surface_subscriber,
-    subscribe_web_channel_events,
+    register_artifact_surface_subscriber, register_automation_halt_subscriber,
+    register_egress_surface_subscriber, subscribe_web_channel_events,
 };
 
 // Test-only: OnceLock-bypassing approval bridge for per-runtime integration tests.
@@ -140,5 +139,5 @@ pub mod test_support {
 pub(crate) use types::SessionCacheFingerprint;
 
 #[cfg(test)]
-#[path = "../web_tests.rs"]
+#[path = "web_tests.rs"]
 mod tests;

@@ -21,8 +21,8 @@
 
 use crate::core::event_bus::{DomainEvent, EventHandler};
 use crate::core::socketio::WebChannelEvent;
-use crate::openhuman::channels::providers::web::publish_web_channel_event;
 use crate::openhuman::channels::{Channel, ChannelSendExt, SendMessage};
+use crate::openhuman::web_chat::publish_web_channel_event;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};

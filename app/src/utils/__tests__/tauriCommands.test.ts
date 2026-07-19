@@ -78,7 +78,7 @@ describe('tauriCommands', () => {
   });
 
   test('resetOpenHumanDataAndRestartCore invokes the destructive Tauri command', async () => {
-    await resetOpenHumanDataAndRestartCore();
+    await resetOpenHumanDataAndRestartCore('user-1');
 
     // The helper used to call `openhuman.config_reset_local_data` over
     // JSON-RPC followed by `restart_core_process`, but the in-process
@@ -88,7 +88,17 @@ describe('tauriCommands', () => {
     // core) behind a single `reset_local_data` command, so no core RPC
     // call should reach `callCoreRpc` from this helper.
     expect(mockCallCoreRpc).not.toHaveBeenCalled();
-    expect(mockInvoke).toHaveBeenCalledWith('reset_local_data');
+    // #4950: the signed-in user id is forwarded so the core deletes the right
+    // `users/<id>` slice even after the active-user marker was cleared.
+    expect(mockInvoke).toHaveBeenCalledWith('reset_local_data', { userId: 'user-1' });
+  });
+
+  test('resetOpenHumanDataAndRestartCore forwards null when no user id is given', async () => {
+    await resetOpenHumanDataAndRestartCore();
+
+    // Pre-login recovery has no user id; the core falls back to marker-based
+    // resolution when `userId` is null.
+    expect(mockInvoke).toHaveBeenCalledWith('reset_local_data', { userId: null });
   });
 
   test('resetOpenHumanDataAndRestartCore surfaces invoke failures to the caller', async () => {

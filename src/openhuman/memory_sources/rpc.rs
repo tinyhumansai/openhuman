@@ -6,6 +6,82 @@ use crate::openhuman::memory_sources::registry::{self, MemorySourcePatch};
 use crate::openhuman::memory_sources::types::{MemorySourceEntry, SourceKind};
 use crate::rpc::RpcOutcome;
 
+#[derive(Debug, serde::Serialize)]
+pub struct CodingSessionStatusResponse {
+    pub sources: Vec<crate::openhuman::tinycortex::CodingSessionSourceStatus>,
+}
+
+pub async fn coding_session_status_rpc() -> Result<RpcOutcome<CodingSessionStatusResponse>, String>
+{
+    tracing::debug!("[memory_sources] coding_session_status_rpc: entry");
+    let sources = tokio::task::spawn_blocking(crate::openhuman::tinycortex::coding_session_status)
+        .await
+        .map_err(|error| format!("join coding-session discovery: {error}"))?;
+    tracing::debug!(
+        sources = sources.len(),
+        files = sources
+            .iter()
+            .map(|source| source.session_files)
+            .sum::<usize>(),
+        "[memory_sources] coding_session_status_rpc: exit"
+    );
+    Ok(RpcOutcome::new(
+        CodingSessionStatusResponse { sources },
+        vec![],
+    ))
+}
+
+pub async fn ingest_coding_sessions_rpc(
+    req: crate::openhuman::tinycortex::CodingSessionIngestRequest,
+) -> Result<RpcOutcome<crate::openhuman::tinycortex::CodingSessionIngestResponse>, String> {
+    tracing::info!("[memory_sources] ingest_coding_sessions_rpc: entry");
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .map_err(|error| format!("load config for coding-session ingestion: {error}"))?;
+    // TinyCortex's persona pipeline intentionally carries borrowed path state
+    // and is not `Send`. Drive it from a blocking worker while its async I/O
+    // remains attached to the ambient Tokio runtime, keeping the controller
+    // future itself Send-safe for the registry.
+    let runtime = tokio::runtime::Handle::current();
+    // Wall-clock ceiling so a stalled provider call or a wedged session step
+    // can't keep the RPC (and its blocking worker) waiting indefinitely (#4863
+    // review). Scale to the requested budget — each session drives at most one
+    // LLM call — so a large backfill isn't killed mid-flight while a genuine
+    // infinite hang still terminates. `max_sessions` is untrusted, so cap the
+    // multiplier before computing the budget.
+    let ingest_timeout =
+        std::time::Duration::from_secs(120 + (req.max_sessions.min(1_000) as u64) * 30);
+    let response = tokio::task::spawn_blocking(move || {
+        runtime.block_on(async move {
+            tokio::time::timeout(
+                ingest_timeout,
+                crate::openhuman::tinycortex::ingest_coding_sessions(&config, req),
+            )
+            .await
+        })
+    })
+    .await
+    .map_err(|error| format!("join coding-session ingestion: {error}"))?
+    .map_err(|_elapsed| {
+        tracing::error!(
+            timeout_secs = ingest_timeout.as_secs(),
+            "[memory_sources] ingest_coding_sessions_rpc: timed out"
+        );
+        format!(
+            "ingest coding sessions: timed out after {}s",
+            ingest_timeout.as_secs()
+        )
+    })?
+    .map_err(|error| format!("ingest coding sessions: {error:#}"))?;
+    tracing::info!(
+        processed = response.sessions_processed,
+        failed = response.sessions_failed,
+        budget_hit = response.budget_hit,
+        "[memory_sources] ingest_coding_sessions_rpc: exit"
+    );
+    Ok(RpcOutcome::new(response, vec![]))
+}
+
 // ── List ──
 
 #[derive(Debug, serde::Serialize)]

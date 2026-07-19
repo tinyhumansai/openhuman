@@ -881,10 +881,12 @@ async fn list_tools_in_direct_mode_returns_empty_without_hitting_backend() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
+    let _home_guard = HomeEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
     config.workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
     config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".to_string());
     config.save().await.expect("save fake config to disk");

@@ -1,6 +1,5 @@
 //! RPC operations for conversation thread management.
 
-use crate::openhuman::channels::providers::web as web_channel;
 use crate::openhuman::config::Config;
 use crate::openhuman::inference::provider;
 use crate::openhuman::memory::{
@@ -26,6 +25,7 @@ use crate::openhuman::threads::turn_state::{
     GetTurnStateRequest, GetTurnStateResponse, ListTurnStatesResponse,
 };
 use crate::openhuman::threads::ThreadsError;
+use crate::openhuman::web_chat as web_channel;
 use crate::rpc::RpcOutcome;
 use serde::Serialize;
 use std::collections::BTreeMap;

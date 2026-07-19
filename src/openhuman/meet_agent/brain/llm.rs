@@ -146,7 +146,7 @@ async fn get_or_build_agent_for_meet(request_id: &str) -> Result<Arc<TokioMutex<
     }
 
     // Cold build. Use the with_profile builder — same canonical path
-    // the web channel (chat UI) uses at channels/providers/web.rs:1570,
+    // the web channel (chat UI) uses at web_chat/,
     // which is what wires the user's connected integrations + delegation
     // tools. profile_prompt_suffix carries the meet voice directive.
     let config = crate::openhuman::config::ops::load_config_with_timeout().await?;

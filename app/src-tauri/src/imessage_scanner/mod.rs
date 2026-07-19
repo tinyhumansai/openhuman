@@ -372,7 +372,7 @@ fn extract_text_from_attributed_body(blob: &[u8]) -> Option<String> {
         .filter_map(|r| String::from_utf8(r).ok())
         .filter(|s| {
             let trimmed = s.trim();
-            trimmed.len() >= 2 && !ignored_markers.iter().any(|m| trimmed == *m)
+            trimmed.len() >= 2 && !ignored_markers.contains(&trimmed)
         })
         .max_by_key(|s| s.len())
         .map(|s| s.trim().to_string())

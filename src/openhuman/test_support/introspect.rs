@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use tokio::fs;
 
-use crate::openhuman::channels::providers::web::in_flight_entries_for_test;
 use crate::openhuman::config::Config;
 use crate::openhuman::wallet::prepared_quotes_for_test;
+use crate::openhuman::web_chat::in_flight_entries_for_test;
 use crate::rpc::RpcOutcome;
 
 /// Maximum bytes returned by `read_workspace_file`. Specs that need bigger

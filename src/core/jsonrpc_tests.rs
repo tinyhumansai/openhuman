@@ -243,6 +243,11 @@ async fn invoke_doctor_models_rejects_unknown_param() {
     assert!(err.contains("unknown param 'invalid'"));
 }
 
+// Uses a `flows.*` method as its gated-family vehicle: without the `flows`
+// feature there is no flows controller in the registry and the `.expect()`
+// below would panic. The transport-layer gating it proves is orthogonal to the
+// compile-time gate (#4797).
+#[cfg(feature = "flows")]
 #[tokio::test]
 async fn gated_method_is_unknown_at_transport_even_with_malformed_params() {
     // #4808 review (CodeRabbit): prove the schema-gate fix at the JSON-RPC
@@ -857,7 +862,7 @@ fn is_session_expired_error_skips_discord_rewrap_for_2285() {
     // to avoid, plus the canonical post-rewrap message body, so
     // either-side drift fails loudly.
     let canonical_rewrap = "Discord API error: Discord list_guilds: bot token was rejected \
-         (upstream HTTP four-oh-one). Open Settings → Channels → Discord \
+         (upstream HTTP four-oh-one). Open Connections → Channels → Discord \
          and rotate / reconnect the bot token.";
     assert!(
         !is_session_expired_error(canonical_rewrap),
@@ -869,7 +874,7 @@ fn is_session_expired_error_skips_discord_rewrap_for_2285() {
     // future regression visible.
     let canonical_rewrap_403 =
         "Discord API error: Discord list_channels: bot token lacks required Discord permissions \
-         (upstream HTTP four-oh-three). Open Settings → Channels → Discord \
+         (upstream HTTP four-oh-three). Open Connections → Channels → Discord \
          and rotate / reconnect the bot token.";
     assert!(!is_session_expired_error(canonical_rewrap_403));
 }

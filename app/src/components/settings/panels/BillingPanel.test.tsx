@@ -49,7 +49,7 @@ describe('<BillingPanel />', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open billing dashboard' }));
     await waitFor(() => expect(openUrlMock).toHaveBeenCalledTimes(1));
-    expect(openUrlMock).toHaveBeenLastCalledWith('https://tinyhumans.ai/dashboard');
+    expect(openUrlMock).toHaveBeenLastCalledWith('https://tinyhumans.ai/pricing');
   });
 
   it('invokes the navigation back handler from both the header and the inline button', async () => {

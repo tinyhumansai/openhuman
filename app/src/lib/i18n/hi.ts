@@ -78,7 +78,7 @@ const messages: TranslationMap = {
   'connections.welcome.eyebrow': 'कनेक्शन',
   'connections.welcome.title': 'जो कुछ भी आप उपयोग करते हैं, सब एक जगह',
   'connections.welcome.body':
-    'अपने मैसेजिंग ऐप्स, ईमेल, कैलेंडर और टूल जोड़ें ताकि आपका एजेंट उन सभी में संदर्भ पढ़ सके और कार्रवाई कर सके: दर्जनों टैब के बीच कॉपी-पेस्ट किए बिना। यह क्या छू सकता है, इस पर नियंत्रण आपके पास रहता है।',
+    'अपने मैसेजिंग ऐप्स, ईमेल, कैलेंडर और टूल जोड़ें ताकि आपका एजेंट उन सभी में संदर्भ पढ़ सके और कार्रवाई कर सके, दर्जनों टैब के बीच कॉपी-पेस्ट किए बिना। यह क्या छू सकता है, इस पर नियंत्रण आपके पास रहता है।',
   'connections.welcome.ctaChannel': 'एक चैनल जोड़ें',
   'connections.welcome.ctaApps': 'ऐप्स जोड़ें',
   'connections.welcome.ctaSkills': 'स्किल्स ब्राउज़ करें',
@@ -98,7 +98,7 @@ const messages: TranslationMap = {
   'notifications.welcome.eyebrow': 'सूचनाएँ',
   'notifications.welcome.title': 'सिर्फ़ वही जिसके लिए वाकई आपकी ज़रूरत है',
   'notifications.welcome.body':
-    'आपके एजेंटों ने क्या किया और किस पर निर्णय चाहिए, इसका एक शांत, स्कोर किया हुआ सारांश: ताकि ज़रूरी चीज़ें सामने आएँ और शोर आपके रास्ते से दूर रहे।',
+    'आपके एजेंटों ने क्या किया और किस पर निर्णय चाहिए, इसका एक शांत, स्कोर किया हुआ सारांश देखें, ताकि ज़रूरी चीज़ें सामने आएँ और शोर आपके रास्ते से दूर रहे।',
   'notifications.welcome.ctaView': 'अलर्ट देखें',
   'notifications.welcome.featsLabel': 'आप क्या देखेंगे',
   'notifications.welcome.feat1Title': 'जिसके लिए आपकी ज़रूरत है',
@@ -114,7 +114,7 @@ const messages: TranslationMap = {
   'rewards.welcome.eyebrow': 'रिवॉर्ड्स',
   'rewards.welcome.title': 'आते रहने के लिए पुरस्कार पाएँ',
   'rewards.welcome.body':
-    'जैसे-जैसे आप OpenHuman का उपयोग करते हैं और दूसरों को आमंत्रित करते हैं, पॉइंट कमाएँ, अपनी स्ट्रीक जीवित रखें, और जो कमाया है उसे भुनाएँ: सब कुछ एक ही जगह ट्रैक किया जाता है।',
+    'जैसे-जैसे आप OpenHuman का उपयोग करते हैं और दूसरों को आमंत्रित करते हैं, पॉइंट कमाएँ, अपनी स्ट्रीक जीवित रखें और जो कमाया है उसे भुनाएँ। सब कुछ एक ही जगह ट्रैक किया जाता है।',
   'rewards.welcome.ctaView': 'रिवॉर्ड्स देखें',
   'rewards.welcome.featsLabel': 'यह कैसे काम करता है',
   'rewards.welcome.feat1Title': 'पॉइंट कमाएँ',
@@ -128,7 +128,7 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': 'वर्कफ़्लो',
   'flows.welcome.title': 'दोहराव वाले काम को ऑटोपायलट पर लगाएँ',
   'flows.welcome.body':
-    'ऐसा कुछ बताएं जो आप बार-बार करते हैं: ट्राइएज, फ़ॉलो-अप, डाइजेस्ट: और आपका एजेंट उसे एक वर्कफ़्लो में बदल देता है जिसे वह शुरू से अंत तक, शेड्यूल पर या माँग पर चला सकता है।',
+    'ऐसा कुछ बताएं जो आप बार-बार करते हैं (ट्राइएज, फ़ॉलो-अप, डाइजेस्ट) और आपका एजेंट उसे एक वर्कफ़्लो में बदल देता है जिसे वह शुरू से अंत तक, शेड्यूल पर या माँग पर चला सकता है।',
   'flows.welcome.ctaNew': 'नया वर्कफ़्लो',
   'flows.welcome.ctaBrowse': 'वर्कफ़्लो ब्राउज़ करें',
   'flows.welcome.featsLabel': 'आप क्या स्वचालित कर सकते हैं',
@@ -332,7 +332,7 @@ const messages: TranslationMap = {
   'orchPage.medulla.title': 'Medulla',
   'orchPage.medulla.tagline': 'OpenHuman का ऑर्केस्ट्रेशन मॉडल',
   'orchPage.medulla.body':
-    'Medulla, OpenHuman का स्वयं-निर्मित LLM है, जिसे एक साथ हज़ारों एजेंट्स को ऑर्केस्ट्रेट करने के लिए तैयार किया गया है: 10-मिलियन-टोकन कॉन्टेक्स्ट विंडो और बेहद कम लागत वाली ऑर्केस्ट्रेशन के साथ।',
+    'Medulla, OpenHuman का स्वयं-निर्मित LLM है, जिसे एक साथ हज़ारों एजेंट्स को ऑर्केस्ट्रेट करने के लिए तैयार किया गया है, 10-मिलियन-टोकन कॉन्टेक्स्ट विंडो और बेहद कम लागत वाली ऑर्केस्ट्रेशन के साथ।',
   'orchPage.medulla.featAgents': 'हज़ारों एजेंट',
   'orchPage.medulla.featContext': '10M-टोकन कॉन्टेक्स्ट',
   'orchPage.medulla.featCost': 'कम लागत वाली ऑर्केस्ट्रेशन',
@@ -455,13 +455,53 @@ const messages: TranslationMap = {
   'agentWorld.world.rooms.outside.name': 'दुनिया',
   'agentWorld.world.rooms.outside.description': 'इमारतों से घिरा बड़ा खुला प्लाजा।',
   'agentWorld.feed': 'फ़ीड',
+  'agentWorld.feed.loadMore': 'और लोड करें',
+  'agentWorld.feed.loadingMore': 'और लोड हो रहा है…',
+  'agentWorld.feed.loadMoreError': 'अधिक पोस्ट लोड नहीं हो सके। फिर से प्रयास करें।',
   'agentWorld.ledger': 'खाता बही',
+  'agentWorld.profileViewer.description': 'सार्वजनिक प्रोफ़ाइल',
+  'agentWorld.profileViewer.agentCard': 'एजेंट कार्ड',
+  'agentWorld.profileViewer.loading': 'प्रोफ़ाइल लोड हो रही है…',
+  'agentWorld.profileViewer.notFoundTitle': 'प्रोफ़ाइल नहीं मिली',
+  'agentWorld.profileViewer.notFoundBody': 'इस हैंडल के लिए अभी तक कोई प्रकाशित प्रोफ़ाइल नहीं है।',
+  'agentWorld.profileViewer.errorTitle': 'प्रोफ़ाइल लोड नहीं हो सकी',
+  'agentWorld.profileViewer.follow': 'फ़ॉलो करें',
+  'agentWorld.profileViewer.following': 'फ़ॉलो कर रहे हैं',
+  'agentWorld.profileViewer.copyLink': 'लिंक कॉपी करें',
+  'agentWorld.profileViewer.linkCopied': 'लिंक कॉपी हो गया',
+  'agentWorld.profileViewer.skills': 'कौशल',
+  'agentWorld.profileViewer.verifiedAccounts': 'सत्यापित खाते',
+  'agentWorld.profileViewer.handlesOwned': 'स्वामित्व वाले हैंडल',
+  'agentWorld.profileViewer.followers': 'फ़ॉलोअर्स',
+  'agentWorld.profileViewer.followingCount': 'फ़ॉलोइंग',
+  'agentWorld.profileViewer.joined': 'शामिल हुए',
+  'agentWorld.profileViewer.ownProfile': 'यह आपकी प्रोफ़ाइल है',
+  'agentWorld.profileViewer.agentBadge': 'एजेंट',
+  'agentWorld.profileViewer.humanBadge': 'मानव',
+  'agentWorld.ledger.loadMore': 'और लोड करें',
+  'agentWorld.ledger.loadingMore': 'और लोड हो रहा है…',
+  'agentWorld.ledger.loadMoreError': 'अधिक लेन-देन लोड नहीं हो सके। फिर से प्रयास करें।',
   'agentWorld.jobs': 'कार्य',
   'agentWorld.bounties': 'इनाम',
   'agentWorld.explore': 'एक्सप्लोर करें',
   'agentWorld.directory': 'डायरेक्टरी',
+  'agentWorld.directory.profile.verified': 'सत्यापित',
+  'agentWorld.directory.profile.joined': 'शामिल हुए',
+  'agentWorld.directory.profile.noBio': 'अभी तक कोई बायो नहीं।',
+  'agentWorld.directory.profile.skills': 'कौशल',
+  'agentWorld.directory.profile.loadError': 'पूरा प्रोफ़ाइल लोड नहीं हो सका।',
   'agentWorld.identities': 'पहचान',
   'agentWorld.profiles': 'प्रोफ़ाइल',
+  'agentWorld.profile.edit': 'प्रोफ़ाइल संपादित करें',
+  'agentWorld.profile.displayName': 'प्रदर्शित नाम',
+  'agentWorld.profile.bio': 'परिचय',
+  'agentWorld.profile.avatarEmail': 'अवतार ईमेल',
+  'agentWorld.profile.avatarEmailHint': 'आपका अवतार Gravatar से लाने के लिए उपयोग किया जाता है।',
+  'agentWorld.profile.save': 'सहेजें',
+  'agentWorld.profile.nameRequired': 'प्रदर्शन नाम खाली नहीं हो सकता।',
+  'agentWorld.profile.cancel': 'रद्द करें',
+  'agentWorld.profile.saving': 'सहेजा जा रहा है…',
+  'agentWorld.profile.saveError': 'आपकी प्रोफ़ाइल सहेजी नहीं जा सकी। फिर से प्रयास करें।',
   'agentWorld.marketplace': 'मार्केटप्लेस',
   'agentWorld.messaging': 'संदेश',
   'agentWorld.walletNotConfigured': 'वॉलेट सेट नहीं है',
@@ -941,6 +981,7 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'आज मैं आपकी कैसे मदद कर सकता हूँ?',
   'chat.send': 'मैसेज भेजें',
   'chat.stopGeneration': 'जेनरेशन रोकें',
+  'chat.stoppedByUser': 'रोक दिया गया',
   'chat.parallelBranchHint': 'समानांतर शाखा टाइप करें: भेजने के लिए ⌘/Ctrl+Enter',
   'chat.followupHint':
     'फ़ॉलो-अप कतार में लगाएँ: इस उत्तर के बाद भेजा जाएगा · समानांतर शाखा के लिए ⌘/Ctrl+Enter',
@@ -1115,7 +1156,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': 'इकाई संबंध',
   'entityAssociations.intro':
-    'जो इकाइयाँ कई समान कनेक्शन साझा करती हैं, वे संबंधित होती हैं: भले ही कोई एक तथ्य उन्हें सीधे न जोड़े। Jaccard समानता इन छिपे हुए संबंधों को उजागर करती है।',
+    'जो इकाइयाँ कई समान कनेक्शन साझा करती हैं, वे संबंधित होती हैं, भले ही कोई एक तथ्य उन्हें सीधे न जोड़े। Jaccard समानता इन छिपे हुए संबंधों को उजागर करती है।',
   'entityAssociations.loading': 'संबंध स्कोर कर रहे हैं…',
   'entityAssociations.errorPrefix': 'ग्राफ़ लोड नहीं हो सका:',
   'entityAssociations.retry': 'Retry',
@@ -1639,7 +1680,7 @@ const messages: TranslationMap = {
   'settings.search.placeholderQuerit': 'क्वेरिट API कुंजी',
   'settings.search.allowedSitesLabel': 'अनुमत वेबसाइटों',
   'settings.search.allowedSitesHint':
-    'वे होस्ट जिन्हें असिस्टेंट खोल और पढ़ सकता है: वेब फ़ेच और ब्राउज़र टूल के माध्यम से: प्रति पंक्ति एक, जैसे reuters.com। एक होस्ट में उसके सभी सबडोमेन भी शामिल होते हैं। वेब सर्च स्वयं इस सूची से प्रतिबंधित नहीं है।',
+    'उन होस्ट को सूचीबद्ध करें जिन्हें असिस्टेंट खोल और पढ़ सकता है (वेब फ़ेच और ब्राउज़र टूल के माध्यम से), प्रति पंक्ति एक, जैसे reuters.com। एक होस्ट में उसके सभी सबडोमेन भी शामिल होते हैं। वेब सर्च स्वयं इस सूची से प्रतिबंधित नहीं है।',
   'settings.search.allowedSitesAllOn':
     'सहायक किसी भी सार्वजनिक वेबसाइट को खोल सकता है। स्थानीय और निजी पते अवरुद्ध रहते हैं।',
   'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
@@ -2839,7 +2880,7 @@ const messages: TranslationMap = {
   'workspace.vaultNotRegisteredHelp':
     'Obsidian केवल वे फ़ोल्डर खोलता है जो आपने वॉल्ट के रूप में जोड़े हैं। Obsidian में "Open folder as vault" चुनें और नीचे दिया फ़ोल्डर चुनें: यह एक बार करना है। फिर View Vault पर क्लिक करें।',
   'workspace.obsidianNotFoundHelp':
-    'इस डिवाइस पर Obsidian नहीं मिला। इसे इंस्टॉल करें, या: यदि यह किसी गैर-मानक स्थान पर इंस्टॉल है: Advanced में इसका कॉन्फ़िग फ़ोल्डर सेट करें।',
+    'इस डिवाइस पर Obsidian नहीं मिला। इसे इंस्टॉल करें, या (यदि यह किसी गैर-मानक स्थान पर इंस्टॉल है) Advanced में इसका कॉन्फ़िग फ़ोल्डर सेट करें।',
   'workspace.openAnyway': 'फिर भी Obsidian में खोलें',
   'workspace.installObsidian': 'Obsidian इंस्टॉल करें',
   'workspace.obsidianAdvanced': 'Obsidian किसी और जगह इंस्टॉल है?',
@@ -3236,6 +3277,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'ऑडियो स्पष्ट रूप से समझ नहीं आया: कृपया पुनः प्रयास करें',
   'mic.failedToStopRecording': 'रिकॉर्डिंग रोकने में दिक्कत: {message}',
   'mic.transcriptionFailed': 'ट्रांसक्रिप्शन विफल: {message}',
+  'mic.voiceNotCompiled':
+    'इस ऐप संस्करण में वॉइस ट्रांसक्रिप्शन शामिल नहीं है। इसे चालू करने के लिए OpenHuman को अपडेट करें।',
   'reflections.kind.retrospective': 'रेट्रोस्पेक्टिव',
   'reflections.kind.derivedFact': 'डिराइव्ड फैक्ट',
   'reflections.kind.moodInsight': 'मूड इनसाइट',
@@ -3461,6 +3504,13 @@ const messages: TranslationMap = {
   'channels.telegram.remoteControlTitle': 'रिमोट कंट्रोल (Telegram)',
   'channels.telegram.remoteControlBody':
     'अनुमत Telegram चैट से, /स्थिति, /सत्र, /नया, या /सहायता भेजें। मॉडल रूटिंग अभी भी /मॉडल और /मॉडल का उपयोग करती है।',
+  'channels.connectHelp.title': 'कैसे कनेक्ट करें',
+  'channels.connectHelp.discord':
+    'नीचे एक तरीका चुनें: OpenHuman के ज़रिए अपना अकाउंट लिंक करें, OAuth से बॉट इंस्टॉल करें, या Discord डेवलपर पोर्टल से अपना खुद का बॉट टोकन पेस्ट करें।',
+  'channels.connectHelp.telegram':
+    'नीचे एक तरीका चुनें: लिंक करने के लिए मैनेज्ड OpenHuman बॉट को मैसेज करें, या @BotFather से अपना खुद का बॉट टोकन पेस्ट करें।',
+  'channels.connectHelp.slackNote':
+    'Slack ढूँढ रहे हैं? Slack यहाँ मैसेजिंग चैनल के रूप में नहीं, बल्कि कनेक्शन → OAuth में एक ऐप के रूप में कनेक्ट होता है।',
   'channels.web.displayName': 'वेब',
   'channels.web.description': 'अंतर्निहित वेब यूआई के माध्यम से चैट करें।',
   'channels.web.authMode.managed_dm.description':
@@ -4616,6 +4666,8 @@ const messages: TranslationMap = {
   'settings.ai.openRouterOauthDescription':
     'OpenRouter के साथ साइन इन करें और PKCE का उपयोग करके उपयोगकर्ता नियंत्रित API कुंजी आयात करें।',
   'settings.ai.connecting': 'कनेक्ट हो रहा है...',
+  'settings.ai.codexAuthButton': 'Codex कनेक्ट करें',
+  'settings.ai.codexAuthHelper': '~/.codex/auth.json से मौजूदा Codex CLI लॉगिन का उपयोग करता है।',
   'settings.ai.backgroundLoops': 'पृष्ठभूमि लूप',
   'settings.ai.backgroundLoopsDesc':
     'क्या एक चैट संदेश के बिना चलाता है, दिल की धड़कन काम को रोकें, और हाल ही में क्रेडिट लेजर पंक्तियों का निरीक्षण करें।',
@@ -5523,7 +5575,7 @@ const messages: TranslationMap = {
     'चुनें कि आपके कंप्यूटर पर कार्रवाई करते समय सहायक को कितनी स्वतंत्रता है।',
   'settings.permissions.preset.readonly.title': 'देखो, छुओ मत',
   'settings.permissions.preset.readonly.desc':
-    'सहायक फ़ाइलें पढ़ और खोज सकता है: लेकिन कभी लिखेगा, संपादित करेगा या ऐसा कुछ नहीं चलाएगा जो स्थिति बदले।',
+    'सहायक फ़ाइलें पढ़ और खोज सकता है, लेकिन न तो लिखेगा, न संपादित करेगा और न ही ऐसा कुछ चलाएगा जो स्थिति बदले।',
   'settings.permissions.preset.supervised.title': 'पहले पूछो',
   'settings.permissions.preset.supervised.desc':
     'नई फ़ाइलें स्वतंत्र रूप से बना सकता है, लेकिन संपादन, कमांड चलाने या नेटवर्क तक पहुँचने से पहले हमेशा आपकी अनुमति माँगेगा।',
@@ -5673,7 +5725,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'बहुत बड़ा',
   'settings.appearance.fontSizeXLargeDesc': 'अधिकतम पठनीयता के लिए सबसे बड़ा टेक्स्ट।',
   'settings.appearance.fontSizeHelperText':
-    'आपके सिस्टम फ़ॉन्ट सेटिंग से स्वतंत्र रूप से पूरे ऐप: चैट, सेटिंग्स और पैनल: में टेक्स्ट का आकार बदलता है।',
+    'आपके सिस्टम फ़ॉन्ट सेटिंग से स्वतंत्र रूप से पूरे ऐप (चैट, सेटिंग्स और पैनल) में टेक्स्ट का आकार बदलता है।',
   'settings.appearance.fontSizeCustomLabel': 'कस्टम आकार',
   'settings.appearance.fontSizeCustomAria': 'पिक्सेल में कस्टम फ़ॉन्ट आकार',
   'settings.appearance.fontSizeCustomSliderAria': 'कस्टम फ़ॉन्ट आकार स्लाइडर, पिक्सेल में',
@@ -5811,7 +5863,7 @@ const messages: TranslationMap = {
     'समझदारी भरा डिफ़ॉल्ट: हर रन पर अतिरिक्त टोकन खर्च किए बिना अच्छी निरंतरता।',
   'settings.memoryWindow.balanced.label': 'संतुलित',
   'settings.memoryWindow.description':
-    'OpenHuman हर नए एजेंट रन में कितना याद किया गया संदर्भ इंजेक्ट करता है। बड़ी विंडोज़ पिछली बातचीत के बारे में अधिक जागरूक लगती हैं लेकिन हर रन पर अधिक टोकन का उपयोग करती हैं: और अधिक लागत आती है।',
+    'OpenHuman हर नए एजेंट रन में कितना याद किया गया संदर्भ इंजेक्ट करता है। बड़ी विंडोज़ पिछली बातचीत के बारे में अधिक जागरूक लगती हैं, लेकिन हर रन पर अधिक टोकन का उपयोग करती हैं, जिससे लागत भी बढ़ती है।',
   'settings.memoryWindow.extended.badge': 'अधिक संदर्भ',
   'settings.memoryWindow.extended.hint':
     'प्रत्येक रन में अधिक दीर्घकालिक मेमोरी इंजेक्ट होती है। प्रति टर्न उच्च टोकन लागत।',
@@ -6825,7 +6877,7 @@ const messages: TranslationMap = {
     'जैसे-जैसे सहायक आपके बारे में जुड़े हुए तथ्य दर्ज करता है, उनकी क्लस्टरिंग संरचना यहाँ उभरेगी।',
   'graphCohesion.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
   'graphCohesion.intro':
-    'हर इकाई के चारों ओर पड़ोस कितना घनिष्ठ रूप से बुना हुआ है। ब्रोकर: वे इकाइयाँ जिनके पड़ोसी आपस में नहीं जुड़े: एकमात्र बिंदु हैं जो वरना अलग क्लस्टरों को साथ थामे रखते हैं, जिसे आवृत्ति या PageRank-आधारित क्रम नहीं दिखा सकता।',
+    'यह दिखाता है कि हर इकाई के चारों ओर का पड़ोस कितना घनिष्ठ रूप से बुना हुआ है। ब्रोकर (वे इकाइयाँ जिनके पड़ोसी आपस में नहीं जुड़े) एकमात्र बिंदु हैं जो वरना अलग क्लस्टरों को साथ थामे रखते हैं, जिन्हें आवृत्ति या PageRank-आधारित क्रम नहीं दिखा सकता।',
   'graphCohesion.loading': 'संसक्ति गणना हो रही है…',
   'graphCohesion.metricConnections': 'कनेक्शन',
   'graphCohesion.metricEntities': 'इकाइयाँ',
@@ -7184,11 +7236,21 @@ const messages: TranslationMap = {
   'agentworld.jobs.applyModal.bidAmountPlaceholder': 'उदा. 450 USDC',
   'agentworld.jobs.applyModal.deliveryLabel': 'अनुमानित डिलीवरी',
   'agentworld.jobs.applyModal.deliveryPlaceholder': 'उदा. 2 सप्ताह',
+  'agentworld.feed.live': 'लाइव',
   'agentworld.jobs.applyModal.cancel': 'रद्द करें',
   'agentworld.jobs.applyModal.submit': 'आवेदन सबमिट करें',
   'agentworld.jobs.applyModal.submitting': 'आवेदन हो रहा है…',
+  'agentworld.messaging.live': 'लाइव',
   'agentworld.messaging.missingSignalBundle':
     'इस उपयोगकर्ता ने अभी तक एन्क्रिप्टेड मैसेजिंग चालू नहीं की है। संदेश भेजने से पहले उनसे Agent World खोलकर सुरक्षित DM चालू करने को कहें।',
+  'agentworld.messaging.notAContact':
+    'जब तक यह व्यक्ति संपर्क नहीं बन जाता, आप उसे संदेश नहीं भेज सकते। एक संपर्क अनुरोध भेजें और उनके स्वीकार करने के बाद फिर से प्रयास करें।',
+  'agentworld.messaging.sendContactRequest': 'संपर्क अनुरोध भेजें',
+  'agentworld.messaging.contactRequestSending': 'अनुरोध भेजा जा रहा है…',
+  'agentworld.messaging.contactRequestSent':
+    'संपर्क अनुरोध भेज दिया गया। उनके स्वीकार करने पर आप उन्हें संदेश भेज सकते हैं।',
+  'agentworld.messaging.contactRequestFailed':
+    'संपर्क अनुरोध नहीं भेजा जा सका। कृपया फिर से प्रयास करें।',
 
   // User-actionable runtime errors (#3931)
   'userErrors.title': 'कार्रवाई आवश्यक',
@@ -7263,9 +7325,35 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'हटाएं',
   'flows.delete.deleting': 'हटाया जा रहा है…',
   'flows.canvas.renameLabel': 'वर्कफ़्लो का नाम बदलें',
+  'memorySources.codingSessions.title': 'कोडिंग-एजेंट सत्र',
+  'memorySources.codingSessions.description':
+    'Codex और Claude Code के निर्णयों व सुधारों को निजी व्यक्तित्व स्मृति में बदलें।',
+  'memorySources.codingSessions.ingest': 'नए सत्र शामिल करें',
+  'memorySources.codingSessions.ingesting': 'शामिल किया जा रहा है…',
+  'memorySources.codingSessions.claude': 'क्लॉड कोड',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '{files} सत्र · {evidence} मानवीय संदेश',
+  'memorySources.codingSessions.notFound': 'कोई स्थानीय इतिहास नहीं मिला',
+  'memorySources.codingSessions.scanning': 'स्थानीय सत्र इतिहास स्कैन हो रहा है…',
+  'memorySources.codingSessions.truncated': 'स्कैन पहले 1,000 सत्र फ़ाइलों तक सीमित था।',
+  'memorySources.codingSessions.complete': 'कोडिंग सत्र शामिल हो गए',
+  'memorySources.codingSessions.completeMessage':
+    '{processed} सत्रों से {observations} व्यक्तित्व अवलोकन बने।',
+  'memorySources.codingSessions.partialFailure':
+    '{processed} सत्र संसाधित हुए, जबकि {failed} विफल रहे। दोबारा प्रयास करने के लिए अंतर्ग्रहण फिर चलाएँ।',
+  'memorySources.codingSessions.moreRemaining':
+    'सत्र बैच की सीमा पूरी हो गई है। अपना इतिहास आयात करना जारी रखने के लिए फिर से अंतर्ग्रहण चलाएँ।',
+  'memorySources.codingSessions.failed': 'कोडिंग सत्र शामिल करना विफल रहा',
   'flows.canvas.sidePanelToggle': 'साइड पैनल',
   'flows.canvas.legendTab': 'मैनुअल',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'आपातकालीन रोक',
+  'safety.stopFailed': 'स्वचालन रोका नहीं जा सका। पुनः प्रयास करें।',
+  'safety.resume': 'स्वचालन पुनः प्रारंभ करें',
+  'safety.resumeFailed': 'पुनः प्रारंभ नहीं हो सका। स्वचालन अभी भी रुका हुआ है। पुनः प्रयास करें।',
+  'safety.haltedTitle': 'स्वचालन रोका गया',
+  'safety.haltedBody': 'सभी डेस्कटॉप स्वचालन रोक दिया गया है। तैयार होने पर पुनः प्रारंभ करें।',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'गोपनीयता स्थिति',
   'privacy.status.external': 'डिवाइस के बाहर',

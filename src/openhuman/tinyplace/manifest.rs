@@ -2604,10 +2604,12 @@ pub(crate) fn handle_tinyplace_streams_start(params: Map<String, Value>) -> Cont
         let kind = match kind_str_trimmed {
             "inbox" => super::streams::StreamKind::Inbox,
             "conversation" => super::streams::StreamKind::Conversation,
+            "feed" => super::streams::StreamKind::Feed,
             _ => return Err(format!("unsupported streamType: {kind_str_trimmed}")),
         };
 
-        // conversation streams require a target id.
+        // conversation and feed streams require a target id (conversation_id /
+        // feed handle respectively); inbox is a singleton with no target.
         let target_id = params
             .get("streamId")
             .and_then(|v| v.as_str())
@@ -2616,6 +2618,9 @@ pub(crate) fn handle_tinyplace_streams_start(params: Map<String, Value>) -> Cont
 
         if kind == super::streams::StreamKind::Conversation && target_id.is_none() {
             return Err("streamId is required for conversation streams".to_string());
+        }
+        if kind == super::streams::StreamKind::Feed && target_id.is_none() {
+            return Err("streamId is required for feed streams".to_string());
         }
 
         log::debug!(
@@ -5815,6 +5820,19 @@ mod tests {
         );
         let err = block_on(handle_tinyplace_streams_start(params)).unwrap_err();
         assert!(err.contains("streamId"), "got: {err}");
+    }
+
+    /// streams_start rejects a feed stream without a streamId (the feed handle).
+    /// Regression for #4926: "feed" is a valid streamType but, like
+    /// "conversation", it is target-scoped and must carry a streamId.
+    #[test]
+    fn streams_start_feed_requires_stream_id() {
+        let mut params = Map::new();
+        params.insert("streamType".to_string(), Value::String("feed".to_string()));
+        let err = block_on(handle_tinyplace_streams_start(params)).unwrap_err();
+        assert!(err.contains("streamId"), "got: {err}");
+        // And it must NOT be rejected as an unsupported streamType.
+        assert!(!err.contains("unsupported"), "got: {err}");
     }
 
     /// streams_stop rejects a missing/blank streamId.

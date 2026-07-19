@@ -232,6 +232,8 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         crate::openhuman::cron::all_cron_registered_controllers(),
     );
     // Saved automation workflows (tinyflows graphs): create/get/list/update/delete/run
+    // (gated with flows).
+    #[cfg(feature = "flows")]
     push(
         &mut controllers,
         DomainGroup::Flows,
@@ -334,6 +336,12 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Security,
         crate::openhuman::approval::all_approval_registered_controllers(),
     );
+    // Emergency stop kill switch (#4255 — fail-closed halt for desktop automation)
+    push(
+        &mut controllers,
+        DomainGroup::Security,
+        crate::openhuman::emergency_stop::all_emergency_registered_controllers(),
+    );
     // Interactive plan-review gate — parks a live turn on a thread-scoped plan
     push(
         &mut controllers,
@@ -380,7 +388,7 @@ fn build_registered_controllers() -> Vec<GroupedController> {
     push(
         &mut controllers,
         DomainGroup::Channels,
-        crate::openhuman::channels::providers::web::all_web_channel_registered_controllers(),
+        crate::openhuman::web_chat::all_web_channel_registered_controllers(),
     );
     push(
         &mut controllers,
@@ -712,19 +720,25 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Platform,
         crate::openhuman::notifications::all_notifications_registered_controllers(),
     );
-    // Google Meet call-join request validation (shell handles the webview)
+    // Google Meet call-join request validation (shell handles the webview).
+    // Gated behind the `meet` feature.
+    #[cfg(feature = "meet")]
     push(
         &mut controllers,
         DomainGroup::Meet,
         crate::openhuman::meet::all_meet_registered_controllers(),
     );
     // Agent meetings — backend-delegated Meet bot via Socket.IO
+    // (gated with meet).
+    #[cfg(feature = "meet")]
     push(
         &mut controllers,
         DomainGroup::Meet,
         crate::openhuman::agent_meetings::all_agent_meetings_registered_controllers(),
     );
-    // Live meet-agent loop: STT/LLM/TTS over the open call's audio.
+    // Live meet-agent loop: STT/LLM/TTS over the open call's audio
+    // (gated with meet).
+    #[cfg(feature = "meet")]
     push(
         &mut controllers,
         DomainGroup::Meet,

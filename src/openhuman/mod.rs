@@ -49,9 +49,11 @@ pub mod dev_paths;
 pub mod devices;
 pub mod doctor;
 pub mod embeddings;
+pub mod emergency_stop;
 pub mod encryption;
 pub mod file_state;
 pub mod file_storage;
+#[cfg(feature = "flows")]
 pub mod flows;
 pub mod harness_init;
 pub mod health;
@@ -71,6 +73,7 @@ pub mod mcp_registry;
 pub mod mcp_server;
 #[cfg(feature = "media")]
 pub mod media_generation;
+#[cfg(feature = "meet")]
 pub mod meet;
 pub mod meet_agent;
 pub mod memory;
@@ -100,6 +103,7 @@ pub mod provider_surfaces;
 pub mod recall_calendar;
 pub mod redirect_links;
 pub mod referral;
+#[cfg(feature = "flows")]
 pub mod rhai_workflows;
 pub mod routing;
 pub mod runtime_node;
@@ -129,6 +133,7 @@ pub mod thread_goals;
 pub mod threads;
 pub mod tinyagents;
 pub mod tinycortex;
+#[cfg(feature = "flows")]
 pub mod tinyflows;
 pub mod tinyplace;
 pub mod tls;
@@ -143,6 +148,7 @@ pub mod util;
 pub mod voice;
 pub mod wallet;
 pub mod web3;
+pub mod web_chat;
 pub mod webhooks;
 pub mod webview_accounts;
 pub mod webview_apis;

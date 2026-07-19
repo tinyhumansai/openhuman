@@ -82,7 +82,7 @@ const messages: TranslationMap = {
   'connections.welcome.eyebrow': 'Koneksi',
   'connections.welcome.title': 'Semua yang Anda gunakan, dalam satu tempat',
   'connections.welcome.body':
-    'Sambungkan aplikasi pesan, email, kalender, dan alat Anda agar agen Anda dapat membaca konteks dan bertindak di semuanya: tanpa menyalin-tempel di antara belasan tab. Anda tetap mengendalikan apa yang boleh disentuhnya.',
+    'Sambungkan aplikasi pesan, email, kalender, dan alat Anda agar agen Anda dapat membaca konteks dan bertindak di semua aplikasi tersebut tanpa menyalin-tempel di antara belasan tab. Anda tetap mengendalikan apa yang boleh disentuhnya.',
   'connections.welcome.ctaChannel': 'Sambungkan saluran',
   'connections.welcome.ctaApps': 'Sambungkan aplikasi',
   'connections.welcome.ctaSkills': 'Jelajahi keahlian',
@@ -102,7 +102,7 @@ const messages: TranslationMap = {
   'notifications.welcome.eyebrow': 'Notifikasi',
   'notifications.welcome.title': 'Hanya yang benar-benar membutuhkan Anda',
   'notifications.welcome.body':
-    'Ringkasan tenang dan berperingkat tentang apa yang dilakukan agen Anda dan apa yang butuh keputusan: sehingga hal penting muncul dan kebisingan tidak menghalangi Anda.',
+    'Ringkasan tenang dan berperingkat tentang apa yang dilakukan agen Anda dan hal-hal yang memerlukan keputusan, sehingga hal penting muncul dan kebisingan tidak menghalangi Anda.',
   'notifications.welcome.ctaView': 'Lihat peringatan',
   'notifications.welcome.featsLabel': 'Apa yang akan Anda lihat',
   'notifications.welcome.feat1Title': 'Apa yang membutuhkan Anda',
@@ -118,7 +118,7 @@ const messages: TranslationMap = {
   'rewards.welcome.eyebrow': 'Hadiah',
   'rewards.welcome.title': 'Dapatkan hadiah karena hadir',
   'rewards.welcome.body':
-    'Kumpulkan poin saat Anda menggunakan OpenHuman dan mengundang orang lain, jaga rentetan Anda tetap hidup, dan tukarkan yang telah Anda peroleh: semuanya terlacak dalam satu tempat.',
+    'Kumpulkan poin saat Anda menggunakan OpenHuman dan mengundang orang lain, jaga rentetan Anda tetap hidup, dan tukarkan yang telah Anda peroleh, semuanya terlacak dalam satu tempat.',
   'rewards.welcome.ctaView': 'Lihat hadiah',
   'rewards.welcome.featsLabel': 'Cara kerjanya',
   'rewards.welcome.feat1Title': 'Kumpulkan poin',
@@ -132,7 +132,7 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': 'Alur kerja',
   'flows.welcome.title': 'Jadikan pekerjaan rutin berjalan otomatis',
   'flows.welcome.body':
-    'Uraikan sesuatu yang Anda lakukan berulang kali: triase, tindak lanjut, ringkasan: dan agen Anda mengubahnya menjadi alur kerja yang bisa dijalankan dari awal sampai akhir, terjadwal atau sesuai permintaan.',
+    'Uraikan sesuatu yang Anda lakukan berulang kali (triase, tindak lanjut, ringkasan); agen Anda akan mengubahnya menjadi alur kerja yang bisa dijalankan dari awal sampai akhir, terjadwal atau sesuai permintaan.',
   'flows.welcome.ctaNew': 'Alur kerja baru',
   'flows.welcome.ctaBrowse': 'Jelajahi alur kerja',
   'flows.welcome.featsLabel': 'Apa yang bisa Anda otomatiskan',
@@ -338,7 +338,7 @@ const messages: TranslationMap = {
   'orchPage.medulla.title': 'Medulla',
   'orchPage.medulla.tagline': 'Model orkestrasi OpenHuman',
   'orchPage.medulla.body':
-    'Medulla adalah LLM buatan sendiri dari OpenHuman, direkayasa untuk mengorkestrasi ribuan agen sekaligus: dengan jendela konteks 10 juta token dan orkestrasi berbiaya sangat rendah.',
+    'Medulla adalah LLM buatan OpenHuman yang dirancang untuk mengorkestrasi ribuan agen sekaligus, dengan jendela konteks 10 juta token dan orkestrasi berbiaya sangat rendah.',
   'orchPage.medulla.featAgents': 'Ribuan agen',
   'orchPage.medulla.featContext': 'Konteks 10M token',
   'orchPage.medulla.featCost': 'Orkestrasi berbiaya rendah',
@@ -461,13 +461,53 @@ const messages: TranslationMap = {
   'agentWorld.world.rooms.outside.name': 'Dunia',
   'agentWorld.world.rooms.outside.description': 'Plaza terbuka besar yang dikelilingi gedung.',
   'agentWorld.feed': 'Feed',
+  'agentWorld.feed.loadMore': 'Muat lebih banyak',
+  'agentWorld.feed.loadingMore': 'Memuat lagi…',
+  'agentWorld.feed.loadMoreError': 'Tidak dapat memuat postingan lainnya. Coba lagi.',
   'agentWorld.ledger': 'Buku Besar',
+  'agentWorld.profileViewer.description': 'Profil publik',
+  'agentWorld.profileViewer.agentCard': 'Kartu agen',
+  'agentWorld.profileViewer.loading': 'Memuat profil…',
+  'agentWorld.profileViewer.notFoundTitle': 'Profil tidak ditemukan',
+  'agentWorld.profileViewer.notFoundBody': 'Belum ada profil yang dipublikasikan untuk handel ini.',
+  'agentWorld.profileViewer.errorTitle': 'Gagal memuat profil',
+  'agentWorld.profileViewer.follow': 'Ikuti',
+  'agentWorld.profileViewer.following': 'Mengikuti',
+  'agentWorld.profileViewer.copyLink': 'Salin tautan',
+  'agentWorld.profileViewer.linkCopied': 'Tautan disalin',
+  'agentWorld.profileViewer.skills': 'Keterampilan',
+  'agentWorld.profileViewer.verifiedAccounts': 'Akun terverifikasi',
+  'agentWorld.profileViewer.handlesOwned': 'Handel yang dimiliki',
+  'agentWorld.profileViewer.followers': 'pengikut',
+  'agentWorld.profileViewer.followingCount': 'mengikuti',
+  'agentWorld.profileViewer.joined': 'Bergabung',
+  'agentWorld.profileViewer.ownProfile': 'Ini profil Anda',
+  'agentWorld.profileViewer.agentBadge': 'Agen',
+  'agentWorld.profileViewer.humanBadge': 'Manusia',
+  'agentWorld.ledger.loadMore': 'Muat lebih banyak',
+  'agentWorld.ledger.loadingMore': 'Memuat lagi…',
+  'agentWorld.ledger.loadMoreError': 'Tidak dapat memuat transaksi lainnya. Coba lagi.',
   'agentWorld.jobs': 'Pekerjaan',
   'agentWorld.bounties': 'Hadiah',
   'agentWorld.explore': 'Jelajahi',
   'agentWorld.directory': 'Direktori',
+  'agentWorld.directory.profile.verified': 'Terverifikasi',
+  'agentWorld.directory.profile.joined': 'Bergabung',
+  'agentWorld.directory.profile.noBio': 'Belum ada bio.',
+  'agentWorld.directory.profile.skills': 'Keahlian',
+  'agentWorld.directory.profile.loadError': 'Tidak dapat memuat profil lengkap.',
   'agentWorld.identities': 'Identitas',
   'agentWorld.profiles': 'Profil',
+  'agentWorld.profile.edit': 'Edit profil',
+  'agentWorld.profile.displayName': 'Nama tampilan',
+  'agentWorld.profile.bio': 'Bio',
+  'agentWorld.profile.avatarEmail': 'Email avatar',
+  'agentWorld.profile.avatarEmailHint': 'Digunakan untuk mengambil avatar Anda dari Gravatar.',
+  'agentWorld.profile.save': 'Simpan',
+  'agentWorld.profile.nameRequired': 'Nama tampilan tidak boleh kosong.',
+  'agentWorld.profile.cancel': 'Batal',
+  'agentWorld.profile.saving': 'Menyimpan…',
+  'agentWorld.profile.saveError': 'Tidak dapat menyimpan profil Anda. Coba lagi.',
   'agentWorld.marketplace': 'Pasar',
   'agentWorld.messaging': 'Pesan',
   'agentWorld.walletNotConfigured': 'Dompet belum diatur',
@@ -953,6 +993,7 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'Apa yang bisa saya bantu hari ini?',
   'chat.send': 'Kirim pesan',
   'chat.stopGeneration': 'Hentikan pembuatan',
+  'chat.stoppedByUser': 'Dihentikan',
   'chat.parallelBranchHint': 'Ketik cabang paralel: ⌘/Ctrl+Enter untuk mengirim',
   'chat.followupHint':
     'Antrekan tindak lanjut: dikirim setelah balasan ini · ⌘/Ctrl+Enter untuk cabang paralel',
@@ -1129,7 +1170,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': 'Asosiasi Entitas',
   'entityAssociations.intro':
-    'Entitas yang berbagi banyak koneksi yang sama berasosiasi: meskipun tidak ada satu fakta pun yang menghubungkan mereka secara langsung. Kesamaan Jaccard mengungkap pasangan tersembunyi ini.',
+    'Entitas yang memiliki banyak koneksi yang sama berasosiasi, meskipun tidak ada satu fakta pun yang menghubungkan mereka secara langsung. Kesamaan Jaccard mengungkap pasangan tersembunyi ini.',
   'entityAssociations.loading': 'Menghitung asosiasi…',
   'entityAssociations.errorPrefix': 'Tidak dapat memuat graf:',
   'entityAssociations.retry': 'Retry',
@@ -1656,7 +1697,7 @@ const messages: TranslationMap = {
   'settings.search.placeholderQuerit': 'kunci Querit API',
   'settings.search.allowedSitesLabel': 'Situs yang diijinkan',
   'settings.search.allowedSitesHint':
-    'Host yang boleh dibuka dan dibaca oleh asisten: melalui pengambilan web dan alat browser: satu per baris, mis. reuters.com. Sebuah host juga mencakup subdomain-nya. Penelusuran web itu sendiri tidak dibatasi oleh daftar ini.',
+    'Host yang boleh dibuka dan dibaca oleh asisten (melalui pengambilan web dan alat browser) satu per baris, mis. reuters.com. Sebuah host juga mencakup subdomain-nya. Penelusuran web itu sendiri tidak dibatasi oleh daftar ini.',
   'settings.search.allowedSitesAllOn':
     'Asisten dapat membuka website publik. Alamat lokal dan pribadi tetap diblokir.',
   'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
@@ -2852,7 +2893,7 @@ const messages: TranslationMap = {
   'workspace.vaultNotRegisteredHelp':
     'Obsidian hanya membuka folder yang telah Anda tambahkan sebagai vault. Di Obsidian, pilih "Buka folder sebagai vault" dan pilih folder di bawah: Anda hanya perlu melakukan ini sekali. Lalu klik Lihat Vault lagi.',
   'workspace.obsidianNotFoundHelp':
-    'Kami tidak dapat menemukan Obsidian di perangkat ini. Instal, atau: jika dipasang di lokasi non-standar: atur folder konfigurasinya di Lanjutan.',
+    'Kami tidak dapat menemukan Obsidian di perangkat ini. Instal, atau (jika dipasang di lokasi non-standar) atur folder konfigurasinya di Lanjutan.',
   'workspace.openAnyway': 'Buka di Obsidian tetap',
   'workspace.installObsidian': 'Instal Obsidian',
   'workspace.obsidianAdvanced': 'Obsidian dipasang di tempat lain?',
@@ -3248,6 +3289,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'Tidak dapat memahami audio dengan jelas: silakan coba lagi',
   'mic.failedToStopRecording': 'Gagal menghentikan perekaman: {message}',
   'mic.transcriptionFailed': 'Transkripsi gagal: {message}',
+  'mic.voiceNotCompiled':
+    'Transkripsi suara tidak tersedia di versi aplikasi ini. Perbarui OpenHuman untuk mengaktifkannya.',
   'reflections.kind.retrospective': 'Retrospektif',
   'reflections.kind.derivedFact': 'Fakta Turunan',
   'reflections.kind.moodInsight': 'Wawasan Suasana Hati',
@@ -3477,6 +3520,13 @@ const messages: TranslationMap = {
   'channels.telegram.remoteControlTitle': 'Kendali jarak jauh (Telegram)',
   'channels.telegram.remoteControlBody':
     'Dari obrolan Telegram yang diizinkan, kirim /status, /sessions, /new, atau /help. Perutean model masih menggunakan /model dan /models.',
+  'channels.connectHelp.title': 'Cara menghubungkan',
+  'channels.connectHelp.discord':
+    'Pilih metode di bawah: tautkan akun Anda lewat OpenHuman, pasang bot dengan OAuth, atau tempel token bot Anda sendiri dari portal developer Discord.',
+  'channels.connectHelp.telegram':
+    'Pilih metode di bawah: kirim pesan ke bot OpenHuman terkelola untuk menautkannya, atau tempel token bot Anda sendiri dari @BotFather.',
+  'channels.connectHelp.slackNote':
+    'Mencari Slack? Slack terhubung sebagai aplikasi di Koneksi → OAuth, bukan sebagai saluran pesan di sini.',
   'channels.web.displayName': 'Web',
   'channels.web.description': 'Mengobrol melalui UI web bawaan.',
   'channels.web.authMode.managed_dm.description':
@@ -4632,6 +4682,8 @@ const messages: TranslationMap = {
   'settings.ai.openRouterOauthDescription':
     'Masuk dengan kunci OpenRouter dan impor sebuah user yang dikendalikan API menggunakan PKCE.',
   'settings.ai.connecting': 'Menghubungkan...',
+  'settings.ai.codexAuthButton': 'Hubungkan Codex',
+  'settings.ai.codexAuthHelper': 'Menggunakan login Codex CLI yang ada dari ~/.codex/auth.json.',
   'settings.ai.backgroundLoops': 'Perulangan latar belakang',
   'settings.ai.backgroundLoopsDesc':
     'Lihat apa yang berjalan tanpa pesan obrolan, jeda kerja detak jantung, dan memeriksa buku kas kredit baru-baru ini.',
@@ -5551,7 +5603,7 @@ const messages: TranslationMap = {
     'Pilih seberapa banyak kebebasan yang dimiliki asisten saat mengambil tindakan di komputer Anda.',
   'settings.permissions.preset.readonly.title': 'Lihat, jangan sentuh',
   'settings.permissions.preset.readonly.desc':
-    'Asisten dapat membaca file dan menjelajah: tetapi tidak pernah menulis, mengedit, atau menjalankan apa pun yang mengubah status.',
+    'Asisten dapat membaca file dan menjelajah, tetapi tidak pernah menulis, mengedit, atau menjalankan apa pun yang mengubah status.',
   'settings.permissions.preset.supervised.title': 'Tanya saya dulu',
   'settings.permissions.preset.supervised.desc':
     'Dapat membuat file baru secara bebas, tetapi selalu meminta persetujuan Anda sebelum mengedit, menjalankan perintah, atau mengakses jaringan.',
@@ -5701,7 +5753,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'Sangat besar',
   'settings.appearance.fontSizeXLargeDesc': 'Teks terbesar untuk keterbacaan maksimal.',
   'settings.appearance.fontSizeHelperText':
-    'Menskalakan teks di seluruh aplikasi: obrolan, pengaturan, dan panel: terlepas dari pengaturan font sistem Anda.',
+    'Menskalakan teks di seluruh aplikasi (obrolan, pengaturan, dan panel) terlepas dari pengaturan font sistem Anda.',
   'settings.appearance.fontSizeCustomLabel': 'Ukuran khusus',
   'settings.appearance.fontSizeCustomAria': 'Ukuran font khusus dalam piksel',
   'settings.appearance.fontSizeCustomSliderAria': 'Penggeser ukuran font khusus, dalam piksel',
@@ -5840,7 +5892,7 @@ const messages: TranslationMap = {
     'Default yang masuk akal: kontinuitas yang baik tanpa membakar token tambahan di setiap run.',
   'settings.memoryWindow.balanced.label': 'Seimbang',
   'settings.memoryWindow.description':
-    'Seberapa banyak konteks yang diingat OpenHuman dimasukkan ke setiap run agen baru. Jendela yang lebih besar terasa lebih sadar akan percakapan sebelumnya, tetapi menggunakan lebih banyak token: dan biaya lebih mahal: di setiap run.',
+    'Seberapa banyak konteks yang diingat OpenHuman dimasukkan ke setiap run agen baru. Jendela yang lebih besar terasa lebih sadar akan percakapan sebelumnya, tetapi menggunakan lebih banyak token dan biayanya lebih tinggi di setiap run.',
   'settings.memoryWindow.extended.badge': 'Lebih banyak konteks',
   'settings.memoryWindow.extended.hint':
     'Lebih banyak memori jangka panjang yang dimasukkan ke setiap run. Biaya token per giliran lebih tinggi.',
@@ -6856,7 +6908,7 @@ const messages: TranslationMap = {
     'Saat asisten mencatat fakta-fakta terhubung tentang Anda, struktur pengelompokannya akan muncul di sini.',
   'graphCohesion.errorPrefix': 'Tidak dapat memuat graf:',
   'graphCohesion.intro':
-    'Seberapa rapat lingkungan di sekitar setiap entitas terjalin. Broker: entitas yang tetangganya tidak saling terhubung: adalah titik-titik tunggal yang menyatukan klaster yang sebenarnya terpisah, hal yang tidak dapat diungkap oleh pengurutan frekuensi atau PageRank.',
+    'Seberapa rapat lingkungan di sekitar setiap entitas terjalin. Broker (entitas yang tetangganya tidak saling terhubung) adalah titik-titik tunggal yang menyatukan klaster yang sebenarnya terpisah, hal yang tidak dapat diungkap oleh pengurutan frekuensi atau PageRank.',
   'graphCohesion.loading': 'Menghitung kohesi…',
   'graphCohesion.metricConnections': 'Koneksi',
   'graphCohesion.metricEntities': 'Entitas',
@@ -7221,11 +7273,21 @@ const messages: TranslationMap = {
   'agentworld.jobs.applyModal.bidAmountPlaceholder': 'mis. 450 USDC',
   'agentworld.jobs.applyModal.deliveryLabel': 'Estimasi Pengiriman',
   'agentworld.jobs.applyModal.deliveryPlaceholder': 'mis. 2 minggu',
+  'agentworld.feed.live': 'Langsung',
   'agentworld.jobs.applyModal.cancel': 'Batal',
   'agentworld.jobs.applyModal.submit': 'Kirim Lamaran',
   'agentworld.jobs.applyModal.submitting': 'Melamar…',
+  'agentworld.messaging.live': 'Langsung',
   'agentworld.messaging.missingSignalBundle':
     'Pengguna ini belum mengaktifkan pesan terenkripsi. Minta mereka membuka Agent World dan mengaktifkan DM aman sebelum Anda mengirim pesan.',
+  'agentworld.messaging.notAContact':
+    'Anda tidak dapat mengirim pesan ke orang ini sampai menjadi kontak. Kirim permintaan kontak dan coba lagi setelah mereka menerimanya.',
+  'agentworld.messaging.sendContactRequest': 'Kirim permintaan kontak',
+  'agentworld.messaging.contactRequestSending': 'Mengirim permintaan…',
+  'agentworld.messaging.contactRequestSent':
+    'Permintaan kontak terkirim. Anda dapat mengirim pesan setelah mereka menerimanya.',
+  'agentworld.messaging.contactRequestFailed':
+    'Tidak dapat mengirim permintaan kontak. Silakan coba lagi.',
 
   // User-actionable runtime errors (#3931)
   'userErrors.title': 'Tindakan diperlukan',
@@ -7301,9 +7363,35 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Hapus',
   'flows.delete.deleting': 'Menghapus…',
   'flows.canvas.renameLabel': 'Ganti nama alur kerja',
+  'memorySources.codingSessions.title': 'Sesi agen pemrograman',
+  'memorySources.codingSessions.description':
+    'Ubah keputusan dan koreksi Codex serta Claude Code menjadi memori persona pribadi.',
+  'memorySources.codingSessions.ingest': 'Serap sesi baru',
+  'memorySources.codingSessions.ingesting': 'Menyerap…',
+  'memorySources.codingSessions.claude': 'Riwayat Claude Code',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '{files} sesi · {evidence} masukan manusia',
+  'memorySources.codingSessions.notFound': 'Riwayat lokal tidak ditemukan',
+  'memorySources.codingSessions.scanning': 'Memindai riwayat sesi lokal…',
+  'memorySources.codingSessions.truncated': 'Pemindaian dibatasi pada 1.000 file sesi pertama.',
+  'memorySources.codingSessions.complete': 'Sesi pemrograman telah diserap',
+  'memorySources.codingSessions.completeMessage':
+    '{processed} sesi menghasilkan {observations} pengamatan persona.',
+  'memorySources.codingSessions.partialFailure':
+    '{failed} sesi gagal sementara {processed} berhasil diproses. Jalankan penyerapan lagi untuk mencoba ulang.',
+  'memorySources.codingSessions.moreRemaining':
+    'Batas batch sesi tercapai. Jalankan penyerapan lagi untuk melanjutkan impor riwayat Anda.',
+  'memorySources.codingSessions.failed': 'Gagal menyerap sesi pemrograman',
   'flows.canvas.sidePanelToggle': 'Panel samping',
   'flows.canvas.legendTab': 'Manual',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'Hentikan darurat',
+  'safety.stopFailed': 'Tidak dapat menghentikan otomasi. Coba lagi.',
+  'safety.resume': 'Lanjutkan otomasi',
+  'safety.resumeFailed': 'Tidak dapat melanjutkan. Otomasi masih dihentikan. Coba lagi.',
+  'safety.haltedTitle': 'Otomasi dihentikan',
+  'safety.haltedBody': 'Semua otomasi desktop dihentikan. Lanjutkan ketika Anda siap.',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'Status privasi',
   'privacy.status.external': 'Di luar perangkat',

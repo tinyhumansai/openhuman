@@ -1479,7 +1479,7 @@ async fn events_handler(
     }
 
     let client_id = query.client_id;
-    let rx = crate::openhuman::channels::providers::web::subscribe_web_channel_events();
+    let rx = crate::openhuman::web_chat::subscribe_web_channel_events();
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(
         move |item| -> Option<Result<Event, std::convert::Infallible>> {
             let event = match item {
@@ -1990,6 +1990,15 @@ fn register_domain_subscribers(
             // peer-status events, and register acks. Must be live before any
             // tunnel:frame events can arrive.
             crate::openhuman::devices::bus::register_device_tunnel_subscriber();
+            // Always-on learning subscribers (email-signature producer, rebuild
+            // trigger + periodic loop, ProfileMdRenderer). Previously wired only
+            // in `channels::runtime::startup::start_channels`, which is skipped
+            // when no channel is configured — silently dropping ALL learning for
+            // channel-less users (#5003). Registered here on the unconditional
+            // Platform boot path; idempotent, so it never double-registers.
+            crate::openhuman::learning::startup::register_learning_subscribers(
+                workspace_dir.clone(),
+            );
         }
     } else {
         log::debug!(
@@ -2024,6 +2033,10 @@ fn register_domain_subscribers(
     // runs `flows::ops::flows_run`, so schedule/app-event workflows still
     // dispatch when no realtime channel is configured or
     // `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` short-circuits `start_channels`.
+    // The `plan.flows` runtime guard cannot stand in for the compile-time gate:
+    // the `flows::bus::FlowTriggerSubscriber` type path below must still resolve
+    // for this to compile, so the whole block is `#[cfg]`-gated too.
+    #[cfg(feature = "flows")]
     if plan.flows {
         if group_first_time(DomainGroup::Flows) {
             if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
@@ -2039,6 +2052,10 @@ fn register_domain_subscribers(
     } else {
         log::debug!("[event_bus] flows trigger subscriber SKIPPED — Flows domain disabled");
     }
+    #[cfg(not(feature = "flows"))]
+    log::debug!(
+        "[event_bus] flows trigger subscriber SKIPPED — flows feature disabled at compile time"
+    );
 
     // Memory: conversation-persistence + sync-stage bridge.
     if plan.memory {
@@ -2342,12 +2359,18 @@ pub async fn bootstrap_core_runtime(
     // `start_channels` is skipped for web-chat-only cores. Without this an
     // unguarded standalone/CLI/Docker core would park a plan review that never
     // reaches the UI and dies at the gate TTL. Idempotent (Once-guarded).
-    crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
+    crate::openhuman::web_chat::register_approval_surface_subscriber();
+    // Bridge emergency-stop halt/resume → the `automation_halt` broadcast on the
+    // same always-run boot path. `start_channels` (which also registers this)
+    // is skipped on a web-chat-only desktop with no listening integrations, so
+    // without this a halt/resume initiated from the CLI or another client would
+    // never reach the UI. Idempotent (Once-guarded). (#4255)
+    crate::openhuman::web_chat::register_automation_halt_subscriber();
     // Egress-surface bridge (privacy epic S2, #4436) — registered
     // unconditionally alongside the approval surface so external-transfer
     // disclosures reach the UI even on cores that skip `start_channels` or run
     // with the approval gate disabled. Idempotent (OnceLock-guarded).
-    crate::openhuman::channels::providers::web::register_egress_surface_subscriber();
+    crate::openhuman::web_chat::register_egress_surface_subscriber();
 
     if decision.install_gate {
         // Per-launch correlation token for the approval gate. This is
@@ -2361,13 +2384,14 @@ pub async fn bootstrap_core_runtime(
         let session_id = format!("session-{}", uuid::Uuid::new_v4());
         let _ =
             crate::openhuman::approval::ApprovalGate::init_global(cfg.clone(), session_id.clone());
+        crate::openhuman::emergency_stop::EmergencyStop::init_global();
         log::info!(
             "[runtime] approval gate installed (on by default; set OPENHUMAN_APPROVAL_GATE=0 to disable, session_id={session_id}) — \
              Prompt-class external-effect tool calls park for approval in interactive chat turns"
         );
         // (The approval/plan-review surface bridge is registered unconditionally
         // above — it must run even when this gate-install branch is skipped.)
-        crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
+        crate::openhuman::web_chat::register_artifact_surface_subscriber();
     } else {
         log::error!(
             "[runtime] approval gate DISABLED (OPENHUMAN_APPROVAL_GATE=0 honored on host={}) — \
@@ -2387,7 +2411,7 @@ pub async fn bootstrap_core_runtime(
     // `if approval_gate` block so artifact events still publish when the user
     // sets OPENHUMAN_APPROVAL_GATE=0 (CR #3328947323 on PR #3026). Idempotent
     // (OnceLock-guarded inside register_artifact_surface_subscriber).
-    crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
+    crate::openhuman::web_chat::register_artifact_surface_subscriber();
 
     // --- Workspace migrations --------------------------------------------
     crate::openhuman::startup::run_workspace_migrations(&workspace_dir);

@@ -102,4 +102,10 @@ describe('AVATAR_MENU_ITEMS', () => {
     const openUrlItems = AVATAR_MENU_ITEMS.filter(i => i.kind === 'openUrl').map(i => i.id);
     expect(openUrlItems).toEqual(['billing']);
   });
+
+  it('opens billing on the public pricing page', () => {
+    expect(AVATAR_MENU_ITEMS.find(i => i.id === 'billing')?.target).toBe(
+      'https://tinyhumans.ai/pricing'
+    );
+  });
 });

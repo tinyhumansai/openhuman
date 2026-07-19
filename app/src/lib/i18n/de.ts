@@ -7,7 +7,7 @@ const messages: TranslationMap = {
   'agentWorld.welcome.eyebrow': 'TinyPlace',
   'agentWorld.welcome.title': 'Eine Welt, in der sich Ihre Agenten treffen',
   'agentWorld.welcome.body':
-    'TinyPlace ist die soziale Ebene für KI-Agenten: Ihre können andere Agenten entdecken, ihnen schreiben, Bounties übernehmen und handeln, alles in Ihrem Auftrag. Betreten Sie die Welt und sehen Sie, was sie so treiben.',
+    'TinyPlace ist die soziale Ebene für KI-Agenten: Ihre Agenten können andere Agenten entdecken, ihnen schreiben, Bounties übernehmen und in Ihrem Auftrag handeln. Betreten Sie diese Welt und sehen Sie, was sie so treiben.',
   'agentWorld.welcome.ctaWorld': 'Welt betreten',
   'agentWorld.welcome.ctaFeed': 'Feed durchstöbern',
   'agentWorld.welcome.ctaDirectory': 'Agenten finden',
@@ -90,7 +90,7 @@ const messages: TranslationMap = {
   'connections.welcome.eyebrow': 'Verbindungen',
   'connections.welcome.title': 'Alles, was Sie nutzen, an einem Ort',
   'connections.welcome.body':
-    'Verbinden Sie Ihre Messaging-Apps, E-Mail, Kalender und Werkzeuge, damit Ihr Agent Kontext lesen und über alle hinweg handeln kann: ohne zwischen einem Dutzend Tabs hin- und herzukopieren. Sie behalten die Kontrolle darüber, was er anfassen darf.',
+    'Verbinden Sie Ihre Messaging-Apps, E-Mail, Kalender und Werkzeuge, damit Ihr Agent Kontext lesen und über alle hinweg handeln kann, ohne zwischen einem Dutzend Tabs hin- und herzukopieren. Sie behalten die Kontrolle darüber, was er anfassen darf.',
   'connections.welcome.ctaChannel': 'Kanal verbinden',
   'connections.welcome.ctaApps': 'Apps verbinden',
   'connections.welcome.ctaSkills': 'Skills durchstöbern',
@@ -110,7 +110,7 @@ const messages: TranslationMap = {
   'notifications.welcome.eyebrow': 'Benachrichtigungen',
   'notifications.welcome.title': 'Nur, was Sie wirklich braucht',
   'notifications.welcome.body':
-    'Eine ruhige, bewertete Zusammenfassung dessen, was Ihre Agenten getan haben und was eine Entscheidung braucht: damit das Wichtige auftaucht und der Lärm Ihnen aus dem Weg bleibt.',
+    'Eine ruhige, bewertete Zusammenfassung dessen, was Ihre Agenten getan haben und was Ihre Entscheidung erfordert, damit das Wichtige auftaucht und der Lärm Ihnen aus dem Weg bleibt.',
   'notifications.welcome.ctaView': 'Hinweise ansehen',
   'notifications.welcome.featsLabel': 'Was Sie sehen werden',
   'notifications.welcome.feat1Title': 'Was Sie braucht',
@@ -128,7 +128,7 @@ const messages: TranslationMap = {
   'rewards.welcome.eyebrow': 'Belohnungen',
   'rewards.welcome.title': 'Werden Sie fürs Dabeisein belohnt',
   'rewards.welcome.body':
-    'Sammeln Sie Punkte, während Sie OpenHuman nutzen und andere einladen, halten Sie Ihre Serie am Leben und lösen Sie ein, was Sie verdient haben: alles an einem Ort erfasst.',
+    'Sammeln Sie Punkte, indem Sie OpenHuman nutzen und andere einladen. Halten Sie Ihre Serie am Leben und lösen Sie Ihre Prämien ein. Alles wird an einem Ort erfasst.',
   'rewards.welcome.ctaView': 'Belohnungen ansehen',
   'rewards.welcome.featsLabel': 'So funktioniert es',
   'rewards.welcome.feat1Title': 'Punkte sammeln',
@@ -142,7 +142,7 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': 'Arbeitsabläufe',
   'flows.welcome.title': 'Schalten Sie die Fleißarbeit auf Autopilot',
   'flows.welcome.body':
-    'Beschreiben Sie etwas, das Sie immer wieder tun: Triage, Nachfassen, Zusammenfassungen: und Ihr Agent verwandelt es in einen Workflow, den er von Anfang bis Ende ausführen kann, nach Zeitplan oder auf Abruf.',
+    'Beschreiben Sie etwas, das Sie immer wieder tun (Triage, Nachfassen, Zusammenfassungen), und Ihr Agent verwandelt es in einen Workflow, den er von Anfang bis Ende ausführen kann, nach Zeitplan oder auf Abruf.',
   'flows.welcome.ctaNew': 'Neuer Workflow',
   'flows.welcome.ctaBrowse': 'Workflows durchstöbern',
   'flows.welcome.featsLabel': 'Was Sie automatisieren können',
@@ -353,7 +353,7 @@ const messages: TranslationMap = {
   'orchPage.medulla.title': 'Medulla',
   'orchPage.medulla.tagline': 'Das Orchestrierungsmodell von OpenHuman',
   'orchPage.medulla.body':
-    'Medulla ist das eigens entwickelte LLM von OpenHuman, konzipiert, um Tausende Agenten gleichzeitig zu orchestrieren: mit einem Kontextfenster von 10 Millionen Tokens und radikal kostengünstiger Orchestrierung.',
+    'Medulla ist das eigens entwickelte LLM von OpenHuman. Es ist darauf ausgelegt, Tausende Agenten gleichzeitig zu orchestrieren, verfügt über ein Kontextfenster von 10 Millionen Tokens und ermöglicht eine radikal kostengünstigere Orchestrierung.',
   'orchPage.medulla.featAgents': 'Tausende Agenten',
   'orchPage.medulla.featContext': 'Kontext mit 10M Tokens',
   'orchPage.medulla.featCost': 'Kostengünstige Orchestrierung',
@@ -479,13 +479,57 @@ const messages: TranslationMap = {
   'agentWorld.world.rooms.outside.name': 'Welt',
   'agentWorld.world.rooms.outside.description': 'Ein großer offener Platz mit Gebäuden ringsum.',
   'agentWorld.feed': 'Feed',
+  'agentWorld.feed.loadMore': 'Mehr laden',
+  'agentWorld.feed.loadingMore': 'Wird geladen…',
+  'agentWorld.feed.loadMoreError':
+    'Weitere Beiträge konnten nicht geladen werden. Bitte erneut versuchen.',
   'agentWorld.ledger': 'Kontobuch',
+  'agentWorld.profileViewer.description': 'Öffentliches Profil',
+  'agentWorld.profileViewer.agentCard': 'Agentenkarte',
+  'agentWorld.profileViewer.loading': 'Profil wird geladen…',
+  'agentWorld.profileViewer.notFoundTitle': 'Profil nicht gefunden',
+  'agentWorld.profileViewer.notFoundBody':
+    'Für dieses Handle gibt es noch kein veröffentlichtes Profil.',
+  'agentWorld.profileViewer.errorTitle': 'Profil konnte nicht geladen werden',
+  'agentWorld.profileViewer.follow': 'Folgen',
+  'agentWorld.profileViewer.following': 'Folge ich',
+  'agentWorld.profileViewer.copyLink': 'Link kopieren',
+  'agentWorld.profileViewer.linkCopied': 'Link kopiert',
+  'agentWorld.profileViewer.skills': 'Fähigkeiten',
+  'agentWorld.profileViewer.verifiedAccounts': 'Verifizierte Konten',
+  'agentWorld.profileViewer.handlesOwned': 'Eigene Handles',
+  'agentWorld.profileViewer.followers': 'Follower',
+  'agentWorld.profileViewer.followingCount': 'folgt',
+  'agentWorld.profileViewer.joined': 'Beigetreten',
+  'agentWorld.profileViewer.ownProfile': 'Das ist dein Profil',
+  'agentWorld.profileViewer.agentBadge': 'Agent',
+  'agentWorld.profileViewer.humanBadge': 'Mensch',
+  'agentWorld.ledger.loadMore': 'Mehr laden',
+  'agentWorld.ledger.loadingMore': 'Wird geladen…',
+  'agentWorld.ledger.loadMoreError':
+    'Weitere Transaktionen konnten nicht geladen werden. Bitte erneut versuchen.',
   'agentWorld.jobs': 'Aufträge',
   'agentWorld.bounties': 'Prämien',
   'agentWorld.explore': 'Entdecken',
   'agentWorld.directory': 'Verzeichnis',
+  'agentWorld.directory.profile.verified': 'Verifiziert',
+  'agentWorld.directory.profile.joined': 'Beigetreten',
+  'agentWorld.directory.profile.noBio': 'Noch keine Bio.',
+  'agentWorld.directory.profile.skills': 'Fähigkeiten',
+  'agentWorld.directory.profile.loadError': 'Vollständiges Profil konnte nicht geladen werden.',
   'agentWorld.identities': 'Identitäten',
   'agentWorld.profiles': 'Profile',
+  'agentWorld.profile.edit': 'Profil bearbeiten',
+  'agentWorld.profile.displayName': 'Anzeigename',
+  'agentWorld.profile.bio': 'Bio',
+  'agentWorld.profile.avatarEmail': 'Avatar-E-Mail',
+  'agentWorld.profile.avatarEmailHint': 'Wird verwendet, um deinen Avatar von Gravatar zu laden.',
+  'agentWorld.profile.save': 'Speichern',
+  'agentWorld.profile.nameRequired': 'Der Anzeigename darf nicht leer sein.',
+  'agentWorld.profile.cancel': 'Abbrechen',
+  'agentWorld.profile.saving': 'Wird gespeichert…',
+  'agentWorld.profile.saveError':
+    'Dein Profil konnte nicht gespeichert werden. Bitte erneut versuchen.',
   'agentWorld.marketplace': 'Marktplatz',
   'agentWorld.messaging': 'Nachrichten',
   'agentWorld.walletNotConfigured': 'Wallet nicht eingerichtet',
@@ -981,6 +1025,7 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'Wie kann ich dir heute helfen?',
   'chat.send': 'Nachricht senden',
   'chat.stopGeneration': 'Generierung stoppen',
+  'chat.stoppedByUser': 'Gestoppt',
   'chat.parallelBranchHint': 'Parallelen Zweig eingeben: ⌘/Strg+Enter zum Senden',
   'chat.followupHint':
     'Folgenachricht einreihen: wird nach dieser Antwort gesendet · ⌘/Strg+Enter für parallelen Zweig',
@@ -1160,7 +1205,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': 'Entitäts-Assoziationen',
   'entityAssociations.intro':
-    'Entitäten, die viele gleiche Verbindungen teilen, sind assoziiert: selbst wenn kein einzelnes Fakt sie direkt verknüpft. Die Jaccard-Ähnlichkeit deckt diese verborgenen Paare auf.',
+    'Entitäten, die viele gemeinsame Verbindungen teilen, sind assoziiert, selbst wenn kein einzelnes Fakt sie direkt verknüpft. Die Jaccard-Ähnlichkeit deckt diese verborgenen Paare auf.',
   'entityAssociations.loading': 'Assoziationen werden berechnet…',
   'entityAssociations.errorPrefix': 'Diagramm konnte nicht geladen werden:',
   'entityAssociations.retry': 'Retry',
@@ -3328,6 +3373,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'Audio konnte nicht klar verstanden werden: bitte erneut versuchen',
   'mic.failedToStopRecording': 'Aufzeichnung konnte nicht gestoppt werden: {message}',
   'mic.transcriptionFailed': 'Transkription fehlgeschlagen: {message}',
+  'mic.voiceNotCompiled':
+    'Sprachtranskription ist in dieser App-Version nicht enthalten. Aktualisiere OpenHuman, um sie zu aktivieren.',
   'reflections.kind.retrospective': 'Retrospektive',
   'reflections.kind.derivedFact': 'Abgeleitete Tatsache',
   'reflections.kind.moodInsight': 'Stimmungseinsicht',
@@ -3561,6 +3608,13 @@ const messages: TranslationMap = {
   'channels.telegram.remoteControlTitle': 'Fernsteuerung (Telegram)',
   'channels.telegram.remoteControlBody':
     'Senden Sie von einem zulässigen Telegram-Chat aus /status, /sessions, /new oder /help. Das Modellrouting verwendet weiterhin /model und /models.',
+  'channels.connectHelp.title': 'So verbindest du',
+  'channels.connectHelp.discord':
+    'Wähle unten eine Methode: verknüpfe dein Konto über OpenHuman, installiere den Bot per OAuth oder füge deinen eigenen Bot-Token aus dem Discord-Entwicklerportal ein.',
+  'channels.connectHelp.telegram':
+    'Wähle unten eine Methode: schreibe dem verwalteten OpenHuman-Bot, um ihn zu verknüpfen, oder füge deinen eigenen Bot-Token von @BotFather ein.',
+  'channels.connectHelp.slackNote':
+    'Du suchst Slack? Slack wird als App unter Verbindungen → OAuth verbunden, nicht als Messaging-Kanal hier.',
   'channels.web.displayName': 'Web',
   'channels.web.description': 'Chatte über die integrierte Web-Oberfläche.',
   'channels.web.authMode.managed_dm.description':
@@ -4746,6 +4800,9 @@ const messages: TranslationMap = {
   'settings.ai.openRouterOauthDescription':
     'Melden Sie sich mit OpenRouter an und importieren Sie einen benutzergesteuerten API-Schlüssel mit PKCE.',
   'settings.ai.connecting': 'Verbindung wird hergestellt...',
+  'settings.ai.codexAuthButton': 'Codex verbinden',
+  'settings.ai.codexAuthHelper':
+    'Verwendet die vorhandene Codex-CLI-Anmeldung aus ~/.codex/auth.json.',
   'settings.ai.backgroundLoops': 'Hintergrundschleifen',
   'settings.ai.backgroundLoopsDesc':
     'Sehen Sie, was ohne Chat-Nachricht läuft, pausieren Sie die Herzschlagarbeit und überprüfen Sie die letzten Kreditbuchzeilen.',
@@ -5599,7 +5656,7 @@ const messages: TranslationMap = {
   'settings.agentAccess.accessMode': 'Aufrufmodus',
   'settings.agentAccess.tier.readonly.title': 'Nur lesen',
   'settings.agentAccess.tier.readonly.desc':
-    'Liest Dateien und führt schreibgeschützte Befehle zum Erkunden aus: schreibt, bearbeitet oder führt jedoch niemals etwas aus, das den Status ändert.',
+    'Liest Dateien und führt schreibgeschützte Befehle zum Erkunden aus, schreibt, bearbeitet oder führt jedoch niemals etwas aus, das den Status ändert.',
   'settings.agentAccess.tier.supervised.title': 'Vor der Bearbeitung fragen',
   'settings.agentAccess.tier.supervised.desc':
     'Erstellt neue Dateien frei, bittet aber um Ihre Zustimmung, bevor Sie eine vorhandene Datei bearbeiten, einen Befehl ausführen, das Netzwerk erreichen oder etwas installieren.',
@@ -5611,7 +5668,7 @@ const messages: TranslationMap = {
     '⚠ Vollzugriff führt Befehle mit Ihrem vollständigen Kontozugriff aus und ist nicht sandboxed. Aktivieren Sie es nur, wenn Sie dem Agenten dieses Geräts anvertrauen. Anmeldeinformationen und Systemverzeichnisse bleiben blockiert, und destruktive Netzwerk- und Installationsaktionen erfordern immer noch die Genehmigung.',
   'settings.agentAccess.confine.label': 'Auf Arbeitsbereich beschränken',
   'settings.agentAccess.confine.desc':
-    'Beschränken Sie den Agenten auf das Arbeitsbereichsverzeichnis (plus alle gewährten Ordner), je nachdem, welcher Zugriffsmodus ausgewählt ist. Wenn sie ausgeschaltet ist, kann sie an jeden Ort gelangen, den Ihr Benutzer erreichen kann: mit Ausnahme der immer gesperrten Anmeldeinformationen und Systemverzeichnisse.',
+    'Beschränken Sie den Agenten auf das Arbeitsbereichsverzeichnis (plus alle gewährten Ordner), je nachdem, welcher Zugriffsmodus ausgewählt ist. Wenn die Option ausgeschaltet ist, kann der Agent jeden Ort erreichen, auf den Ihr Benutzer zugreifen kann, mit Ausnahme der immer gesperrten Anmeldeinformationen und Systemverzeichnisse.',
   'settings.agentAccess.requireTaskPlanApproval.label':
     'Erfordern Sie die Genehmigung des Aufgabenplans',
   'settings.agentAccess.requireTaskPlanApproval.desc':
@@ -5839,7 +5896,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'Sehr groß',
   'settings.appearance.fontSizeXLargeDesc': 'Der größte Text für maximale Lesbarkeit.',
   'settings.appearance.fontSizeHelperText':
-    'Skaliert den Text in der gesamten App: Chat, Einstellungen und Bereiche: unabhängig von der Schrifteinstellung deines Systems.',
+    'Skaliert den Text in der gesamten App (Chat, Einstellungen und Bereiche) unabhängig von der Schrifteinstellung deines Systems.',
   'settings.appearance.fontSizeCustomLabel': 'Benutzerdefinierte Größe',
   'settings.appearance.fontSizeCustomAria': 'Benutzerdefinierte Schriftgröße in Pixeln',
   'settings.appearance.fontSizeCustomSliderAria':
@@ -7019,7 +7076,7 @@ const messages: TranslationMap = {
     'Während der Assistent verbundene Fakten über Sie erfasst, erscheint hier deren Clustering-Struktur.',
   'graphCohesion.errorPrefix': 'Graph konnte nicht geladen werden:',
   'graphCohesion.intro':
-    'Wie eng verwoben die Nachbarschaft jeder Entität ist. Broker: Entitäten, deren Nachbarn untereinander nicht verbunden sind: sind die Einzelpunkte, die sonst getrennte Cluster zusammenhalten, was eine Häufigkeits- oder PageRank-Sortierung nicht aufdecken kann.',
+    'Wie eng verwoben die Nachbarschaft jeder Entität ist. Broker (Entitäten, deren Nachbarn untereinander nicht verbunden sind) sind die Einzelpunkte, die sonst getrennte Cluster zusammenhalten, was eine Häufigkeits- oder PageRank-Sortierung nicht aufdecken kann.',
   'graphCohesion.loading': 'Berechne Kohäsion…',
   'graphCohesion.metricConnections': 'Verbindungen',
   'graphCohesion.metricEntities': 'Entitäten',
@@ -7400,11 +7457,21 @@ const messages: TranslationMap = {
   'agentworld.jobs.applyModal.bidAmountPlaceholder': 'z. B. 450 USDC',
   'agentworld.jobs.applyModal.deliveryLabel': 'Voraussichtliche Lieferzeit',
   'agentworld.jobs.applyModal.deliveryPlaceholder': 'z. B. 2 Wochen',
+  'agentworld.feed.live': 'Live',
   'agentworld.jobs.applyModal.cancel': 'Abbrechen',
   'agentworld.jobs.applyModal.submit': 'Bewerbung einreichen',
   'agentworld.jobs.applyModal.submitting': 'Wird eingereicht…',
+  'agentworld.messaging.live': 'Live',
   'agentworld.messaging.missingSignalBundle':
     'Dieser Benutzer hat verschlüsselte Nachrichten noch nicht aktiviert. Bitte ihn, Agent World zu öffnen und sichere DMs zu aktivieren, bevor du eine Nachricht sendest.',
+  'agentworld.messaging.notAContact':
+    'Du kannst dieser Person erst schreiben, wenn sie ein Kontakt ist. Sende eine Kontaktanfrage und versuche es erneut, sobald sie angenommen wurde.',
+  'agentworld.messaging.sendContactRequest': 'Kontaktanfrage senden',
+  'agentworld.messaging.contactRequestSending': 'Anfrage wird gesendet…',
+  'agentworld.messaging.contactRequestSent':
+    'Kontaktanfrage gesendet. Sobald sie angenommen wird, kannst du schreiben.',
+  'agentworld.messaging.contactRequestFailed':
+    'Kontaktanfrage konnte nicht gesendet werden. Bitte versuche es erneut.',
 
   // User-actionable runtime errors (#3931)
   'userErrors.title': 'Aktion erforderlich',
@@ -7480,9 +7547,38 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Löschen',
   'flows.delete.deleting': 'Wird gelöscht…',
   'flows.canvas.renameLabel': 'Workflow umbenennen',
+  'memorySources.codingSessions.title': 'Coding-Agent-Sitzungen',
+  'memorySources.codingSessions.description':
+    'Verwandle Entscheidungen und Korrekturen aus Codex und Claude Code in private Persona-Erinnerungen.',
+  'memorySources.codingSessions.ingest': 'Neue Sitzungen einlesen',
+  'memorySources.codingSessions.ingesting': 'Wird eingelesen…',
+  'memorySources.codingSessions.claude': 'Claude-Code-Verlauf',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '{files} Sitzungen · {evidence} menschliche Beiträge',
+  'memorySources.codingSessions.notFound': 'Kein lokaler Verlauf gefunden',
+  'memorySources.codingSessions.scanning': 'Lokaler Sitzungsverlauf wird durchsucht…',
+  'memorySources.codingSessions.truncated':
+    'Der Scan wurde auf die ersten 1.000 Sitzungsdateien begrenzt.',
+  'memorySources.codingSessions.complete': 'Coding-Sitzungen eingelesen',
+  'memorySources.codingSessions.completeMessage':
+    '{processed} Sitzungen ergaben {observations} Persona-Beobachtungen.',
+  'memorySources.codingSessions.partialFailure':
+    '{failed} Sitzungen sind fehlgeschlagen, während {processed} verarbeitet wurden. Starten Sie das Einlesen erneut.',
+  'memorySources.codingSessions.moreRemaining':
+    'Das Sitzungslimit für diesen Durchlauf wurde erreicht. Starten Sie das Einlesen erneut, um den Import fortzusetzen.',
+  'memorySources.codingSessions.failed': 'Einlesen der Coding-Sitzungen fehlgeschlagen',
   'flows.canvas.sidePanelToggle': 'Seitenleiste',
   'flows.canvas.legendTab': 'Manuell',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'Notabschaltung',
+  'safety.stopFailed': 'Automatisierung konnte nicht gestoppt werden – bitte erneut versuchen.',
+  'safety.resume': 'Automatisierung fortsetzen',
+  'safety.resumeFailed':
+    'Fortsetzen fehlgeschlagen – Automatisierung ist weiterhin angehalten. Bitte erneut versuchen.',
+  'safety.haltedTitle': 'Automatisierung angehalten',
+  'safety.haltedBody':
+    'Alle Desktop-Automatisierungen sind gestoppt. Fortsetzen, wenn Sie bereit sind.',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'Datenschutzstatus',
   'privacy.status.external': 'Außerhalb des Geräts',

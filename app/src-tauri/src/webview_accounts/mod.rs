@@ -310,30 +310,53 @@ fn popup_should_stay_in_app(provider: &str, url: &Url) -> bool {
                 None => false,
             }
         }
-        "linkedin" => {
-            // LinkedIn's "Sign in with Google" button is rendered as a Google
-            // Identity Services (GSI) iframe loaded from
-            // `accounts.google.com/gsi/button`. When the user clicks it, GSI
-            // calls `window.open("https://accounts.google.com/gsi/select?...",
-            // "gsig", "width=500,height=600,...")` to show the account chooser.
-            //
-            // This popup MUST stay as a real in-app child window — NOT routed
-            // to the system browser (blank screen) and NOT a parent navigation
-            // (the parent page would be replaced, so the postMessage credential
-            // callback from the popup can never reach LinkedIn's JS handler).
-            //
-            // After the user selects an account the popup postMessages the
-            // signed credential back to the opener; LinkedIn's GSI callback
-            // receives it and completes sign-in (#1021).
-            match url.host_str() {
-                Some(host) => {
-                    is_google_sso_host(host) && url.path().to_ascii_lowercase().contains("gsi")
-                }
-                None => false,
-            }
-        }
+        // LinkedIn (#1021) and X/Twitter (#5009) render "Sign in with Google"
+        // as a Google Identity Services (GSI) popup that the GIS SDK drives via
+        // window.open() and completes by postMessage-ing the credential back to
+        // window.opener (the provider page). Every leg of that popup — the
+        // account chooser and the /o/oauth2 auth hop — MUST stay as a real
+        // in-app child window: routing it to the system browser leaves the
+        // embedded webview on a dead page, and navigating the parent to it
+        // destroys the opener so the credential can never post back. See
+        // `is_google_gsi_popup`.
+        "linkedin" | "twitter" => is_google_gsi_popup(url),
         _ => false,
     }
+}
+
+/// `true` for a Google Identity Services (GSI) **popup-mode** "Sign in with
+/// Google" window — the opener-dependent flow the GIS SDK drives via
+/// `window.open(...)` and completes by `postMessage`-ing the credential back to
+/// `window.opener` (the provider page). Covers both the account-chooser
+/// (`accounts.google.com/gsi/select`, #1021) and the `/o/oauth2/v2/auth` leg the
+/// same popup navigates through (#5009).
+///
+/// Matched by Google SSO host (`is_google_sso_host`) AND either a `gsi` path
+/// segment or one of the GIS-SDK popup-mode query markers. Deliberately narrow
+/// — a redirect-mode Google sign-in (a real https `redirect_uri`, no GSI
+/// markers) does NOT match, so it still replaces the parent. NOT a blanket
+/// popup allow.
+///
+/// Keeping these popups in-app is what lets the postMessage handshake complete
+/// inside the account's isolated CEF profile instead of leaking to the system
+/// browser (#5009) or being dropped when the parent (the opener) is navigated
+/// away (#5009 / #1021).
+fn is_google_gsi_popup(url: &Url) -> bool {
+    if !url.host_str().is_some_and(is_google_sso_host) {
+        return false;
+    }
+    if url.path().to_ascii_lowercase().contains("gsi") {
+        return true;
+    }
+    // GIS-SDK popup-mode markers. These appear on the popup's auth URLs (incl.
+    // `/o/oauth2/v2/auth`) and never on a plain redirect-mode sign-in.
+    url.query_pairs().any(|(key, value)| {
+        let k = key.to_ascii_lowercase();
+        let v = value.to_ascii_lowercase();
+        ((k == "ux_mode" || k == "display") && v == "popup")
+            || k == "gsiwebsdk"
+            || (k == "redirect_uri" && v == "gis_transform")
+    })
 }
 
 /// `true` if `scheme` is a known provider native-desktop-app deep-link
@@ -395,6 +418,17 @@ fn popup_should_navigate_parent(provider: &str, url: &Url) -> Option<Url> {
         return None;
     }
     if url.scheme() == "about" {
+        return None;
+    }
+    // #5009: X/Twitter (and LinkedIn) sign in with Google via the GSI popup —
+    // an opener-dependent flow where the popup postMessages the credential back
+    // to `window.opener` (the provider page). Navigating the parent to any leg
+    // of that popup (chooser or the `/o/oauth2` hop) destroys the opener, so the
+    // sign-in never completes and the pane paints blank. Keep it in-app instead
+    // (`popup_should_stay_in_app` catches it for these providers). Redirect-mode
+    // Google sign-in (a real https `redirect_uri`, no GSI markers) is NOT a GSI
+    // popup, so it still falls through to the parent-navigation below.
+    if matches!(provider, "linkedin" | "twitter") && is_google_gsi_popup(url) {
         return None;
     }
     if is_google_auth_popup(url) {

@@ -2067,8 +2067,8 @@ async fn channel_provider_public_paths_cover_pre_network_errors_and_utilities() 
 
 #[tokio::test]
 async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
-    let mut rx = openhuman_core::openhuman::channels::web::subscribe_web_channel_events();
-    openhuman_core::openhuman::channels::web::publish_web_channel_event(WebChannelEvent {
+    let mut rx = openhuman_core::openhuman::web_chat::subscribe_web_channel_events();
+    openhuman_core::openhuman::web_chat::publish_web_channel_event(WebChannelEvent {
         event: "coverage_event".to_string(),
         client_id: "client-1".to_string(),
         thread_id: "thread-1".to_string(),
@@ -2086,7 +2086,7 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
     assert_eq!(event.message.as_deref(), Some("hello web channel"));
 
     assert_eq!(
-        openhuman_core::openhuman::channels::web::start_chat(
+        openhuman_core::openhuman::web_chat::start_chat(
             "",
             "thread-1",
             "hello",
@@ -2095,14 +2095,14 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
             None,
             None,
             None,
-            openhuman_core::openhuman::channels::web::ChatRequestMetadata::default(),
+            openhuman_core::openhuman::web_chat::ChatRequestMetadata::default(),
         )
         .await
         .expect_err("blank client_id"),
         "client_id is required"
     );
     assert_eq!(
-        openhuman_core::openhuman::channels::web::start_chat(
+        openhuman_core::openhuman::web_chat::start_chat(
             "client-1",
             "",
             "hello",
@@ -2111,14 +2111,14 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
             None,
             None,
             None,
-            openhuman_core::openhuman::channels::web::ChatRequestMetadata::default(),
+            openhuman_core::openhuman::web_chat::ChatRequestMetadata::default(),
         )
         .await
         .expect_err("blank thread_id"),
         "thread_id is required"
     );
     assert_eq!(
-        openhuman_core::openhuman::channels::web::start_chat(
+        openhuman_core::openhuman::web_chat::start_chat(
             "client-1",
             "thread-1",
             "   ",
@@ -2127,7 +2127,7 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
             None,
             None,
             None,
-            openhuman_core::openhuman::channels::web::ChatRequestMetadata::default(),
+            openhuman_core::openhuman::web_chat::ChatRequestMetadata::default(),
         )
         .await
         .expect_err("blank message"),
@@ -2135,26 +2135,26 @@ async fn web_channel_public_paths_cover_event_delivery_and_validation_errors() {
     );
 
     assert_eq!(
-        openhuman_core::openhuman::channels::web::cancel_chat("", "thread-1")
+        openhuman_core::openhuman::web_chat::cancel_chat("", "thread-1")
             .await
             .expect_err("blank cancel client_id"),
         "client_id is required"
     );
     assert_eq!(
-        openhuman_core::openhuman::channels::web::cancel_chat("client-1", "")
+        openhuman_core::openhuman::web_chat::cancel_chat("client-1", "")
             .await
             .expect_err("blank cancel thread_id"),
         "thread_id is required"
     );
     assert!(
-        openhuman_core::openhuman::channels::web::cancel_chat("client-1", "thread-1")
+        openhuman_core::openhuman::web_chat::cancel_chat("client-1", "thread-1")
             .await
             .expect("cancel with no in-flight request")
             .is_none()
     );
-    openhuman_core::openhuman::channels::web::invalidate_thread_sessions("thread-1").await;
+    openhuman_core::openhuman::web_chat::invalidate_thread_sessions("thread-1").await;
     assert!(
-        openhuman_core::openhuman::channels::web::in_flight_entries_for_test()
+        openhuman_core::openhuman::web_chat::in_flight_entries_for_test()
             .await
             .is_empty()
     );
@@ -2181,7 +2181,7 @@ async fn proactive_subscriber_routes_web_and_active_external_channel_without_net
         }
     }
 
-    let mut rx = openhuman_core::openhuman::channels::web::subscribe_web_channel_events();
+    let mut rx = openhuman_core::openhuman::web_chat::subscribe_web_channel_events();
     let capture = Arc::new(CapturingChannel::default());
     let mut channels: HashMap<String, Arc<dyn Channel>> = HashMap::new();
     channels.insert("capture".into(), capture.clone());

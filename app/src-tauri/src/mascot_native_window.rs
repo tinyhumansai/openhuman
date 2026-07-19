@@ -52,6 +52,9 @@ const DRAG_POLL_SECONDS: f64 = 0.016;
 /// dropped webview.
 struct MascotPanel {
     panel: Retained<NSPanel>,
+    // RAII keep-alive: never read, but dropping it deallocates the WKWebView and
+    // blanks the panel. Must outlive the show/hide cycle — do not remove.
+    #[allow(dead_code)]
     webview: Retained<WKWebView>,
     drag_timer: Retained<NSTimer>,
 }
@@ -389,7 +392,7 @@ unsafe fn build_webview(
         let _: () = msg_send![&*webview, setAutoresizingMask: 18u64]; // width|height
 
         // Make the webview the panel's content view so it fills the frame.
-        let webview_ref: &objc2::runtime::AnyObject = &*webview;
+        let webview_ref: &objc2::runtime::AnyObject = &webview;
         let webview_view: *mut objc2::runtime::AnyObject =
             webview_ref as *const _ as *mut objc2::runtime::AnyObject;
         let _: () = msg_send![panel, setContentView: webview_view];

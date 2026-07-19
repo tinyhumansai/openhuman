@@ -42,6 +42,10 @@ describe('clearAllAppData', () => {
     expect(mockPurgeCef).toHaveBeenCalledWith('user-1');
     expect(clearSession).toHaveBeenCalledTimes(1);
     expect(mockReset).toHaveBeenCalledTimes(1);
+    // #4950: the reset must receive the signed-in user id so it deletes the
+    // right `users/<id>` slice even though clearSession already removed the
+    // active-user marker. Passing no id here is the bug that left data behind.
+    expect(mockReset).toHaveBeenCalledWith('user-1');
     expect(mockPurge).toHaveBeenCalledTimes(1);
     // user-1's own keys are gone
     expect(window.localStorage.getItem('OPENHUMAN_ACTIVE_USER_ID')).toBeNull();
@@ -63,6 +67,9 @@ describe('clearAllAppData', () => {
     expect(mockPurgeCef).toHaveBeenCalledWith(null);
     // No clearSession was provided — call sequence still completes.
     expect(mockReset).toHaveBeenCalledTimes(1);
+    // Pre-login recovery (Welcome screen) has no user id: the reset falls back
+    // to marker-based resolution, so `null` is forwarded.
+    expect(mockReset).toHaveBeenCalledWith(null);
     expect(mockRestart).toHaveBeenCalledTimes(1);
     // Without a userId we have no way to scope, so everything is cleared
     expect(window.localStorage.getItem('user-1:persist:accounts')).toBeNull();

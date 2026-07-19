@@ -5,6 +5,7 @@
  * This module is pure data — no JSX, no React imports.  Icons are owned by
  * BottomTabBar.tsx and mapped from tab.id.
  */
+import { BILLING_DASHBOARD_URL } from '../utils/links';
 
 // ── Tab bar ──────────────────────────────────────────────────────────────────
 
@@ -103,8 +104,7 @@ export const AVATAR_MENU_ITEMS: AvatarMenuItem[] = [
   {
     id: 'billing',
     labelKey: 'nav.avatarMenu.billing',
-    // Resolved at runtime via BILLING_DASHBOARD_URL; placeholder keeps typing clean.
-    target: 'https://tinyhumans.ai/dashboard',
+    target: BILLING_DASHBOARD_URL,
     kind: 'openUrl',
     cloudOnly: true,
   },

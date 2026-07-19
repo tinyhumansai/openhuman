@@ -81,7 +81,23 @@ impl UnifiedMemory {
         query: &str,
         limit: u32,
     ) -> Result<Vec<NamespaceQueryResult>, String> {
-        let hits = self.query_namespace_hits(namespace, query, limit).await?;
+        self.query_namespace_ranked_excluding_session(namespace, query, limit, None)
+            .await
+    }
+
+    /// Same as [`Self::query_namespace_ranked`], but excludes same-session
+    /// documents — see [`Self::query_namespace_hits_excluding_session`] for
+    /// the exact semantics and backward-compatibility guarantee.
+    pub async fn query_namespace_ranked_excluding_session(
+        &self,
+        namespace: &str,
+        query: &str,
+        limit: u32,
+        exclude_session_id: Option<&str>,
+    ) -> Result<Vec<NamespaceQueryResult>, String> {
+        let hits = self
+            .query_namespace_hits_excluding_session(namespace, query, limit, exclude_session_id)
+            .await?;
         let mut out = Vec::new();
         for hit in hits {
             if hit.kind != MemoryItemKind::Document {
@@ -107,8 +123,49 @@ impl UnifiedMemory {
         query: &str,
         limit: u32,
     ) -> Result<Vec<NamespaceMemoryHit>, String> {
+        self.query_namespace_hits_excluding_session(namespace, query, limit, None)
+            .await
+    }
+
+    /// Same as [`Self::query_namespace_hits`], but drops any document-kind
+    /// hit whose stored `session_id` matches `exclude_session_id`.
+    ///
+    /// This is the self-echo guard for agent-invoked search (`memory_recall`,
+    /// `memory_hybrid_search`): the harness auto-saves the user's own turn as
+    /// a `[conversation]` document tagged with the ambient chat thread id
+    /// (see `agent::harness::session::turn::core`), so without this filter a
+    /// search issued *during that same turn* can retrieve its own triggering
+    /// request as the top "relevant" result. Only documents are
+    /// session-filtered — KV rows carry no session concept, and
+    /// episodic/event hits already have their own dedicated session-scoping
+    /// (`RecallOpts::session_id` / `cross_session`).
+    ///
+    /// `exclude_session_id = None` (or an empty/whitespace string) is
+    /// identical to [`Self::query_namespace_hits`] — no filtering is
+    /// applied, so every existing caller (and every caller with no ambient
+    /// session context) keeps its exact prior behavior.
+    pub async fn query_namespace_hits_excluding_session(
+        &self,
+        namespace: &str,
+        query: &str,
+        limit: u32,
+        exclude_session_id: Option<&str>,
+    ) -> Result<Vec<NamespaceMemoryHit>, String> {
         let ns = Self::sanitize_namespace(namespace);
-        let docs = self.load_documents_for_scope(&ns).await?;
+        let exclude_session_id = exclude_session_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty());
+        let mut docs = self.load_documents_for_scope(&ns).await?;
+        if let Some(exclude) = exclude_session_id {
+            let before = docs.len();
+            docs.retain(|doc| doc.session_id.as_deref() != Some(exclude));
+            let dropped = before - docs.len();
+            tracing::debug!(
+                "[query] session-exclusion filter namespace={ns} exclude_session_id={exclude} \
+                 dropped={dropped} remaining={}",
+                docs.len()
+            );
+        }
         let kvs = self.kv_records_for_scope(&ns).await?;
 
         let graph_relations = self

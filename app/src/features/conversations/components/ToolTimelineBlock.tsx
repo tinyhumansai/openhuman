@@ -1,3 +1,6 @@
+import createDebug from 'debug';
+import { useState } from 'react';
+
 import WorktreeActions from '../../../components/worktree/WorktreeActions';
 import { useT } from '../../../lib/i18n/I18nContext';
 import type {
@@ -422,6 +425,8 @@ function RepeatCount({ count }: { count: number }) {
   );
 }
 
+const log = createDebug('app:conversations:tool-timeline');
+
 /**
  * Neutral surface tones for an expanded row's body (worker-thread card,
  * detail bubble, code block). Per the Figma "Agentic task insights"
@@ -449,6 +454,7 @@ export function ToolTimelineBlock({
   onViewWholeRun,
   expandAllRows = false,
   liveResponse,
+  turnActive,
 }: {
   entries: ToolTimelineEntry[];
   /** Opens the full-transcript drawer for a subagent row. When omitted,
@@ -474,13 +480,90 @@ export function ToolTimelineBlock({
    * Omitted/empty once the turn settles — the final answer is the message
    * bubble. */
   liveResponse?: string;
+  /** Whether a turn is in flight on this thread's lifecycle
+   * (`inferenceTurnLifecycleByThread`), the same signal the chat threads page
+   * uses. When provided, the sticky `userOverrideOpen` reset fires on THIS
+   * value's true→false edge — once per USER TURN — instead of on `isRunning`'s
+   * edge, which flips once PER SUB-AGENT within a single turn (each
+   * subagent spawn→settle) and made the panel flicker open/closed as
+   * sub-agents ran (regression from #5008). Falls back to `isRunning` when
+   * omitted, which is correct for a settled/past-turn render (there is no
+   * turn left to track). */
+  turnActive?: boolean;
 }) {
   const { t } = useT();
-  const latestRunningEntryId = [...entries].reverse().find(entry => entry.status === 'running')?.id;
+
+  // Sticky override for the outer "Agentic task insights" group: `null` means
+  // the user hasn't explicitly toggled it on THIS mount yet, so the group
+  // falls back to the auto rule below (open while running, collapsed once
+  // settled). Once the user clicks the summary, this pins their choice —
+  // including across later turns that stream onto the SAME mounted block
+  // (e.g. the workflow copilot's dedicated thread, whose `ToolTimelineBlock`
+  // stays mounted for the life of the conversation while `entries` keeps
+  // growing turn over turn) — so a new turn's activity landing no longer
+  // involuntarily re-collapses (or re-expands) a choice the user already
+  // made ("Agentic task insights keeps collapsing on every new feedback").
+  // Deliberately component-local state, not lifted to Redux:
+  // the block never remounts mid-conversation in the one place this bug was
+  // reported (`WorkflowCopilotPanel` renders it at a stable JSX position
+  // with entries accumulating in `toolTimelineByThread`, not reset per
+  // turn), so a plain `useState` already survives every turn it needs to.
+  const [userOverrideOpen, setUserOverrideOpen] = useState<boolean | null>(null);
+
+  // Whether *any* entry is currently running — computed here (ahead of the
+  // `entries.length === 0` early return below) purely so the render-time
+  // reset adjustment that follows runs every render; order doesn't matter for
+  // this existence check, unlike `latestRunningEntryId` further down, which
+  // needs the seq-sorted order to pick a specific "latest" row.
+  const isRunning = entries.some(entry => entry.status === 'running');
+
+  // The signal the reset below watches for a "turn just settled" edge. Prefer
+  // the real TURN lifecycle (`turnActive`, sourced from
+  // `inferenceTurnLifecycleByThread` — the same signal the chat threads page
+  // uses) when the caller supplies it: it flips true→false exactly once per
+  // USER TURN. `isRunning` is only a fallback for callers with no turn
+  // lifecycle to hand (e.g. a settled/past-turn render, where entries never
+  // change again anyway) — used directly it flips once PER SUB-AGENT within a
+  // single turn (each subagent spawn→settle), which reset the override (and
+  // so auto-collapsed the panel) repeatedly within one turn and made it
+  // flicker open/closed as sub-agents ran (#5008 regression).
+  const settleSignal = turnActive ?? isRunning;
+
+  // Reset the user's manual open/close override on the settleSignal's
+  // true→false edge (a turn just finished) so the auto-collapse applies to
+  // the just-settled turn. The override only sticks WITHIN a turn —
+  // preventing involuntary mid-feedback collapse (#4942) — not permanently
+  // across turns.
+  //
+  // Done as a render-time adjustment (comparing against `prevSettleSignal`
+  // state and calling both setters synchronously in the render body), not a
+  // `useEffect`, per React's documented pattern for resetting state on a prop
+  // transition: it bails out and re-renders with the reset applied before
+  // paint, instead of committing a stale (still-collapsed/expanded) frame
+  // and only correcting it a tick later once the effect runs.
+  const [prevSettleSignal, setPrevSettleSignal] = useState(settleSignal);
+  if (prevSettleSignal !== settleSignal) {
+    if (prevSettleSignal && !settleSignal) {
+      log('agent-task-insights: turn settled (running→done), resetting user override');
+      setUserOverrideOpen(null);
+    }
+    setPrevSettleSignal(settleSignal);
+  }
 
   if (entries.length === 0) return null;
 
-  const isRunning = latestRunningEntryId != null;
+  // The rows + the parent's streaming response — shared by both the collapsible
+  // (in-flight) and static (settled) header layouts below.
+  // Sort by issue order (`seq`), not arrival order: a `tool_args_delta` for a
+  // later parallel call can reach the store before an earlier call's own
+  // event, which would otherwise create rows in the wrong order.
+  // Sort a copy — `entries` may be a state slice other callers still rely on.
+  const ordered = [...entries].sort((a, b) => a.seq - b.seq);
+  // "Latest running" must be derived from the same seq-ordered list the rows
+  // render from — not raw arrival order — or a running row that arrived late
+  // but sorts earlier (e.g. seq [2, 0, 1]) gets treated as "latest" and the
+  // wrong step stays expanded/linked in compact chat mode.
+  const latestRunningEntryId = [...ordered].reverse().find(entry => entry.status === 'running')?.id;
 
   const titleLabel = (
     <span className="text-[13px] font-medium text-content-muted">
@@ -505,11 +588,9 @@ export function ToolTimelineBlock({
     </button>
   ) : null;
 
-  // The rows + the parent's streaming response — shared by both the collapsible
-  // (in-flight) and static (settled) header layouts below.
   // Coalesce runs of identical, body-less rows (e.g. a retry loop that spawns
   // the same integrations step 25×) into single `×N` rows before rendering.
-  const rows = coalesceTimelineEntries(entries);
+  const rows = coalesceTimelineEntries(ordered);
 
   const body = (
     <>
@@ -629,20 +710,38 @@ export function ToolTimelineBlock({
 
   // The group header is a static section label — the live "working" state is
   // conveyed by the pulsing agent-name rows, so it never repeats a "Working…"
-  // string. The group is always collapsible: while the run is in flight it is
-  // open so the live activity is visible; once it settles it collapses to a
-  // single-line opener by default so a finished run (which can be dozens of
-  // steps) never dominates the conversation — the rows stay one click away, and
-  // the whole-run side panel is still reachable via the header link. The full
-  // "Agent Process Source" panel forces every row open via `expandAllRows`.
-  const open = isRunning || expandAllRows;
+  // string. Absent a user override, the group is auto-driven: open while the
+  // run is in flight so the live activity is visible; collapsed once it
+  // settles so a finished run (which can be dozens of steps) never dominates
+  // the conversation. The full "Agent Process Source" panel forces every row
+  // open via `expandAllRows`. Once the user has explicitly toggled the group
+  // (see `userOverrideOpen` above), THAT choice wins over the auto rule —
+  // otherwise a new turn streaming onto an already-mounted block (settling,
+  // or starting a fresh run) would silently flip `open` out from under the
+  // user's manual choice on every turn.
+  const autoOpen = isRunning || expandAllRows;
+  const open = userOverrideOpen ?? autoOpen;
+
+  // Fully own the disclosure via React state rather than letting the browser
+  // toggle the native `open` attribute itself — `preventDefault` stops the
+  // native toggle so there is exactly one source of truth (`open` above),
+  // never a race between the DOM's own uncontrolled state and the next
+  // render's `open` prop.
+  const handleSummaryClick = (event: React.MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    const next = !open;
+    log('agent-task-insights: user toggled open=%s (auto would be %s)', next, autoOpen);
+    setUserOverrideOpen(next);
+  };
 
   return (
     <details
       open={open}
       className="group/insights mb-2 px-1 py-0"
       data-testid="agent-task-insights">
-      <summary className="mb-1.5 flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
+      <summary
+        onClick={handleSummaryClick}
+        className="mb-1.5 flex cursor-pointer list-none items-center gap-1.5 select-none marker:hidden">
         {titleLabel}
         <span className="text-[11px] text-content-faint transition-transform group-open/insights:rotate-90">
           ▶

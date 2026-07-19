@@ -30,6 +30,8 @@ import SecretPromptDialog from './components/mcp-setup/SecretPromptDialog';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import PttHotkeyManager from './components/PttHotkeyManager';
+import { AutomationHaltedBanner } from './components/safety/AutomationHaltedBanner';
+import { EmergencyStopButton } from './components/safety/EmergencyStopButton';
 import SecurityBanner from './components/SecurityBanner';
 import SettingsModal from './components/settings/modal/SettingsModal';
 import { resolveSettingsOverlay } from './components/settings/modal/settingsOverlay';
@@ -57,6 +59,7 @@ import {
   startInternetStatusListener,
   stopInternetStatusListener,
 } from './services/internetStatusListener';
+import { hydrateEmergencyState } from './services/safety/hydrateEmergencyState';
 import {
   hideWebviewAccount,
   startWebviewAccountService,
@@ -256,6 +259,16 @@ export function AppShellDesktop() {
   // the core is ready (once per boot). Extracted to a hook so it's testable.
   useNotchBootSync(isBootstrapping);
 
+  // Boot hydration: read the authoritative halt state from the core once on
+  // mount so the UI reflects any halt that was engaged before this window
+  // opened (e.g. another tab, CLI, or a crash-recovery scenario). Errors are
+  // swallowed inside hydrateEmergencyState so a degraded core never blanks the shell.
+  useEffect(() => {
+    void hydrateEmergencyState(dispatch);
+    // Intentionally runs once on mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const navType = useNavigationType();
 
@@ -291,6 +304,9 @@ export function AppShellDesktop() {
 
   const content = (
     <div ref={scrollRef} className="relative h-full overflow-y-auto">
+      {/* Automation halt banner — renders at the top of the content area when
+          emergency stop is engaged. Always visible during automation sessions. */}
+      <AutomationHaltedBanner />
       <GlobalUpsellBanner />
       <AppRoutes location={baseLocation} />
       {activeProviderAccount && !accountsOverlayOpen && (
@@ -332,6 +348,17 @@ export function AppShellDesktop() {
             exhaustion). Mounted outside the routes so entries survive route
             changes and background-job completion. */}
         <UserErrorCenter />
+        {/* Emergency Stop — persistent safety control pinned to the top-right,
+            clear of the chat composer (bottom) and the sidebar (left); the
+            macOS traffic lights sit top-left, so the top-right stays free. The
+            button hides itself while halted (the AutomationHaltedBanner's
+            Resume takes over). Only shown when the shell chrome is visible
+            (i.e. the user is authenticated and past onboarding). */}
+        {!chromeless && (
+          <div className="fixed top-3 right-4 z-50">
+            <EmergencyStopButton />
+          </div>
+        )}
         {/* Hidden Remotion-driven producer for the Meet camera. Mounts a
             640×480 JPEG frame stream to the Rust frame bus while a meet
             call is active; idle no-op otherwise. See

@@ -30,7 +30,7 @@ describe('HomeBanners', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Buy top-up credits' }));
 
-    expect(openUrl).toHaveBeenCalledWith('https://tinyhumans.ai/dashboard');
+    expect(openUrl).toHaveBeenCalledWith('https://tinyhumans.ai/pricing');
   });
 
   it('renders danger tone styles for UsageLimitBanner', () => {
@@ -53,7 +53,7 @@ describe('HomeBanners', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /get a subscription/i }));
 
-    expect(openUrl).toHaveBeenCalledWith('https://tinyhumans.ai/dashboard');
+    expect(openUrl).toHaveBeenCalledWith('https://tinyhumans.ai/pricing');
   });
 
   it('opens the Discord invite through openUrl from the Discord banner', () => {

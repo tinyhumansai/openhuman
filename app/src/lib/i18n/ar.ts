@@ -74,7 +74,7 @@ const messages: TranslationMap = {
   'connections.welcome.eyebrow': 'الاتصالات',
   'connections.welcome.title': 'كل ما تستخدمه، في مكان واحد',
   'connections.welcome.body':
-    'اربط تطبيقات المراسلة والبريد الإلكتروني والتقويم والأدوات كي يتمكن وكيلك من قراءة السياق واتخاذ الإجراءات عبرها جميعًا: دون النسخ واللصق بين عشرات التبويبات. تبقى أنت المتحكم فيما يمكنه لمسه.',
+    'اربط تطبيقات المراسلة والبريد الإلكتروني والتقويم والأدوات كي يتمكن وكيلك من قراءة السياق واتخاذ الإجراءات عبرها جميعًا، دون النسخ واللصق بين عشرات التبويبات. تبقى أنت المتحكم فيما يمكنه لمسه.',
   'connections.welcome.ctaChannel': 'اربط قناة',
   'connections.welcome.ctaApps': 'اربط التطبيقات',
   'connections.welcome.ctaSkills': 'تصفّح المهارات',
@@ -91,7 +91,7 @@ const messages: TranslationMap = {
   'notifications.welcome.eyebrow': 'الإشعارات',
   'notifications.welcome.title': 'فقط ما يحتاج إليك فعلاً',
   'notifications.welcome.body':
-    'خلاصة هادئة ومُقيّمة لما فعله وكلاؤك وما يحتاج إلى قرار: كي تظهر الأمور المهمة ويبقى الضجيج بعيدًا عن طريقك.',
+    'خلاصة هادئة ومُقيّمة لما فعله وكلاؤك وما يحتاج إلى قرار، كي تظهر الأمور المهمة ويبقى الضجيج بعيدًا عن طريقك.',
   'notifications.welcome.ctaView': 'عرض التنبيهات',
   'notifications.welcome.featsLabel': 'ما الذي ستراه',
   'notifications.welcome.feat1Title': 'ما يحتاج إليك',
@@ -106,7 +106,7 @@ const messages: TranslationMap = {
   'rewards.welcome.eyebrow': 'المكافآت',
   'rewards.welcome.title': 'احصل على مكافأة لحضورك',
   'rewards.welcome.body':
-    'اكسب نقاطًا أثناء استخدامك OpenHuman ودعوتك للآخرين، وحافظ على سلسلة حضورك، واستبدل ما كسبته: كل ذلك متتبَّع في مكان واحد.',
+    'اكسب نقاطًا أثناء استخدامك OpenHuman ودعوتك للآخرين، وحافظ على سلسلة حضورك، واستبدل ما كسبته، كل ذلك متتبَّع في مكان واحد.',
   'rewards.welcome.ctaView': 'عرض المكافآت',
   'rewards.welcome.featsLabel': 'كيف يعمل',
   'rewards.welcome.feat1Title': 'اكسب النقاط',
@@ -120,7 +120,7 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': 'سير العمل',
   'flows.welcome.title': 'ضع الأعمال الروتينية على الطيّار الآلي',
   'flows.welcome.body':
-    'صِف شيئًا تفعله مرارًا وتكرارًا: الفرز والمتابعات والخلاصات: ويحوّله وكيلك إلى سير عمل يمكنه تشغيله من البداية إلى النهاية، وفق جدول أو عند الطلب.',
+    'صِف شيئًا تفعله مرارًا وتكرارًا (الفرز والمتابعات والخلاصات) ويحوّله وكيلك إلى سير عمل يمكنه تشغيله من البداية إلى النهاية، وفق جدول أو عند الطلب.',
   'flows.welcome.ctaNew': 'سير عمل جديد',
   'flows.welcome.ctaBrowse': 'تصفّح سير العمل',
   'flows.welcome.featsLabel': 'ما الذي يمكنك أتمتته',
@@ -318,7 +318,7 @@ const messages: TranslationMap = {
   'orchPage.medulla.title': 'Medulla',
   'orchPage.medulla.tagline': 'نموذج التنسيق من OpenHuman',
   'orchPage.medulla.body':
-    'Medulla هو نموذج اللغة الكبير الذي طوّرته OpenHuman خصيصًا، مصمَّم لتنسيق آلاف الوكلاء في آنٍ واحد: بنافذة سياق تتسع لـ 10 ملايين توكن وتنسيق منخفض التكلفة بشكل جذري.',
+    'Medulla هو نموذج اللغة الكبير الذي طوّرته OpenHuman خصيصًا، مصمَّم لتنسيق آلاف الوكلاء في آنٍ واحد، بنافذة سياق تتسع لـ 10 ملايين توكن وتنسيق منخفض التكلفة بشكل جذري.',
   'orchPage.medulla.featAgents': 'آلاف الوكلاء',
   'orchPage.medulla.featContext': 'سياق بسعة 10M توكن',
   'orchPage.medulla.featCost': 'تنسيق منخفض التكلفة',
@@ -439,13 +439,53 @@ const messages: TranslationMap = {
   'agentWorld.world.rooms.outside.name': 'العالم',
   'agentWorld.world.rooms.outside.description': 'ساحة مفتوحة كبيرة تحيط بها المباني.',
   'agentWorld.feed': 'التغذية',
+  'agentWorld.feed.loadMore': 'تحميل المزيد',
+  'agentWorld.feed.loadingMore': 'جارٍ تحميل المزيد…',
+  'agentWorld.feed.loadMoreError': 'تعذّر تحميل المزيد من المنشورات. حاول مرة أخرى.',
   'agentWorld.ledger': 'السجل',
+  'agentWorld.profileViewer.description': 'الملف الشخصي العام',
+  'agentWorld.profileViewer.agentCard': 'بطاقة الوكيل',
+  'agentWorld.profileViewer.loading': 'جارٍ تحميل الملف الشخصي…',
+  'agentWorld.profileViewer.notFoundTitle': 'الملف الشخصي غير موجود',
+  'agentWorld.profileViewer.notFoundBody': 'لا يوجد ملف شخصي منشور لهذا المعرّف حتى الآن.',
+  'agentWorld.profileViewer.errorTitle': 'تعذّر تحميل الملف الشخصي',
+  'agentWorld.profileViewer.follow': 'متابعة',
+  'agentWorld.profileViewer.following': 'تتابعه',
+  'agentWorld.profileViewer.copyLink': 'نسخ الرابط',
+  'agentWorld.profileViewer.linkCopied': 'تم نسخ الرابط',
+  'agentWorld.profileViewer.skills': 'المهارات',
+  'agentWorld.profileViewer.verifiedAccounts': 'الحسابات الموثّقة',
+  'agentWorld.profileViewer.handlesOwned': 'المعرّفات المملوكة',
+  'agentWorld.profileViewer.followers': 'متابِعون',
+  'agentWorld.profileViewer.followingCount': 'يتابع',
+  'agentWorld.profileViewer.joined': 'انضم في',
+  'agentWorld.profileViewer.ownProfile': 'هذا ملفك الشخصي',
+  'agentWorld.profileViewer.agentBadge': 'وكيل',
+  'agentWorld.profileViewer.humanBadge': 'إنسان',
+  'agentWorld.ledger.loadMore': 'تحميل المزيد',
+  'agentWorld.ledger.loadingMore': 'جارٍ تحميل المزيد…',
+  'agentWorld.ledger.loadMoreError': 'تعذّر تحميل المزيد من المعاملات. حاول مرة أخرى.',
   'agentWorld.jobs': 'الوظائف',
   'agentWorld.bounties': 'مكافآت',
   'agentWorld.explore': 'استكشاف',
   'agentWorld.directory': 'الدليل',
+  'agentWorld.directory.profile.verified': 'موثّق',
+  'agentWorld.directory.profile.joined': 'انضم في',
+  'agentWorld.directory.profile.noBio': 'لا توجد نبذة بعد.',
+  'agentWorld.directory.profile.skills': 'المهارات',
+  'agentWorld.directory.profile.loadError': 'تعذّر تحميل الملف الشخصي الكامل.',
   'agentWorld.identities': 'الهويات',
   'agentWorld.profiles': 'الملفات الشخصية',
+  'agentWorld.profile.edit': 'تعديل الملف الشخصي',
+  'agentWorld.profile.displayName': 'الاسم المعروض',
+  'agentWorld.profile.bio': 'نبذة',
+  'agentWorld.profile.avatarEmail': 'بريد الصورة الرمزية',
+  'agentWorld.profile.avatarEmailHint': 'يُستخدم لجلب صورتك الرمزية من Gravatar.',
+  'agentWorld.profile.save': 'حفظ',
+  'agentWorld.profile.nameRequired': 'لا يمكن أن يكون اسم العرض فارغًا.',
+  'agentWorld.profile.cancel': 'إلغاء',
+  'agentWorld.profile.saving': 'جارٍ الحفظ…',
+  'agentWorld.profile.saveError': 'تعذّر حفظ ملفك الشخصي. حاول مرة أخرى.',
   'agentWorld.marketplace': 'السوق',
   'agentWorld.messaging': 'الرسائل',
   'agentWorld.walletNotConfigured': 'المحفظة غير مُهيَّأة',
@@ -920,6 +960,7 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'كيف يمكنني مساعدتك اليوم؟',
   'chat.send': 'إرسال الرسالة',
   'chat.stopGeneration': 'إيقاف التوليد',
+  'chat.stoppedByUser': 'تم الإيقاف',
   'chat.parallelBranchHint': 'فرع متوازٍ: ⌘/Ctrl+Enter للإرسال',
   'chat.followupHint': 'أضِف متابعة إلى القائمة: تُرسَل بعد هذا الرد · ⌘/Ctrl+Enter لفرع متوازٍ',
   'chat.queuedFollowups.label': 'متابعات في قائمة الانتظار',
@@ -1090,7 +1131,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': 'ارتباطات الكيانات',
   'entityAssociations.intro':
-    'الكيانات التي تتشارك العديد من الروابط نفسها تكون مرتبطة: حتى لو لم تربطها حقيقة واحدة مباشرة. تشابه Jaccard يكشف هذه الارتباطات المخفية.',
+    'الكيانات التي تتشارك العديد من الروابط نفسها تكون مرتبطة، حتى لو لم تربطها حقيقة واحدة مباشرة. تشابه Jaccard يكشف هذه الارتباطات المخفية.',
   'entityAssociations.loading': 'جارٍ حساب الارتباطات…',
   'entityAssociations.errorPrefix': 'تعذّر تحميل الرسم البياني:',
   'entityAssociations.retry': 'إعادة المحاولة',
@@ -1605,7 +1646,7 @@ const messages: TranslationMap = {
   'settings.search.placeholderQuerit': 'مفتاح API الخاص بـ Querit',
   'settings.search.allowedSitesLabel': 'المواقع الشبكية المسموح بها',
   'settings.search.allowedSitesHint':
-    'المضيفون الذين يُسمح للمساعد بفتحهم وقراءتهم: عبر جلب الويب وأداة المتصفح: مضيف واحد في كل سطر، مثل reuters.com. يشمل المضيف نطاقاته الفرعية أيضًا. البحث على الويب نفسه لا يتقيّد بهذه القائمة.',
+    'المضيفون الذين يُسمح للمساعد بفتحهم وقراءتهم (عبر جلب الويب وأداة المتصفح) مضيف واحد في كل سطر، مثل reuters.com. يشمل المضيف نطاقاته الفرعية أيضًا. البحث على الويب نفسه لا يتقيّد بهذه القائمة.',
   'settings.search.allowedSitesAllOn':
     'يمكن للمساعد فتح أي موقع علني العناوين المحلية والخاصة تبقى مغلقة',
   'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
@@ -2773,7 +2814,7 @@ const messages: TranslationMap = {
   'workspace.vaultNotRegisteredHelp':
     'يفتح Obsidian فقط المجلدات التي أضفتها كخزنة. في Obsidian، اختر «فتح المجلد كخزنة» واختر المجلد أدناه: تحتاج إلى القيام بذلك مرة واحدة فقط. ثم انقر «عرض الخزنة» مجدداً.',
   'workspace.obsidianNotFoundHelp':
-    'لم نتمكن من العثور على Obsidian على هذا الجهاز. ثبّته، أو: إذا كان مثبتاً في مكان غير قياسي: حدد مجلد إعداداته ضمن خيارات متقدمة.',
+    'لم نتمكن من العثور على Obsidian على هذا الجهاز. ثبّته، أو (إذا كان مثبتاً في مكان غير قياسي) حدد مجلد إعداداته ضمن خيارات متقدمة.',
   'workspace.openAnyway': 'فتح في Obsidian على أي حال',
   'workspace.installObsidian': 'تثبيت Obsidian',
   'workspace.obsidianAdvanced': 'هل Obsidian مثبّت في مكان آخر؟',
@@ -3163,6 +3204,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'تعذّر فهم الصوت بوضوح: يرجى المحاولة مرة أخرى',
   'mic.failedToStopRecording': 'فشل إيقاف التسجيل: {message}',
   'mic.transcriptionFailed': 'فشل النسخ: {message}',
+  'mic.voiceNotCompiled':
+    'خاصية تحويل الصوت إلى نص غير متوفرة في هذا الإصدار من التطبيق. حدّث OpenHuman لتفعيلها.',
   'reflections.kind.retrospective': 'مراجعة',
   'reflections.kind.derivedFact': 'حقيقة مستنتجة',
   'reflections.kind.moodInsight': 'رؤية المزاج',
@@ -3383,6 +3426,13 @@ const messages: TranslationMap = {
   'channels.telegram.remoteControlTitle': 'جهاز التحكم عن بعد (Telegram)',
   'channels.telegram.remoteControlBody':
     'من دردشة Telegram المسموح بها، أرسل /الحالة، /الجلسات، /جديد، أو /مساعدة. لا يزال توجيه النموذج يستخدم /model و /models.',
+  'channels.connectHelp.title': 'كيفية الاتصال',
+  'channels.connectHelp.discord':
+    'اختر طريقة أدناه: اربط حسابك عبر OpenHuman، أو ثبّت البوت باستخدام OAuth، أو الصق رمز البوت الخاص بك من بوابة مطوري Discord.',
+  'channels.connectHelp.telegram':
+    'اختر طريقة أدناه: راسل بوت OpenHuman المُدار لربطه، أو الصق رمز البوت الخاص بك من @BotFather.',
+  'channels.connectHelp.slackNote':
+    'تبحث عن Slack؟ يتصل Slack كتطبيق من خلال الاتصالات → OAuth، وليس كقناة مراسلة هنا.',
   'channels.web.displayName': 'الويب',
   'channels.web.description': 'الدردشة عبر واجهة مستخدم الويب المضمنة.',
   'channels.web.authMode.managed_dm.description': 'استخدم دردشة الويب المضمنة - لا يلزم الإعداد.',
@@ -4502,6 +4552,8 @@ const messages: TranslationMap = {
   'settings.ai.openRouterOauthDescription':
     'وقع مع OpenRouter وإستيراد مفتاح ×xxxxx متحكم به مستخدماً',
   'settings.ai.connecting': 'جارٍ الاتصال...',
+  'settings.ai.codexAuthButton': 'ربط Codex',
+  'settings.ai.codexAuthHelper': 'يستخدم تسجيل دخول Codex CLI الحالي من ~/.codex/auth.json.',
   'settings.ai.backgroundLoops': 'حلقات الخلفية',
   'settings.ai.backgroundLoopsDesc':
     'شاهدْ ما يَعْملُ بدون رسالةِ دردشةِ، يَتوقّفُ عملَ نبضات القلب، ويَتفحصُ مؤخراً دفترِ دفاترِ الإئتمانِ.',
@@ -5327,7 +5379,7 @@ const messages: TranslationMap = {
     'الدخول الكامل يُديرُ الأوامرَ بوصولِ حسابِكَ الكاملِ وهو لَيسَ مُربّطَ رملَ. فقط قم بتمكينها عندما تضغطين على العميل بهذه الآلة ولا تزال الأدلة الإبداعية والنظامية مجمدة، وما زالت أعمال التدمير والشبكات والتركيب تتطلب الموافقة.',
   'settings.agentAccess.confine.label': 'مقصورة على مكان العمل',
   'settings.agentAccess.confine.desc':
-    'قيّد الوكيل بدليل مساحة العمل (بالإضافة إلى أي مجلدات ممنوحة)، بصرف النظر عن وضع الوصول المحدد. عند إيقاف التشغيل، يمكنه الوصول إلى أي مكان يمكن لمستخدمك الوصول إليه: باستثناء أدلة بيانات الاعتماد والنظام المحظورة دائمًا.',
+    'قيّد الوكيل بدليل مساحة العمل (بالإضافة إلى أي مجلدات ممنوحة)، بصرف النظر عن وضع الوصول المحدد. عند إيقاف التشغيل، يمكنه الوصول إلى أي مكان يمكن لمستخدمك الوصول إليه، باستثناء أدلة بيانات الاعتماد والنظام المحظورة دائمًا.',
   'settings.agentAccess.requireTaskPlanApproval.label': 'الموافقة على خطة العمل المطلوبة',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'وقف أمام عميل معين يقوم بتنفيذ موجز عمل مشرف على عميل',
@@ -5396,7 +5448,7 @@ const messages: TranslationMap = {
     'اختر مقدار الحرية التي يتمتع بها المساعد عند اتخاذ الإجراءات على جهاز الكمبيوتر الخاص بك.',
   'settings.permissions.preset.readonly.title': 'انظر ولا تلمس',
   'settings.permissions.preset.readonly.desc':
-    'يمكن للمساعد قراءة الملفات والاستكشاف: لكنه لن يكتب أو يعدّل أو يُشغّل أي شيء يغير الحالة.',
+    'يمكن للمساعد قراءة الملفات والاستكشاف، لكنه لن يكتب أو يعدّل أو يُشغّل أي شيء يغير الحالة.',
   'settings.permissions.preset.supervised.title': 'اسألني أولاً',
   'settings.permissions.preset.supervised.desc':
     'يمكنه إنشاء ملفات جديدة بحرية، لكنه يطلب موافقتك دائمًا قبل التعديل أو تشغيل الأوامر أو الوصول إلى الشبكة.',
@@ -5542,7 +5594,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'كبير جدًا',
   'settings.appearance.fontSizeXLargeDesc': 'أكبر حجم للنص لأقصى قدر من الوضوح.',
   'settings.appearance.fontSizeHelperText':
-    'يضبط حجم النص في التطبيق بأكمله: المحادثة والإعدادات واللوحات: بشكل مستقل عن إعداد خط نظامك.',
+    'يضبط حجم النص في التطبيق بأكمله (المحادثة والإعدادات واللوحات) بشكل مستقل عن إعداد خط نظامك.',
   'settings.appearance.fontSizeCustomLabel': 'حجم مخصص',
   'settings.appearance.fontSizeCustomAria': 'حجم الخط المخصص بالبكسل',
   'settings.appearance.fontSizeCustomSliderAria': 'شريط تمرير حجم الخط المخصص، بالبكسل',
@@ -5678,7 +5730,7 @@ const messages: TranslationMap = {
     'افتراضي معقول: استمرارية جيدة دون استهلاك رموز إضافية في كل تشغيل.',
   'settings.memoryWindow.balanced.label': 'متوازن',
   'settings.memoryWindow.description':
-    'مقدار السياق المحفوظ الذي يحقنه OpenHuman في كل تشغيل وكيل جديد. النوافذ الأكبر تشعر بإدراك أكثر للمحادثات السابقة لكنها تستخدم رموزًا أكثر: وتكلّف أكثر: في كل تشغيل.',
+    'مقدار السياق المحفوظ الذي يحقنه OpenHuman في كل تشغيل وكيل جديد. النوافذ الأكبر تمنح الوكيل وعيًا أكبر بالمحادثات السابقة، لكنها تستخدم رموزًا أكثر وتكلّف أكثر في كل تشغيل.',
   'settings.memoryWindow.extended.badge': 'سياق أكثر',
   'settings.memoryWindow.extended.hint':
     'حقن ذاكرة طويلة المدى أكثر في كل تشغيل. تكلفة رموز أعلى لكل دور.',
@@ -6670,7 +6722,7 @@ const messages: TranslationMap = {
   'graphCohesion.emptyHint': 'كلما سجّل المساعد حقائق مترابطة عنك، ستظهر هنا بنية تجميعها.',
   'graphCohesion.errorPrefix': 'تعذّر تحميل الرسم البياني:',
   'graphCohesion.intro':
-    'مدى تماسك الجوار حول كل كيان. الوسطاء: كيانات لا يرتبط جيرانها ببعضهم: هم النقاط الوحيدة التي تربط بين عناقيد كانت ستظل منفصلة، وهو ما لا يمكن لفرز التكرار أو PageRank الكشف عنه.',
+    'مدى تماسك الجوار حول كل كيان. الوسطاء (كيانات لا يرتبط جيرانها ببعضهم) هم النقاط الوحيدة التي تربط بين عناقيد كانت ستظل منفصلة، وهو ما لا يمكن لفرز التكرار أو PageRank الكشف عنه.',
   'graphCohesion.loading': 'يجري حساب التماسك…',
   'graphCohesion.metricConnections': 'الاتصالات',
   'graphCohesion.metricEntities': 'الكيانات',
@@ -7023,11 +7075,20 @@ const messages: TranslationMap = {
   'agentworld.jobs.applyModal.bidAmountPlaceholder': 'مثال: 450 USDC',
   'agentworld.jobs.applyModal.deliveryLabel': 'وقت التسليم المتوقع',
   'agentworld.jobs.applyModal.deliveryPlaceholder': 'مثال: أسبوعان',
+  'agentworld.feed.live': 'مباشر',
   'agentworld.jobs.applyModal.cancel': 'إلغاء',
   'agentworld.jobs.applyModal.submit': 'إرسال الطلب',
   'agentworld.jobs.applyModal.submitting': 'جارٍ التقديم…',
+  'agentworld.messaging.live': 'مباشر',
   'agentworld.messaging.missingSignalBundle':
     'لم يفعّل هذا المستخدم الرسائل المشفرة بعد. اطلب منه فتح Agent World وتفعيل الرسائل المباشرة الآمنة قبل إرسال رسالة.',
+  'agentworld.messaging.notAContact':
+    'لا يمكنك مراسلة هذا الشخص حتى يصبح جهة اتصال. أرسل طلب جهة اتصال وحاول مرة أخرى بعد قبوله.',
+  'agentworld.messaging.sendContactRequest': 'إرسال طلب جهة اتصال',
+  'agentworld.messaging.contactRequestSending': 'جارٍ إرسال الطلب…',
+  'agentworld.messaging.contactRequestSent': 'تم إرسال طلب جهة الاتصال. يمكنك مراسلته بعد قبوله.',
+  'agentworld.messaging.contactRequestFailed':
+    'تعذّر إرسال طلب جهة الاتصال. يُرجى المحاولة مرة أخرى.',
 
   // User-actionable runtime errors (#3931)
   'userErrors.title': 'إجراء مطلوب',
@@ -7099,9 +7160,35 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'حذف',
   'flows.delete.deleting': 'جارٍ الحذف…',
   'flows.canvas.renameLabel': 'إعادة تسمية سير العمل',
+  'memorySources.codingSessions.title': 'جلسات وكلاء البرمجة',
+  'memorySources.codingSessions.description':
+    'حوّل قرارات وتصحيحات Codex وClaude Code إلى ذاكرة شخصية خاصة.',
+  'memorySources.codingSessions.ingest': 'استيعاب الجلسات الجديدة',
+  'memorySources.codingSessions.ingesting': 'جارٍ الاستيعاب…',
+  'memorySources.codingSessions.claude': 'كلود كود',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '{files} جلسات · {evidence} مداخلات بشرية',
+  'memorySources.codingSessions.notFound': 'لم يُعثر على سجل محلي',
+  'memorySources.codingSessions.scanning': 'جارٍ فحص سجل الجلسات المحلي…',
+  'memorySources.codingSessions.truncated': 'اقتصر الفحص على أول 1,000 ملف جلسة.',
+  'memorySources.codingSessions.complete': 'تم استيعاب جلسات البرمجة',
+  'memorySources.codingSessions.completeMessage':
+    'أنتجت {processed} جلسات {observations} ملاحظات شخصية.',
+  'memorySources.codingSessions.partialFailure':
+    'فشلت {failed} جلسات بينما تمت معالجة {processed}. شغّل الاستيعاب مرة أخرى لإعادة المحاولة.',
+  'memorySources.codingSessions.moreRemaining':
+    'تم بلوغ حد دفعة الجلسات. شغّل الاستيعاب مرة أخرى لمتابعة استيراد سجلك.',
+  'memorySources.codingSessions.failed': 'فشل استيعاب جلسات البرمجة',
   'flows.canvas.sidePanelToggle': 'اللوحة الجانبية',
   'flows.canvas.legendTab': 'يدوي',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'إيقاف الطوارئ',
+  'safety.stopFailed': 'تعذّر إيقاف الأتمتة. أعد المحاولة.',
+  'safety.resume': 'استئناف الأتمتة',
+  'safety.resumeFailed': 'تعذّر الاستئناف. لا تزال الأتمتة متوقفة. أعد المحاولة.',
+  'safety.haltedTitle': 'الأتمتة متوقفة',
+  'safety.haltedBody': 'تم إيقاف جميع أتمتة سطح المكتب. استأنف عندما تكون مستعدًا.',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'حالة الخصوصية',
   'privacy.status.external': 'خارج الجهاز',

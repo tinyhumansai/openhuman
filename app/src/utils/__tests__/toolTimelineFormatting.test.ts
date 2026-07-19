@@ -14,7 +14,7 @@ import {
 } from '../toolTimelineFormatting';
 
 function entry(overrides: Partial<ToolTimelineEntry>): ToolTimelineEntry {
-  return { id: 'x', name: 'delegate_notion', round: 1, status: 'running', ...overrides };
+  return { id: 'x', name: 'delegate_notion', round: 1, seq: 0, status: 'running', ...overrides };
 }
 
 describe('formatTimelineEntry', () => {

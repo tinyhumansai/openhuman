@@ -366,6 +366,28 @@ pub(crate) fn graph_has_outbound_side_effect(graph: &WorkflowGraph) -> bool {
     })
 }
 
+/// Shared Rule 2 enforcement (issue B29, and its `flows_update` compound-bypass
+/// closure): forces `require_approval` to `true` when `graph` contains an
+/// outbound side-effect node, no matter what the caller asked for. Used by both
+/// [`flows_create`] and [`flows_update`] so a flow can never persist
+/// `require_approval: false` alongside a `tool_call` / `http_request` / `code`
+/// node — on create OR on a later edit that *adds* such a node to a
+/// previously-read-only graph.
+///
+/// Returns `(effective_require_approval, was_forced)`: `was_forced` is `true`
+/// only when the caller's own toggle was `false` but a side-effect node
+/// required the override — callers use it to decide whether to emit the
+/// loud "forced to true" log/result note.
+pub(crate) fn enforce_side_effect_approval(
+    graph: &WorkflowGraph,
+    caller_require_approval: bool,
+) -> (bool, bool) {
+    let has_side_effect = graph_has_outbound_side_effect(graph);
+    let effective_require_approval = caller_require_approval || has_side_effect;
+    let was_forced = has_side_effect && !caller_require_approval;
+    (effective_require_approval, was_forced)
+}
+
 /// Whether `graph` has anything for [`flows_run`] to actually *do* — i.e. at
 /// least one non-`trigger` node **reachable from the trigger** by following
 /// directed edges. A graph made of nothing but a bare `trigger` node (or a
@@ -1423,6 +1445,9 @@ pub(crate) async fn validate_connection_refs(
             Ok(outcome) => Some(build_flow_connections(
                 outcome.value.connections,
                 Vec::new(),
+                // Identity isn't needed for this existence/toolkit-mismatch
+                // check — only `connection_ref` and `toolkit` are read.
+                &[],
             )),
             Err(e) => {
                 tracing::debug!(
@@ -2175,9 +2200,9 @@ pub async fn flows_create(
 
     // Rule 2: any outbound side-effect node forces require_approval, no
     // matter what the caller asked for.
-    let has_side_effect = graph_has_outbound_side_effect(&graph);
-    let effective_require_approval = require_approval || has_side_effect;
-    if has_side_effect && !require_approval {
+    let (effective_require_approval, side_effect_forced) =
+        enforce_side_effect_approval(&graph, require_approval);
+    if side_effect_forced {
         tracing::info!(
             target: "flows",
             %name,
@@ -2215,7 +2240,7 @@ pub async fn flows_create(
              Enable it explicitly (flows_set_enabled) when you are ready for it to fire."
         ));
     }
-    if effective_require_approval && !require_approval {
+    if side_effect_forced {
         logs.push(
             "require_approval forced to true because the graph contains outbound side-effect \
              nodes (tool_call / http_request / code)."
@@ -2358,7 +2383,16 @@ pub async fn flows_list_connections(
             }
         };
 
-    let connections = build_flow_connections(composio_conns, http_creds);
+    // Connected-account identities (email/handle/platform user id), synced
+    // via each toolkit's whoami-style call (e.g. Slack `SLACK_TEST_AUTH`) on
+    // connection sync. Loaded once here so `build_flow_connections` can stay
+    // a pure, unit-testable matcher.
+    let identities = crate::openhuman::composio::providers::profile::load_connected_identities();
+    tracing::debug!(
+        count = identities.len(),
+        "[flows] flows_list_connections: identity-cache load"
+    );
+    let connections = build_flow_connections(composio_conns, http_creds, &identities);
     tracing::debug!(
         total = connections.len(),
         "[flows] flows_list_connections: aggregated picker sources"
@@ -2374,11 +2408,36 @@ pub async fn flows_list_connections(
 /// secret-free [`FlowConnection`] picker list. Only ACTIVE Composio connections
 /// are surfaced — a pending/expired OAuth account cannot execute a tool, so it
 /// would be a dead pick. Pure (no I/O) so the aggregation shape is
-/// unit-testable without a live backend.
+/// unit-testable without a live backend; `identities` is loaded once by the
+/// caller and matched in here.
+///
+/// Each Composio connection is also matched against `identities` (keyed by
+/// `(toolkit, connection_id)`, both normalized the same way
+/// `enrich_connections_with_identity` in `composio::ops::connections` does)
+/// to attach `platform_user_id` — the connected account's own member id
+/// (e.g. Slack `U123ABC`). This is what lets the workflow builder wire a
+/// self-targeted action ("DM me") to the user's own account instead of
+/// guessing a public channel.
 fn build_flow_connections(
     composio: Vec<crate::openhuman::composio::ComposioConnection>,
     http: Vec<crate::openhuman::credentials::HttpCredentialSummary>,
+    identities: &[crate::openhuman::composio::providers::profile::ConnectedIdentity],
 ) -> Vec<FlowConnection> {
+    use crate::openhuman::composio::providers::profile::normalize_connection_identifier;
+
+    let identity_lookup: std::collections::HashMap<(String, String), &_> = identities
+        .iter()
+        .map(|id| {
+            (
+                (
+                    normalize_connection_identifier(&id.source),
+                    normalize_connection_identifier(&id.identifier),
+                ),
+                id,
+            )
+        })
+        .collect();
+
     let mut out = Vec::with_capacity(composio.len() + http.len());
     for conn in composio {
         if !conn.is_active() {
@@ -2391,6 +2450,19 @@ fn build_flow_connections(
             continue;
         }
         let toolkit = conn.normalized_toolkit();
+        let lookup_key = (
+            normalize_connection_identifier(&toolkit),
+            normalize_connection_identifier(&conn.id),
+        );
+        let platform_user_id = identity_lookup
+            .get(&lookup_key)
+            .and_then(|identity| identity.user_id.clone());
+        tracing::debug!(
+            toolkit = %toolkit,
+            connection_id = %conn.id,
+            has_platform_user_id = platform_user_id.is_some(),
+            "[flows] flows_list_connections: resolved platform_user_id for composio connection"
+        );
         out.push(FlowConnection {
             // Exactly the shape `tinyflows::caps::composio_connection_id` parses.
             connection_ref: format!("composio:{}:{}", toolkit, conn.id),
@@ -2398,6 +2470,7 @@ fn build_flow_connections(
             display: composio_connection_display(&toolkit, &conn),
             toolkit: Some(toolkit),
             scheme: None,
+            platform_user_id,
         });
     }
     for cred in http {
@@ -2408,6 +2481,7 @@ fn build_flow_connections(
             display: http_credential_display(&cred),
             toolkit: None,
             scheme: Some(cred.scheme),
+            platform_user_id: None,
         });
     }
     out
@@ -2586,7 +2660,31 @@ pub async fn flows_update(
         "[flows] flows_update: auto-trigger disarm decision inputs"
     );
 
-    tracing::debug!(target: "flows", flow_id = %id, has_expected = expected_version.is_some(), "[flows] flows_update: persisting changes");
+    // Rule 2 analogue (compound-bypass closure): re-apply the same outbound
+    // side-effect check `flows_create` applies on save — via the shared
+    // [`enforce_side_effect_approval`] helper — so an update that *adds* a
+    // tool_call/http_request/code node to a previously read-only graph can
+    // never persist `require_approval: false` just because the update path
+    // trusted the caller's toggle unconditionally.
+    let (effective_require_approval, side_effect_forced) =
+        enforce_side_effect_approval(&graph, new_require_approval);
+    if side_effect_forced {
+        tracing::info!(
+            target: "flows",
+            flow_id = %id,
+            "[flows] flows_update: forcing require_approval=true — graph contains outbound \
+             side-effect node(s) (tool_call / http_request / code)"
+        );
+    }
+
+    tracing::debug!(
+        target: "flows",
+        flow_id = %id,
+        has_expected = expected_version.is_some(),
+        require_approval = effective_require_approval,
+        side_effect_forced,
+        "[flows] flows_update: persisting changes"
+    );
     // `enabled_override` is threaded into the same guarded UPDATE as the
     // graph/name/require_approval write (see `store::update_flow_graph`)
     // rather than a follow-up `flows_set_enabled` call, so the disarm can
@@ -2596,7 +2694,7 @@ pub async fn flows_update(
         id,
         new_name,
         graph,
-        new_require_approval,
+        effective_require_approval,
         enabled_override,
         expected_version.as_deref(),
     )
@@ -2628,6 +2726,13 @@ pub async fn flows_update(
             "Flow was auto-disabled because its trigger changed from manual to automatic \
              (schedule / app_event / webhook). Enable it explicitly (flows_set_enabled) once \
              you've reviewed the new trigger."
+                .to_string(),
+        );
+    }
+    if side_effect_forced {
+        logs.push(
+            "require_approval forced to true because the graph contains outbound side-effect \
+             nodes (tool_call / http_request / code)."
                 .to_string(),
         );
     }
@@ -3913,13 +4018,13 @@ fn attach_flow_progress_bridge(
         source = %source,
         "[flows] progress bridge: attaching (streaming copilot/scout turn)"
     );
-    crate::openhuman::channels::providers::web::spawn_progress_bridge(
+    crate::openhuman::web_chat::spawn_progress_bridge(
         progress_rx,
         "system".to_string(),
         target.thread_id.clone(),
         target.request_id.clone(),
         crate::openhuman::threads::turn_state::TurnStateStore::new(config.workspace_dir.clone()),
-        crate::openhuman::channels::providers::web::ChatRequestMetadata {
+        crate::openhuman::web_chat::ChatRequestMetadata {
             source: Some(source.to_string()),
             ..Default::default()
         },
@@ -3941,7 +4046,7 @@ async fn finalize_flow_stream(
 ) {
     match result {
         Ok(text) => {
-            crate::openhuman::channels::providers::web::presentation::deliver_response(
+            crate::openhuman::web_chat::presentation::deliver_response(
                 "system",
                 &target.thread_id,
                 &target.request_id,
@@ -3955,7 +4060,7 @@ async fn finalize_flow_stream(
             .await;
         }
         Err(err) => {
-            crate::openhuman::channels::providers::web::publish_web_channel_event(
+            crate::openhuman::web_chat::publish_web_channel_event(
                 crate::core::socketio::WebChannelEvent {
                     event: "chat_error".to_string(),
                     client_id: "system".to_string(),
@@ -4315,15 +4420,17 @@ pub async fn flows_build(
     let trail_off = !capped && proposal.is_none() && run_error.is_none();
     let assistant_text = if trail_off && !text_looks_like_question(&assistant_text) {
         let fallback = build_trail_off_fallback(agent.history());
+        let combined = combine_trail_off_fallback(&fallback, &assistant_text);
         tracing::warn!(
             target: "flows",
             flow_id = req.flow_id.as_deref().unwrap_or("<none>"),
             original_len = assistant_text.len(),
             fallback_len = fallback.len(),
+            combined_len = combined.len(),
             "[flows] flows_build: trail-off detected (no proposal, no cap, no question) — \
-             guaranteeing a fallback question instead of silence"
+             guaranteeing a fallback question while preserving the model's original text"
         );
-        fallback
+        combined
     } else {
         assistant_text
     };
@@ -4362,15 +4469,31 @@ pub async fn flows_build(
     ))
 }
 
-/// Heuristic: does `text` already end with a clear, answerable question?
-/// Conservative by design (issue: builder convergence) — a false negative (an
-/// actual question this misses) just wraps it in the trail-off fallback,
-/// which still includes the blocker context, so the safe failure mode is
-/// "over-wrap", never "under-detect and stay silent".
+/// Heuristic: does `text` already contain a clear, answerable question in its
+/// final paragraph? Conservative by design (issue: builder convergence) — a
+/// false negative (an actual question this misses) no longer discards the
+/// model's text (see `combine_trail_off_fallback`), so the safe failure mode
+/// stays "add a guaranteed question on top", never "under-detect and stay
+/// silent".
+///
+/// Regression (#4887 follow-up): the original version only checked for a `?`
+/// at the very end of the text / last line, which false-negatived on the
+/// extremely common LLM pattern "What's X? You can find it at Y." — a real
+/// question immediately followed by a trailing instructional sentence. The
+/// backstop then clobbered a specific, answerable question with a generic
+/// fallback. To catch that shape, this now also scans the LAST non-empty
+/// paragraph for a `?` that isn't inside inline code or a fenced code block
+/// (so a literal `?` in a code sample, e.g. `WHERE id = ?`, doesn't count).
+///
+/// Note: the trailing-noise strip below deliberately does NOT include the
+/// backtick. Stripping a trailing backtick would peel off the CLOSING
+/// delimiter of a code span whose last character is `?` (e.g. `` `id = ?` ``
+/// at the very end of the text), exposing that `?` as if it were a bare
+/// trailing question mark and defeating the code guard entirely.
 fn text_looks_like_question(text: &str) -> bool {
     let trimmed = text
         .trim()
-        .trim_end_matches(['"', '\'', ')', ']', '*', '_', '`', '.'])
+        .trim_end_matches(['"', '\'', ')', ']', '*', '_', '.'])
         .trim_end();
     if trimmed.is_empty() {
         return false;
@@ -4380,15 +4503,132 @@ fn text_looks_like_question(text: &str) -> bool {
     }
     // The question may not be the literal last character (trailing markdown
     // like a closing code fence or list marker on its own line) — fall back
-    // to the last non-blank line. This does NOT catch a question followed by
-    // a further trailing sentence ("...channel?\n\nLet me know!") — that's
-    // an accepted false negative: the turn still ends in a real (if
-    // over-eagerly replaced) question, never in silence, which is the
-    // invariant this function exists to protect.
-    trimmed
+    // to the last non-blank line.
+    if trimmed
         .lines()
         .rfind(|line| !line.trim().is_empty())
         .is_some_and(|last_line| last_line.trim_end().ends_with('?'))
+    {
+        return true;
+    }
+    // Final-paragraph scan: a question can sit mid-paragraph, followed by a
+    // further trailing sentence on the SAME line/paragraph ("...ID? You can
+    // find it under Profile > Copy member ID."). Take the last non-blank
+    // paragraph and accept it if it contains a `?` that isn't inside inline
+    // code / a code fence.
+    last_paragraph(trimmed)
+        .as_deref()
+        .is_some_and(question_mark_outside_code)
+}
+
+/// Returns the last non-blank paragraph of `text` — a maximal run of
+/// consecutive non-blank lines, working backward from the end and skipping
+/// any trailing blank lines first. `None` if `text` has no non-blank lines.
+///
+/// CodeRabbit review follow-up: this used to split on the literal `"\n\n"`
+/// byte sequence, which mishandles two real shapes:
+/// - **CRLF input** (`"question?\r\n\r\nstatus"`): the separator is
+///   `"\r\n\r\n"`, not `"\n\n"`, so the whole text was treated as ONE
+///   paragraph — an earlier question could then suppress the fallback for a
+///   trailing non-question status paragraph.
+/// - **Whitespace-only separator lines** (`"question?\n \nstatus"` — a blank
+///   line that isn't perfectly empty): same failure, same reason.
+///
+/// Working line-by-line via [`str::lines`] (which normalizes CRLF) and
+/// treating any all-whitespace line as blank fixes both.
+fn last_paragraph(text: &str) -> Option<String> {
+    let mut collected: Vec<&str> = Vec::new();
+    for line in text.lines().rev() {
+        if line.trim().is_empty() {
+            if collected.is_empty() {
+                continue; // still skipping trailing blank lines
+            }
+            break; // blank line marks the start of the paragraph above
+        }
+        collected.push(line);
+    }
+    if collected.is_empty() {
+        return None;
+    }
+    collected.reverse();
+    Some(collected.join("\n"))
+}
+
+/// Does `text` contain at least one *sentence-terminal* `?` that isn't
+/// inside a backtick-delimited code span (inline code like `` `U...` `` or a
+/// fenced block like `` ``` ``)? Follows the CommonMark code-span rule: a
+/// *run* of one or more consecutive backticks opens a span, and that span is
+/// closed only by the next run of the SAME length — a shorter or longer run
+/// of backticks encountered while inside a span is just literal backtick
+/// characters, not a delimiter.
+///
+/// CodeRabbit review follow-up: an earlier version tracked a running
+/// per-character backtick COUNT and used its parity (even = outside code).
+/// That misclassifies any multi-backtick span whose delimiter is more than
+/// one backtick — e.g. ``` ``SELECT ? FROM t`` ``` opens with a 2-backtick
+/// run (count 0→2, even → looks "outside" again immediately), so the `?`
+/// inside a valid double-backtick span was wrongly treated as outside code.
+/// Tracking delimiter run LENGTH (not raw backtick count) fixes this while
+/// still handling the common single-backtick and triple-backtick-fence
+/// cases, since those are just the run-length-1 and run-length-3 instances
+/// of the same rule.
+///
+/// Codex review follow-up: a bare `?` outside code isn't necessarily a real
+/// question — a status line like "Checked https://api.example/search?q=foo
+/// and got 403." has one mid-token, in a URL query string. Counting that
+/// would flip `text_looks_like_question` to `true` and skip
+/// `combine_trail_off_fallback` entirely, leaving the user with an
+/// unanswerable status note — exactly the failure mode this backstop exists
+/// to prevent. So each candidate `?` is additionally required to be
+/// sentence-terminal via [`is_sentence_terminal_question_mark`].
+fn question_mark_outside_code(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    // `Some(n)` while scanning is inside a code span opened by a run of `n`
+    // backticks; that span closes only on the next run of exactly `n`.
+    let mut open_run_len: Option<usize> = None;
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '`' {
+            let start = i;
+            while i < chars.len() && chars[i] == '`' {
+                i += 1;
+            }
+            let run_len = i - start;
+            open_run_len = match open_run_len {
+                None => Some(run_len),
+                Some(n) if n == run_len => None,
+                Some(n) => Some(n), // mismatched run length: still inside the span
+            };
+            continue;
+        }
+        if chars[i] == '?'
+            && open_run_len.is_none()
+            && is_sentence_terminal_question_mark(&chars, i)
+        {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Is the `?` at `chars[index]` sentence-terminal — i.e. does it read as an
+/// actual question mark rather than a character that merely happens to be a
+/// `?` mid-token (a URL query string like `search?q=foo`, a shell glob,
+/// etc.)? Skips over any immediately-following closing quote/bracket
+/// punctuation (`"`, `'`, right single/double quotes, `)`, `]`) and requires
+/// what remains to be whitespace or the end of the text — the shape a `?`
+/// takes at the end of a real sentence or clause.
+fn is_sentence_terminal_question_mark(chars: &[char], index: usize) -> bool {
+    let mut i = index + 1;
+    while let Some(&c) = chars.get(i) {
+        if matches!(c, '"' | '\'' | '\u{2019}' | '\u{201D}' | ')' | ']') {
+            i += 1;
+            continue;
+        }
+        return c.is_whitespace();
+    }
+    true // '?' was the last character in the paragraph.
 }
 
 /// Builder-authoring tools whose result body can explain a trail-off — the
@@ -4425,6 +4665,24 @@ fn build_trail_off_fallback(
         None => "I wasn't able to finish building this workflow in this turn. Could you describe \
                   what you'd like in more detail, or tell me which part to focus on?"
             .to_string(),
+    }
+}
+
+/// Combines the guaranteed trail-off `fallback` question with the model's own
+/// `original` text instead of discarding it (#4887 follow-up, Change 2). Even
+/// after loosening `text_looks_like_question`, a future false negative must
+/// never destroy the model's words — it should only ever ADD the guaranteed
+/// question on top. The `fallback` is prepended (so the user sees the
+/// actionable question first) and the original is kept below a divider for
+/// context. When `original` is empty/whitespace-only (a genuine silent
+/// turn — there's nothing to preserve), returns the fallback alone rather
+/// than prepending an empty divider.
+fn combine_trail_off_fallback(fallback: &str, original: &str) -> String {
+    let trimmed_original = original.trim();
+    if trimmed_original.is_empty() {
+        fallback.to_string()
+    } else {
+        format!("{fallback}\n\n---\n\n{trimmed_original}")
     }
 }
 

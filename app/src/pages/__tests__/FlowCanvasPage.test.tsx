@@ -15,6 +15,7 @@ import FlowCanvasPage, {
   asCopilotBuildSeed,
   asCopilotPrefillSeed,
   FlowCanvasDraftPage,
+  formatRunError,
   isPlaceholderTitle,
 } from '../FlowCanvasPage';
 
@@ -23,12 +24,14 @@ const updateFlow = vi.hoisted(() => vi.fn());
 const createFlow = vi.hoisted(() => vi.fn());
 const validateFlow = vi.hoisted(() => vi.fn());
 const listFlowConnections = vi.hoisted(() => vi.fn());
+const runFlow = vi.hoisted(() => vi.fn());
 vi.mock('../../services/api/flowsApi', () => ({
   getFlow,
   updateFlow,
   createFlow,
   validateFlow,
   listFlowConnections,
+  runFlow,
 }));
 
 // Stub the copilot panel: it drives the real chat runtime (redux + socket),
@@ -95,6 +98,7 @@ describe('FlowCanvasPage', () => {
     createFlow.mockReset();
     validateFlow.mockReset();
     listFlowConnections.mockReset();
+    runFlow.mockReset();
     validateFlow.mockResolvedValue({ valid: true, errors: [], warnings: [] });
     listFlowConnections.mockResolvedValue([]);
     updateFlow.mockResolvedValue(makeFlow());
@@ -144,6 +148,93 @@ describe('FlowCanvasPage', () => {
 
     await waitFor(() => expect(screen.getByTestId('flow-canvas-error')).toBeInTheDocument());
     expect(screen.getByText('core unreachable')).toBeInTheDocument();
+  });
+
+  describe('run-error banner (#flows-canvas-error-banner)', () => {
+    // Run always goes through the header icon → confirm popup → accept, same
+    // as a real user flow (see `handleRun` wiring around `confirmAction`).
+    // Two `fireEvent.click`s in a row: the first (Run) synchronously opens
+    // the confirm popup via a plain `useState` setter, so no flush is needed
+    // between them.
+    function clickRun() {
+      fireEvent.click(screen.getByTestId('flow-canvas-run'));
+      fireEvent.click(screen.getByTestId('flow-action-confirm-accept'));
+    }
+
+    it('renders the run-error banner (trimmed) without covering undo/redo, and lets it be dismissed', async () => {
+      getFlow.mockResolvedValue(makeFlow());
+      runFlow.mockRejectedValue(
+        new Error(
+          'capability error: graph error: capability error: code node exited non-zero (timed_out=false):'
+        )
+      );
+      renderAtFlowId('test-id');
+      await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+
+      clickRun();
+
+      const banner = await screen.findByTestId('flow-canvas-run-error');
+      // The raw nested "capability error: graph error: capability error: "
+      // wrapper prefixes are stripped — only the innermost tail remains.
+      expect(banner).toHaveTextContent('code node exited non-zero (timed_out=false)');
+      expect(banner).not.toHaveTextContent('graph error');
+
+      // Regression for the overlap bug: the banner sits at top-14, well
+      // below the canvas's own top-3 undo/redo controls, and both remain
+      // present/interactive rather than one covering the other.
+      expect(banner.parentElement).toHaveClass('top-14');
+      expect(screen.getByTestId('flow-editor-undo')).toBeInTheDocument();
+      expect(screen.getByTestId('flow-editor-redo')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId('flow-canvas-run-error-dismiss'));
+      expect(screen.queryByTestId('flow-canvas-run-error')).not.toBeInTheDocument();
+    });
+
+    it('auto-dismisses the run-error banner after the timeout, and restarts the timer on a new error', async () => {
+      getFlow.mockResolvedValue(makeFlow());
+      runFlow.mockRejectedValue(new Error('capability error: boom'));
+      renderAtFlowId('test-id');
+      await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+
+      // Switch to fake timers only now — the load above already went through
+      // `waitFor` (real timers); the run/timeout portion below only needs
+      // fake macrotasks plus microtask flushes for the rejected `runFlow`
+      // promise, matching the FlowRunsDrawer.test.tsx fake-timer precedent.
+      vi.useFakeTimers();
+      try {
+        clickRun();
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(screen.getByTestId('flow-canvas-run-error')).toBeInTheDocument();
+
+        // Not yet at the 12s mark — banner is still up.
+        await act(async () => {
+          vi.advanceTimersByTime(11_000);
+        });
+        expect(screen.getByTestId('flow-canvas-run-error')).toBeInTheDocument();
+
+        // A new failure before the old timer fires resets the clock rather
+        // than stacking on top of it.
+        clickRun();
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(11_000);
+        });
+        expect(screen.getByTestId('flow-canvas-run-error')).toBeInTheDocument();
+
+        await act(async () => {
+          vi.advanceTimersByTime(2_000);
+        });
+        expect(screen.queryByTestId('flow-canvas-run-error')).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('ignores a stale response for a superseded id after navigating to a new one', async () => {
@@ -288,6 +379,128 @@ describe('FlowCanvasPage', () => {
     expect(screen.getByTestId('flow-canvas-page')).toBeInTheDocument();
   });
 
+  // ---------------------------------------------------------------------------
+  // F4/F5 fix: Save/Accept/Reject bump `canvasVersion`, remounting the editable
+  // canvas — which previously always reset both the pan/zoom viewport
+  // (`fitView` refits on every mount) and the undo history. Fix A threads a
+  // `savedViewport` ref (captured via `onViewportChange`, survives the
+  // remount) through so a remount can restore pan/zoom instead of losing it;
+  // `EditableFlowCanvas` exposes `data-viewport-restored` on its root so this
+  // is observable without reaching into React Flow internals. Fix B stops the
+  // *redundant* second bump `handleSave` fired on top of Accept's own bump
+  // whenever the server echoed the graph back unchanged.
+  // ---------------------------------------------------------------------------
+  describe('F4/F5: canvas viewport preserved + no redundant remount', () => {
+    it('reads as no-viewport-restored on the very first mount', async () => {
+      getFlow.mockResolvedValue(makeFlow());
+      renderEditor();
+      await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+
+      expect(screen.getByTestId('flow-canvas')).toHaveAttribute('data-viewport-restored', 'false');
+    });
+
+    it('restores the captured viewport across a remount triggered by a server-normalized save (B21)', async () => {
+      getFlow.mockResolvedValue(makeFlow());
+      // Same server-normalization shape as the B21 test above: the response
+      // legitimately differs from what was sent, so Fix B still lets the
+      // remount-triggering bump through — this test asserts that when a
+      // remount DOES happen, the captured viewport survives it via Fix A.
+      updateFlow.mockResolvedValue(
+        makeFlow({
+          graph: {
+            schema_version: 1,
+            id: 'test-id',
+            name: 'Daily digest',
+            nodes: [
+              {
+                id: 't',
+                kind: 'trigger',
+                name: 'Start (normalized)',
+                config: {},
+                ports: [],
+                position: { x: 0, y: 0 },
+              },
+              {
+                id: 'new-agent-0',
+                kind: 'agent',
+                name: 'New agent',
+                config: {},
+                ports: [],
+                position: { x: 80, y: 80 },
+              },
+              {
+                id: 'server-added',
+                kind: 'transform',
+                name: 'Server-added node',
+                config: {},
+                ports: [],
+                position: { x: 160, y: 160 },
+              },
+            ],
+            edges: [],
+          },
+        })
+      );
+      renderEditor();
+      await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+      expect(screen.getByTestId('flow-canvas')).toHaveAttribute('data-viewport-restored', 'false');
+
+      // Pan the canvas — React Flow's `onViewportChange` fires off a real
+      // wheel event on the pane (panOnScroll is on), which is what the host
+      // page's `handleViewportChange` captures into the ref that survives the
+      // upcoming remount. Wait for the pane's own `.react-flow__viewport`
+      // transform to actually change rather than a fixed sleep (scheduler-
+      // dependent — React Flow's viewport update isn't synchronous with the
+      // wheel event) so the test isn't flaky under slow CI runners.
+      const pane = document.querySelector('.react-flow__pane');
+      expect(pane).not.toBeNull();
+      const viewportEl = document.querySelector('.react-flow__viewport') as HTMLElement | null;
+      expect(viewportEl).not.toBeNull();
+      const transformBeforePan = viewportEl?.style.transform;
+      fireEvent.wheel(pane as Element, { deltaY: -50, deltaX: 0, clientX: 200, clientY: 200 });
+      await waitFor(() => {
+        expect(viewportEl?.style.transform).not.toBe(transformBeforePan);
+      });
+
+      fireEvent.click(screen.getByTestId('flow-canvas-legend-toggle'));
+      fireEvent.click(screen.getByTestId('flow-palette-item-agent'));
+      fireEvent.click(screen.getByTestId('flow-editor-save'));
+      fireEvent.click(screen.getByTestId('flow-action-confirm-accept'));
+      await waitFor(() => expect(updateFlow).toHaveBeenCalledTimes(1));
+
+      // The server-normalized response differs from what was sent, so the
+      // canvas remounts (3 nodes, matching the B21 behavior) — and the
+      // freshly mounted canvas reads the captured viewport back.
+      await waitFor(() => expect(screen.getAllByTestId('flow-node')).toHaveLength(3));
+      expect(screen.getByTestId('flow-canvas')).toHaveAttribute('data-viewport-restored', 'true');
+    });
+
+    it('accepting a proposal the server echoes back unchanged does not double-remount (no redundant Save-triggered bump)', async () => {
+      getFlow.mockResolvedValue(makeFlow({ name: 'Daily digest' }));
+      const proposal = makeProposal();
+      // The server persists the proposed graph verbatim — no normalization —
+      // so `handleSave`'s own bump must be skipped; only Accept's single bump
+      // (preview → draft) should remount the canvas.
+      updateFlow.mockResolvedValue(makeFlow({ name: 'Daily digest', graph: proposal.graph }));
+      copilotPanelProps.current = null;
+      renderEditor();
+      await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+      await waitFor(() => expect(listFlowConnections).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        await (copilotPanelProps.current?.onAccept as (p: WorkflowProposal) => Promise<void>)(
+          proposal
+        );
+      });
+
+      await waitFor(() => expect(updateFlow).toHaveBeenCalledTimes(1));
+      // Exactly one extra mount for Accept's own preview→draft bump — Fix B's
+      // gate on `handleSave`'s bump means the accept-triggered save did NOT
+      // fire a second one on top of it.
+      expect(listFlowConnections).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('does not prompt when navigating Back with no unsaved changes', async () => {
     getFlow.mockResolvedValue(makeFlow());
     renderEditor();
@@ -404,6 +617,28 @@ describe('isPlaceholderTitle', () => {
   it('does not treat a user-chosen or description-derived name as a placeholder', () => {
     expect(isPlaceholderTitle('My flow', 'New workflow')).toBe(false);
     expect(isPlaceholderTitle('Standup reminder', 'New workflow')).toBe(false);
+  });
+});
+
+describe('formatRunError', () => {
+  it('strips repeated nested "<word> error: " wrapper prefixes down to the innermost tail', () => {
+    expect(
+      formatRunError(
+        'capability error: graph error: capability error: code node exited non-zero (timed_out=false):'
+      )
+    ).toBe('code node exited non-zero (timed_out=false)');
+  });
+
+  it('leaves a message with no wrapper prefix unchanged', () => {
+    expect(formatRunError('flow has no trigger node')).toBe('flow has no trigger node');
+  });
+
+  it('drops a bare trailing colon left over from a single, unstripped wrapper label', () => {
+    expect(formatRunError('capability error:')).toBe('capability error');
+  });
+
+  it('falls back to the original message rather than returning an empty string', () => {
+    expect(formatRunError(':')).toBe(':');
   });
 });
 

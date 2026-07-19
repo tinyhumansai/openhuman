@@ -1527,6 +1527,38 @@ async fn connected_toolkit_slugs(config: &Config) -> Option<Vec<String>> {
     )
 }
 
+/// Effect-aware classification of a Composio `tool_call` slug into the
+/// [`CommandClass`] the autonomy-tier gate ([`enforce_node_tier_gate`])
+/// evaluates it under.
+///
+/// Reuses [`curated_scope_for`](crate::openhuman::memory_sync::composio::providers::curated_scope_for),
+/// the same catalog walk `composio::ops`'s `gated_tools` hints use — a
+/// registered native provider's `curated_tools()` first, then the static
+/// `catalog_for_toolkit` fallback. **Fail-safe by construction:** only a
+/// slug that resolves to a curated entry with `ToolScope::Read` maps to
+/// `CommandClass::Read` (the one class every tier `Allow`s outright, so a
+/// read never parks as a pending approval). Every other outcome — a
+/// curated `Write`/`Admin` entry, a toolkit with no catalog entry for this
+/// slug, a toolkit with no catalog at all, or an unparseable/empty slug —
+/// maps to `CommandClass::Network`, the same class `http_request` uses
+/// (prompts under Supervised/Full, blocks under ReadOnly).
+///
+/// Deliberately does **not** fall back to
+/// [`classify_unknown`](crate::openhuman::memory_sync::composio::providers::classify_unknown)
+/// for uncurated slugs: that heuristic is tuned for the *curation*
+/// allowlist (`flow_tool_allowed`'s Path B — "is this slug even visible to
+/// the agent"), not for deciding whether a real side-effecting call skips
+/// a human approval prompt. A "SEARCH"/"GET"-shaped uncurated slug must
+/// still prompt until OpenHuman has actually hand-curated it as `Read`.
+async fn classify_composio_action_for_tier(slug: &str) -> CommandClass {
+    use crate::openhuman::memory_sync::composio::providers::{curated_scope_for, ToolScope};
+
+    match curated_scope_for(slug) {
+        Some(ToolScope::Read) => CommandClass::Read,
+        Some(ToolScope::Write) | Some(ToolScope::Admin) | None => CommandClass::Network,
+    }
+}
+
 /// Deny-by-default curation gate for a flow `tool_call` slug (see
 /// [`flow_tool_allowed`] for the decision matrix). Fetches the user's live
 /// connected-toolkit set only when the slug's toolkit has no static catalog.
@@ -1616,6 +1648,7 @@ async fn resolve_composio_account(
 /// // approval when a trigger-driven run's tool/http config contains `=`-exprs.
 pub struct OpenHumanTools {
     pub config: Arc<Config>,
+    pub security: Arc<SecurityPolicy>,
 }
 
 /// Prefix marking a `tool_call` node's slug as a NATIVE OpenHuman tool (the
@@ -2562,18 +2595,13 @@ impl ToolInvoker for OpenHumanTools {
                 ));
             }
 
-            let security = SecurityPolicy::from_config(
-                &self.config.autonomy,
-                &self.config.workspace_dir,
-                &self.config.action_dir,
-            );
             let class = crate::openhuman::runtime_node::ops::classify_tool_call(
                 &self.config,
                 tool_name,
                 &args,
             )
             .map_err(EngineError::Capability)?;
-            let tier_decision = enforce_node_tier_gate(&security, class, "tool_call")?;
+            let tier_decision = enforce_node_tier_gate(&self.security, class, "tool_call")?;
             let summary = crate::openhuman::approval::summarize_action(tool_name, &args);
             let redacted = crate::openhuman::approval::redact_args(&args);
             let (outcome, _request_id) =
@@ -2601,6 +2629,30 @@ impl ToolInvoker for OpenHumanTools {
             });
         }
 
+        // Autonomy-tier gate (Phase 2, made effect-aware): the node's
+        // [`CommandClass`] is derived from the action's curated
+        // [`ToolScope`](crate::openhuman::memory_sync::composio::providers::ToolScope)
+        // via [`classify_composio_action_for_tier`] — a curated Read action
+        // (e.g. `TWITTER_RECENT_SEARCH`) is `CommandClass::Read`, which every
+        // tier `Allow`s; a curated Write/Admin action, or anything not
+        // curated, is `CommandClass::Network` (same class `http_request`
+        // uses — fail-safe: only a curated Read skips the prompt). A
+        // read-only run `Block`s on a non-Read class here and never reaches
+        // curation, the preflight, or the approval gate; Supervised/Full
+        // fall through to `gate_call_for_tier` below. Runs BEFORE the
+        // curation check (unlike the pre-fix behavior) so a read-only tier
+        // can never even probe which slugs are curated.
+        let composio_class = classify_composio_action_for_tier(slug).await;
+        let tier_decision = enforce_node_tier_gate(&self.security, composio_class, "tool_call")?;
+        tracing::debug!(
+            target: "flows",
+            %slug,
+            ?composio_class,
+            ?tier_decision,
+            tier = ?self.security.autonomy,
+            "[flows] tool_call: composio node tier gate evaluated"
+        );
+
         // Curation + scope gate — hard allowlist (see [`is_curated_flow_tool`]'s
         // doc for why this differs from the general agent tool-call path).
         // Runs before anything else — a rejected slug never reaches the
@@ -2623,22 +2675,41 @@ impl ToolInvoker for OpenHumanTools {
         // provider or asks the user to approve a call that cannot succeed.
         preflight_composio_args(&self.config, slug, &args).await?;
 
-        // Approval gate (see the struct doc). Mirrors
-        // `tinyagents/middleware.rs::ApprovalSecurityMiddleware::wrap_tool`'s
-        // shape exactly: compute summary/redacted args only when a gate is
-        // installed, deny short-circuits before any composio call, allow
-        // records an audit id to close out after the call resolves.
-        let mut audit_id: Option<String> = None;
-        if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
-            let summary = crate::openhuman::approval::summarize_action(slug, &args);
-            let redacted = crate::openhuman::approval::redact_args(&args);
-            let (outcome, request_id) = gate.intercept_audited(slug, &summary, redacted).await;
-            match outcome {
-                crate::openhuman::approval::GateOutcome::Deny { reason } => {
-                    return Err(EngineError::Capability(reason));
-                }
-                crate::openhuman::approval::GateOutcome::Allow => audit_id = request_id,
-            }
+        // Approval gate (see the struct doc). Mirrors `OpenHumanHttp::request`'s
+        // shape exactly: `gate_call_for_tier` is what actually performs the
+        // `Prompt` round-trip — it escalates a Supervised `Prompt` decision
+        // into a forced approval regardless of the flow's own
+        // `require_approval` toggle (Codex P1), same as the `http_request` and
+        // `code` node paths. Deny short-circuits before any composio call;
+        // Allow records an audit id to close out after the call resolves.
+        //
+        // Effect-aware short-circuit: when the tier decision is already
+        // `Allow` (a curated Read action — the only `CommandClass` this
+        // classifier maps to `Read`), skip `gate_call_for_tier`/
+        // `intercept_audited` entirely. This matters
+        // because `flows/ops.rs`'s Rule 2 force-sets `require_approval: true`
+        // on any saved flow that contains a `tool_call` node, regardless of
+        // which actions it calls — without this short-circuit, that forced
+        // `Workflow { require_approval: true }` origin would still route a
+        // curated-Read `Allow` decision through `intercept_audited`'s normal
+        // parking flow, re-introducing the "reads wait for approval" bug via
+        // a different path than the one this fix closes at the tier gate.
+        // Refining Rule 2 itself to be scope-aware is a deferred follow-up.
+        let summary = crate::openhuman::approval::summarize_action(slug, &args);
+        let redacted = crate::openhuman::approval::redact_args(&args);
+        let (outcome, audit_id) = if tier_decision == GateDecision::Allow {
+            (crate::openhuman::approval::GateOutcome::Allow, None)
+        } else {
+            gate_call_for_tier(tier_decision, slug, &summary, redacted).await
+        };
+        if let crate::openhuman::approval::GateOutcome::Deny { reason } = outcome {
+            tracing::warn!(
+                target: "flows",
+                %slug,
+                ?tier_decision,
+                "[flows] tool_call: approval gate denied before Composio dispatch"
+            );
+            return Err(EngineError::Capability(reason));
         }
 
         let kind = create_composio_client(&self.config)
@@ -3277,6 +3348,7 @@ pub fn build_capabilities(config: Arc<Config>, state_namespace: impl Into<String
         }),
         tools: Arc::new(OpenHumanTools {
             config: config.clone(),
+            security: security.clone(),
         }),
         http: Arc::new(OpenHumanHttp {
             security: security.clone(),
@@ -4169,6 +4241,191 @@ mod tests {
         } else {
             panic!("expected EngineError::Capability");
         }
+    }
+
+    /// End-to-end at the adapter: a Composio `tool_call` node under a
+    /// read-only tier is refused BEFORE it ever reaches the curation gate or
+    /// any Composio dispatch — closes the compound bypass where the Composio
+    /// branch of `OpenHumanTools::invoke` reached `intercept_audited` without
+    /// ever consulting the autonomy tier, unlike the native `oh:`,
+    /// `http_request`, and `code` node paths, which all gate on tier first.
+    #[tokio::test]
+    async fn composio_tool_call_blocks_under_readonly_tier() {
+        use crate::openhuman::security::AutonomyLevel;
+
+        let tools = OpenHumanTools {
+            config: Arc::new(Config::default()),
+            security: Arc::new(policy(AutonomyLevel::ReadOnly)),
+        };
+
+        let err = tools
+            .invoke("SLACK_SEND_MESSAGE", json!({}), None)
+            .await
+            .expect_err("read-only tier must block a Composio tool_call node before dispatch");
+        if let EngineError::Capability(msg) = err {
+            assert!(
+                msg.contains(POLICY_BLOCKED_MARKER),
+                "expected a policy-blocked refusal, got: {msg}"
+            );
+        } else {
+            panic!("expected EngineError::Capability");
+        }
+    }
+
+    // ── Effect-aware Composio tier gating (fixes reads parking as pending
+    // approvals): the tier gate must classify a Composio action by its
+    // curated [`ToolScope`], not blanket-treat every action as `Network`.
+    // Only a curated `Read` entry skips the prompt; curated `Write`/`Admin`,
+    // an uncurated toolkit, or an unparseable slug all still classify as
+    // `Network` (fail-safe — same class `http_request` uses).
+
+    /// A genuinely curated read (`TWITTER_RECENT_SEARCH`) must resolve to
+    /// `CommandClass::Read`, which `ReadOnly`'s gate matrix allows — closing
+    /// the bug where every Composio action (reads included) hard-blocked
+    /// under a read-only tier.
+    #[tokio::test]
+    async fn composio_read_action_allowed_under_readonly_tier() {
+        use crate::openhuman::security::AutonomyLevel;
+
+        let class = classify_composio_action_for_tier("TWITTER_RECENT_SEARCH").await;
+        assert_eq!(class, CommandClass::Read);
+        assert_eq!(
+            enforce_node_tier_gate(&policy(AutonomyLevel::ReadOnly), class, "tool_call")
+                .expect("a curated Read action must not be blocked under ReadOnly"),
+            GateDecision::Allow
+        );
+
+        // End-to-end: the adapter itself must not refuse before dispatch —
+        // it may still fail downstream (no Composio session configured in
+        // this test), but never with the policy-blocked marker.
+        let tools = OpenHumanTools {
+            config: Arc::new(Config::default()),
+            security: Arc::new(policy(AutonomyLevel::ReadOnly)),
+        };
+        let err = tools
+            .invoke("TWITTER_RECENT_SEARCH", json!({}), None)
+            .await
+            .expect_err("no live Composio session is configured in this test");
+        if let EngineError::Capability(msg) = err {
+            assert!(
+                !msg.contains(POLICY_BLOCKED_MARKER),
+                "a curated read must never be refused by the autonomy-tier gate, got: {msg}"
+            );
+        } else {
+            panic!("expected EngineError::Capability");
+        }
+    }
+
+    /// A curated read under Supervised classifies as `CommandClass::Read`,
+    /// which the gate matrix always `Allow`s — so it can never trigger the
+    /// Supervised `Prompt` round-trip (the actual pending-approval bug: a
+    /// blanket `Network` classification prompted for every Composio call,
+    /// reads included).
+    #[tokio::test]
+    async fn composio_read_action_does_not_prompt_under_supervised_tier() {
+        use crate::openhuman::security::AutonomyLevel;
+
+        let class = classify_composio_action_for_tier("TWITTER_RECENT_SEARCH").await;
+        assert_eq!(class, CommandClass::Read);
+        assert_eq!(
+            enforce_node_tier_gate(&policy(AutonomyLevel::Supervised), class, "tool_call")
+                .expect("a curated Read action must not be blocked under Supervised"),
+            GateDecision::Allow,
+            "a curated read must resolve to Allow, never Prompt, under Supervised"
+        );
+
+        let tools = OpenHumanTools {
+            config: Arc::new(Config::default()),
+            security: Arc::new(policy(AutonomyLevel::Supervised)),
+        };
+        let err = tools
+            .invoke("TWITTER_RECENT_SEARCH", json!({}), None)
+            .await
+            .expect_err("no live Composio session is configured in this test");
+        if let EngineError::Capability(msg) = err {
+            assert!(
+                !msg.contains(POLICY_BLOCKED_MARKER),
+                "a curated read must pass the tier gate under Supervised, got: {msg}"
+            );
+        } else {
+            panic!("expected EngineError::Capability");
+        }
+    }
+
+    /// Guard: a curated *write* action must still resolve to a
+    /// `Network`-class decision that `Prompt`s under Supervised — the
+    /// effect-aware classification must never widen who skips approval
+    /// beyond curated reads.
+    #[tokio::test]
+    async fn composio_write_action_still_prompts_under_supervised_tier() {
+        use crate::openhuman::security::AutonomyLevel;
+
+        for slug in ["TWITTER_CREATION_OF_A_POST", "GMAIL_SEND_EMAIL"] {
+            let class = classify_composio_action_for_tier(slug).await;
+            assert_eq!(
+                class,
+                CommandClass::Network,
+                "slug {slug} must classify as Network"
+            );
+            assert_eq!(
+                enforce_node_tier_gate(&policy(AutonomyLevel::Supervised), class, "tool_call")
+                    .expect(
+                        "a Network-class action is not blocked (only prompted) under Supervised"
+                    ),
+                GateDecision::Prompt,
+                "slug {slug} must still require a Supervised-tier approval prompt"
+            );
+        }
+    }
+
+    /// Guard: an uncurated / unrecognized slug must fail safe to
+    /// `Network` (never `Read`) so it still prompts under Supervised and
+    /// blocks under ReadOnly — an agent can't dodge approval just by
+    /// calling a toolkit action OpenHuman hasn't curated yet.
+    #[tokio::test]
+    async fn composio_unknown_slug_prompts_under_supervised_tier() {
+        use crate::openhuman::security::AutonomyLevel;
+
+        let class = classify_composio_action_for_tier("UNKNOWN_SERVICE_DO_THING").await;
+        assert_eq!(class, CommandClass::Network);
+        assert_eq!(
+            enforce_node_tier_gate(&policy(AutonomyLevel::Supervised), class, "tool_call")
+                .expect("Network-class is prompted, not blocked, under Supervised"),
+            GateDecision::Prompt
+        );
+        assert!(
+            enforce_node_tier_gate(&policy(AutonomyLevel::ReadOnly), class, "tool_call").is_err()
+        );
+    }
+
+    /// Unit coverage of the classifier itself, independent of the gate: a
+    /// curated Read entry classifies as `Read`; curated Write/Admin entries,
+    /// an uncurated toolkit, and an unparseable/empty slug all classify as
+    /// `Network` (fail-safe default — never silently widen to Read).
+    #[tokio::test]
+    async fn classify_composio_action_for_tier_matches_curated_scope_fail_safe() {
+        assert_eq!(
+            classify_composio_action_for_tier("TWITTER_RECENT_SEARCH").await,
+            CommandClass::Read
+        );
+        assert_eq!(
+            classify_composio_action_for_tier("TWITTER_CREATION_OF_A_POST").await,
+            CommandClass::Network
+        );
+        assert_eq!(
+            classify_composio_action_for_tier("TWITTER_POST_DELETE_BY_POST_ID").await,
+            CommandClass::Network
+        );
+        // Uncurated toolkit (no catalog at all for "unknown").
+        assert_eq!(
+            classify_composio_action_for_tier("UNKNOWN_SERVICE_DO_THING").await,
+            CommandClass::Network
+        );
+        // Unparseable / empty slug.
+        assert_eq!(
+            classify_composio_action_for_tier("").await,
+            CommandClass::Network
+        );
     }
 
     // ── Codex P1: Prompt-tier decisions must escalate past a workflow's own

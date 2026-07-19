@@ -30,7 +30,6 @@ pub use providers::qq;
 pub use providers::signal;
 pub use providers::slack;
 pub use providers::telegram;
-pub use providers::web;
 pub use providers::whatsapp;
 #[cfg(feature = "whatsapp-web")]
 pub use providers::whatsapp_web;

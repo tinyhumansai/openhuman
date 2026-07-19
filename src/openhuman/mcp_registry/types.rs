@@ -170,6 +170,33 @@ pub struct McpTool {
     pub input_schema: Value,
 }
 
+// ── ConnectedServerOverview ─────────────────────────────────────────────────
+
+/// One connected server's identity + advertised tools, for prompt-surface
+/// discovery (the orchestrator's "## Connected MCP Servers" block). Sourced
+/// entirely from the live connection map — no `Config`, no store read.
+///
+/// Lives here (rather than beside the live connection map in [`super::connections`],
+/// where it was originally defined) because it is an inert, dependency-free
+/// data type consumed by the ALWAYS-COMPILED orchestrator prompt builder. The
+/// `mcp` Cargo feature gates `connections` — which owns the tokio/stdio
+/// machinery — but this type must survive that gate. Keeping the single
+/// definition here and re-exporting it from `connections` means the disabled
+/// build reuses the real type instead of a hand-mirrored stub copy, so the
+/// struct's fields can never drift between the two builds.
+#[derive(Debug, Clone)]
+pub struct ConnectedServerOverview {
+    pub server_id: String,
+    pub qualified_name: String,
+    pub display_name: String,
+    /// Short registry description — the primary capability hint surfaced in
+    /// the orchestrator prompt (mirrors Composio's per-toolkit description).
+    pub description: Option<String>,
+    /// Advertised tools — retained for a tool-count fallback when a server
+    /// has no description, and for any caller that wants the full list.
+    pub tools: Vec<McpTool>,
+}
+
 // ── ConnStatus ──────────────────────────────────────────────────────────────
 
 /// Connection status summary for one installed server.

@@ -234,6 +234,88 @@ fn voice_and_audio_controllers_absent_when_feature_off() {
     );
 }
 
+/// With the `skills` feature on (the default), all three skill domains are
+/// compiled in and registered — the desktop build is byte-identical.
+#[test]
+#[cfg(feature = "skills")]
+fn skill_controllers_registered_when_feature_on() {
+    let schemas = all_controller_schemas();
+    for ns in ["skills", "skill_runtime", "skill_registry"] {
+        assert!(
+            schemas.iter().any(|s| s.namespace == ns),
+            "`{ns}` controllers must be registered when the `skills` feature is on"
+        );
+    }
+}
+
+/// With the `skills` feature off, all three domains are compiled out: their
+/// controllers never enter the registry, so skills RPC methods are
+/// unknown-method and absent from `/schema`. This is the compile-time
+/// stub-facade correctness gate (see `openhuman::skills::stub`).
+///
+/// Note this does NOT cover `skills::types` / `skills::ops_types`: those stay
+/// compiled in both directions (the type carve-out — `tools::traits` re-exports
+/// `ToolResult`/`ToolContent` out of them), but they expose no controllers, so
+/// the namespaces are absent either way.
+#[test]
+#[cfg(not(feature = "skills"))]
+fn skill_controllers_absent_when_feature_off() {
+    let schemas = all_controller_schemas();
+    assert!(
+        !schemas.iter().any(|s| s.namespace == "skills"
+            || s.namespace == "skill_runtime"
+            || s.namespace == "skill_registry"),
+        "skills/skill_runtime/skill_registry controllers must be compiled out \
+         when the `skills` feature is off"
+    );
+}
+
+/// With the `web3` feature on (the default), the wallet + web3 + x402
+/// controllers are compiled in and registered, and the high-level web3 agent
+/// tools (swap/bridge/dapp) are present — the desktop build is byte-identical.
+#[test]
+#[cfg(feature = "web3")]
+fn wallet_web3_x402_controllers_registered_when_feature_on() {
+    let schemas = all_controller_schemas();
+    assert!(
+        schemas.iter().any(|s| s.namespace == "wallet"),
+        "wallet controllers must be registered when the `web3` feature is on"
+    );
+    assert!(
+        schemas.iter().any(|s| s.namespace.starts_with("web3_")),
+        "web3 (swap/bridge/dapp) controllers must be registered when the `web3` feature is on"
+    );
+    assert!(
+        schemas.iter().any(|s| s.namespace == "x402"),
+        "x402 controllers must be registered when the `web3` feature is on"
+    );
+    assert!(
+        !crate::openhuman::web3::all_web3_agent_tools().is_empty(),
+        "web3 agent tools must be present when the `web3` feature is on"
+    );
+}
+
+/// With the `web3` feature off, all three domains are compiled out: their
+/// controllers never enter the registry (wallet/web3/x402 RPC methods are
+/// unknown-method and absent from `/schema`) and the web3 agent tools are
+/// gone. This is the compile-time stub-facade correctness gate (see
+/// `openhuman::{wallet,web3,x402}::stub`).
+#[test]
+#[cfg(not(feature = "web3"))]
+fn wallet_web3_x402_controllers_absent_when_feature_off() {
+    let schemas = all_controller_schemas();
+    assert!(
+        !schemas.iter().any(|s| s.namespace == "wallet"
+            || s.namespace.starts_with("web3_")
+            || s.namespace == "x402"),
+        "wallet/web3/x402 controllers must be compiled out when the `web3` feature is off"
+    );
+    assert!(
+        crate::openhuman::web3::all_web3_agent_tools().is_empty(),
+        "web3 agent tools must be gone when the `web3` feature is off"
+    );
+}
+
 #[test]
 fn schema_for_rpc_method_finds_known_method() {
     let schema = schema_for_rpc_method("openhuman.health_snapshot");
@@ -253,6 +335,7 @@ fn schema_for_rpc_method_finds_security_policy_info() {
 }
 
 #[test]
+#[cfg(feature = "mcp")]
 fn schema_for_rpc_method_finds_internal_mcp_audit_list() {
     let schema = schema_for_rpc_method("openhuman.mcp_audit_list");
     assert!(
@@ -738,7 +821,11 @@ async fn harness_excludes_gated_namespaces() {
         .iter()
         .map(|s| s.namespace)
         .collect();
+    #[cfg(feature = "flows")]
     assert!(full_ns.contains("flows"), "full() must expose flows");
+    // `voice` was the pathfinder gate (#4803) and predates this per-assert cfg
+    // convention; gate it like its siblings so the disabled build passes (#5022).
+    #[cfg(feature = "voice")]
     assert!(full_ns.contains("voice"), "full() must expose voice");
 
     let ctx = CoreContext::for_test(DomainSet::harness(), None);
@@ -777,6 +864,12 @@ async fn harness_excludes_gated_namespaces() {
     );
 }
 
+// Uses a `flows.*` method as its gated-family vehicle, so the whole test is
+// `#[cfg(feature = "flows")]`: without the feature there is no flows controller
+// in the registry at all and the `.expect()` below would panic. The runtime
+// gating this proves is orthogonal to the compile-time gate, and CI runs the
+// test suite on default features (flows ON), so no coverage is lost there.
+#[cfg(feature = "flows")]
 #[tokio::test]
 async fn dispatch_returns_none_for_gated_method() {
     // A method whose group is gated OFF under the ambient DomainSet must
@@ -808,6 +901,8 @@ async fn dispatch_returns_none_for_gated_method() {
     );
 }
 
+// Same flows-vehicle reasoning as `dispatch_returns_none_for_gated_method`.
+#[cfg(feature = "flows")]
 #[tokio::test]
 async fn schema_lookup_is_gated_in_lockstep_with_dispatch() {
     // #4808 review: `schema_for_rpc_method` must gate identically to
@@ -857,12 +952,146 @@ fn group_mapping_smoke() {
     assert_eq!(group_for_namespace("config"), Some(DomainGroup::Config));
     assert_eq!(group_for_namespace("security"), Some(DomainGroup::Security));
     assert_eq!(group_for_namespace("agent"), Some(DomainGroup::Agent));
-    // …and a representative gated one maps to its gate group.
+    // …and a representative gated one maps to its gate group. `group_for_namespace`
+    // reads the real controller registry, so a compile-time-gated family has no
+    // entry to map when its feature is off.
+    #[cfg(feature = "flows")]
     assert_eq!(group_for_namespace("flows"), Some(DomainGroup::Flows));
+    // `group_for_namespace` is registry-derived, so a compile-time-gated domain
+    // has no controller to map. Skip when its Cargo feature is off.
+    #[cfg(feature = "skills")]
     assert_eq!(group_for_namespace("skills"), Some(DomainGroup::Skills));
+    // `voice` predates the per-assert cfg convention (#4803); registry-derived, so
+    // it has no entry to map when the feature is off. Gate like its siblings (#5022).
+    #[cfg(feature = "voice")]
     assert_eq!(group_for_namespace("voice"), Some(DomainGroup::Voice));
+    #[cfg(feature = "web3")]
     assert_eq!(group_for_namespace("wallet"), Some(DomainGroup::Web3));
+    // `meet` is compiled out under `--no-default-features`, so the registry has
+    // no entry to map (#4800).
+    #[cfg(feature = "meet")]
     assert_eq!(group_for_namespace("meet"), Some(DomainGroup::Meet));
     // Internal-only registry is grouped too (mcp_audit → Mcp).
+    // Compiled out with the `mcp` feature: `group_for_namespace` reads the LIVE
+    // registry, and the gate unregisters the mcp_audit controller entirely.
+    #[cfg(feature = "mcp")]
     assert_eq!(group_for_namespace("mcp_audit"), Some(DomainGroup::Mcp));
+}
+
+// --- `mcp` compile-time gate (#4799) ------------------------------------
+
+/// With the `mcp` feature ON (the default / shipped desktop build), both MCP
+/// namespaces are registered: `mcp_clients` (the dynamic Smithery registry,
+/// agent-facing) and `mcp_audit` (the write-audit log, internal-only).
+///
+/// Paired with `mcp_namespaces_absent_when_gate_off` below so the gate is
+/// pinned in BOTH directions — an assert that only ever runs in one build
+/// configuration cannot prove a gate works.
+#[test]
+#[cfg(feature = "mcp")]
+fn mcp_namespaces_registered_when_gate_on() {
+    assert_eq!(
+        group_for_namespace("mcp_clients"),
+        Some(DomainGroup::Mcp),
+        "with `mcp` compiled in, the dynamic registry's `mcp_clients` \
+         namespace must be registered"
+    );
+    assert_eq!(
+        group_for_namespace("mcp_audit"),
+        Some(DomainGroup::Mcp),
+        "with `mcp` compiled in, the internal `mcp_audit` namespace must be \
+         registered"
+    );
+}
+
+/// With the `mcp` feature OFF, both MCP namespaces are gone from the live
+/// registry — every `openhuman.mcp_clients_*` / `openhuman.mcp_audit_*` method
+/// is an unknown method over `/rpc` and absent from `/schema`.
+///
+/// This is the compile-time analogue of the runtime `DomainSet::mcp` filter:
+/// `DomainSet` can hide these namespaces at runtime, this feature removes the
+/// code that backs them altogether. Note the stubs make this work with NO
+/// `#[cfg]` in `src/core/all.rs` — the aggregators simply return empty vecs.
+#[test]
+#[cfg(not(feature = "mcp"))]
+fn mcp_namespaces_absent_when_gate_off() {
+    assert_eq!(
+        group_for_namespace("mcp_clients"),
+        None,
+        "with `mcp` compiled out, the `mcp_clients` namespace must not be \
+         registered — the stub aggregator returns an empty vec"
+    );
+    assert_eq!(
+        group_for_namespace("mcp_audit"),
+        None,
+        "with `mcp` compiled out, the internal `mcp_audit` namespace must not \
+         be registered — the stub aggregator returns an empty vec"
+    );
+}
+
+// --- #4797: `flows` compile-time gate (directional proof) -------------------
+//
+// One namespace, not three: `tinyflows` registers no controllers, and
+// `rhai_workflows` is `scope() = AgentOnly` (no controller schemas in v1), so
+// `flows` is the gate's entire controller surface.
+
+#[cfg(feature = "flows")]
+#[test]
+fn flows_controllers_registered_when_feature_on() {
+    let namespaces: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.namespace)
+        .collect();
+    assert!(
+        namespaces.contains(&"flows"),
+        "with the `flows` feature ON the flows controllers must be registered"
+    );
+}
+
+#[cfg(not(feature = "flows"))]
+#[test]
+fn flows_controllers_absent_when_feature_off() {
+    let namespaces: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.namespace)
+        .collect();
+    assert!(
+        !namespaces.contains(&"flows"),
+        "with the `flows` feature OFF the flows controllers must be absent \
+         (unknown-method over /rpc, omitted from /schema)"
+    );
+}
+
+/// All three Meet namespaces register when the `meet` feature is on (#4800).
+///
+/// Paired with `meet_controllers_absent_when_feature_off` below: together they
+/// pin *both* directions of the compile-time gate. The negative half is the one
+/// that actually proves the gate does something — a gate that never removes
+/// anything would still pass this positive test.
+#[cfg(feature = "meet")]
+#[test]
+fn meet_controllers_registered_when_feature_on() {
+    for ns in ["meet", "agent_meetings", "meet_agent"] {
+        assert_eq!(
+            group_for_namespace(ns),
+            Some(DomainGroup::Meet),
+            "`{ns}` must register under DomainGroup::Meet when the `meet` feature is on"
+        );
+    }
+}
+
+/// No Meet namespace registers when the `meet` feature is off (#4800).
+///
+/// This is the half that proves the gate: with `meet` compiled out the three
+/// domains must leave zero trace in either the public or the internal registry.
+#[cfg(not(feature = "meet"))]
+#[test]
+fn meet_controllers_absent_when_feature_off() {
+    for ns in ["meet", "agent_meetings", "meet_agent"] {
+        assert_eq!(
+            group_for_namespace(ns),
+            None,
+            "`{ns}` must not register when the `meet` feature is off"
+        );
+    }
 }

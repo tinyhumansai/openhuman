@@ -17,6 +17,7 @@
  *    mounts a `HashRouter`, so full `useBlocker` interception isn't available —
  *    the Back button is this page's only in-app navigation affordance.)
  */
+import type { Viewport } from '@xyflow/react';
 import createDebug from 'debug';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -145,6 +146,9 @@ export function asCopilotRepairSeed(state: unknown): CopilotRepairSeed | null {
 
 const log = createDebug('app:flows:canvas');
 
+/** How long the run-error banner stays up before it auto-dismisses. */
+const RUN_ERROR_AUTO_DISMISS_MS = 12_000;
+
 /** Which panel (if any) the canvas side rail shows. Driven by the header toggle. */
 type SidePanel = 'copilot' | 'legend' | null;
 
@@ -156,6 +160,28 @@ type LoadState =
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Run-start failures bubble up through several `thiserror`-wrapped tinyflows
+ * layers, each re-tagging the one beneath it (e.g. "capability error: graph
+ * error: capability error: code node exited non-zero (timed_out=false):").
+ * The nesting is meaningless to the user — strip repeated "<word> error: "
+ * wrapper prefixes so only the innermost, actionable tail is shown. Scoped
+ * to the run-error banner only (`handleRun`'s catch); other error surfaces
+ * in this file keep the raw message since their shapes differ. Pure and
+ * exported for direct unit testing without rendering `FlowEditor`.
+ */
+export function formatRunError(message: string): string {
+  const wrapperPrefix = /^\w+\s+error:\s*/i;
+  let rest = message;
+  let match = wrapperPrefix.exec(rest);
+  while (match && match[0].length < rest.length) {
+    rest = rest.slice(match[0].length);
+    match = wrapperPrefix.exec(rest);
+  }
+  const trimmed = rest.replace(/:\s*$/, '').trim();
+  return trimmed || message.trim();
 }
 
 /**
@@ -277,6 +303,22 @@ function FlowEditor({
   // Save/Discard now live in the page header; the canvas reports its Save state
   // up and exposes save()/discard() via this handle.
   const canvasRef = useRef<EditableFlowCanvasHandle>(null);
+  // F4/F5 fix: the editable canvas is remounted on every Save/Accept/Reject
+  // (keyed on `canvasVersion` below), which previously wiped BOTH the
+  // pan/zoom viewport (React Flow's `fitView` refits on every mount) and the
+  // undo history. This ref lives on `FlowEditor` — keyed on `flow.id`, not
+  // `canvasVersion` — so it survives those remounts and can seed the fresh
+  // canvas's `defaultViewport`, skipping `fitView` and preserving pan/zoom
+  // across a Save. (The undo-history wipe is a known, accepted limitation —
+  // Save/Accept are commit points, so resetting undo there is semantically
+  // fine; see the PR description.)
+  const viewportRef = useRef<Viewport | null>(null);
+  const handleViewportChange = useCallback((vp: Viewport) => {
+    viewportRef.current = vp;
+    // Grep-friendly, numeric-only (no PII) — fires on every pan/zoom, so kept
+    // to plain numbers rather than the full `Viewport` object.
+    log('viewport capture: x=%d y=%d zoom=%d', vp.x, vp.y, vp.zoom);
+  }, []);
   const [saveMeta, setSaveMeta] = useState<EditorSaveMeta>({
     dirty: false,
     hasErrors: false,
@@ -429,14 +471,21 @@ function FlowEditor({
   // (schema migration, id defaults, port normalization, etc.) before
   // persisting, so the canonical saved shape can differ from what the client
   // sent. Re-sync the canvas draft from the RESPONSE (not just the just-sent
-  // `next`) and bump `canvasVersion` so the editable canvas re-seeds from the
-  // canonical persisted graph immediately — matching what a navigate-away-
-  // and-back remount would show, without requiring one.
+  // `next`) always; only bump `canvasVersion` — remounting the editable canvas
+  // to re-seed from the canonical persisted graph — when that response
+  // actually DIFFERS from what was sent (F4/F5 fix: an unconditional bump
+  // here wiped the canvas's undo history and viewport on every Save even when
+  // the server echoed the graph back unchanged, and double-remounted on
+  // Accept, which already bumps once for its own preview→draft transition).
   //
   // Declared ahead of `handleAcceptProposal` (below), which calls it directly
   // to persist an accepted proposal immediately.
   const handleSave = useCallback(
-    async (next: WorkflowGraph, overrideName?: string, overrideRequireApproval?: boolean) => {
+    async (
+      next: WorkflowGraph,
+      overrideName?: string,
+      overrideRequireApproval?: boolean
+    ): Promise<{ remounted: boolean }> => {
       // `overrideName` covers the copilot-Accept call site: it calls
       // `setName(proposal.name)` and `handleSave(...)` in the same handler,
       // but `name` in THIS closure is still the pre-update value — React
@@ -463,7 +512,9 @@ function FlowEditor({
         const created = await createFlow(effectiveName, next, effectiveRequireApproval);
         log('save: draft persisted as flow id=%s', created.id);
         navigate(`/flows/${created.id}`, { replace: true });
-        return;
+        // Navigating replaces this whole page (new `flowId` route param), so
+        // "remounted" is moot for a draft-create — no caller branches on it.
+        return { remounted: false };
       }
       // Only include `name` / `requireApproval` in the update payload when
       // they actually diverge from what's already persisted (a manual
@@ -486,6 +537,10 @@ function FlowEditor({
         ...(requireApprovalChanged ? { requireApproval: effectiveRequireApproval } : {}),
       });
       const persisted = updated.graph as WorkflowGraph;
+      // `persistedGraphRef`/`setDraftGraph` run UNCONDITIONALLY regardless of
+      // whether a remount fires below — the dirty diff (`initialDirty`, B21)
+      // is computed against `persistedGraphRef`, not the canvas's own mount
+      // baseline, so it stays correct either way. Only the remount is gated.
       persistedGraphRef.current = persisted;
       persistedNameRef.current = updated.name;
       setDraftGraph(persisted);
@@ -496,15 +551,40 @@ function FlowEditor({
         setName(updated.name);
         setTitleDraft(updated.name);
       }
-      setCanvasVersion(v => v + 1);
+      // F4/F5 fix: only remount the canvas (wiping its undo history and,
+      // pre-Fix-A, its viewport) when the server actually normalized the
+      // graph into something different from what was sent (issue B21 — schema
+      // migration, id defaults, port normalization, etc.). When the response
+      // is a byte-for-byte echo of `next` (the common case), re-seeding from
+      // it would be a no-op remount — most visibly on Accept, whose own
+      // preview→draft transition already bumps `canvasVersion` once, so a
+      // guaranteed-normalized-away Save bump right after it was a pure
+      // double-remount (undo wipe + dirty flash) with no behavioral upside.
+      const graphChanged = JSON.stringify(persisted) !== JSON.stringify(next);
+      if (graphChanged) {
+        setCanvasVersion(v => v + 1);
+      }
       log(
-        'save: flow id=%s persisted — canvas re-synced from response nodes=%d edges=%d',
+        'save: flow id=%s persisted — canvas re-synced from response nodes=%d edges=%d graphChanged=%s',
         flowId,
         persisted.nodes.length,
-        persisted.edges.length
+        persisted.edges.length,
+        graphChanged
       );
+      return { remounted: graphChanged };
     },
     [isDraft, flowId, name, requireApproval, navigate]
+  );
+
+  // Adapter for the canvas's own `onSave` prop, whose type (`void |
+  // Promise<void>`) is shared with the read-only viewer and every other
+  // consumer — `handleSave`'s richer `{ remounted }` return (needed by
+  // `handleAcceptProposal` below) isn't part of that contract.
+  const onCanvasSave = useCallback(
+    async (next: WorkflowGraph) => {
+      await handleSave(next);
+    },
+    [handleSave]
   );
 
   const handleGraphChange = useCallback(
@@ -590,8 +670,25 @@ function FlowEditor({
       // `canvasVersion` bump above) so the ref's imperative handle is stale;
       // call `handleSave` directly with the known-good proposed graph.
       try {
-        await handleSave(proposedGraph, overrideName, proposal.requireApproval);
-        log('copilot proposal accepted: persisted');
+        const { remounted } = await handleSave(
+          proposedGraph,
+          overrideName,
+          proposal.requireApproval
+        );
+        // The canvas remounted once already (this handler's own bump above)
+        // with `forcedDirty` seeded `true` — correct pre-persist, but that
+        // instance's `forcedDirty` is only ever cleared by ITS OWN save()/
+        // discard(), neither of which fires here (we persisted directly,
+        // above). A second remount (`remounted === true`, server actually
+        // normalized the graph) reseeds a fresh instance with the now-correct
+        // `initialDirty`, so nothing else to do. Otherwise (the common
+        // echoed-back-unchanged case) explicitly sync the still-current
+        // instance so it doesn't read dirty forever (see
+        // `EditableFlowCanvasHandle.clearForcedDirty`'s doc comment).
+        if (!remounted) {
+          canvasRef.current?.clearForcedDirty();
+        }
+        log('copilot proposal accepted: persisted remounted=%s', remounted);
       } catch (err) {
         log('copilot proposal accepted: save failed err=%o', err);
         // Rethrow: the draft above is already applied unconditionally, so no
@@ -690,6 +787,17 @@ function FlowEditor({
       setRunning(false);
     }
   }, [flowId]);
+
+  // Auto-dismiss the run-error banner so a stale failure doesn't linger
+  // forever over the canvas. Re-runs (and thus restarts the timer) whenever
+  // `runError` changes — including a new failure replacing an old one, since
+  // `handleRun` always routes through `setRunError(null)` before setting the
+  // next message, so a later error is always a distinct effect run.
+  useEffect(() => {
+    if (!runError) return;
+    const timer = setTimeout(() => setRunError(null), RUN_ERROR_AUTO_DISMISS_MS);
+    return () => clearTimeout(timer);
+  }, [runError]);
 
   // Return to wherever the user came from rather than always the list. React
   // Router stamps the initial history entry with key 'default', so when this
@@ -881,7 +989,7 @@ function FlowEditor({
             nodes={nodes}
             edges={edges}
             meta={meta}
-            onSave={handleSave}
+            onSave={onCanvasSave}
             onDirtyChange={setDirty}
             onSaveMetaChange={setSaveMeta}
             activeRunId={activeRunId}
@@ -891,15 +999,49 @@ function FlowEditor({
             saveDisabled={preview !== null}
             initialDirty={initialDirty}
             showPalette={sidePanel === 'legend'}
+            savedViewport={viewportRef.current}
+            onViewportChange={handleViewportChange}
           />
 
           {runError && (
-            <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex justify-center">
+            // top-14 (not top-3) so this never overlaps the canvas's own
+            // top-right undo/redo controls, which sit at top-3; max-w-md
+            // caps how wide a long nested error can grow. When the legend
+            // palette is open it also docks at top-14/right-3 (w-48), so we
+            // pull the banner's right edge in past it (right-56) rather than
+            // centering across the full width, which would let a long
+            // message reach under the palette and swallow its clicks.
+            <div
+              className={`pointer-events-none absolute left-3 top-14 z-20 flex justify-center ${
+                sidePanel === 'legend' ? 'right-56' : 'right-3'
+              }`}>
               <div
                 role="alert"
                 data-testid="flow-canvas-run-error"
-                className="pointer-events-auto rounded-xl border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
-                {t('flows.editor.runFailed')}: {runError}
+                className="pointer-events-auto flex w-full max-w-md items-start gap-2 rounded-xl border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
+                <span className="flex-1">
+                  {t('flows.editor.runFailed')}: {formatRunError(runError)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setRunError(null)}
+                  aria-label={t('common.dismiss')}
+                  title={t('common.dismiss')}
+                  data-testid="flow-canvas-run-error-dismiss"
+                  className="flex-shrink-0 text-coral-500 hover:text-coral-700 dark:text-coral-300 dark:hover:text-coral-100">
+                  <svg
+                    className="h-3.5 w-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
               </div>
             </div>
           )}

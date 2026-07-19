@@ -78,7 +78,7 @@ const messages: TranslationMap = {
   'connections.welcome.eyebrow': 'সংযোগ',
   'connections.welcome.title': 'আপনি যা ব্যবহার করেন সবকিছু এক জায়গায়',
   'connections.welcome.body':
-    'আপনার মেসেজিং অ্যাপ, ইমেল, ক্যালেন্ডার এবং টুল সংযুক্ত করুন যাতে আপনার এজেন্ট প্রেক্ষাপট পড়তে এবং সেগুলো জুড়ে পদক্ষেপ নিতে পারে: এক ডজন ট্যাবের মধ্যে কপি-পেস্ট না করে। এটি কী স্পর্শ করতে পারে তার নিয়ন্ত্রণ আপনার হাতেই থাকে।',
+    'আপনার মেসেজিং অ্যাপ, ইমেল, ক্যালেন্ডার এবং টুল সংযুক্ত করুন যাতে আপনার এজেন্ট প্রেক্ষাপট পড়তে এবং সেগুলো জুড়ে পদক্ষেপ নিতে পারে, এক ডজন ট্যাবের মধ্যে কপি-পেস্ট না করে। এটি কী স্পর্শ করতে পারে তার নিয়ন্ত্রণ আপনার হাতেই থাকে।',
   'connections.welcome.ctaChannel': 'একটি চ্যানেল সংযুক্ত করুন',
   'connections.welcome.ctaApps': 'অ্যাপ সংযুক্ত করুন',
   'connections.welcome.ctaSkills': 'দক্ষতা ব্রাউজ করুন',
@@ -98,7 +98,7 @@ const messages: TranslationMap = {
   'notifications.welcome.eyebrow': 'বিজ্ঞপ্তি',
   'notifications.welcome.title': 'শুধু যা সত্যিই আপনাকে প্রয়োজন',
   'notifications.welcome.body':
-    'আপনার এজেন্টরা কী করেছে এবং কী একটি সিদ্ধান্তের প্রয়োজন তার একটি শান্ত, স্কোরকৃত সারসংক্ষেপ: যাতে গুরুত্বপূর্ণ বিষয়গুলো সামনে আসে এবং কোলাহল আপনার পথ থেকে দূরে থাকে।',
+    'আপনার এজেন্টরা কী করেছে এবং কী একটি সিদ্ধান্তের প্রয়োজন তার একটি শান্ত, স্কোরকৃত সারসংক্ষেপ, যাতে গুরুত্বপূর্ণ বিষয়গুলো সামনে আসে এবং কোলাহল আপনার পথ থেকে দূরে থাকে।',
   'notifications.welcome.ctaView': 'সতর্কতা দেখুন',
   'notifications.welcome.featsLabel': 'আপনি যা দেখবেন',
   'notifications.welcome.feat1Title': 'যা আপনাকে প্রয়োজন',
@@ -113,7 +113,7 @@ const messages: TranslationMap = {
   'rewards.welcome.eyebrow': 'পুরস্কার',
   'rewards.welcome.title': 'হাজির থাকার জন্য পুরস্কৃত হন',
   'rewards.welcome.body':
-    'আপনি OpenHuman ব্যবহার করার সাথে সাথে এবং অন্যদের আমন্ত্রণ জানানোর সাথে পয়েন্ট অর্জন করুন, আপনার স্ট্রিক বজায় রাখুন এবং যা অর্জন করেছেন তা রিডিম করুন: সবই এক জায়গায় ট্র্যাক করা।',
+    'আপনি OpenHuman ব্যবহার এবং অন্যদের আমন্ত্রণ জানানোর সময় পয়েন্ট অর্জন করুন, আপনার স্ট্রিক বজায় রাখুন এবং যা অর্জন করেছেন তা রিডিম করুন। সবকিছু এক জায়গায় ট্র্যাক করুন।',
   'rewards.welcome.ctaView': 'পুরস্কার দেখুন',
   'rewards.welcome.featsLabel': 'এটি কীভাবে কাজ করে',
   'rewards.welcome.feat1Title': 'পয়েন্ট অর্জন করুন',
@@ -127,7 +127,7 @@ const messages: TranslationMap = {
   'flows.welcome.eyebrow': 'ওয়ার্কফ্লো',
   'flows.welcome.title': 'ব্যস্ততার কাজকে অটোপাইলটে দিন',
   'flows.welcome.body':
-    'আপনি বারবার যা করেন তা বর্ণনা করুন: ট্রায়াজ, ফলো-আপ, সারসংক্ষেপ: এবং আপনার এজেন্ট এটিকে একটি ওয়ার্কফ্লোতে পরিণত করে যা সে শুরু থেকে শেষ পর্যন্ত, একটি সময়সূচি অনুযায়ী বা চাহিদামতো চালাতে পারে।',
+    'আপনি বারবার যা করেন তা বর্ণনা করুন (ট্রায়াজ, ফলো-আপ, সারসংক্ষেপ) এবং আপনার এজেন্ট এটিকে একটি ওয়ার্কফ্লোতে পরিণত করে যা সে শুরু থেকে শেষ পর্যন্ত, একটি সময়সূচি অনুযায়ী বা চাহিদামতো চালাতে পারে।',
   'flows.welcome.ctaNew': 'নতুন ওয়ার্কফ্লো',
   'flows.welcome.ctaBrowse': 'ওয়ার্কফ্লো ব্রাউজ করুন',
   'flows.welcome.featsLabel': 'আপনি যা স্বয়ংক্রিয় করতে পারেন',
@@ -331,7 +331,7 @@ const messages: TranslationMap = {
   'orchPage.medulla.title': 'Medulla',
   'orchPage.medulla.tagline': 'OpenHuman-এর অর্কেস্ট্রেশন মডেল',
   'orchPage.medulla.body':
-    'Medulla হলো OpenHuman-এর নিজস্বভাবে তৈরি LLM, যা একসঙ্গে হাজার হাজার এজেন্ট অর্কেস্ট্রেট করার জন্য প্রকৌশলিত: 10 মিলিয়ন-টোকেন কনটেক্সট উইন্ডো এবং অত্যন্ত কম খরচের অর্কেস্ট্রেশন সহ।',
+    'Medulla হলো OpenHuman-এর নিজস্বভাবে তৈরি LLM, যা একসঙ্গে হাজার হাজার এজেন্ট অর্কেস্ট্রেট করার জন্য প্রকৌশলিত, 10 মিলিয়ন-টোকেন কনটেক্সট উইন্ডো এবং অত্যন্ত কম খরচের অর্কেস্ট্রেশন সহ।',
   'orchPage.medulla.featAgents': 'হাজার হাজার এজেন্ট',
   'orchPage.medulla.featContext': '10M-টোকেন কনটেক্সট',
   'orchPage.medulla.featCost': 'কম খরচের অর্কেস্ট্রেশন',
@@ -455,13 +455,53 @@ const messages: TranslationMap = {
   'agentWorld.world.rooms.outside.name': 'বিশ্ব',
   'agentWorld.world.rooms.outside.description': 'ভবনঘেরা বড় খোলা প্লাজা।',
   'agentWorld.feed': 'ফিড',
+  'agentWorld.feed.loadMore': 'আরও লোড করুন',
+  'agentWorld.feed.loadingMore': 'আরও লোড হচ্ছে…',
+  'agentWorld.feed.loadMoreError': 'আরও পোস্ট লোড করা যায়নি। আবার চেষ্টা করুন।',
   'agentWorld.ledger': 'লেজার',
+  'agentWorld.profileViewer.description': 'সর্বজনীন প্রোফাইল',
+  'agentWorld.profileViewer.agentCard': 'এজেন্ট কার্ড',
+  'agentWorld.profileViewer.loading': 'প্রোফাইল লোড হচ্ছে…',
+  'agentWorld.profileViewer.notFoundTitle': 'প্রোফাইল পাওয়া যায়নি',
+  'agentWorld.profileViewer.notFoundBody': 'এই হ্যান্ডেলের জন্য এখনও কোনো প্রকাশিত প্রোফাইল নেই।',
+  'agentWorld.profileViewer.errorTitle': 'প্রোফাইল লোড করা যায়নি',
+  'agentWorld.profileViewer.follow': 'অনুসরণ',
+  'agentWorld.profileViewer.following': 'অনুসরণ করছেন',
+  'agentWorld.profileViewer.copyLink': 'লিঙ্ক কপি করুন',
+  'agentWorld.profileViewer.linkCopied': 'লিঙ্ক কপি হয়েছে',
+  'agentWorld.profileViewer.skills': 'দক্ষতা',
+  'agentWorld.profileViewer.verifiedAccounts': 'যাচাই করা অ্যাকাউন্ট',
+  'agentWorld.profileViewer.handlesOwned': 'মালিকানাধীন হ্যান্ডেল',
+  'agentWorld.profileViewer.followers': 'অনুসারী',
+  'agentWorld.profileViewer.followingCount': 'অনুসরণ করছেন',
+  'agentWorld.profileViewer.joined': 'যোগ দিয়েছেন',
+  'agentWorld.profileViewer.ownProfile': 'এটি আপনার প্রোফাইল',
+  'agentWorld.profileViewer.agentBadge': 'এজেন্ট',
+  'agentWorld.profileViewer.humanBadge': 'মানুষ',
+  'agentWorld.ledger.loadMore': 'আরও লোড করুন',
+  'agentWorld.ledger.loadingMore': 'আরও লোড হচ্ছে…',
+  'agentWorld.ledger.loadMoreError': 'আরও লেনদেন লোড করা যায়নি। আবার চেষ্টা করুন।',
   'agentWorld.jobs': 'চাকরি',
   'agentWorld.bounties': 'পুরস্কার',
   'agentWorld.explore': 'অন্বেষণ করুন',
   'agentWorld.directory': 'ডিরেক্টরি',
+  'agentWorld.directory.profile.verified': 'যাচাইকৃত',
+  'agentWorld.directory.profile.joined': 'যোগ দিয়েছেন',
+  'agentWorld.directory.profile.noBio': 'এখনও কোনো বায়ো নেই।',
+  'agentWorld.directory.profile.skills': 'দক্ষতা',
+  'agentWorld.directory.profile.loadError': 'সম্পূর্ণ প্রোফাইল লোড করা যায়নি।',
   'agentWorld.identities': 'পরিচয়',
   'agentWorld.profiles': 'প্রোফাইল',
+  'agentWorld.profile.edit': 'প্রোফাইল সম্পাদনা',
+  'agentWorld.profile.displayName': 'প্রদর্শন নাম',
+  'agentWorld.profile.bio': 'পরিচিতি',
+  'agentWorld.profile.avatarEmail': 'অ্যাভাটার ইমেল',
+  'agentWorld.profile.avatarEmailHint': 'Gravatar থেকে আপনার অ্যাভাটার আনতে ব্যবহৃত হয়।',
+  'agentWorld.profile.save': 'সংরক্ষণ',
+  'agentWorld.profile.nameRequired': 'প্রদর্শন নাম খালি রাখা যাবে না।',
+  'agentWorld.profile.cancel': 'বাতিল',
+  'agentWorld.profile.saving': 'সংরক্ষণ হচ্ছে…',
+  'agentWorld.profile.saveError': 'আপনার প্রোফাইল সংরক্ষণ করা যায়নি। আবার চেষ্টা করুন।',
   'agentWorld.marketplace': 'মার্কেটপ্লেস',
   'agentWorld.messaging': 'বার্তা',
   'agentWorld.walletNotConfigured': 'ওয়ালেট সেট আপ হয়নি',
@@ -942,6 +982,7 @@ const messages: TranslationMap = {
   'chat.typeMessage': 'আজ আমি আপনাকে কীভাবে সাহায্য করতে পারি?',
   'chat.send': 'বার্তা পাঠান',
   'chat.stopGeneration': 'জেনারেশন বন্ধ করুন',
+  'chat.stoppedByUser': 'থামানো হয়েছে',
   'chat.parallelBranchHint': 'সমান্তরাল শাখা টাইপ করুন: পাঠাতে ⌘/Ctrl+Enter',
   'chat.followupHint':
     'একটি ফলো-আপ সারিবদ্ধ করুন: এই উত্তরের পরে পাঠানো হবে · সমান্তরাল শাখার জন্য ⌘/Ctrl+Enter',
@@ -1118,7 +1159,7 @@ const messages: TranslationMap = {
   'memory.tab.associations': 'Associations',
   'entityAssociations.title': 'সত্তা সম্পর্ক',
   'entityAssociations.intro':
-    'যে সত্তাগুলো অনেক একই সংযোগ ভাগ করে, তারা সম্পর্কিত: এমনকি কোনো একক তথ্য তাদের সরাসরি সংযুক্ত না করলেও। Jaccard সাদৃশ্য এই লুকানো সম্পর্কগুলো প্রকাশ করে।',
+    'যে সত্তাগুলো অনেক একই সংযোগ ভাগ করে, তারা সম্পর্কিত, এমনকি কোনো একক তথ্য তাদের সরাসরি সংযুক্ত না করলেও। Jaccard সাদৃশ্য এই লুকানো সম্পর্কগুলো প্রকাশ করে।',
   'entityAssociations.loading': 'সম্পর্ক স্কোর করা হচ্ছে…',
   'entityAssociations.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
   'entityAssociations.retry': 'Retry',
@@ -1641,7 +1682,7 @@ const messages: TranslationMap = {
   'settings.search.placeholderQuerit': 'কিউ- টি xxqx কি',
   'settings.search.allowedSitesLabel': 'ওয়েবসাইটের অনুমতি দেওয়া হয়েছে',
   'settings.search.allowedSitesHint':
-    'যেসব হোস্ট অ্যাসিস্ট্যান্ট খুলতে ও পড়তে পারবে: ওয়েব ফেচ এবং ব্রাউজার টুলের মাধ্যমে: প্রতি লাইনে একটি করে, যেমন reuters.com। একটি হোস্ট তার সাবডোমেইনগুলোও অন্তর্ভুক্ত করে। ওয়েব সার্চ নিজে এই তালিকা দ্বারা সীমাবদ্ধ নয়।',
+    'যেসব হোস্ট অ্যাসিস্ট্যান্ট খুলতে ও পড়তে পারবে (ওয়েব ফেচ এবং ব্রাউজার টুলের মাধ্যমে) প্রতি লাইনে একটি করে, যেমন reuters.com। একটি হোস্ট তার সাবডোমেইনগুলোও অন্তর্ভুক্ত করে। ওয়েব সার্চ নিজে এই তালিকা দ্বারা সীমাবদ্ধ নয়।',
   'settings.search.allowedSitesAllOn':
     'সহকারীটি যেকোন পাবলিক ওয়েবসাইট খুলতে পারে। স্থানীয় এবং ব্যক্তিগত ঠিকানা প্রতিরোধ করা হয়েছে।',
   'settings.search.allowedSitesPlaceholder': 'xqx+x\nএক্স.qx1x\nxqx2x',
@@ -2842,7 +2883,7 @@ const messages: TranslationMap = {
   'workspace.vaultNotRegisteredHelp':
     'Obsidian শুধুমাত্র আপনার যোগ করা ফোল্ডারগুলি ভল্ট হিসেবে খোলে। Obsidian-এ, "Open folder as vault" বেছে নিন এবং নিচের ফোল্ডারটি পিক করুন: এটি শুধুমাত্র একবার করতে হবে। তারপর আবার View Vault ক্লিক করুন।',
   'workspace.obsidianNotFoundHelp':
-    'আমরা এই ডিভাইসে Obsidian খুঁজে পাইনি। এটি ইনস্টল করুন, অথবা: যদি এটি অ-মানক কোথাও ইনস্টল করা থাকে: Advanced-এর অধীনে এর কনফিগ ফোল্ডার সেট করুন।',
+    'আমরা এই ডিভাইসে Obsidian খুঁজে পাইনি। এটি ইনস্টল করুন, অথবা (যদি এটি অ-মানক কোথাও ইনস্টল করা থাকে) Advanced-এর অধীনে এর কনফিগ ফোল্ডার সেট করুন।',
   'workspace.openAnyway': 'যাইহোক Obsidian-এ খুলুন',
   'workspace.installObsidian': 'Obsidian ইনস্টল করুন',
   'workspace.obsidianAdvanced': 'Obsidian অন্য কোথাও ইনস্টল করা আছে?',
@@ -3238,6 +3279,8 @@ const messages: TranslationMap = {
   'mic.lowConfidenceResult': 'অডিও স্পষ্টভাবে বোঝা যায়নি: আবার চেষ্টা করুন',
   'mic.failedToStopRecording': 'রেকর্ডিং বন্ধ করতে ব্যর্থ: {message}',
   'mic.transcriptionFailed': 'ট্রান্সক্রিপশন ব্যর্থ: {message}',
+  'mic.voiceNotCompiled':
+    'অ্যাপের এই সংস্করণে ভয়েস ট্রান্সক্রিপশন অন্তর্ভুক্ত নেই। এটি চালু করতে OpenHuman আপডেট করুন।',
   'reflections.kind.retrospective': 'পূর্বদর্শন',
   'reflections.kind.derivedFact': 'ডেরাইভড ফ্যাক্ট',
   'reflections.kind.moodInsight': 'মুড ইনসাইট',
@@ -3461,6 +3504,13 @@ const messages: TranslationMap = {
   'channels.telegram.remoteControlTitle': 'রিমোট কন্ট্রোল (Telegram)',
   'channels.telegram.remoteControlBody':
     'একটি অনুমোদিত Telegram চ্যাট থেকে, /status, /sessions, /new, অথবা /help পাঠান। মডেল রাউটিং এখনও /মডেল এবং /মডেল ব্যবহার করে।',
+  'channels.connectHelp.title': 'কীভাবে সংযুক্ত করবেন',
+  'channels.connectHelp.discord':
+    'নিচে একটি পদ্ধতি বেছে নিন: OpenHuman-এর মাধ্যমে আপনার অ্যাকাউন্ট লিঙ্ক করুন, OAuth দিয়ে বট ইনস্টল করুন, অথবা Discord ডেভেলপার পোর্টাল থেকে আপনার নিজের বট টোকেন পেস্ট করুন।',
+  'channels.connectHelp.telegram':
+    'নিচে একটি পদ্ধতি বেছে নিন: লিঙ্ক করতে ম্যানেজড OpenHuman বটে বার্তা পাঠান, অথবা @BotFather থেকে আপনার নিজের বট টোকেন পেস্ট করুন।',
+  'channels.connectHelp.slackNote':
+    'Slack খুঁজছেন? Slack এখানে মেসেজিং চ্যানেল হিসেবে নয়, সংযোগ → OAuth-এ একটি অ্যাপ হিসেবে সংযুক্ত হয়।',
   'channels.web.displayName': 'ওয়েব',
   'channels.web.description': 'বিল্ট-ইন ওয়েব UI এর মাধ্যমে চ্যাট করুন।',
   'channels.web.authMode.managed_dm.description':
@@ -4617,6 +4667,8 @@ const messages: TranslationMap = {
   'settings.ai.openRouterOauthDescription':
     'xqxqxx সহযোগে সাইন করুন এবং xqxyqx ব্যবহার করে একটি ব্যবহারকারী xxqx কী ইম্পোর্ট করুন',
   'settings.ai.connecting': 'সংযোগ করা হচ্ছে...',
+  'settings.ai.codexAuthButton': 'Codex সংযুক্ত করুন',
+  'settings.ai.codexAuthHelper': '~/.codex/auth.json থেকে বিদ্যমান Codex CLI লগইন ব্যবহার করে।',
   'settings.ai.backgroundLoops': 'ব্যাকগ্রাউন্ড লুপস',
   'settings.ai.backgroundLoopsDesc':
     'লক্ষ্য করুন যে, কোন আড্ডা ছাড়াই কি করা হয়, হার্টবিটের কাজ বিরতি দিন এবং সম্প্রতি ক্রেডিট কার্ড পরীক্ষা করুন ।',
@@ -5525,7 +5577,7 @@ const messages: TranslationMap = {
     'আপনার কম্পিউটারে পদক্ষেপ নেওয়ার সময় সহকারীর কতটুকু স্বাধীনতা থাকবে তা বেছে নিন।',
   'settings.permissions.preset.readonly.title': 'দেখো, স্পর্শ করো না',
   'settings.permissions.preset.readonly.desc':
-    'সহকারী ফাইল পড়তে এবং অন্বেষণ করতে পারে: কিন্তু কখনো লিখতে, সম্পাদনা করতে বা এমন কিছু চালাতে পারবে না যা অবস্থা পরিবর্তন করে।',
+    'সহকারী ফাইল পড়তে এবং অন্বেষণ করতে পারে, কিন্তু কখনো লিখতে, সম্পাদনা করতে বা এমন কিছু চালাতে পারবে না যা অবস্থা পরিবর্তন করে।',
   'settings.permissions.preset.supervised.title': 'আগে আমাকে জিজ্ঞেস করো',
   'settings.permissions.preset.supervised.desc':
     'নতুন ফাইল তৈরি করতে পারে, কিন্তু সম্পাদনা, কমান্ড চালানো বা নেটওয়ার্ক অ্যাক্সেসের আগে সবসময় আপনার অনুমতি চাইবে।',
@@ -5664,7 +5716,7 @@ const messages: TranslationMap = {
   'settings.appearance.modeSystem': 'ম্যাচ সিস্টেম',
   'settings.appearance.modeSystemDesc': 'আপনার OS চেহারা সেটিং অনুসরণ করুন.',
   'settings.appearance.helperText':
-    'ডার্ক মোড পুরো অ্যাপকে স্যুইচ করে: চ্যাট, সেটিংস, প্যানেল: একটি আবছা প্যালেটে। "ম্যাচ সিস্টেম" আপনার OS চেহারা অনুসরণ করে এবং লাইভ আপডেট করে।',
+    'ডার্ক মোড পুরো অ্যাপকে স্যুইচ করে (চ্যাট, সেটিংস, প্যানেল) একটি আবছা প্যালেটে। "ম্যাচ সিস্টেম" আপনার OS চেহারা অনুসরণ করে এবং লাইভ আপডেট করে।',
   'settings.appearance.fontSizeHeading': 'ফন্টের আকার',
   'settings.appearance.fontSizeAria': 'ফন্টের আকার',
   'settings.appearance.fontSizeSmall': 'ছোট',
@@ -5676,7 +5728,7 @@ const messages: TranslationMap = {
   'settings.appearance.fontSizeXLarge': 'অতিরিক্ত বড়',
   'settings.appearance.fontSizeXLargeDesc': 'সর্বাধিক পঠনযোগ্যতার জন্য সবচেয়ে বড় লেখা।',
   'settings.appearance.fontSizeHelperText':
-    'সিস্টেম ফন্ট সেটিং নির্বিশেষে পুরো অ্যাপ জুড়ে: চ্যাট, সেটিংস ও প্যানেল: লেখার আকার পরিবর্তন করে।',
+    'সিস্টেম ফন্ট সেটিং নির্বিশেষে পুরো অ্যাপ জুড়ে (চ্যাট, সেটিংস ও প্যানেল) লেখার আকার পরিবর্তন করে।',
   'settings.appearance.fontSizeCustomLabel': 'কাস্টম আকার',
   'settings.appearance.fontSizeCustomAria': 'পিক্সেলে কাস্টম ফন্ট আকার',
   'settings.appearance.fontSizeCustomSliderAria': 'কাস্টম ফন্ট আকারের স্লাইডার, পিক্সেলে',
@@ -5815,7 +5867,7 @@ const messages: TranslationMap = {
     'যৌক্তিক ডিফল্ট: প্রতিটি রানে অতিরিক্ত টোকেন না পুড়িয়ে ভাল ধারাবাহিকতা।',
   'settings.memoryWindow.balanced.label': 'সুষম',
   'settings.memoryWindow.description':
-    'প্রতিটি নতুন এজেন্ট রানে OpenHuman কতটা মনে রাখা প্রসঙ্গ ইনজেক্ট করে। বড় উইন্ডো অতীত কথোপকথন সম্পর্কে বেশি সচেতন মনে হয় কিন্তু প্রতিটি রানে বেশি টোকেন ব্যবহার করে: এবং বেশি খরচ হয়।',
+    'প্রতিটি নতুন এজেন্ট রানে OpenHuman কতটা মনে রাখা প্রসঙ্গ ইনজেক্ট করে। বড় উইন্ডো অতীত কথোপকথন সম্পর্কে বেশি সচেতন মনে হয় কিন্তু প্রতিটি রানে বেশি টোকেন ব্যবহার করে, এবং বেশি খরচ হয়।',
   'settings.memoryWindow.extended.badge': 'আরও প্রসঙ্গ',
   'settings.memoryWindow.extended.hint':
     'প্রতিটি রানে আরও দীর্ঘমেয়াদী মেমরি ইনজেক্ট করা হয়। প্রতি টার্নে উচ্চ টোকেন খরচ।',
@@ -6829,7 +6881,7 @@ const messages: TranslationMap = {
     'সহকারী যখন আপনার সম্পর্কে সংযুক্ত তথ্য রেকর্ড করে, তাদের ক্লাস্টারিং কাঠামো এখানে উঠে আসবে।',
   'graphCohesion.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
   'graphCohesion.intro':
-    'প্রতিটি সত্তার চারপাশে প্রতিবেশ কতটা দৃঢ়ভাবে বোনা। ব্রোকার: যেসব সত্তার প্রতিবেশী একে অপরের সাথে যুক্ত নয়: তারাই একমাত্র বিন্দু যা পরস্পর-বিচ্ছিন্ন ক্লাস্টারকে একত্রে ধরে রাখে, যা ফ্রিকোয়েন্সি বা PageRank সাজানি প্রকাশ করতে পারে না।',
+    'প্রতিটি সত্তার চারপাশে প্রতিবেশ কতটা দৃঢ়ভাবে বোনা। ব্রোকার (যেসব সত্তার প্রতিবেশী একে অপরের সাথে যুক্ত নয়) তারাই একমাত্র বিন্দু যা পরস্পর-বিচ্ছিন্ন ক্লাস্টারকে একত্রে ধরে রাখে, যা ফ্রিকোয়েন্সি বা PageRank সাজানি প্রকাশ করতে পারে না।',
   'graphCohesion.loading': 'সংসক্তি গণনা করা হচ্ছে…',
   'graphCohesion.metricConnections': 'সংযোগ',
   'graphCohesion.metricEntities': 'সত্তা',
@@ -7189,11 +7241,20 @@ const messages: TranslationMap = {
   'agentworld.jobs.applyModal.bidAmountPlaceholder': 'যেমন: 450 USDC',
   'agentworld.jobs.applyModal.deliveryLabel': 'আনুমানিক ডেলিভারি',
   'agentworld.jobs.applyModal.deliveryPlaceholder': 'যেমন: 2 সপ্তাহ',
+  'agentworld.feed.live': 'লাইভ',
   'agentworld.jobs.applyModal.cancel': 'বাতিল',
   'agentworld.jobs.applyModal.submit': 'আবেদন জমা দিন',
   'agentworld.jobs.applyModal.submitting': 'আবেদন করা হচ্ছে…',
+  'agentworld.messaging.live': 'লাইভ',
   'agentworld.messaging.missingSignalBundle':
     'এই ব্যবহারকারী এখনো এনক্রিপ্টেড মেসেজিং চালু করেননি। বার্তা পাঠানোর আগে তাকে Agent World খুলে নিরাপদ DM চালু করতে বলুন।',
+  'agentworld.messaging.notAContact':
+    'এই ব্যক্তি পরিচিতি না হওয়া পর্যন্ত আপনি তাকে বার্তা পাঠাতে পারবেন না। একটি পরিচিতি অনুরোধ পাঠান এবং তিনি গ্রহণ করার পর আবার চেষ্টা করুন।',
+  'agentworld.messaging.sendContactRequest': 'পরিচিতি অনুরোধ পাঠান',
+  'agentworld.messaging.contactRequestSending': 'অনুরোধ পাঠানো হচ্ছে…',
+  'agentworld.messaging.contactRequestSent':
+    'পরিচিতি অনুরোধ পাঠানো হয়েছে। তিনি গ্রহণ করলে আপনি তাকে বার্তা পাঠাতে পারবেন।',
+  'agentworld.messaging.contactRequestFailed': 'পরিচিতি অনুরোধ পাঠানো যায়নি। আবার চেষ্টা করুন।',
 
   // User-actionable runtime errors (#3931)
   'userErrors.title': 'পদক্ষেপ প্রয়োজন',
@@ -7267,9 +7328,35 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'মুছুন',
   'flows.delete.deleting': 'মুছে ফেলা হচ্ছে…',
   'flows.canvas.renameLabel': 'ওয়ার্কফ্লো পুনঃনামকরণ করুন',
+  'memorySources.codingSessions.title': 'কোডিং-এজেন্ট সেশন',
+  'memorySources.codingSessions.description':
+    'Codex ও Claude Code-এর সিদ্ধান্ত এবং সংশোধনকে ব্যক্তিগত পারসোনা মেমরিতে রূপ দিন।',
+  'memorySources.codingSessions.ingest': 'নতুন সেশন গ্রহণ করুন',
+  'memorySources.codingSessions.ingesting': 'গ্রহণ করা হচ্ছে…',
+  'memorySources.codingSessions.claude': 'ক্লড কোড',
+  'memorySources.codingSessions.codex': 'Codex',
+  'memorySources.codingSessions.counts': '{files}টি সেশন · {evidence}টি মানব বার্তা',
+  'memorySources.codingSessions.notFound': 'কোনো স্থানীয় ইতিহাস পাওয়া যায়নি',
+  'memorySources.codingSessions.scanning': 'স্থানীয় সেশন ইতিহাস স্ক্যান করা হচ্ছে…',
+  'memorySources.codingSessions.truncated': 'স্ক্যানটি প্রথম ১,০০০টি সেশন ফাইলে সীমাবদ্ধ ছিল।',
+  'memorySources.codingSessions.complete': 'কোডিং সেশন গ্রহণ সম্পন্ন',
+  'memorySources.codingSessions.completeMessage':
+    '{processed}টি সেশন থেকে {observations}টি পারসোনা পর্যবেক্ষণ তৈরি হয়েছে।',
+  'memorySources.codingSessions.partialFailure':
+    '{processed}টি সেশন প্রক্রিয়া করার সময় {failed}টি ব্যর্থ হয়েছে। আবার চেষ্টা করতে গ্রহণ পুনরায় চালান।',
+  'memorySources.codingSessions.moreRemaining':
+    'সেশন ব্যাচের সীমা পূর্ণ হয়েছে। আপনার ইতিহাস আমদানি চালিয়ে যেতে আবার গ্রহণ চালান।',
+  'memorySources.codingSessions.failed': 'কোডিং সেশন গ্রহণ ব্যর্থ হয়েছে',
   'flows.canvas.sidePanelToggle': 'সাইড প্যানেল',
   'flows.canvas.legendTab': 'ম্যানুয়াল',
 
+  // Emergency stop (#4255)
+  'safety.emergencyStop': 'জরুরি বন্ধ',
+  'safety.stopFailed': 'অটোমেশন থামানো যায়নি। আবার চেষ্টা করুন।',
+  'safety.resume': 'অটোমেশন পুনরায় শুরু করুন',
+  'safety.resumeFailed': 'পুনরায় শুরু করা যায়নি। অটোমেশন এখনও বন্ধ। আবার চেষ্টা করুন।',
+  'safety.haltedTitle': 'অটোমেশন বন্ধ',
+  'safety.haltedBody': 'সমস্ত ডেস্কটপ অটোমেশন বন্ধ করা হয়েছে। প্রস্তুত হলে পুনরায় শুরু করুন।',
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   'privacy.status.ariaLabel': 'গোপনীয়তা স্থিতি',
   'privacy.status.external': 'ডিভাইসের বাইরে',

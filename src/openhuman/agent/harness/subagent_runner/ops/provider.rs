@@ -247,6 +247,14 @@ pub(crate) struct LazyToolkitResolver {
 const TIER4_MIN_SLUG_LEN: usize = 8;
 
 impl LazyToolkitResolver {
+    /// NOTE (contract gate, #4853): this builds a *fresh* `ComposioActionTool`
+    /// — and therefore a fresh, empty `ContractGate` — on every call. The gate's
+    /// surface-once state lives in the tool instance, so if a future wiring
+    /// resolves a new tool per invocation the gate would surface the full
+    /// contract on every call and the retry would never see `first_time == false`
+    /// to proceed. When this path is wired to actually dispatch, cache the
+    /// resolved tool (and its gate) per turn so a given action can proceed after
+    /// its contract has been surfaced once.
     pub(super) fn resolve(&self, name: &str) -> Option<Box<dyn crate::openhuman::tools::Tool>> {
         let action = self.find_action(name)?;
         Some(Box::new(

@@ -474,7 +474,7 @@ pub async fn start_chat(
     let prompt_decision = enforce_prompt_input(
         &message,
         PromptEnforcementContext {
-            source: "channels.providers.web.start_chat",
+            source: "web_chat.start_chat",
             request_id: Some(&request_id),
             user_id: Some(&client_id),
             session_id: Some(&thread_id),
@@ -728,7 +728,7 @@ pub async fn start_chat(
 
         match result {
             Ok(chat_result) => {
-                crate::openhuman::channels::providers::web::presentation::deliver_response(
+                crate::openhuman::web_chat::presentation::deliver_response(
                     &client_id_task,
                     &thread_id_task,
                     &request_id_task,
@@ -931,7 +931,7 @@ async fn spawn_parallel_turn(
 
         match result {
             Some(Ok(chat_result)) => {
-                crate::openhuman::channels::providers::web::presentation::deliver_response(
+                crate::openhuman::web_chat::presentation::deliver_response(
                     &client_id_task,
                     &thread_id_task,
                     &request_id_task,

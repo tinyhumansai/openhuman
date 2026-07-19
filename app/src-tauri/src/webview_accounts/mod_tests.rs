@@ -342,6 +342,103 @@ fn linkedin_google_oauth2_popup_navigates_parent() {
 }
 
 #[test]
+fn linkedin_google_account_chooser_popup_stays_in_app() {
+    // Regression guard for the refactor that shares the GSI account-chooser
+    // arm between linkedin + twitter: LinkedIn's gsi/select popup must still
+    // stay in-app (#1021).
+    assert!(popup_should_stay_in_app(
+        "linkedin",
+        &url("https://accounts.google.com/gsi/select?client_id=x&ux_mode=popup"),
+    ));
+}
+
+#[test]
+fn twitter_supports_google_sso() {
+    // X/Twitter offers "Continue with Google"; without twitter in the SSO set
+    // the /o/oauth2 leg would not navigate the parent in-app (#5009).
+    assert!(provider_supports_google_sso("twitter"));
+}
+
+#[test]
+fn twitter_google_account_chooser_popup_stays_in_app() {
+    // #5009: X's "Continue with Google" opens the GSI account chooser via
+    // window.open(accounts.google.com/gsi/select). Before the fix twitter had
+    // no popup_should_stay_in_app arm, so this popup fell through to the system
+    // browser — the user picked their account OUTSIDE the app and the embedded
+    // webview was revealed on a dead page (blank screen). It must stay in-app.
+    assert!(popup_should_stay_in_app(
+        "twitter",
+        &url("https://accounts.google.com/gsi/select?client_id=x&ux_mode=popup&origin=https%3A%2F%2Fx.com"),
+    ));
+    // The GSI button/status endpoints share the same in-app requirement.
+    assert!(popup_should_stay_in_app(
+        "twitter",
+        &url("https://accounts.google.com/gsi/button?client_id=x"),
+    ));
+}
+
+#[test]
+fn twitter_google_account_chooser_popup_is_not_navigate_parent() {
+    // The account-chooser popup must be handled by popup_should_stay_in_app,
+    // NOT popup_should_navigate_parent — navigating the parent to gsi/select
+    // would destroy the opener the popup postMessages the credential back to.
+    // (gsi/select is not an is_google_auth_popup match, so this holds.)
+    assert!(popup_should_navigate_parent(
+        "twitter",
+        &url("https://accounts.google.com/gsi/select?client_id=x&ux_mode=popup"),
+    )
+    .is_none());
+}
+
+#[test]
+fn twitter_google_oauth2_popup_mode_stays_in_app_not_navigate_parent() {
+    // #5009 core fix: X's "Continue with Google" is a GSI *popup* (ux_mode=popup)
+    // — the popup postMessages the id_token back to the x.com opener. The
+    // /o/oauth2 leg must stay in-app and must NOT navigate the parent; doing so
+    // destroyed the opener and painted the pane white.
+    let u = url(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id=x&ux_mode=popup\
+         &gsiwebsdk=gis_attributes&redirect_uri=gis_transform&response_type=id_token\
+         &origin=https%3A%2F%2Fx.com",
+    );
+    assert!(
+        popup_should_navigate_parent("twitter", &u).is_none(),
+        "popup-mode /o/oauth2 must not replace the x.com opener"
+    );
+    assert!(
+        popup_should_stay_in_app("twitter", &u),
+        "popup-mode /o/oauth2 must stay as an in-app child window"
+    );
+}
+
+#[test]
+fn linkedin_google_oauth2_redirect_mode_still_navigates_parent() {
+    // Regression: LinkedIn's Google sign-in is a *redirect* flow (a real https
+    // redirect_uri, no GSI popup markers). That is not a GSI popup, so it must
+    // still replace the parent in-app (#1021) — the #5009 guard must not touch
+    // it.
+    let u = url("https://accounts.google.com/o/oauth2/v2/auth?client_id=x\
+         &redirect_uri=https://www.linkedin.com/oauth/callback");
+    assert!(popup_should_navigate_parent("linkedin", &u).is_some());
+    assert!(!popup_should_stay_in_app("linkedin", &u));
+}
+
+#[test]
+fn twitter_non_google_popup_does_not_stay_in_app() {
+    // Scope guard: only the Google account-chooser popup is kept in-app. An
+    // ordinary target="_blank"/window.open link still routes to the system
+    // browser, so this is not a blanket popup allow.
+    assert!(!popup_should_stay_in_app(
+        "twitter",
+        &url("https://example.com/some/article"),
+    ));
+    assert!(!popup_should_stay_in_app(
+        "twitter",
+        &url("https://x.com/i/status/123")
+    ));
+}
+
+#[test]
 fn linkedin_google_sso_navigation_is_internal() {
     // Direct (non-popup) navigation to accounts.google.com during the
     // LinkedIn Google SSO flow must be classified internal so it stays

@@ -22,6 +22,17 @@ allow = [
     # found" and the boot gate stalls.
     "start_core_process",
     "restart_core_process",
+    # `reset_local_data` is the "Clear App Data" command (Settings → Account,
+    # and the Welcome-screen decryption-recovery flow). It stops the embedded
+    # core, deletes the signed-in user's data dir + active markers, then
+    # restarts the core. It replaced the old two-step
+    # `callCoreRpc('config_reset_local_data') + restartCoreProcess()` dance
+    # (which reached Rust via the ACL-permitted `relay_http_rpc`), but the new
+    # dedicated command was never added here — so the invoke was rejected with
+    # "reset_local_data not allowed. Command not found" and Clear App Data
+    # silently did nothing (#4950). Without this allow entry the ACL denies it
+    # before it reaches Rust.
+    "reset_local_data",
     # `restart_app` triggers `app.restart()` so CEF re-initializes against
     # the active user's `users/<id>/cef` profile after an identity flip
     # (#900). Without this allow entry, the invoke is silently denied by

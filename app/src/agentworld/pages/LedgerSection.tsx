@@ -8,23 +8,50 @@
  *
  * Pattern mirrors FeedSection: useState + useEffect fetch, PanelScaffold
  * wrapper, StatusBlock for loading/error/empty states.
+ *
+ * Pagination: the backend/SDK `ledgerTransactions` call accepts `limit`/`offset`
+ * (LedgerListParams) and returns a `count`, so the list is fetched a page at a
+ * time and extended via an offset-based "Load more" control. A page shorter than
+ * {@link LEDGER_PAGE_SIZE} means the ledger is exhausted (`hasMore=false`).
  */
-import { useEffect, useState } from 'react';
+import debug from 'debug';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import PanelScaffold from '../../components/layout/PanelScaffold';
+import Button from '../../components/ui/Button';
 import { type GqlLedgerTransaction } from '../../lib/agentworld/invokeApiClient';
+import { useT } from '../../lib/i18n/I18nContext';
 import { apiClient } from '../AgentWorldShell';
 import { decimalsForAsset, resolveAssetSymbol } from '../assets';
 import { formatUnits, friendlyNetwork } from '../components/X402ConfirmDialog';
 import { explorerTxUrl } from '../hooks/useX402Buy';
 import { relativeTime } from './relativeTime';
 
+const log = debug('agentworld:ledger');
+
+/** Ledger rows fetched per page (also the initial page size). */
+export const LEDGER_PAGE_SIZE = 50;
+
 // ── State types ───────────────────────────────────────────────────────────────
 
 type LedgerState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ok'; transactions: GqlLedgerTransaction[] };
+  | {
+      status: 'ok';
+      transactions: GqlLedgerTransaction[];
+      // Server-side cursor, in request units: how many rows to skip on the next
+      // page. Advances by LEDGER_PAGE_SIZE per fetch, decoupled from the client
+      // row count so dedupe never desyncs the offset.
+      nextOffset: number;
+      // A full page came back, so more rows may exist.
+      hasMore: boolean;
+      // A "Load more" fetch is in flight.
+      loadingMore: boolean;
+      // Non-null when the most recent "Load more" fetch failed (existing rows
+      // stay visible; the user can retry).
+      moreError: string | null;
+    };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -298,30 +325,99 @@ function TransactionRow({
 // ── LedgerSection (main export) ───────────────────────────────────────────────
 
 export default function LedgerSection() {
+  const { t } = useT();
   const [ledgerState, setLedgerState] = useState<LedgerState>({ status: 'loading' });
   const [expandedTxId, setExpandedTxId] = useState<string | null>(null);
 
-  // ── Fetch ledger transactions ──────────────────────────────────────────────
+  // Guards async setState after unmount (the initial useEffect uses its own
+  // `cancelled` flag; "Load more" fetches outlive no single effect, so they read
+  // this ref instead).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // ── Fetch first page of ledger transactions ────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     setLedgerState({ status: 'loading' });
+    log('loading first ledger page', { limit: LEDGER_PAGE_SIZE });
 
-    // TODO(phase-2-follow-up): implement pagination with offset or cursor.
     void apiClient.graphql
-      .ledgerTransactions({ limit: 50 })
+      .ledgerTransactions({ limit: LEDGER_PAGE_SIZE, offset: 0 })
       .then(result => {
         if (cancelled) return;
         const transactions = Array.isArray(result?.transactions) ? result.transactions : [];
-        setLedgerState({ status: 'ok', transactions });
+        const hasMore = transactions.length >= LEDGER_PAGE_SIZE;
+        log('loaded first ledger page', { received: transactions.length, hasMore });
+        setLedgerState({
+          status: 'ok',
+          transactions,
+          nextOffset: LEDGER_PAGE_SIZE,
+          hasMore,
+          loadingMore: false,
+          moreError: null,
+        });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
+        log('first ledger page failed', { error: String(err) });
         setLedgerState({ status: 'error', message: String(err) });
       });
 
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // ── Fetch the next page and append it ──────────────────────────────────────
+  // `offset` is passed in from the rendered 'ok' state so the cursor stays a
+  // pure function of pages requested. Reentry is prevented by disabling the
+  // button while `loadingMore` is set.
+  const loadMore = useCallback((offset: number) => {
+    log('loading more ledger rows', { offset, limit: LEDGER_PAGE_SIZE });
+    setLedgerState(prev =>
+      prev.status === 'ok' ? { ...prev, loadingMore: true, moreError: null } : prev
+    );
+
+    void apiClient.graphql
+      .ledgerTransactions({ limit: LEDGER_PAGE_SIZE, offset })
+      .then(result => {
+        if (!mountedRef.current) return;
+        const page = Array.isArray(result?.transactions) ? result.transactions : [];
+        const hasMore = page.length >= LEDGER_PAGE_SIZE;
+        setLedgerState(prev => {
+          if (prev.status !== 'ok') return prev;
+          // Dedupe by txId: if rows shifted between page fetches the overlap must
+          // not produce duplicate React keys or double-counted entries.
+          const seen = new Set(prev.transactions.map(tx => tx.txId));
+          const fresh = page.filter(tx => !seen.has(tx.txId));
+          log('appended ledger rows', {
+            received: page.length,
+            fresh: fresh.length,
+            total: prev.transactions.length + fresh.length,
+            hasMore,
+          });
+          return {
+            status: 'ok',
+            transactions: [...prev.transactions, ...fresh],
+            nextOffset: offset + LEDGER_PAGE_SIZE,
+            hasMore,
+            loadingMore: false,
+            moreError: null,
+          };
+        });
+      })
+      .catch((err: unknown) => {
+        if (!mountedRef.current) return;
+        log('load more failed', { error: String(err) });
+        setLedgerState(prev =>
+          prev.status === 'ok' ? { ...prev, loadingMore: false, moreError: String(err) } : prev
+        );
+      });
   }, []);
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -351,17 +447,38 @@ export default function LedgerSection() {
       />
     );
   } else {
+    const { transactions, hasMore, loadingMore, moreError, nextOffset } = ledgerState;
     body = (
-      <div className="rounded-lg border border-line bg-surface">
-        {ledgerState.transactions.map(tx => (
-          <TransactionRow
-            key={tx.txId}
-            tx={tx}
-            expanded={expandedTxId === tx.txId}
-            onToggle={() => setExpandedTxId(prev => (prev === tx.txId ? null : tx.txId))}
-          />
-        ))}
-      </div>
+      <>
+        <div className="rounded-lg border border-line bg-surface">
+          {transactions.map(tx => (
+            <TransactionRow
+              key={tx.txId}
+              tx={tx}
+              expanded={expandedTxId === tx.txId}
+              onToggle={() => setExpandedTxId(prev => (prev === tx.txId ? null : tx.txId))}
+            />
+          ))}
+        </div>
+
+        {moreError && (
+          <p className="mt-3 text-center text-xs text-red-600 dark:text-red-400">
+            {t('agentWorld.ledger.loadMoreError')}
+          </p>
+        )}
+
+        {hasMore && (
+          <div className="mt-3 flex justify-center">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={loadingMore}
+              onClick={() => loadMore(nextOffset)}>
+              {loadingMore ? t('agentWorld.ledger.loadingMore') : t('agentWorld.ledger.loadMore')}
+            </Button>
+          </div>
+        )}
+      </>
     );
   }
 

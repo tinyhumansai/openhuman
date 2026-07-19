@@ -12,7 +12,7 @@
 //!     — the *spawning turn's* progress channel.
 //!
 //! The run-ledger's terminal transition used to live **only** in the per-turn
-//! [`progress_bridge`](crate::openhuman::channels::providers::web::progress_bridge),
+//! [`progress_bridge`](crate::openhuman::web_chat::progress_bridge),
 //! which consumes that progress channel. That works for synchronous subagents
 //! (they finish inside the turn, sink still alive) but **leaks** for detached
 //! `spawn_async_subagent` runs: they outlive the parent turn, so when they

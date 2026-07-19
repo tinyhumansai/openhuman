@@ -1963,7 +1963,7 @@ fn build_flow_connections_emits_parseable_refs_for_both_kinds() {
     )];
     let http = vec![http_summary("stripe", "bearer")];
 
-    let out = build_flow_connections(composio, http);
+    let out = build_flow_connections(composio, http, &[]);
     assert_eq!(out.len(), 2);
 
     let gmail = &out[0];
@@ -1978,6 +1978,7 @@ fn build_flow_connections_emits_parseable_refs_for_both_kinds() {
     assert_eq!(gmail.toolkit.as_deref(), Some("gmail"));
     assert_eq!(gmail.display, "Gmail · user@example.com");
     assert!(gmail.scheme.is_none());
+    assert!(gmail.platform_user_id.is_none());
 
     let stripe = &out[1];
     assert_eq!(stripe.kind, "http");
@@ -1989,6 +1990,7 @@ fn build_flow_connections_emits_parseable_refs_for_both_kinds() {
     assert_eq!(stripe.scheme.as_deref(), Some("bearer"));
     assert_eq!(stripe.display, "stripe (bearer)");
     assert!(stripe.toolkit.is_none());
+    assert!(stripe.platform_user_id.is_none());
 }
 
 #[test]
@@ -1997,7 +1999,7 @@ fn build_flow_connections_skips_non_active_composio_accounts() {
         composio_conn("ca_ok", "notion", "ACTIVE", None),
         composio_conn("ca_pending", "slack", "PENDING", None),
     ];
-    let out = build_flow_connections(composio, Vec::new());
+    let out = build_flow_connections(composio, Vec::new(), &[]);
     assert_eq!(out.len(), 1, "only the ACTIVE connection is surfaced");
     assert_eq!(out[0].connection_ref, "composio:notion:ca_ok");
     // No cached identity → title-cased toolkit alone.
@@ -2009,10 +2011,11 @@ fn build_flow_connections_never_carries_secret_fields() {
     let out = build_flow_connections(
         vec![composio_conn("ca_abc", "gmail", "ACTIVE", Some("u@x.io"))],
         vec![http_summary("stripe", "header")],
+        &[],
     );
     let json = serde_json::to_string(&out).unwrap();
     // The serialized picker payload must expose only ref/kind/display/toolkit/
-    // scheme — no secret-bearing key names at all.
+    // scheme/platform_user_id — no secret-bearing key names at all.
     for banned in [
         "secret", "token", "password", "\"key\"", "apiKey", "api_key",
     ] {
@@ -2023,6 +2026,47 @@ fn build_flow_connections_never_carries_secret_fields() {
             "serialized FlowConnection leaked a secret-bearing field ({banned}): {json}"
         );
     }
+}
+
+#[test]
+fn build_flow_connections_attaches_platform_user_id_from_a_seeded_identity() {
+    use crate::openhuman::composio::providers::profile::ConnectedIdentity;
+
+    let composio = vec![composio_conn("ca_slack1", "slack", "ACTIVE", None)];
+    let identities = vec![ConnectedIdentity {
+        source: "slack".to_string(),
+        identifier: "ca_slack1".to_string(),
+        user_id: Some("U123ABC".to_string()),
+        ..Default::default()
+    }];
+
+    let out = build_flow_connections(composio, Vec::new(), &identities);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].platform_user_id.as_deref(), Some("U123ABC"));
+}
+
+#[test]
+fn build_flow_connections_platform_user_id_is_none_without_a_matching_identity() {
+    use crate::openhuman::composio::providers::profile::ConnectedIdentity;
+
+    // No identities at all.
+    let composio = vec![composio_conn("ca_slack1", "slack", "ACTIVE", None)];
+    let out = build_flow_connections(composio, Vec::new(), &[]);
+    assert_eq!(out.len(), 1);
+    assert!(out[0].platform_user_id.is_none());
+
+    // An identity exists, but for a different toolkit/connection — must not
+    // cross-wire onto this connection.
+    let composio = vec![composio_conn("ca_slack1", "slack", "ACTIVE", None)];
+    let identities = vec![ConnectedIdentity {
+        source: "gmail".to_string(),
+        identifier: "ca_slack1".to_string(),
+        user_id: Some("U123ABC".to_string()),
+        ..Default::default()
+    }];
+    let out = build_flow_connections(composio, Vec::new(), &identities);
+    assert_eq!(out.len(), 1);
+    assert!(out[0].platform_user_id.is_none());
 }
 
 #[test]
@@ -2375,6 +2419,7 @@ fn ws3_flow_conn(toolkit: &str, id: &str) -> FlowConnection {
         display: toolkit.to_string(),
         toolkit: Some(toolkit.to_string()),
         scheme: None,
+        platform_user_id: None,
     }
 }
 
@@ -2851,7 +2896,7 @@ fn seeded_slack_send_message_contract_with_schema() -> ToolContract {
         output_fields: vec![],
         output_schema: None,
         primary_array_path: None,
-        is_curated: true,
+        is_curated: false,
     }
 }
 
@@ -4292,6 +4337,77 @@ async fn flows_create_schedule_outbound_creates_disabled_and_approval() {
     );
 }
 
+#[tokio::test]
+async fn flows_update_forces_require_approval_when_adding_side_effect_nodes() {
+    // Compound bypass fix, half 2: `flows_create`'s Rule 2 (force
+    // require_approval when the graph gains an outbound side-effect node)
+    // must also re-apply on `flows_update` — a flow that starts read-only and
+    // is later edited to add a Composio/http_request/code node must not be
+    // able to keep require_approval=false just because the update path never
+    // re-checked.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let created = flows_create(&config, "demo".to_string(), trigger_only_graph(), false)
+        .await
+        .unwrap();
+    assert!(
+        !created.value.require_approval,
+        "a trigger-only graph must not force require_approval on create"
+    );
+
+    let updated = flows_update(
+        &config,
+        &created.value.id,
+        None,
+        Some(tool_call_graph()),
+        Some(false),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        updated.value.require_approval,
+        "flows_update must force require_approval when the replacement graph adds an outbound \
+         side-effect node (tool_call), even though the caller passed false"
+    );
+    assert!(
+        updated
+            .logs
+            .iter()
+            .any(|l| l.contains("require_approval forced to true")),
+        "flows_update must loudly log the forced require_approval: {:?}",
+        updated.logs
+    );
+}
+
+#[tokio::test]
+async fn flows_update_does_not_force_require_approval_on_readonly_graph() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let created = flows_create(&config, "demo".to_string(), trigger_only_graph(), false)
+        .await
+        .unwrap();
+    assert!(!created.value.require_approval);
+
+    // Name-only update — no graph change, no side-effect nodes.
+    let updated = flows_update(
+        &config,
+        &created.value.id,
+        Some("renamed".to_string()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !updated.value.require_approval,
+        "a name-only update to a read-only graph must not force require_approval"
+    );
+}
+
 // ── graph_has_outbound_side_effect / trigger_is_automatic helper tests ────
 
 #[test]
@@ -4706,15 +4822,117 @@ fn text_looks_like_question_detects_trailing_question_mark() {
     ));
 }
 
-/// A question followed by a further trailing sentence on its own line
-/// ("...channel?\n\nLet me know!") is an accepted false negative — the
-/// heuristic is deliberately conservative (see the function doc). Pin that
-/// this case is NOT detected so a future "improvement" doesn't silently
-/// change the accepted trade-off without a matching design review.
+/// Regression (#4887 follow-up): a question immediately followed by a
+/// trailing pleasantry/instruction in the SAME paragraph ("...to? Let me
+/// know!") used to be an accepted false negative. That false negative let the
+/// trail-off backstop clobber real, specific questions with a generic
+/// fallback — this is now DETECTED via the final-paragraph scan in
+/// `text_looks_like_question`.
+///
+/// Note: a question mark separated from the trailing sentence by a full
+/// blank-line paragraph break (`"...to?\n\nLet me know!"`) is a DIFFERENT
+/// shape — the `?` there sits in an earlier paragraph, not the last one — and
+/// remains an intentional false negative: the final-paragraph scan only
+/// looks at the LAST non-blank paragraph, by design (see the function doc
+/// and `text_looks_like_question_ignores_question_mark_in_earlier_paragraph`
+/// below, which pins that scope decision).
 #[test]
-fn text_looks_like_question_accepts_false_negative_on_trailing_pleasantry() {
+fn text_looks_like_question_detects_same_paragraph_trailing_pleasantry() {
+    assert!(text_looks_like_question(
+        "Which channel should I post to? Let me know!"
+    ));
+}
+
+/// Pins the intentional cross-paragraph false negative documented above: a
+/// `?` that sits in an EARLIER paragraph than the last one is deliberately
+/// NOT detected — the final-paragraph scan only looks at the last non-blank
+/// paragraph, by design. This is harmless because the trail-off backstop's
+/// fallback is non-destructive (PREPEND, not REPLACE): even when this false
+/// negative fires, the model's original question is preserved below the
+/// fallback rather than discarded.
+#[test]
+fn text_looks_like_question_ignores_question_mark_in_earlier_paragraph() {
     assert!(!text_looks_like_question(
         "Which channel should I post to?\n\nLet me know!"
+    ));
+}
+
+/// The exact shape a live tester hit (#4887 regression): a clear, specific
+/// question mid-sentence, immediately followed by a trailing instructional
+/// sentence on the SAME paragraph/line. The old last-line-only check missed
+/// this entirely; the final-paragraph scan must catch it.
+#[test]
+fn text_looks_like_question_detects_mid_sentence_question_with_trailing_instruction() {
+    assert!(text_looks_like_question(
+        "Alan — what's your **Slack user ID** (the `U...` code) so I can DM you the daily \
+         update? You can find it in Slack under Profile > Copy member ID."
+    ));
+}
+
+/// A `?` that only appears inside inline code or a fenced code block must
+/// NOT be treated as a question — the guard on `question_mark_outside_code`
+/// has to hold, or a code sample like `WHERE id = ?` would false-positive.
+#[test]
+fn text_looks_like_question_ignores_question_mark_inside_code() {
+    assert!(!text_looks_like_question(
+        "Run the query below to check the row.\n\n`SELECT * FROM t WHERE id = ?`"
+    ));
+    assert!(!text_looks_like_question(
+        "Here's the query:\n\n```sql\nSELECT * FROM t WHERE id = ?\n```"
+    ));
+}
+
+/// Codex review follow-up: a `?` mid-token that isn't a real question mark —
+/// e.g. a URL query string in a status update — must NOT flip
+/// `text_looks_like_question` to `true`. Counting it would make `flows_build`
+/// skip `combine_trail_off_fallback` entirely, leaving the user with an
+/// unanswerable status note and no guaranteed question — exactly the failure
+/// mode this backstop exists to prevent.
+#[test]
+fn text_looks_like_question_ignores_question_mark_in_url_query_string() {
+    assert!(!text_looks_like_question(
+        "Checked https://api.example/search?q=foo and got 403."
+    ));
+    assert!(!text_looks_like_question(
+        "Ran the search with filter?status=open but the API rejected it."
+    ));
+}
+
+/// CodeRabbit review follow-up: paragraph boundaries must be recognized for
+/// CRLF line endings and whitespace-only blank lines, not just a literal
+/// `"\n\n"` byte sequence — otherwise an earlier question survives into what
+/// should be treated as a separate, later, non-question status paragraph,
+/// and the fallback gets wrongly suppressed for that trailing paragraph.
+#[test]
+fn text_looks_like_question_treats_crlf_and_whitespace_lines_as_paragraph_breaks() {
+    // CRLF paragraph break: the earlier "?" must not leak into the final
+    // paragraph, which is a plain status line with no question of its own.
+    assert!(!text_looks_like_question(
+        "Which channel should I post to?\r\n\r\nPosted the update just now."
+    ));
+    // Whitespace-only blank line (not perfectly empty) must also count as a
+    // paragraph break.
+    assert!(!text_looks_like_question(
+        "Which channel should I post to?\n   \nPosted the update just now."
+    ));
+}
+
+/// CodeRabbit review follow-up: a multi-backtick Markdown code span (e.g.
+/// double backtick, used so the span can itself contain a literal single
+/// backtick) must still be recognized as code — a naive backtick-count
+/// parity check misclassifies it because two backticks flip parity back to
+/// "even" immediately. The span must only close on a run of the SAME length
+/// that opened it.
+#[test]
+fn text_looks_like_question_ignores_question_mark_inside_double_backtick_span() {
+    assert!(!text_looks_like_question(
+        "Run the query below to check the row.\n\n``SELECT * FROM t WHERE id = ?``"
+    ));
+    // A single backtick embedded inside a double-backtick span (the classic
+    // reason to use a longer delimiter) must not be mistaken for the span's
+    // closing delimiter.
+    assert!(!text_looks_like_question(
+        "Use ``SELECT `id` FROM t WHERE id = ?`` before retrying."
     ));
 }
 
@@ -4841,4 +5059,34 @@ fn build_trail_off_fallback_does_not_resurface_a_resolved_blocker() {
         "must not surface an already-resolved blocker: {fallback}"
     );
     assert!(text_looks_like_question(&fallback));
+}
+
+/// Change 2 of the #4887 regression fix: when the trail-off backstop fires on
+/// a genuine non-question (a status dump), the model's original words must
+/// still be present in the combined output — the fallback question is added
+/// on top, never a replacement.
+#[test]
+fn combine_trail_off_fallback_preserves_original_text_on_genuine_non_question() {
+    let original = "## Done so far\n- Checked connections\n- Verified contracts";
+    let fallback = build_trail_off_fallback(&[]);
+    let combined = combine_trail_off_fallback(&fallback, original);
+    // Assert the exact combined string, not just that both pieces appear
+    // somewhere — this pins the documented fallback-first ordering and the
+    // `---` divider, which a looser `contains`-based check wouldn't catch a
+    // regression in (e.g. original-first ordering, or a missing divider).
+    assert_eq!(combined, format!("{fallback}\n\n---\n\n{original}"));
+    // The combined text still ends in the model's original (non-question)
+    // words, so the "is this a question" invariant applies to the
+    // fallback alone, not the full combined string.
+    assert!(text_looks_like_question(&fallback));
+}
+
+/// Guards against prepending an empty divider when the original text is a
+/// genuine silent turn (empty/whitespace-only) — there is nothing to
+/// preserve, so the combined output should just be the fallback.
+#[test]
+fn combine_trail_off_fallback_returns_fallback_alone_for_genuine_silence() {
+    let fallback = build_trail_off_fallback(&[]);
+    assert_eq!(combine_trail_off_fallback(&fallback, ""), fallback);
+    assert_eq!(combine_trail_off_fallback(&fallback, "   \n\n  "), fallback);
 }

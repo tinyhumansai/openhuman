@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import { transcribeWithFactory } from './voice/sttClient';
+import { isVoiceNotCompiledError, transcribeWithFactory } from './voice/sttClient';
 import { encodeBlobToWav } from './voice/wavEncoder';
 
 /** Minimal descriptor for an audio input device. */
@@ -33,7 +33,7 @@ const STT_RETRY_BASE_MS = 500;
  * Matched case-insensitively against the error message.
  */
 const PERMANENT_ERROR_PATTERNS = [
-  'unknown method', // stale sidecar
+  'unknown method', // core built without the `voice` feature (#4901)
   'audio blob is empty',
   'unavailable in this build',
 ];
@@ -576,6 +576,13 @@ export function MicComposer({
       }
       const msg = err instanceof Error ? err.message : String(err);
       composerLog('transcribe failed: %s', msg);
+      // The core has no voice domain compiled in (#4901). `msg` is untranslated
+      // developer copy, so render the localized string rather than splicing it
+      // into the `{message}` slot.
+      if (isVoiceNotCompiledError(err)) {
+        onError?.(t('mic.voiceNotCompiled'));
+        return;
+      }
       onError?.(t('mic.transcriptionFailed').replace('{message}', msg));
     } finally {
       if (!disposedRef.current) setState('idle');

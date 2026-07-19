@@ -257,18 +257,37 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::mcp_setup::prompt::build,
         graph_fn: None,
     },
+    // Connected-server execution specialist. Compiled out with the `mcp`
+    // feature, which drops the `delegate_use_mcp_server` tool from the
+    // orchestrator's synthesised belt.
+    //
+    // The orchestrator's `agent.toml` still lists `mcp_agent` in `subagents`
+    // (TOML is data — it cannot be `cfg`'d, and forking it per-feature would
+    // invite exactly the data drift this gate is meant to avoid). That
+    // dangling reference is SAFE and already handled: `collect_orchestrator_tools`
+    // logs a warn and skips subagent ids that are not in the registry, and
+    // `validate_tier_hierarchy` explicitly `continue`s past unknown ids rather
+    // than failing the boot. `orchestrator_tolerates_absent_mcp_agent` in the
+    // test module below pins that contract so a future "strict unknown
+    // subagent" change cannot silently break the slim build's boot.
+    #[cfg(feature = "mcp")]
     BuiltinAgent {
         id: "mcp_agent",
         toml: include_str!("mcp_agent/agent.toml"),
         prompt_fn: super::mcp_agent::prompt::build,
         graph_fn: None,
     },
+    // Skill agents — `#[cfg]` rather than stub: `include_str!` embeds the
+    // agent TOML from disk regardless of module gating, so the entry itself
+    // must disappear when the `skills` feature is off.
+    #[cfg(feature = "skills")]
     BuiltinAgent {
         id: "skill_setup",
         toml: include_str!("../../skill_registry/agent/skill_setup/agent.toml"),
         prompt_fn: crate::openhuman::skill_registry::agent::skill_setup::prompt::build,
         graph_fn: None,
     },
+    #[cfg(feature = "skills")]
     BuiltinAgent {
         id: "skill_executor",
         toml: include_str!("../../skill_runtime/agent/skill_executor/agent.toml"),
@@ -290,6 +309,9 @@ pub const BUILTINS: &[BuiltinAgent] = &[
     // Workflow-authoring specialist (Phase 5a): builds tinyflows automation
     // graphs from natural language and returns a validated PROPOSAL — it never
     // persists or enables a flow. Deliberately narrow propose-or-read tool belt.
+    // Gated with `flows`: a slim build must not advertise an agent whose entire
+    // tool belt is absent, so the entry (and its `include_str!`) is stripped.
+    #[cfg(feature = "flows")]
     BuiltinAgent {
         id: "workflow_builder",
         toml: include_str!("../../flows/agents/workflow_builder/agent.toml"),
@@ -301,7 +323,9 @@ pub const BUILTINS: &[BuiltinAgent] = &[
     // `suggest_workflows` to record concrete, buildable automation ideas for
     // the Flows page "Suggested for you" section. It never persists or enables
     // a flow — the read-only counterpart to `workflow_builder`, which turns a
-    // picked suggestion into a real graph proposal.
+    // picked suggestion into a real graph proposal. Gated with `flows` (same
+    // reasoning as `workflow_builder` above).
+    #[cfg(feature = "flows")]
     BuiltinAgent {
         id: "flow_discovery",
         toml: include_str!("../../flows/agents/flow_discovery/agent.toml"),
@@ -1000,6 +1024,9 @@ mod tests {
         assert!(matches!(def.tools, ToolScope::Wildcard));
     }
 
+    // Both flows agents are `#[cfg(feature = "flows")]` entries in `BUILTINS`
+    // (#4797), so these tests only apply when the gate is on.
+    #[cfg(feature = "flows")]
     #[test]
     fn workflow_builder_is_registered_worker_with_bounded_authoring_scope() {
         // Phase 5a/5b: the workflow-builder must be a Worker-tier leaf whose
@@ -1130,6 +1157,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "flows")]
     #[test]
     fn flow_discovery_is_registered_readonly_reasoning_scout() {
         // The Flow Scout must be a read-only reasoning leaf: it reads the
@@ -1843,6 +1871,71 @@ mod tests {
         );
     }
 
+    /// The `mcp` gate's load-bearing safety contract (#4799).
+    ///
+    /// `agent.toml` is DATA — it cannot be `#[cfg]`'d, so the orchestrator goes
+    /// on listing `mcp_agent` in `subagents` even in builds where the `mcp`
+    /// feature dropped `mcp_agent` from [`BUILTINS`]. That leaves a subagent id
+    /// that resolves to nothing, and the whole gate rests on the loader
+    /// TOLERATING it rather than failing the boot.
+    ///
+    /// Two independent sites provide that tolerance today:
+    /// * `orchestrator_tools::collect_orchestrator_tools` warns + skips
+    ///   subagent ids absent from the registry;
+    /// * [`validate_tier_hierarchy`] `continue`s past unknown ids instead of
+    ///   reporting a tier error.
+    ///
+    /// This test pins the second one (the boot-blocking one) from BOTH build
+    /// configurations, so a future "unknown subagent ids are a hard error"
+    /// change fails here loudly instead of silently breaking the slim build's
+    /// boot — the failure mode would otherwise only appear in a
+    /// `--no-default-features` run, which CI's `cargo check` lane cannot catch.
+    #[test]
+    fn orchestrator_tolerates_unresolvable_subagent_id() {
+        let mut def = find("orchestrator");
+        def.subagents.push(SubagentEntry::AgentId(
+            "definitely_not_a_compiled_in_agent".into(),
+        ));
+
+        validate_tier_hierarchy(&[def]).expect(
+            "validate_tier_hierarchy must tolerate an unresolvable subagent id — the `mcp` \
+             feature gate relies on it (orchestrator's agent.toml lists `mcp_agent` even in \
+             builds that compile `mcp_agent` out)",
+        );
+    }
+
+    /// Companion to the above, asserting the real gated shape rather than a
+    /// synthetic id: with `mcp` compiled out, `mcp_agent` is genuinely absent
+    /// from the loaded set while the orchestrator still lists it — and
+    /// `load_builtins` (which runs `validate_tier_hierarchy` internally) must
+    /// still succeed, i.e. the core boots.
+    #[test]
+    #[cfg(not(feature = "mcp"))]
+    fn orchestrator_tolerates_absent_mcp_agent() {
+        let defs = load_builtins().expect(
+            "load_builtins must succeed with `mcp` compiled out — the orchestrator's dangling \
+             `mcp_agent` subagent reference must not fail the boot",
+        );
+
+        assert!(
+            !defs.iter().any(|d| d.id == "mcp_agent"),
+            "`mcp_agent` must be compiled out when the `mcp` feature is off"
+        );
+
+        let orchestrator = defs
+            .iter()
+            .find(|d| d.id == "orchestrator")
+            .expect("orchestrator must still load");
+        assert!(
+            orchestrator.subagents.iter().any(|e| matches!(
+                e,
+                SubagentEntry::AgentId(id) if id == "mcp_agent"
+            )),
+            "orchestrator.agent.toml is data and still lists `mcp_agent` — this dangling \
+             reference is exactly what the loader must tolerate"
+        );
+    }
+
     /// The orchestrator gets lightweight MCP discovery (`mcp_registry_status`,
     /// like `composio_list_connections`) but must NOT carry the per-server
     /// enumerate/execute tools — those belong to `mcp_agent`, keeping the
@@ -1873,7 +1966,11 @@ mod tests {
     /// the discover + call surface and a stable `use_mcp_server` delegate name,
     /// but must NOT hold the secret-handling install/uninstall tools (those are
     /// `mcp_setup`'s) or any shell/file/network capability.
+    ///
+    /// Gated: `find` panics on a missing id, and the `mcp` feature drops
+    /// `mcp_agent` from [`BUILTINS`] entirely.
     #[test]
+    #[cfg(feature = "mcp")]
     fn mcp_agent_drives_connected_servers_without_install_or_shell() {
         let def = find("mcp_agent");
         assert_eq!(def.agent_tier, AgentTier::Worker);

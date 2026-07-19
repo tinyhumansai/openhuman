@@ -237,8 +237,9 @@ mod tests {
         assert!(body.contains("[composio:error:insufficient_scope]"));
         assert!(body.contains("Scope errors are not disconnections"));
         assert!(body.contains("Never say the toolkit is disconnected"));
-        assert!(body.contains("Settings"));
-        assert!(body.contains("Connections"));
+        assert!(body.contains("Connections → the toolkit"));
+        assert!(!body.contains("Settings → Connections"));
+        assert!(!body.contains("Settings → Automation & Channels"));
     }
 
     #[test]

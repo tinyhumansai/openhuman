@@ -7,12 +7,19 @@ import {
   MicComposer,
   STT_MAX_RETRIES,
 } from './MicComposer';
+import { VoiceNotCompiledError } from './voice/sttClient';
 
 // transcribeWithFactory + encodeBlobToWav are the network/heavy boundaries —
 // mock them here so we can drive the state machine without touching real APIs.
 const transcribeWithFactoryMock = vi.fn();
 const encodeBlobToWavMock = vi.fn();
-vi.mock('./voice/sttClient', () => ({
+// Spread the real module so `VoiceNotCompiledError` / `isVoiceNotCompiledError`
+// keep their real behaviour; only the network-touching call is stubbed. A
+// factory listing exports by hand silently yields `undefined` for anything it
+// forgets, which fails as a TypeError at the call site rather than a clear mock
+// error.
+vi.mock('./voice/sttClient', async importOriginal => ({
+  ...(await importOriginal<typeof import('./voice/sttClient')>()),
   transcribeWithFactory: (...args: unknown[]) => transcribeWithFactoryMock(...args),
 }));
 vi.mock('./voice/wavEncoder', () => ({
@@ -794,10 +801,11 @@ describe('MicComposer', () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it('does not retry permanent errors (stale sidecar)', async () => {
+  it('does not retry permanent errors (voice not compiled into the core)', async () => {
     transcribeWithFactoryMock.mockRejectedValueOnce(
       new Error(
-        'Voice transcription is unavailable in this build. Restart the OpenHuman desktop app to pick up the latest core sidecar.'
+        'Voice transcription is unavailable in this build — the voice module was not compiled into the app. ' +
+          'Update OpenHuman to the latest version; restarting will not help.'
       )
     );
     const onError = vi.fn();
@@ -813,6 +821,31 @@ describe('MicComposer', () => {
     await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.stringMatching(/failed/i)));
     // Only 1 attempt — no retries for permanent errors
     expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  // #4901: the raw error text is untranslated developer copy, so a
+  // VoiceNotCompiledError must surface the localized `mic.voiceNotCompiled`
+  // string instead of being spliced into the `{message}` slot.
+  it('renders translated copy for a voice-not-compiled error, not the raw message', async () => {
+    transcribeWithFactoryMock.mockRejectedValueOnce(new VoiceNotCompiledError());
+    const onError = vi.fn();
+    const onSubmit = vi.fn();
+    render(<MicComposer disabled={false} onSubmit={onSubmit} onError={onError} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+
+    await waitFor(() => expect(onError).toHaveBeenCalled());
+    const shown = onError.mock.calls[0][0] as string;
+    // The English `mic.voiceNotCompiled` value, resolved through useT().
+    expect(shown).toMatch(/not included in this version/i);
+    // The untranslated developer copy must not leak into the UI.
+    expect(shown).not.toMatch(/not compiled into the app/i);
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
