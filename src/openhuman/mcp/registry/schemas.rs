@@ -884,7 +884,8 @@ fn handle_add_custom(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let input = read_custom_input(&params)?;
         to_json(
-            crate::openhuman::mcp_registry::custom::mcp_clients_add_custom(&config, input).await?,
+            crate::openhuman::mcp_registry::custom::ops::mcp_clients_add_custom(&config, input)
+                .await?,
         )
     })
 }
@@ -895,7 +896,7 @@ fn handle_update_custom(params: Map<String, Value>) -> ControllerFuture {
         let server_id = read_required::<String>(&params, "server_id")?;
         let input = read_custom_input(&params)?;
         to_json(
-            crate::openhuman::mcp_registry::custom::mcp_clients_update_custom(
+            crate::openhuman::mcp_registry::custom::ops::mcp_clients_update_custom(
                 &config, server_id, input,
             )
             .await?,
