@@ -105,6 +105,16 @@ fn stub(name: &'static str) -> Box<dyn Tool> {
     Box::new(StubTool { name })
 }
 
+fn remove_fake_app_session(config: &crate::openhuman::config::Config) {
+    let removed = crate::openhuman::credentials::AuthService::from_config(config)
+        .remove_profile(
+            crate::openhuman::credentials::APP_SESSION_PROVIDER,
+            crate::openhuman::credentials::DEFAULT_AUTH_PROFILE_NAME,
+        )
+        .expect("fake app-session token should be removable");
+    assert!(removed, "fake app-session token should exist");
+}
+
 #[test]
 fn filter_named_scope_keeps_only_named() {
     let parent: Vec<Box<dyn Tool>> = vec![stub("alpha"), stub("beta"), stub("gamma")];
@@ -990,6 +1000,7 @@ async fn integrations_agent_reuses_cached_toolkit_actions_without_refetching_lis
         !gmail.tools.is_empty(),
         "cached gmail integration should include action schemas"
     );
+    remove_fake_app_session(config.as_ref());
 
     let requests_before = backend.requests();
     let tools_before = requests_before
@@ -1098,6 +1109,7 @@ async fn integrations_agent_refilters_cached_actions_with_current_user_scope() {
             .any(|tool| tool.name == "GMAIL_SEND_EMAIL"),
         "warm cache should include write action before the user disables write scope"
     );
+    remove_fake_app_session(config.as_ref());
 
     crate::openhuman::composio::providers::user_scopes::save(
         &memory,
