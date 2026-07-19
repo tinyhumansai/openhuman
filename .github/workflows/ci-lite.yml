@@ -451,6 +451,7 @@ jobs:
           openhuman/agent/harness/session/tests.rs
           openhuman/agent/harness/subagent_runner/tool_prep.rs
           openhuman/agent_registry/agents/loader.rs
+          openhuman/composio/action_tool.rs
           openhuman/inference/local/mod.rs
           openhuman/tool_registry/ops_tests.rs
           openhuman/tool_registry/schemas.rs

@@ -72,6 +72,7 @@ jobs:
             --exclude '^https://www\.star-history\.com/#tinyhumansai/openhuman&type=date&legend=top-left$'
             --exclude '^https://github\.com/tinyhumansai/openhuman/stargazers'
             --exclude '^https://api\.star-history\.com/'
+            --exclude '^https://img\.shields\.io/'
             --exclude '^https://x\.com/karpathy/status/2039805659525644595$'
             'docs/**/*.md'
             'src/**/README.md'
