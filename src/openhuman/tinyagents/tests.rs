@@ -234,10 +234,12 @@ async fn unknown_tool_hint_uses_the_policy_filtered_available_set() {
     ]);
     let allowed = std::collections::HashSet::from(["read_notes".to_string()]);
 
+    let provider_id = provider.telemetry_provider_id();
+    let turn_models = build_turn_models(provider.clone(), "mock-model", 0.0, None);
     let outcome = run_turn_via_tinyagents_shared(
-        provider.clone(),
+        turn_models,
+        provider_id,
         "mock-model",
-        0.0,
         vec![ChatMessage::user("use a missing tool")],
         vec![tools],
         Some(allowed),
@@ -251,6 +253,9 @@ async fn unknown_tool_hint_uses_the_policy_filtered_available_set() {
         None,
         TurnContextMiddleware::defaults(),
         None,
+        None,
+        false,
+        false,
     )
     .await
     .expect("unknown tool recovery should continue the turn");
