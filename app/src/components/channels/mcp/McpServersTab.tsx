@@ -289,24 +289,36 @@ const McpServersTab = () => {
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestSeqRef = useRef(0);
 
-  const loadInstalled = useCallback(async () => {
-    log('loading installed servers');
+  // Returns whether the load succeeded so callers can tell a real reload from a
+  // swallowed failure (the list/status render off polled state, so a failed
+  // reload leaves stale rows on screen). Does not throw — the error is surfaced
+  // as `loadError` and as a `false` result.
+  const loadInstalled = useCallback(async (): Promise<boolean> => {
+    log('loadInstalled: begin');
     try {
       const installed = await mcpClientsApi.installedList();
       setServers(Array.isArray(installed) ? installed : []);
       setLoadError(null);
+      log('loadInstalled: ok count=%d', Array.isArray(installed) ? installed.length : 0);
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load installed servers';
+      log('loadInstalled: error %s', msg);
       setLoadError(msg);
+      return false;
     }
   }, []);
 
-  const fetchStatuses = useCallback(async () => {
+  const fetchStatuses = useCallback(async (): Promise<boolean> => {
+    log('fetchStatuses: begin');
     try {
       const sv = await mcpClientsApi.status();
       setStatuses(Array.isArray(sv) ? sv : []);
+      log('fetchStatuses: ok count=%d', Array.isArray(sv) ? sv.length : 0);
+      return true;
     } catch (err) {
-      log('status poll error: %o', err);
+      log('fetchStatuses: error %o', err);
+      return false;
     }
   }, []);
 
@@ -439,11 +451,16 @@ const McpServersTab = () => {
    *  reload — the caller's mutation has already committed and must not be
    *  reported as failed by a refresh miss. Log the outcome so a silent reload
    *  failure is still visible. */
-  const refreshInstalled = useCallback(async () => {
+  // Resolves `true` only when BOTH the installed list and the statuses reloaded.
+  // A mutation caller (the custom-servers pane) uses this to distinguish "saved
+  // and the view is current" from "saved but the reload failed and the rows are
+  // now stale" — without conflating either with the mutation's own success.
+  const refreshInstalled = useCallback(async (): Promise<boolean> => {
     log('refreshInstalled: begin');
-    await loadInstalled();
-    await fetchStatuses();
-    log('refreshInstalled: done');
+    const installedOk = await loadInstalled();
+    const statusesOk = await fetchStatuses();
+    log('refreshInstalled: done installedOk=%s statusesOk=%s', installedOk, statusesOk);
+    return installedOk && statusesOk;
   }, [loadInstalled, fetchStatuses]);
 
   const handleLoadMore = () => {

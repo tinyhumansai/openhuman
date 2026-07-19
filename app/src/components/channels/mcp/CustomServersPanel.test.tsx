@@ -46,7 +46,7 @@ const statusFor = (server_id: string): ConnStatus => ({
 });
 
 const renderPanel = (servers: InstalledServer[], statuses: ConnStatus[] = []) => {
-  const onChanged = vi.fn().mockResolvedValue(undefined);
+  const onChanged = vi.fn().mockResolvedValue(true);
   const onSelectServer = vi.fn();
   render(
     <CustomServersPanel

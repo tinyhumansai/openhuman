@@ -26,8 +26,12 @@ export interface CustomServersPanelProps {
   /** Every installed server; the panel filters to the custom ones itself. */
   servers: InstalledServer[];
   statuses: ConnStatus[];
-  /** Reload installed servers + statuses after a mutation. */
-  onChanged: () => Promise<void>;
+  /**
+   * Reload installed servers + statuses after a mutation. Resolves `false` when
+   * the reload itself failed (the mutation still committed) so this pane can log
+   * the stale-view case without reporting the mutation as failed.
+   */
+  onChanged: () => Promise<boolean>;
   /** Open a server's detail view (tools, logs, playground). */
   onSelectServer: (serverId: string) => void;
 }
@@ -58,13 +62,16 @@ const CustomServersPanel = ({
   // The refresh (`onChanged`) is wrapped everywhere below: persistence has
   // already committed by the time we refresh, so a reload failure must not
   // reject back into the form and report the add/edit as failed (letting the
-  // user "retry" an operation that already succeeded). Refresh failures are
-  // logged, not surfaced as mutation failures.
+  // user "retry" an operation that already succeeded). A failed reload — signaled
+  // by a `false` result or, defensively, a rejection — is logged; the next 5s
+  // status poll reconciles the view. It is not surfaced as a mutation failure.
   const safeRefresh = async (stage: string, serverId: string) => {
     try {
-      await onChanged();
+      const ok = await onChanged();
+      if (!ok)
+        log('%s refresh incomplete for %s — rows may be stale until next poll', stage, serverId);
     } catch (err) {
-      log('%s refresh failed for %s: %o', stage, serverId, err);
+      log('%s refresh threw for %s: %o', stage, serverId, err);
     }
   };
 
