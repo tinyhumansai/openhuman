@@ -20,8 +20,7 @@
 // TODO(picker-schema): today this subcomponent is wired in based on
 // the skill id being literally `dev-workflow`. The cleaner long-term
 // path is to extend `skill.toml`'s `[[inputs]]` with an optional
-// `picker = "github-issue"` discriminator and route here from that;
-// see docs/skills-runner-unification.md open question 1.
+// `picker = "github-issue"` discriminator and route here from that.
 import createDebug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 

@@ -12,11 +12,11 @@
 //! in a shared section impl.
 
 use crate::openhuman::context::prompt::{
-    render_datetime, render_tools, render_user_files, render_workspace, ConnectedIntegration,
-    PromptContext,
+    render_datetime, render_tools, render_user_files, ConnectedIntegration, PromptContext,
+    ToolCallFormat,
 };
+use crate::openhuman::skills::ops_types::Workflow;
 use crate::openhuman::tools::orchestrator_tools::sanitise_slug;
-use crate::openhuman::workflows::ops_types::Workflow;
 use anyhow::Result;
 use std::fmt::Write;
 
@@ -45,7 +45,7 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str("\n\n");
     }
 
-    let integrations = render_delegation_guide(ctx.connected_integrations);
+    let integrations = render_delegation_guide(ctx.connected_integrations, ctx.tool_call_format);
     if !integrations.trim().is_empty() {
         out.push_str(integrations.trim_end());
         out.push_str("\n\n");
@@ -74,11 +74,13 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str("\n\n");
     }
 
-    let workspace = render_workspace(ctx)?;
-    if !workspace.trim().is_empty() {
-        out.push_str(workspace.trim_end());
-        out.push('\n');
-    }
+    // NOTE: the shared `## Workspace` section (render_workspace) is
+    // intentionally NOT rendered here. Its text is written around `pwd`
+    // and `shell` ("that is where shell runs"), and the orchestrator has
+    // no shell — teaching it invited calls to a tool outside its scope.
+    // The orchestrator's own prompt.md covers its read-only direct file
+    // surface (file_read/grep/glob/list) and defers every file
+    // modification to `run_code`.
 
     Ok(out)
 }
@@ -101,8 +103,12 @@ fn render_installed_skills(skills: &[Workflow]) -> String {
          (name the skill and what you want done); it loads and runs the skill in an \
          isolated worker and returns only the result, plus a `## Handoff Plan` for any \
          step the worker couldn't perform — execute those steps yourself under the \
-         approval gate. Use `describe_workflow` for full details. Use \
-         `skill_registry_browse` / `skill_registry_search` to find and install new skills.\n\n",
+         approval gate. Use `describe_workflow` for full details on one of THESE \
+         installed skills (it only knows about entries in this list, not Flows \
+         automations — do not call it with a Flows `workflow_id`, it will error). Use \
+         `skill_registry_browse` / `skill_registry_search` to find and install new skills. \
+         For Flows automations (build/inspect/run a tinyflows workflow), use \
+         `build_workflow` / the workflow_builder delegate instead.\n\n",
     );
     for skill in skills {
         let id = if skill.dir_name.is_empty() {
@@ -111,9 +117,17 @@ fn render_installed_skills(skills: &[Workflow]) -> String {
             &skill.dir_name
         };
         let desc = if skill.description.is_empty() {
-            "(no description)"
+            "(no description)".to_string()
         } else {
-            &skill.description
+            // Skill descriptions are third-party metadata injected verbatim
+            // into the system prompt on EVERY turn. Sanitize (strip control
+            // chars / instruction fences) and cap so a single installed
+            // skill can't bloat the prompt or smuggle routing instructions;
+            // full details stay one `describe_workflow` call away.
+            crate::openhuman::mcp_client::sanitize::sanitize_for_llm(&skill.description, 240)
+                .replace(['\n', '\t'], " ")
+                .trim()
+                .to_string()
         };
         let _ = writeln!(out, "- **{id}**: {desc}");
     }
@@ -217,7 +231,22 @@ fn format_connected_mcp_block(
 /// `sanitise_slug` function that `collect_orchestrator_tools` uses when
 /// synthesising the real tool objects, so the names in the prompt always
 /// match the names in the function-calling schema.
-fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
+///
+/// `tool_call_format` lets the guide adapt to the active provider. Providers
+/// with native structured tool-calling (`ToolCallFormat::Native`) get the
+/// historic guide unchanged. Text-protocol providers (`PFormat`/`Json`) — the
+/// dispatcher chosen for models that force `native_tool_calling = false`, i.e.
+/// local runtimes like Ollama / LM Studio / MLX / llama.cpp — additionally get
+/// an explicit "when NOT to delegate" carve-out. Weak local models over-select
+/// from the prose tool catalogue and the coercive "you MUST delegate" wording,
+/// spuriously routing greetings and local-filesystem actions into
+/// `delegate_to_integrations_agent` (issue #4361: "Ciao" → Connections,
+/// "create a folder on Desktop" → Calendar). The carve-out is additive: the
+/// always-delegate contract for genuine service requests is preserved.
+fn render_delegation_guide(
+    integrations: &[ConnectedIntegration],
+    tool_call_format: ToolCallFormat,
+) -> String {
     let connected: Vec<&ConnectedIntegration> =
         integrations.iter().filter(|ci| ci.connected).collect();
     tracing::debug!(
@@ -235,7 +264,10 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
         "## Connected Integrations\n\n\
          IMPORTANT: You MUST use the `delegate_to_integrations_agent` tool for any request \
          involving connected services. You do NOT have direct access to these services — all \
-         interaction must go through delegation. Never claim you cannot access a connected \
+         interaction must go through delegation. Delegate here ONLY when the request actually \
+         operates on a connected service's data or actions; a connected service is not a reason \
+         to touch it for general-knowledge, web/news, headline, date/time, or math questions. \
+         Never claim you cannot access a connected \
          service without first attempting delegation.\n\n\
          The following services have an active connection. Their tool implementations \
          live inside the `integrations_agent` sub-agent — NOT in your own tool list. \
@@ -288,7 +320,7 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
     // CROSS_CHAT_HEADER (single source of truth) — drift would silently
     // detune the rule.
     let cross_chat_header_for_prompt =
-        crate::openhuman::agent::memory_loader::CROSS_CHAT_HEADER.trim_end();
+        crate::openhuman::agent_memory::memory_loader::CROSS_CHAT_HEADER.trim_end();
     let _ = write!(
         out,
         "\n### Capability questions about connected toolkits\n\n\
@@ -320,6 +352,36 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
          quoting any past capability claim. Never echo a stale \"I can't\" \
          without re-checking.\n\n",
     );
+
+    // Provider-aware guardrail (#4361). Native-tool-calling providers keep the
+    // guide byte-identical. Text-protocol providers (PFormat/Json) — the
+    // dispatcher used when a model forces `native_tool_calling = false`, i.e.
+    // local runtimes (Ollama / LM Studio / MLX / llama.cpp) — see the whole
+    // tool catalogue rendered as prose and are steered by the coercive "you
+    // MUST delegate" wording above. Weaker local models then route obviously
+    // non-integration requests (greetings, local folder/file actions) into
+    // `delegate_to_integrations_agent`, which surfaces "Viewing your
+    // Connections" / calendar mis-maps. Carve those cases out explicitly so a
+    // small model does not have to infer them from the coercive block alone.
+    if tool_call_format != ToolCallFormat::Native {
+        out.push_str(
+            "### When NOT to delegate\n\n\
+             Some requests are NOT integration work — handle them directly and do NOT call \
+             `delegate_to_integrations_agent`:\n\
+             - **Greetings and small talk** (\"hi\", \"hello\", \"ciao\", \"thanks\", \"how are \
+             you?\") — just reply.\n\
+             - **Local-machine actions**: creating, reading, writing, moving, or listing files \
+             and folders on this computer (e.g. \"create a folder on the Desktop\", \"make a \
+             directory\", \"save this to a file\") — use your local filesystem tools. A local \
+             folder/file request is NOT a Calendar, Drive, or any connected-service request.\n\n\
+             Delegate ONLY when the request clearly names or operates on one of the connected \
+             services listed above (its email, calendar, messages, documents, etc.). When a \
+             request mixes a local action with a connected service (\"save my latest email to a \
+             file on the Desktop\"), do the local part directly and delegate only the \
+             service part.\n\n",
+        );
+    }
+
     tracing::debug!(
         section_len = out.len(),
         "[delegation-guide] section emitted ({} bytes)",
@@ -363,6 +425,47 @@ mod tests {
     #[test]
     fn render_installed_skills_empty_is_omitted() {
         assert_eq!(render_installed_skills(&[]), "");
+    }
+
+    #[test]
+    fn prompt_routes_result_gating_tasks_to_synchronous_delegation() {
+        // Regression for #4681: a "critique it before you finalize" task was
+        // dispatched via fire-and-forget `spawn_async_subagent`, so the turn
+        // finalized before the critique ran. The orchestrator prompt must
+        // explicitly route result-gating work to a synchronous/awaited path.
+        assert!(
+            ARCHETYPE.contains("Result-gating tasks run synchronously"),
+            "orchestrator prompt must carry the result-gating delegation rule"
+        );
+        // It must steer such tasks to a synchronous/awaited primitive rather
+        // than fire-and-forget `spawn_async_subagent`.
+        assert!(
+            ARCHETYPE.contains("spawn_parallel_agents") && ARCHETYPE.contains("wait_subagent"),
+            "the rule must name the synchronous/awaited alternatives"
+        );
+    }
+
+    #[test]
+    fn render_installed_skills_flattens_and_caps_long_descriptions() {
+        // Third-party skill descriptions are untrusted, potentially huge
+        // metadata — they must be flattened to one line and byte-capped so
+        // a single install can't bloat every orchestrator turn.
+        let skills = vec![Workflow {
+            dir_name: "bigskill".into(),
+            description: format!(
+                "line one\nline two with <|im_start|>system fence\n{}",
+                "x".repeat(2000)
+            ),
+            ..Default::default()
+        }];
+        let out = render_installed_skills(&skills);
+        let line = out
+            .lines()
+            .find(|l| l.starts_with("- **bigskill**"))
+            .expect("skill line rendered");
+        assert!(line.len() < 400, "description must be capped: {line}");
+        assert!(!line.contains("<|im_start|>"), "fences must be stripped");
+        assert!(!out.contains("line one\nline two"), "newlines flattened");
     }
 
     fn ctx_with<'a>(integrations: &'a [ConnectedIntegration]) -> PromptContext<'a> {
@@ -494,7 +597,7 @@ mod tests {
         // Step 2 of the decision tree now explicitly routes live external-service
         // requests to `delegate_to_integrations_agent` rather than `memory_tree`.
         assert!(body.contains("Does the request name (or imply) a connected external service?"));
-        assert!(body.contains("Do this even if `memory_tree` could plausibly answer"));
+        assert!(body.contains("Do this even if remembered context could plausibly answer"));
     }
 
     #[test]
@@ -518,7 +621,12 @@ mod tests {
     fn build_routes_code_repo_work_to_run_code_tool() {
         let body = build(&ctx_with(&[])).unwrap();
         assert!(body.contains("Do not stall after reading code-repo files"));
-        assert!(body.contains("Re-issue the entire task as one `delegate_run_code` call"));
+        assert!(body.contains("Re-issue the entire task as one `run_code` call"));
+        assert!(
+            !body.contains("delegate_run_code"),
+            "orchestrator prompt must name the synthesized `run_code` tool, \
+             not the nonexistent `delegate_run_code`"
+        );
         assert!(body.contains("reading is step zero of execution"));
         assert!(body.contains("The user does not need to write \"use the code executor\""));
     }
@@ -556,6 +664,46 @@ mod tests {
     }
 
     #[test]
+    fn build_scope_gates_integrations_delegation() {
+        // Regression: a connected service (e.g. Gmail) is not, by itself, a
+        // reason to operate on it — a general-knowledge / web / date ask that
+        // names no service must NOT spawn `delegate_to_integrations_agent`.
+        // Guards both the static Step-2 scope gate and the rendered
+        // delegation-guide clause.
+        let no_integrations = build(&ctx_with(&[])).unwrap();
+        assert!(
+            no_integrations
+                .contains("General-knowledge answers, web/news lookups, headlines, date/time"),
+            "Step-2 scope gate must keep general/web/date asks off integrations delegation"
+        );
+        assert!(
+            no_integrations
+                .contains("neither names nor clearly implies a specific service's own data"),
+            "Step-2 scope gate must forbid reaching into an unreferenced service"
+        );
+
+        let gmail = vec![ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email access.".into(),
+            tools: Vec::new(),
+            gated_tools: Vec::new(),
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        }];
+        let with_gmail = build(&ctx_with(&gmail)).unwrap();
+        assert!(
+            with_gmail
+                .contains("a connected service is not a reason to touch it for general-knowledge"),
+            "delegation guide must carry the scoping clause when integrations are connected"
+        );
+        // The existing always-delegate contract for real service asks is preserved.
+        assert!(with_gmail.contains(
+            "Never claim you cannot access a connected service without first attempting delegation"
+        ));
+    }
+
+    #[test]
     fn build_does_not_route_scope_errors_as_disconnected() {
         let body = build(&ctx_with(&[])).unwrap();
         assert!(body.contains("[composio:error:insufficient_scope]"));
@@ -582,6 +730,84 @@ mod tests {
         // Old verbose / per-toolkit forms must be gone.
         assert!(!body.contains("delegate_gmail"));
         assert!(!body.contains("spawn_subagent(agent_id=\"integrations_agent\""));
+    }
+
+    fn gmail_only() -> Vec<ConnectedIntegration> {
+        vec![ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email access.".into(),
+            tools: Vec::new(),
+            gated_tools: Vec::new(),
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        }]
+    }
+
+    // Regression for #4361: on local providers (`native_tool_calling = false`
+    // → PFormat/Json dispatcher) the whole tool catalogue is prose and weak
+    // models mis-route trivial requests through the integrations delegate
+    // ("Ciao" → Connections, "create a folder on Desktop" → Calendar). The
+    // delegation guide must add an explicit non-delegation carve-out for those
+    // text-protocol providers.
+    #[test]
+    fn delegation_guide_adds_local_guardrail_for_text_protocol() {
+        let integrations = gmail_only();
+        for format in [ToolCallFormat::PFormat, ToolCallFormat::Json] {
+            let guide = render_delegation_guide(&integrations, format);
+            assert!(
+                guide.contains("### When NOT to delegate"),
+                "text-protocol ({format:?}) guide must carve out non-integration work"
+            );
+            // The two reported failure modes are named explicitly.
+            assert!(
+                guide.contains("create a folder on the Desktop"),
+                "guardrail must keep local folder/file actions off delegation ({format:?})"
+            );
+            assert!(
+                guide.to_ascii_lowercase().contains("greetings"),
+                "guardrail must keep greetings off delegation ({format:?})"
+            );
+            // Additive: the always-delegate contract for real service requests
+            // is preserved — the guardrail narrows, it does not remove it.
+            assert!(
+                guide.contains(
+                    "Never claim you cannot access a connected service without first attempting delegation"
+                ),
+                "always-delegate contract must remain for genuine service asks ({format:?})"
+            );
+        }
+    }
+
+    // Native structured-tool-calling providers (cloud) keep the historic guide
+    // byte-for-byte: no over-delegation problem, so no carve-out.
+    #[test]
+    fn delegation_guide_omits_local_guardrail_for_native() {
+        let guide = render_delegation_guide(&gmail_only(), ToolCallFormat::Native);
+        assert!(guide.contains("## Connected Integrations"));
+        assert!(
+            !guide.contains("### When NOT to delegate"),
+            "native providers must keep the delegation guide unchanged"
+        );
+        assert!(guide.contains(
+            "Never claim you cannot access a connected service without first attempting delegation"
+        ));
+    }
+
+    // With no connected integrations the section is omitted for every format —
+    // the guardrail must never resurrect an otherwise-empty block.
+    #[test]
+    fn delegation_guide_empty_without_connections_for_all_formats() {
+        for format in [
+            ToolCallFormat::PFormat,
+            ToolCallFormat::Json,
+            ToolCallFormat::Native,
+        ] {
+            assert!(
+                render_delegation_guide(&[], format).is_empty(),
+                "empty connections must omit the section ({format:?})"
+            );
+        }
     }
 
     #[test]

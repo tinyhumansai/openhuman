@@ -946,7 +946,8 @@ describe('loadProviderAuthErrors', () => {
           {
             provider: 'openrouter',
             status: 401,
-            message: 'openrouter rejected the API key (HTTP 401). Update it in Settings → AI.',
+            message:
+              'openrouter rejected the API key (HTTP 401). Update it in Connections → API keys → LLM.',
             timestamp_ms: 1000,
           },
         ],

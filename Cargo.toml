@@ -1,9 +1,14 @@
 [package]
 name = "openhuman"
-version = "0.58.7"
+version = "0.61.5"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
+# build.rs globs tests/raw_coverage/*.rs into the single `raw_coverage_all`
+# integration target (see tests/raw_coverage_all.rs). Those files used to be ~76
+# individual `tests/*.rs` targets, each statically relinking the whole crate —
+# collapsing them into one target removes ~75 full-crate link steps per test run.
+build = "build.rs"
 
 [[bin]]
 name = "openhuman-core"
@@ -33,33 +38,71 @@ path = "src/bin/harness_subagent_audit.rs"
 name = "test-mcp-stub"
 path = "src/bin/test_mcp_stub.rs"
 
+[[bin]]
+name = "openhuman-fleet"
+path = "src/bin/fleet.rs"
+
 [lib]
 name = "openhuman_core"
 crate-type = ["rlib"]
 
 [dependencies]
-# tiny.place A2A social network SDK — published on crates.io (tinyhumansai/tiny.place)
-tinyplace = "1.0.1"
+# tiny.place A2A social network SDK — published on crates.io and patched below
+# to the vendored tiny.place submodule so OpenHuman can test SDK changes before
+# publishing.
+tinyplace = "2.0"
+# tinyflows — host-agnostic workflow engine (typed node graph → validate → compile →
+# run on tinyagents). Powers the "Workflows" feature via the seam in
+# `src/openhuman/tinyflows/` + the `flows::` domain. Pulls tinyagents 1.7 transitively
+# (same version openhuman already uses — no conflict). Published on crates.io
+# and patched below to the vendored submodule.
+#
+# `mock` feature: enables `tinyflows::caps::mock::mock_capabilities()` — the
+# deterministic in-memory capability bundle the flows `dry_run_workflow` agent
+# tool (Phase 5b) runs a *draft* graph against so the workflow-builder agent can
+# self-verify a proposal without any real side effects (no real LLM/tool/HTTP/code).
+#
+# Optional: exclusive to the default-ON `flows` feature (#4797). A slim build
+# without `flows` drops this crate and its `jaq-*` JSON-query stack entirely.
+tinyflows = { version = "0.5", features = ["mock"], optional = true }
+# TinyJuice — host-agnostic TokenJuice compression engine. OpenHuman keeps
+# config/RPC/tool/runtime adapters in `src/openhuman/tokenjuice/` and patches
+# this dependency to the vendored submodule below.
+tinyjuice = { version = "0.2.1", default-features = false }
 # TinyAgents — Rust LLM orchestration framework (LangGraph/LangChain-style):
 # durable state graphs, agent-loop harness, model/tool registries, REPL +
 # `.rag` workflow language. openhuman's agent engine + orchestration run on this
 # crate's primitives via the adapter seam in `src/openhuman/tinyagents/` (issue
 # #4249): every turn drives through the harness; the workflow phase DAG, team
 # member runtime, parallel fan-out, and multi-stage delegation run on graphs.
-# Default (offline) features only — we wire openhuman's own Provider/Tool, not
-# the bundled openai client. We deliberately do NOT enable the `sqlite` feature:
-# its `rusqlite 0.40` (libsqlite3-sys 0.38) conflicts with openhuman's own
-# `rusqlite 0.37` over the `links = "sqlite3"` native lib. Durable graph
-# checkpoints are instead provided by `SqlRunLedgerCheckpointer`, a custom
-# `Checkpointer` over openhuman's SQLite (see `src/openhuman/tinyagents/checkpoint.rs`).
-tinyagents = "1.2"
+# We wire openhuman's own Provider/Tool, not the removed bundled openai client.
+# The `sqlite` feature is enabled now that openhuman's direct rusqlite pin is
+# aligned to 0.40, avoiding duplicate `links = "sqlite3"` native bindings.
+# Durable graph checkpoints still use `SqlRunLedgerCheckpointer` until the
+# migration re-points those rows to the crate checkpointer.
+# The `repl` feature (embedded Rhai `.ragsh` session runtime powering the
+# `rhai_workflows` language-workflow tool, `src/openhuman/rhai_workflows/`) is
+# NOT enabled here — the default-ON `flows` feature turns it on via
+# `tinyagents/repl` (#4797), so a slim build without `flows` sheds `rhai`.
+# The crate itself can never be dropped: 26+ domains consume tinyagents.
+tinyagents = { version = "1.7", features = ["sqlite"] }
+# TinyCortex — Rust core for the memory engine (store/chunks/tree/retrieval/
+# queue/ingest/score + long tail), vendored as a git submodule and patched
+# below to `vendor/tinycortex`. OpenHuman's memory subsystem migrates onto this
+# crate through the adapter seam in `src/openhuman/tinycortex/` (mirroring the
+# tinyagents seam): engine logic in the crate; RPC, agent tools, live sync,
+# security gating, and the global singleton stay host-side. rusqlite/git2 are
+# aligned to the host pins (=0.40 / 0.21) so one bundled SQLite + one libgit2
+# link. Keep the version pin in lockstep with the submodule tag.
+tinycortex = { version = "0.1", features = ["git-diff", "persona", "sync"] }
+tinychannels = { version = "0.1", features = ["relay-websocket"] }
 # TokenJuice code compressor — AST-aware signature extraction. Optional (C build)
 # behind the default `tokenjuice-treesitter` feature; disabling it falls back to
 # the language-agnostic brace-depth heuristic. See src/openhuman/tokenjuice/compressors/code.rs.
-tree-sitter = { version = "0.24", optional = true }
-tree-sitter-rust = { version = "0.23", optional = true }
+tree-sitter = { version = "0.26", optional = true }
+tree-sitter-rust = { version = "0.24", optional = true }
 tree-sitter-typescript = { version = "0.23", optional = true }
-tree-sitter-python = { version = "0.23", optional = true }
+tree-sitter-python = { version = "0.25", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_repr = "0.1"
@@ -75,6 +118,9 @@ serde_yaml = "0.9"
 # providers/gmail/post_process.rs) and prefer the email's
 # `text/plain` MIME part when available.)
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls", "native-tls", "stream", "http2", "multipart", "socks"] }
+# Already in-tree via reqwest/hyper; named directly so `IntegrationClient::get_bytes`
+# can return `bytes::Bytes` without a copy.
+bytes = "1"
 tokio = { version = "1", features = ["full", "sync"] }
 once_cell = "1.19"
 parking_lot = "0.12"
@@ -127,7 +173,7 @@ tokio-util = { version = "0.7", features = ["rt", "io"] }
 # (native-tls on Windows, rustls on macOS / Linux) matches the reqwest
 # backend selected at each TLS call site.
 futures = "0.3"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "=0.40.0", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
 iana-time-zone = "0.1"
 cron = "0.12"
@@ -177,7 +223,7 @@ sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
-lettre = { version = "0.11.22", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
+lettre = { version = "0.11.22", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"], optional = true }
 mail-parser = "0.11.2"
 async-imap = { version = "0.11", features = ["runtime-tokio"], default-features = false }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "macros"] }
@@ -193,7 +239,7 @@ whisper-rs = "0.16"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 tempfile = "3"
 cpal = "0.15"
-hound = "3.5"
+hound = { version = "3.5", optional = true }
 enigo = "0.3"
 arboard = "3"
 rdev = "0.5"
@@ -210,7 +256,7 @@ ethers-signers = { version = "2.0.14", default-features = false }
 # - ed25519-dalek: Solana transaction signing.
 # - bs58: Solana base58 addresses + Tron base58check addresses.
 # - ripemd: RIPEMD160 for BTC HASH160 (P2WPKH) and Tron address hash.
-bitcoin = { version = "0.32", default-features = false, features = ["std", "secp-recovery", "rand-std"] }
+bitcoin = { version = "0.32", default-features = false, features = ["std", "secp-recovery", "rand-std"], optional = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "rand_core"] }
 bs58 = { version = "0.5", default-features = false, features = ["std", "check"] }
 ripemd = "0.1"
@@ -220,22 +266,21 @@ ripemd = "0.1"
 # off the recovery phrase without going through the EVM signer wrapper.
 coins-bip39 = "0.8"
 # Solana off-curve check for ATA derivation (find_program_address).
-curve25519-dalek = { version = "4", default-features = false, features = ["alloc"] }
+curve25519-dalek = { version = "4", default-features = false, features = ["alloc"], optional = true }
 
-matrix-sdk = { version = "0.16", optional = true, default-features = false, features = ["e2e-encryption", "rustls-tls", "markdown"] }
 fantoccini = { version = "0.22.0", optional = true, default-features = false, features = ["rustls-tls"] }
-serde-big-array = { version = "0.5", optional = true }
 pdf-extract = "0.10"
-# WhatsApp Web — upstream `whatsapp-rust` 0.5. Replaces the previous `wa-rs`
-# 0.2 fork: upstream now ships its own SqliteStore (so we no longer need the
-# 1.3K-line custom RusqliteStore) and dispatches `Event::Message` for
-# LID-addressed contacts and group sender-key (skmsg) messages — both of
-# which the 0.2 fork silently dropped after decryption.
-whatsapp-rust = { version = "0.5", optional = true, default-features = false, features = ["sqlite-storage", "tokio-runtime"] }
-whatsapp-rust-tokio-transport = { version = "0.5", optional = true, default-features = false }
-whatsapp-rust-ureq-http-client = { version = "0.5", optional = true }
-wacore = { version = "0.5", optional = true, default-features = false }
+# The WhatsApp Web provider (and its `whatsapp-rust` / `wacore` / `serde-big-array`
+# stack) now lives in the tinychannels crate; the `whatsapp-web` feature forwards
+# to `tinychannels/whatsapp-web`.
 ppt-rs = "0.2.14"
+# Native-Rust `.docx` writer for the `generate_document` tool (GH #4847).
+# Pure Rust (no subprocess / managed runtime), MIT-licensed, actively
+# maintained (2.8M downloads, last release 0.4.20 — Apr 2026). Mirrors the
+# `ppt-rs` presentation engine: synthesise bytes in-process, hand them to
+# the byte-agnostic artifact pipeline. `default-features` keeps the crate's
+# image support (unused here, but avoids a bespoke feature list drifting).
+docx-rs = "0.4.20"
 
 [target.'cfg(windows)'.dependencies]
 # Windows: tokio-tungstenite uses native-tls (schannel) so wss://
@@ -297,25 +342,130 @@ filetime = "0.2"
 # beat without real-time waits. Test-only — the runtime feature set in
 # `[dependencies]` (`full`) intentionally excludes it.
 tokio = { version = "1", features = ["test-util"] }
+# Property-based testing for the adversarial-input surfaces (command classifier,
+# encryption round-trip) — plan.md §6.3. Version already resolved in Cargo.lock.
+proptest = "1"
 
 [features]
-default = ["tokenjuice-treesitter"]
+default = ["tokenjuice-treesitter", "voice", "web3", "media", "meet", "skills", "flows", "mcp"]
 # AST-aware code compression (tree-sitter Rust/TS/Python grammars; C build).
 # On by default; disable to fall back to the brace-depth heuristic.
 tokenjuice-treesitter = [
-    "dep:tree-sitter",
-    "dep:tree-sitter-rust",
-    "dep:tree-sitter-typescript",
-    "dep:tree-sitter-python",
+    "tinyjuice/tinyjuice-treesitter",
 ]
+# Voice + audio_toolkit domains: STT/TTS providers, the standalone dictation
+# server, always-on listening, and podcast audio generation/email delivery.
+# Default-ON — the desktop app always ships with voice. Slim / headless builds
+# opt out via `--no-default-features --features "<explicit list without voice>"`,
+# which also drops the exclusive `hound` (WAV I/O) + `lettre` (podcast email)
+# dependencies. Composes with the runtime `DomainSet::voice` flag (#4796): the
+# feature narrows the compile-time surface, `DomainSet` gates it at runtime.
+# NOTE: this gate does NOT drop whisper-rs / llama / cpal — those live in the
+# inference domain (shared with accessibility for cpal) and await a separate
+# `inference` gate.
+voice = ["dep:hound", "dep:lettre"]
+# Web3 domains: openhuman::wallet + openhuman::web3 + openhuman::x402 — the
+# crypto wallet (multi-chain sign/broadcast), the high-level swap/bridge/dapp
+# surface, and the x402 machine-payment protocol. Default-ON — the desktop app
+# always ships with the wallet. Slim / headless builds opt out via
+# `--no-default-features --features "<explicit list without web3>"`, which also
+# drops the exclusive `bitcoin` (P2WPKH PSBT) + `curve25519-dalek` (Solana
+# off-curve ATA) dependencies. Composes with the runtime `DomainSet::Web3` flag
+# (#4796): the feature narrows the compile-time surface, `DomainSet` gates it at
+# runtime. NOTE: this gate does NOT drop ethers-core / ethers-signers /
+# coins-bip39 / bs58 / ed25519-dalek / ripemd — those are shared with the
+# Polymarket tools + tinyplace on-chain payments + orchestration and stay
+# always-on. When off, tinyplace payments + Polymarket writes degrade to
+# graceful "wallet disabled" errors via the wallet/web3/x402 stub facades.
+web3 = ["dep:bitcoin", "dep:curve25519-dalek"]
+# Media-generation + image domains: the `media_generate_*` agent tools
+# (image/video via GMI through the backend) and the `openhuman::image` tool
+# contracts scaffold. Default-ON. Slim builds opt out via
+# `--no-default-features --features "<explicit list without media>"`.
+# Composes with the runtime `DomainSet::media` flag (#4796).
+# NOTE: this gate sheds NO exclusive dependencies — media generation is
+# backend-proxied (reqwest, shared) and the `image` crate is shared with
+# channel media upload. It is a surface-only gate (drops the tool code +
+# module from the compile), not a dependency-shedding one. There are no
+# controllers / stores / subscribers tagged `Media` (agent tools only), and
+# `openhuman::image` is currently unwired scaffold (added #2997).
+media = []
+# Flows domains: the `flows::` automation surface (saved tinyflows graphs —
+# create/run/schedule + the workflow_builder / flow_discovery agents), the
+# `tinyflows::` adapter seam, and the `rhai_workflows::` language-workflow tool.
+# Default-ON — the desktop app always ships with Workflows. Slim / headless
+# builds opt out via `--no-default-features --features "<list without flows>"`,
+# which drops `tinyflows` + its `jaq-core`/`jaq-std`/`jaq-json` JSON-query stack
+# and, via `tinyagents/repl`, the `rhai` scripting engine. Composes with the
+# runtime `DomainSet::flows` flag (#4796): the feature narrows the compile-time
+# surface, `DomainSet` gates it at runtime.
+# NOTE: this gate does NOT drop `tinyagents` itself — 26+ domains consume it.
+# Only its `repl` feature (⇒ `rhai`) is exclusive to flows.
+flows = ["dep:tinyflows", "tinyagents/repl"]
+# Meet domains: `meet` (join-URL validation), `meet_agent` (live STT/LLM/TTS
+# loop over an open call), and `agent_meetings` (backend-delegated Meet bot via
+# Socket.IO). Default-ON — the desktop app always ships with Meet. Slim /
+# headless builds opt out via `--no-default-features --features "<list without
+# meet>"`. Composes with the runtime `DomainSet::meet` flag (#4796): the feature
+# narrows the compile-time surface, `DomainSet` gates it at runtime.
+# NOTE: unlike `voice`, this gate drops NO dependencies — the Meet domains have
+# zero exclusive crates. `meet_agent::wav` is a hand-rolled RIFF writer
+# precisely so Meet never needed `hound` (which `voice` already owns), so the
+# dependency shed was pre-paid. The gate's value is compile-time surface +
+# binary size, not the dep tree.
+# CARVE-OUT: `meet_agent::wav` stays compiled in ALL builds — the always-on
+# `desktop_companion` STT path depends on it. See `meet_agent/mod.rs`.
+meet = []
+# Skills domains: `openhuman::skills` (metadata/discovery/install),
+# `openhuman::skill_runtime` (SKILL.md execution + the skill_executor agent),
+# and `openhuman::skill_registry` (remote catalogs + the skill_setup agent).
+# Default-ON — the desktop app always ships with skills. Slim / headless builds
+# opt out via `--no-default-features --features "<explicit list without skills>"`.
+# Composes with the runtime `DomainSet::skills` flag (#4796): the feature
+# narrows the compile-time surface, `DomainSet` gates it at runtime.
+#
+# The dep list is INTENTIONALLY EMPTY — do not "fix" it. Unlike `voice`
+# (`hound`/`lettre`), these domains have no exclusive dependencies: every crate
+# they touch (serde, serde_json, tokio, anyhow, async-trait, …) is shared with
+# always-on domains, and `runtime_node`/`runtime_python` are used by Agent /
+# Flows / Memory too. This gate's value is tool-surface + prompt-bloat +
+# startup cost, NOT binary size.
+#
+# NOTE: `openhuman::skills::types` and `::ops_types` stay compiled even when
+# this feature is OFF — `tools::traits` re-exports `ToolResult`/`ToolContent`
+# out of `skills::types` and ~236 files consume them, so those inert serde
+# types are a type carve-out, not part of the gated behaviour. See
+# `src/openhuman/skills/stub.rs`.
+skills = []
+# MCP domains: `mcp_server` (the `openhuman mcp` stdio/HTTP server exposing our
+# tool surface), `mcp_registry` (dynamic Smithery installs — SQLite, lifecycle,
+# `mcp_clients` RPC namespace), `mcp_audit` (write-audit log), and the
+# static/config-declared server set in `mcp_client`. Default-ON — the desktop
+# app always ships with MCP. Composes with the runtime `DomainSet::mcp` flag
+# (#4796): this feature narrows the compile-time surface, `DomainSet` gates it
+# at runtime.
+#
+# INTENTIONALLY EMPTY — do NOT "fix" this by adding `dep:` entries. There is no
+# MCP SDK in this crate: the whole protocol stack is hand-rolled over tokio
+# process stdio + reqwest + axum, every one of which is load-bearing for
+# non-MCP domains. So this gate drops ~20k LOC and ~19 agent tools but ZERO
+# dependencies. The issue-level DoD line claiming it "sheds the MCP SDK /
+# transport stack" is superseded by this correction (see AGENTS.md).
+#
+# NOTE: `mcp_client::{sanitize, client}` stay ALWAYS compiled — they are
+# mis-housed shared utilities (the gitbooks docs tool dials `McpHttpClient`;
+# the orchestrator prompt sanitises *skill* descriptions through
+# `sanitize::sanitize_for_llm`). The gate follows the real dependency graph,
+# not the directory name.
+mcp = []
 sandbox-landlock = ["dep:landlock"]
 sandbox-bubblewrap = []
-channel-matrix = ["dep:matrix-sdk"]
 peripheral-rpi = ["dep:rppal"]
 browser-native = ["dep:fantoccini"]
 fantoccini = ["browser-native"]
 landlock = ["sandbox-landlock"]
-whatsapp-web = ["dep:whatsapp-rust", "dep:whatsapp-rust-tokio-transport", "dep:whatsapp-rust-ureq-http-client", "dep:wacore", "serde-big-array"]
+# The WhatsApp Web provider now lives in tinychannels; forward to its feature.
+whatsapp-web = ["tinychannels/whatsapp-web"]
 # Exposes the destructive `openhuman.test_reset` RPC. Off by default; the E2E
 # build (app/scripts/e2e-build.sh) flips it on. Shipped binaries never have
 # this feature so the wipe RPC isn't even registered, let alone reachable.
@@ -324,12 +474,45 @@ e2e-test-support = []
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 
+# These project-wide shape/documentation lints describe intentional public APIs
+# and long-standing module docs. Keep them explicitly baselined so `-D warnings`
+# can make every other Clippy and rustc diagnostic a hard failure.
+[lints.clippy]
+borrowed_box = "allow"
+doc_overindented_list_items = "allow"
+field_reassign_with_default = "allow"
+large_enum_variant = "allow"
+result_large_err = "allow"
+should_implement_trait = "allow"
+too_many_arguments = "allow"
+while_let_loop = "allow"
+
 # Fix whisper-rs-sys CRT mismatch on Windows MSVC (LNK2038).
 # Upstream cmake build defaults to /MD but Rust uses /MT.
 # This fork adds config.static_crt(true) to the build script.
 # See: https://github.com/tinyhumansai/openhuman/issues/273
 [patch.crates-io]
 whisper-rs-sys = { git = "https://github.com/tinyhumansai/whisper-rs-sys.git", branch = "main" }
+# TinyAgents is vendored as a git submodule (pinned at the released tag) so
+# migration work can change the SDK source in-tree, test it against OpenHuman
+# immediately, and PR the diff upstream from the submodule. Keep the submodule
+# version in lockstep with the `tinyagents` requirement above. After cloning:
+# `git submodule update --init vendor/tinyagents` (worktrees included).
+tinyagents = { path = "vendor/tinyagents" }
+# TinyFlows, TinyCortex, TinyJuice, TinyChannels, and TinyPlace are vendored beside
+# TinyAgents so integration work can test crate changes against OpenHuman before
+# publishing.
+tinyflows = { path = "vendor/tinyflows" }
+tinycortex = { path = "vendor/tinycortex" }
+tinyjuice = { path = "vendor/tinyjuice" }
+tinychannels = { path = "vendor/tinychannels" }
+tinyplace = { path = "vendor/tinyplace/sdk/rust" }
+
+# TinyCortex temporarily pins the embedding API port while tinyagents #58 is
+# pending. Resolve that git source to the same vendored crate so host adapters
+# and TinyCortex share one `EmbeddingModel` trait identity.
+[patch."https://github.com/senamakel/tinyagents"]
+tinyagents = { path = "vendor/tinyagents" }
 
 # Emit just enough DWARF in release builds for Sentry to symbolicate Rust
 # panics + render surrounding source lines. `line-tables-only` keeps the

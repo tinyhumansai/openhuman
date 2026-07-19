@@ -6,8 +6,8 @@
 //! the sibling `mod.rs` so type edits don't pull in the whole 2 000-line
 //! renderer.
 
+use crate::openhuman::skills::Workflow;
 use crate::openhuman::tools::Tool;
-use crate::openhuman::workflows::Workflow;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::path::Path;

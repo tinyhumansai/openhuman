@@ -13,7 +13,7 @@
 //! resulting artifact into the agent's `generated-media/` root, and return the
 //! local file paths. The backend owns GMI keys, billing, and rate limiting.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -22,7 +22,10 @@ use serde_json::{json, Value};
 
 use crate::openhuman::config::Config;
 use crate::openhuman::integrations::IntegrationClient;
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
+use crate::openhuman::tools::traits::{
+    PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult,
+};
+use tinyagents::harness::tool::ToolExecutionContext;
 
 use super::download::persist_media;
 use super::types::MediaResponse;
@@ -39,7 +42,7 @@ const VIDEO_MAX_WAIT_SECS: u64 = 420;
 /// Shared submit-then-poll-then-persist flow for both modalities.
 async fn generate_and_persist(
     client: &IntegrationClient,
-    action_dir: &std::path::Path,
+    action_dir: &Path,
     submit_path: &str,
     body: Value,
     max_wait_secs: u64,
@@ -146,6 +149,24 @@ async fn generate_and_persist(
     }
 }
 
+fn action_dir_for_context(
+    default_action_dir: &Path,
+    context: Option<&ToolExecutionContext>,
+    tool_name: &str,
+) -> PathBuf {
+    if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+        tracing::debug!(
+            tool = tool_name,
+            workspace_root = %workspace.root.display(),
+            policy_id = %workspace.policy_id,
+            "[media_generation] using ToolExecutionContext workspace root"
+        );
+        return workspace.root.clone();
+    }
+
+    default_action_dir.to_path_buf()
+}
+
 // ── MediaGenerateImageTool ──────────────────────────────────────────
 
 pub struct MediaGenerateImageTool {
@@ -156,6 +177,47 @@ pub struct MediaGenerateImageTool {
 impl MediaGenerateImageTool {
     pub fn new(client: Arc<IntegrationClient>, action_dir: PathBuf) -> Self {
         Self { client, action_dir }
+    }
+
+    async fn run(&self, args: Value, action_dir: &Path) -> anyhow::Result<ToolResult> {
+        let prompt = match args.get("prompt").and_then(|v| v.as_str()) {
+            Some(p) if !p.trim().is_empty() => p,
+            _ => return Ok(ToolResult::error("prompt is required")),
+        };
+
+        let mut body = json!({ "prompt": prompt, "wait": false });
+        if let Some(model) = args.get("model").and_then(|v| v.as_str()) {
+            body["model"] = json!(model);
+        }
+        if let Some(size) = args.get("size").and_then(|v| v.as_str()) {
+            body["size"] = json!(size);
+        }
+        if let Some(n) = args.get("n").and_then(|v| v.as_u64()) {
+            body["n"] = json!(n.clamp(1, 8));
+        }
+        if let Some(imgs) = args.get("input_images").and_then(|v| v.as_array()) {
+            let urls: Vec<&str> = imgs.iter().filter_map(|v| v.as_str()).collect();
+            if !urls.is_empty() {
+                body["inputImages"] = json!(urls);
+            }
+        }
+        if let Some(seed) = args.get("seed").and_then(|v| v.as_i64()) {
+            body["seed"] = json!(seed);
+        }
+
+        tracing::info!(
+            prompt_len = prompt.len(),
+            action_dir = %action_dir.display(),
+            "[media_generate_image] persisting generated media"
+        );
+        Ok(generate_and_persist(
+            &self.client,
+            action_dir,
+            IMAGES_PATH,
+            body,
+            IMAGE_MAX_WAIT_SECS,
+        )
+        .await)
     }
 }
 
@@ -200,40 +262,17 @@ impl Tool for MediaGenerateImageTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let prompt = match args.get("prompt").and_then(|v| v.as_str()) {
-            Some(p) if !p.trim().is_empty() => p,
-            _ => return Ok(ToolResult::error("prompt is required")),
-        };
+        self.run(args, &self.action_dir).await
+    }
 
-        let mut body = json!({ "prompt": prompt, "wait": false });
-        if let Some(model) = args.get("model").and_then(|v| v.as_str()) {
-            body["model"] = json!(model);
-        }
-        if let Some(size) = args.get("size").and_then(|v| v.as_str()) {
-            body["size"] = json!(size);
-        }
-        if let Some(n) = args.get("n").and_then(|v| v.as_u64()) {
-            body["n"] = json!(n.clamp(1, 8));
-        }
-        if let Some(imgs) = args.get("input_images").and_then(|v| v.as_array()) {
-            let urls: Vec<&str> = imgs.iter().filter_map(|v| v.as_str()).collect();
-            if !urls.is_empty() {
-                body["inputImages"] = json!(urls);
-            }
-        }
-        if let Some(seed) = args.get("seed").and_then(|v| v.as_i64()) {
-            body["seed"] = json!(seed);
-        }
-
-        tracing::info!("[media_generate_image] prompt_len={}", prompt.len());
-        Ok(generate_and_persist(
-            &self.client,
-            &self.action_dir,
-            IMAGES_PATH,
-            body,
-            IMAGE_MAX_WAIT_SECS,
-        )
-        .await)
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let action_dir = action_dir_for_context(&self.action_dir, context, self.name());
+        self.run(args, &action_dir).await
     }
 }
 
@@ -247,6 +286,47 @@ pub struct MediaGenerateVideoTool {
 impl MediaGenerateVideoTool {
     pub fn new(client: Arc<IntegrationClient>, action_dir: PathBuf) -> Self {
         Self { client, action_dir }
+    }
+
+    async fn run(&self, args: Value, action_dir: &Path) -> anyhow::Result<ToolResult> {
+        let prompt = match args.get("prompt").and_then(|v| v.as_str()) {
+            Some(p) if !p.trim().is_empty() => p,
+            _ => return Ok(ToolResult::error("prompt is required")),
+        };
+
+        let mut body = json!({ "prompt": prompt, "wait": false });
+        if let Some(model) = args.get("model").and_then(|v| v.as_str()) {
+            body["model"] = json!(model);
+        }
+        if let Some(img) = args.get("input_image").and_then(|v| v.as_str()) {
+            body["inputImage"] = json!(img);
+        }
+        if let Some(d) = args.get("duration_seconds").and_then(|v| v.as_u64()) {
+            body["durationSeconds"] = json!(d.clamp(1, 60));
+        }
+        if let Some(ar) = args.get("aspect_ratio").and_then(|v| v.as_str()) {
+            body["aspectRatio"] = json!(ar);
+        }
+        if let Some(np) = args.get("negative_prompt").and_then(|v| v.as_str()) {
+            body["negativePrompt"] = json!(np);
+        }
+        if let Some(seed) = args.get("seed").and_then(|v| v.as_i64()) {
+            body["seed"] = json!(seed);
+        }
+
+        tracing::info!(
+            prompt_len = prompt.len(),
+            action_dir = %action_dir.display(),
+            "[media_generate_video] persisting generated media"
+        );
+        Ok(generate_and_persist(
+            &self.client,
+            action_dir,
+            VIDEOS_PATH,
+            body,
+            VIDEO_MAX_WAIT_SECS,
+        )
+        .await)
     }
 }
 
@@ -289,40 +369,17 @@ impl Tool for MediaGenerateVideoTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let prompt = match args.get("prompt").and_then(|v| v.as_str()) {
-            Some(p) if !p.trim().is_empty() => p,
-            _ => return Ok(ToolResult::error("prompt is required")),
-        };
+        self.run(args, &self.action_dir).await
+    }
 
-        let mut body = json!({ "prompt": prompt, "wait": false });
-        if let Some(model) = args.get("model").and_then(|v| v.as_str()) {
-            body["model"] = json!(model);
-        }
-        if let Some(img) = args.get("input_image").and_then(|v| v.as_str()) {
-            body["inputImage"] = json!(img);
-        }
-        if let Some(d) = args.get("duration_seconds").and_then(|v| v.as_u64()) {
-            body["durationSeconds"] = json!(d.clamp(1, 60));
-        }
-        if let Some(ar) = args.get("aspect_ratio").and_then(|v| v.as_str()) {
-            body["aspectRatio"] = json!(ar);
-        }
-        if let Some(np) = args.get("negative_prompt").and_then(|v| v.as_str()) {
-            body["negativePrompt"] = json!(np);
-        }
-        if let Some(seed) = args.get("seed").and_then(|v| v.as_i64()) {
-            body["seed"] = json!(seed);
-        }
-
-        tracing::info!("[media_generate_video] prompt_len={}", prompt.len());
-        Ok(generate_and_persist(
-            &self.client,
-            &self.action_dir,
-            VIDEOS_PATH,
-            body,
-            VIDEO_MAX_WAIT_SECS,
-        )
-        .await)
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let action_dir = action_dir_for_context(&self.action_dir, context, self.name());
+        self.run(args, &action_dir).await
     }
 }
 

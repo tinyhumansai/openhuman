@@ -4,17 +4,22 @@ import { describe, expect, it } from 'vitest';
 import type { AgentRun, AgentRunStatus, PersistedTurnState } from '../types/turnState';
 import chatRuntimeReducer, {
   appendProcessingProse,
+  beginInferenceTurn,
   clearAllChatRuntime,
   clearQueueStatusForThread,
   clearRuntimeForThread,
   hydrateRuntimeFromRunLedger,
   hydrateRuntimeFromSnapshot,
   hydrateThreadUsage,
+  markInferenceTurnStreaming,
   type QueueStatus,
   recordChatTurnUsage,
   resetSessionTokenUsage,
+  setPendingApprovalForThread,
   setQueueStatusForThread,
+  setStreamingAssistantForThread,
   setToolTimelineForThread,
+  setWorkflowProposalForThread,
 } from './chatRuntimeSlice';
 
 function makeRun(id: string, status: AgentRunStatus): AgentRun {
@@ -400,6 +405,38 @@ describe('chatRuntimeSlice queue status', () => {
     expect(byId['subagent:sub-completed']).toBe('success');
   });
 
+  it('does not duplicate a live subagent row whose taskId is already on screen', () => {
+    const store = makeStore();
+    // Live row created by the socket path — a different entry id scheme than
+    // the ledger's `subagent:<runId>`, but the same delegation taskId.
+    store.dispatch(
+      setToolTimelineForThread({
+        threadId: 't-dup',
+        entries: [
+          {
+            id: 't-dup:subagent:run-1:spawn_subagent',
+            name: 'subagent:tinyplace_agent',
+            round: 1,
+            seq: 0,
+            status: 'running',
+            subagent: { taskId: 'run-1', agentId: 'tinyplace_agent', toolCalls: [] },
+          },
+        ],
+      })
+    );
+    store.dispatch(
+      hydrateRuntimeFromRunLedger({
+        threadId: 't-dup',
+        runs: [makeRun('run-1', 'running'), makeRun('run-2', 'completed')],
+      })
+    );
+    const timeline = store.getState().chatRuntime.toolTimelineByThread['t-dup'];
+    // run-1 is already represented by the live row; only run-2 is added.
+    expect(timeline).toHaveLength(2);
+    expect(timeline.filter(e => e.subagent?.taskId === 'run-1')).toHaveLength(1);
+    expect(timeline.some(e => e.id === 'subagent:run-2')).toBe(true);
+  });
+
   it('settles the parent row but preserves an awaiting_user subagent on interrupt', () => {
     const store = makeStore();
     store.dispatch(
@@ -463,6 +500,7 @@ describe('hydrateRuntimeFromSnapshot — sub-agent prose persistence', () => {
             id: 't9:subagent:task-x:spawn_subagent',
             name: 'subagent:researcher',
             round: 1,
+            seq: 0,
             status: 'running',
             subagent: {
               taskId: 'task-x',
@@ -577,5 +615,297 @@ describe('hydrateRuntimeFromSnapshot — sub-agent prose persistence', () => {
     expect(thinking.kind === 'thinking' ? thinking.text : undefined).toBe('planning the search');
     const text = transcript[2];
     expect(text.kind === 'text' ? text.text : undefined).toBe('here is the summary');
+  });
+});
+
+describe('hydrateRuntimeFromSnapshot — live-driver guard', () => {
+  function makeStreamingSnapshot(threadId: string): PersistedTurnState {
+    return {
+      threadId,
+      requestId: 'req-stale',
+      lifecycle: 'streaming',
+      iteration: 1,
+      maxIterations: 10,
+      streamingText: '',
+      thinking: '',
+      // Flush-boundary snapshot: one lonely row, behind the live state.
+      toolTimeline: [{ id: 'c-old', name: 'web_search', round: 1, status: 'running' }],
+      taskBoard: {
+        threadId,
+        cards: [
+          {
+            id: 'card-1',
+            title: 'Do the thing',
+            status: 'in_progress',
+            order: 0,
+            updatedAt: '2026-06-23T00:00:00Z',
+          },
+        ],
+        updatedAt: '2026-06-23T00:00:00Z',
+      },
+      startedAt: '2026-06-23T00:00:00Z',
+      updatedAt: '2026-06-23T00:00:00Z',
+    };
+  }
+
+  it('does not clobber a thread with a live in-flight turn (tab-switch case)', () => {
+    const store = makeStore();
+    // Live driver: the user sent, events are streaming into Redux.
+    store.dispatch(beginInferenceTurn({ threadId: 't-live' }));
+    store.dispatch(markInferenceTurnStreaming({ threadId: 't-live' }));
+    store.dispatch(
+      setToolTimelineForThread({
+        threadId: 't-live',
+        entries: [
+          {
+            id: 'c1',
+            name: 'web_search',
+            round: 1,
+            seq: 0,
+            status: 'success',
+            result: 'found 3 hits',
+          },
+          { id: 'c2', name: 'read_file', round: 2, seq: 0, status: 'running' },
+        ],
+      })
+    );
+    store.dispatch(
+      setPendingApprovalForThread({
+        threadId: 't-live',
+        approval: { requestId: 'req-live', toolName: 'shell', message: 'Run `ls`?' },
+      })
+    );
+
+    // A thread-switch hydration lands with a stale flush-boundary snapshot.
+    store.dispatch(hydrateRuntimeFromSnapshot({ snapshot: makeStreamingSnapshot('t-live') }));
+
+    const state = store.getState().chatRuntime;
+    // The richer live timeline (2 rows, with a result) survives untouched…
+    expect(state.toolTimelineByThread['t-live'].map(e => e.id)).toEqual(['c1', 'c2']);
+    expect(state.toolTimelineByThread['t-live'][0].result).toBe('found 3 hits');
+    // …the pending approval card is not wiped mid-turn…
+    expect(state.pendingApprovalByThread['t-live']?.requestId).toBe('req-live');
+    // …and the lifecycle stays live.
+    expect(state.inferenceTurnLifecycleByThread['t-live']).toBe('streaming');
+    // The task board (monotonic, cheap) is still applied.
+    expect(state.taskBoardByThread['t-live']?.cards[0]?.id).toBe('card-1');
+  });
+
+  it('applies the snapshot when there is no live driver (cold boot / new window)', () => {
+    const store = makeStore();
+    store.dispatch(hydrateRuntimeFromSnapshot({ snapshot: makeStreamingSnapshot('t-cold') }));
+    const state = store.getState().chatRuntime;
+    expect(state.toolTimelineByThread['t-cold'].map(e => e.id)).toEqual(['c-old']);
+    expect(state.inferenceTurnLifecycleByThread['t-cold']).toBe('streaming');
+  });
+});
+
+// Regression: `fetchAndHydrateTurnState` (via `hydrateRuntimeFromSnapshot`)
+// fires on thread rehydration (e.g. the always-open Flows copilot re-opening
+// a persisted thread, #4874). A workflow proposal is a client-only flag with
+// no server-side record, so a rehydrate must not resurrect a *stale* one from
+// a crashed prior session — but it must also not wipe a proposal the
+// streaming/blocking path set THIS session, moments before a `completed`
+// snapshot for the same settled turn lands. Only `interrupted` (genuine
+// crashed-mid-flight cleanup) should clear it.
+describe('hydrateRuntimeFromSnapshot — workflow proposal race guard', () => {
+  function makeProposal(name: string) {
+    return {
+      name,
+      graph: { nodes: [], edges: [] },
+      requireApproval: true,
+      summary: { trigger: 'manual', steps: [] },
+    };
+  }
+
+  function makeSnapshot(
+    threadId: string,
+    lifecycle: PersistedTurnState['lifecycle']
+  ): PersistedTurnState {
+    return {
+      threadId,
+      requestId: 'req-1',
+      lifecycle,
+      iteration: 3,
+      maxIterations: 10,
+      streamingText: '',
+      thinking: '',
+      toolTimeline: [],
+      startedAt: '2026-06-23T00:00:00Z',
+      updatedAt: '2026-06-23T00:00:00Z',
+    };
+  }
+
+  it('clears a pending proposal on an interrupted (crashed prior-session) snapshot', () => {
+    const store = makeStore();
+    store.dispatch(
+      setWorkflowProposalForThread({ threadId: 't-crashed', proposal: makeProposal('Stale') })
+    );
+
+    store.dispatch(
+      hydrateRuntimeFromSnapshot({ snapshot: makeSnapshot('t-crashed', 'interrupted') })
+    );
+
+    expect(
+      store.getState().chatRuntime.pendingWorkflowProposalsByThread['t-crashed']
+    ).toBeUndefined();
+  });
+
+  it('preserves a pending proposal on a completed snapshot from this session', () => {
+    const store = makeStore();
+    // The streaming/blocking path just set this moments before the
+    // rehydration thunk's `completed` snapshot lands for the same turn.
+    store.dispatch(
+      setWorkflowProposalForThread({ threadId: 't-settled', proposal: makeProposal('Fresh') })
+    );
+
+    store.dispatch(
+      hydrateRuntimeFromSnapshot({ snapshot: makeSnapshot('t-settled', 'completed') })
+    );
+
+    expect(store.getState().chatRuntime.pendingWorkflowProposalsByThread['t-settled']).toEqual(
+      makeProposal('Fresh')
+    );
+  });
+});
+
+// Regression: a `completed` snapshot rehydration must not clobber streaming
+// narration / a tool timeline that is fresher than the snapshot itself. This
+// happens when the socket-disconnect reconciliation path (ChatRuntimeProvider)
+// deliberately preserves `streamingAssistantByThread` across `endInferenceTurn`
+// so a partial reply stays visible while the socket reconnects, and a
+// `fetchAndHydrateTurnState` rehydration then lands with a `completed`
+// snapshot for that same (now-settled) turn. Only `interrupted` (a genuine
+// crash — nothing fresher can exist) should unconditionally clobber; a
+// `completed` snapshot should only fill in when there is no live state to
+// lose (cold boot / new window).
+describe('hydrateRuntimeFromSnapshot — streaming/timeline race guard', () => {
+  function makeTimelineSnapshot(
+    threadId: string,
+    lifecycle: PersistedTurnState['lifecycle']
+  ): PersistedTurnState {
+    return {
+      threadId,
+      requestId: 'req-snapshot',
+      lifecycle,
+      iteration: 3,
+      maxIterations: 10,
+      streamingText: '',
+      thinking: '',
+      toolTimeline: [{ id: 'c-snapshot', name: 'web_search', round: 1, status: 'success' }],
+      startedAt: '2026-06-23T00:00:00Z',
+      updatedAt: '2026-06-23T00:00:00Z',
+    };
+  }
+
+  it('does not wipe a fresher streaming/tool-timeline lane on a completed snapshot', () => {
+    const store = makeStore();
+    // The live driver already has state for this thread — e.g. the
+    // disconnect-reconciliation path kept the streaming bubble around while
+    // the socket reconnects.
+    store.dispatch(
+      setStreamingAssistantForThread({
+        threadId: 't-settled',
+        streaming: { requestId: 'req-live', content: 'partial reply so far', thinking: '' },
+      })
+    );
+    store.dispatch(
+      setToolTimelineForThread({
+        threadId: 't-settled',
+        entries: [{ id: 'c-live', name: 'read_file', round: 1, seq: 0, status: 'success' }],
+      })
+    );
+
+    store.dispatch(
+      hydrateRuntimeFromSnapshot({ snapshot: makeTimelineSnapshot('t-settled', 'completed') })
+    );
+
+    const state = store.getState().chatRuntime;
+    // The fresher live streaming bubble survives untouched…
+    expect(state.streamingAssistantByThread['t-settled']?.content).toBe('partial reply so far');
+    // …and so does the live tool timeline, rather than being replaced by the
+    // (behind) snapshot's single row.
+    expect(state.toolTimelineByThread['t-settled'].map(e => e.id)).toEqual(['c-live']);
+  });
+
+  it('clears the streaming/tool-timeline lanes on an interrupted snapshot (crash cleanup)', () => {
+    const store = makeStore();
+    store.dispatch(
+      setStreamingAssistantForThread({
+        threadId: 't-crashed',
+        streaming: { requestId: 'req-stale', content: 'stale partial reply', thinking: '' },
+      })
+    );
+    store.dispatch(
+      setToolTimelineForThread({
+        threadId: 't-crashed',
+        entries: [{ id: 'c-stale', name: 'read_file', round: 1, seq: 0, status: 'running' }],
+      })
+    );
+
+    store.dispatch(
+      hydrateRuntimeFromSnapshot({ snapshot: makeTimelineSnapshot('t-crashed', 'interrupted') })
+    );
+
+    const state = store.getState().chatRuntime;
+    expect(state.streamingAssistantByThread['t-crashed']).toBeUndefined();
+    expect(state.toolTimelineByThread['t-crashed'].map(e => e.id)).toEqual(['c-snapshot']);
+  });
+
+  it('still hydrates the timeline from a completed snapshot on cold boot (no prior live state)', () => {
+    const store = makeStore();
+
+    store.dispatch(
+      hydrateRuntimeFromSnapshot({ snapshot: makeTimelineSnapshot('t-cold-boot', 'completed') })
+    );
+
+    const state = store.getState().chatRuntime;
+    expect(state.streamingAssistantByThread['t-cold-boot']).toBeUndefined();
+    expect(state.toolTimelineByThread['t-cold-boot'].map(e => e.id)).toEqual(['c-snapshot']);
+  });
+});
+
+describe('hydrateRuntimeFromSnapshot — persisted tool result output', () => {
+  it('maps the persisted output onto parent and sub-agent rows as result', () => {
+    const store = makeStore();
+    const snapshot: PersistedTurnState = {
+      threadId: 't-out',
+      requestId: 'req-1',
+      lifecycle: 'completed',
+      iteration: 2,
+      maxIterations: 10,
+      streamingText: '',
+      thinking: '',
+      toolTimeline: [
+        {
+          id: 'c1',
+          name: 'web_search',
+          round: 1,
+          status: 'success',
+          output: 'top hit: openhuman.dev',
+        },
+        {
+          id: 'subagent:task-z',
+          name: 'subagent:researcher',
+          round: 2,
+          status: 'success',
+          subagent: {
+            taskId: 'task-z',
+            agentId: 'researcher',
+            toolCalls: [
+              { callId: 'cc1', toolName: 'read_file', status: 'success', output: 'file body' },
+            ],
+          },
+        },
+      ],
+      startedAt: '2026-06-23T00:00:00Z',
+      updatedAt: '2026-06-23T00:00:00Z',
+    };
+
+    store.dispatch(hydrateRuntimeFromSnapshot({ snapshot }));
+
+    const timeline = store.getState().chatRuntime.toolTimelineByThread['t-out'];
+    expect(timeline[0].result).toBe('top hit: openhuman.dev');
+    expect(timeline[1].subagent?.toolCalls[0]?.result).toBe('file body');
   });
 });

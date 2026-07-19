@@ -847,3 +847,154 @@ async fn recall_relevant_by_vector_gates_on_similarity() {
         "an unrelated message must surface no situational preferences"
     );
 }
+
+// ── Same-session self-echo exclusion (memory-search self-echo fix) ─────────
+//
+// Regression coverage for the workflow_builder self-echo bug: the harness
+// auto-saves the user's own turn as a `[conversation]` document tagged with
+// the live chat thread id, and without a filter a search issued mid-turn
+// could retrieve that very request as its own top "relevant" result. See
+// `UnifiedMemory::query_namespace_hits_excluding_session`.
+
+fn conversation_doc_with_session(
+    key: &str,
+    content: &str,
+    session_id: Option<&str>,
+) -> NamespaceDocumentInput {
+    NamespaceDocumentInput {
+        namespace: "global".to_string(),
+        key: key.to_string(),
+        title: key.to_string(),
+        content: content.to_string(),
+        source_type: "chat".to_string(),
+        priority: "medium".to_string(),
+        tags: vec![],
+        metadata: json!({}),
+        category: "conversation".to_string(),
+        session_id: session_id.map(str::to_string),
+        document_id: None,
+        taint: crate::openhuman::memory::MemoryTaint::Internal,
+    }
+}
+
+#[tokio::test]
+async fn excludes_same_session_document_but_keeps_unrelated_useful_doc() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    // (a) The current turn's own auto-saved request — tagged with the live
+    // session/thread id, exactly like `agent::harness::session::turn::core`
+    // tags the `user_msg:<uuid>` autosave.
+    memory
+        .upsert_document(conversation_doc_with_session(
+            "user_msg:current-turn",
+            "Please look up Jordan Rivera's chat platform user ID for me.",
+            Some("thread-current"),
+        ))
+        .await
+        .unwrap();
+
+    // (b) An unrelated, genuinely useful fact from a prior turn/session that
+    // actually answers the query.
+    memory
+        .upsert_document(conversation_doc_with_session(
+            "fact:jordan-rivera-platform-id",
+            "Jordan Rivera's chat platform user ID is U0000042.",
+            Some("thread-other"),
+        ))
+        .await
+        .unwrap();
+
+    let query = "Jordan Rivera chat platform user ID";
+
+    // Sanity check: without exclusion, both documents are lexically relevant
+    // and both come back (this is the pre-fix, buggy shape).
+    let unfiltered = memory
+        .query_namespace_hits("global", query, 10)
+        .await
+        .unwrap();
+    assert!(
+        unfiltered.iter().any(|h| h.key == "user_msg:current-turn"),
+        "sanity check: the self-request doc must be lexically relevant without a filter, got {unfiltered:#?}"
+    );
+
+    // With the current-session exclusion applied, the self-echo document is
+    // dropped and the useful fact survives.
+    let filtered = memory
+        .query_namespace_hits_excluding_session("global", query, 10, Some("thread-current"))
+        .await
+        .unwrap();
+
+    assert!(
+        !filtered.iter().any(|h| h.key == "user_msg:current-turn"),
+        "same-session self-request document must be excluded, got {filtered:#?}"
+    );
+    assert!(
+        filtered
+            .iter()
+            .any(|h| h.key == "fact:jordan-rivera-platform-id"),
+        "unrelated useful document from another session must still be returned, got {filtered:#?}"
+    );
+}
+
+#[tokio::test]
+async fn no_session_context_leaves_results_unchanged() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    memory
+        .upsert_document(conversation_doc_with_session(
+            "user_msg:current-turn",
+            "Please look up Jordan Rivera's chat platform user ID for me.",
+            Some("thread-current"),
+        ))
+        .await
+        .unwrap();
+    memory
+        .upsert_document(conversation_doc_with_session(
+            "fact:jordan-rivera-platform-id",
+            "Jordan Rivera's chat platform user ID is U0000042.",
+            Some("thread-other"),
+        ))
+        .await
+        .unwrap();
+
+    let query = "Jordan Rivera chat platform user ID";
+
+    let baseline = memory
+        .query_namespace_hits("global", query, 10)
+        .await
+        .unwrap();
+
+    // `None` exclusion (no ambient session context — cron, CLI, standalone,
+    // or a caller with no `exclude_session_id` to give) must behave
+    // identically to the pre-existing `query_namespace_hits` entry point:
+    // same hit count, same keys, in the same order.
+    let explicit_none = memory
+        .query_namespace_hits_excluding_session("global", query, 10, None)
+        .await
+        .unwrap();
+
+    let baseline_keys: Vec<&str> = baseline.iter().map(|h| h.key.as_str()).collect();
+    let explicit_none_keys: Vec<&str> = explicit_none.iter().map(|h| h.key.as_str()).collect();
+    assert_eq!(
+        baseline_keys, explicit_none_keys,
+        "no session context must be a no-op vs. the unfiltered entry point"
+    );
+    assert!(
+        explicit_none_keys.contains(&"user_msg:current-turn"),
+        "without any exclusion, the self-request document must still be present"
+    );
+
+    // An empty/whitespace exclude id must also be treated as "no filter",
+    // not accidentally matched against a document with `session_id: None`.
+    let empty_string = memory
+        .query_namespace_hits_excluding_session("global", query, 10, Some("   "))
+        .await
+        .unwrap();
+    let empty_string_keys: Vec<&str> = empty_string.iter().map(|h| h.key.as_str()).collect();
+    assert_eq!(
+        baseline_keys, empty_string_keys,
+        "a blank exclude_session_id must not filter anything"
+    );
+}

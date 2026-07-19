@@ -12,7 +12,7 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::ParsedToolCall;
 use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::agent_tool_policy::ToolPolicyEngine;
-use crate::openhuman::inference::provider::{self, ConversationMessage, Provider, ToolCall};
+use crate::openhuman::inference::provider::{self, ConversationMessage, ToolCall};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
@@ -57,12 +57,12 @@ impl Agent {
         AgentBuilder::new()
     }
 
-    /// Borrow the agent's provider as an `Arc`. Used by the sub-agent
-    /// runner to share the parent's provider instance with spawned
-    /// sub-agents (so they share connection pools, retry budgets, and
-    /// rate-limit state).
-    pub fn provider_arc(&self) -> Arc<dyn Provider> {
-        Arc::clone(&self.provider)
+    /// Clone the agent's model source. Used by the sub-agent runner /
+    /// parent-context builder to share the parent's provider instance with
+    /// spawned sub-agents (so they share connection pools, retry budgets, and
+    /// rate-limit state) — issue #4249, Phase 3 / Motion A.
+    pub fn turn_model_source(&self) -> crate::openhuman::tinyagents::TurnModelSource {
+        self.turn_model_source.clone()
     }
 
     /// Borrow the agent's tools as a slice. Used by the sub-agent runner
@@ -115,7 +115,7 @@ impl Agent {
     }
 
     /// The agent's loaded workflows, if any.
-    pub fn workflows(&self) -> &[crate::openhuman::workflows::Workflow] {
+    pub fn workflows(&self) -> &[crate::openhuman::skills::Workflow] {
         &self.workflows
     }
 
@@ -156,6 +156,21 @@ impl Agent {
     /// The agent's runtime config snapshot.
     pub fn agent_config(&self) -> &crate::openhuman::config::AgentConfig {
         &self.config
+    }
+
+    /// Override the agent's tool-iteration cap after construction.
+    ///
+    /// Issue #4868 — `build_session_agent_inner` now stamps every agent with
+    /// its `AgentDefinition::effective_max_iterations()`, which is the correct
+    /// behavior for direct-invocation call sites. A handful of callers need a
+    /// *different* cap than the definition's declared budget (e.g. long-running
+    /// workflow/task-dispatcher runs that intentionally exceed any single
+    /// agent's normal budget). Those callers should apply their override
+    /// AFTER construction via this setter, so the shared definition-cap logic
+    /// in the builder doesn't get silently clobbered by pre-construction
+    /// mutations (and vice versa).
+    pub fn set_max_tool_iterations(&mut self, cap: usize) {
+        self.config.max_tool_iterations = cap;
     }
 
     /// Returns the current conversation history.
@@ -233,6 +248,37 @@ impl Agent {
     /// still subject to the configured channel permission policy.
     pub fn set_visible_tool_names(&mut self, names: HashSet<String>) {
         self.visible_tool_names = names;
+        self.rebuild_tool_policy_session();
+    }
+
+    /// Remove `names` from the main agent's callable set for this session,
+    /// leaving every other currently-visible tool untouched.
+    ///
+    /// The hidden names resolve to `Deny` at the tool-call boundary (via the
+    /// rebuilt [`ToolPolicySession`]), not merely absent from the prompt — a
+    /// hard execution guarantee even if the model requests the tool anyway.
+    ///
+    /// When the session currently has *no* visible-tool filter (empty set =
+    /// "all visible"), the filter is first seeded from every registered tool
+    /// spec so hiding actually **restricts** the set rather than no-opping into
+    /// the still-"all visible" empty state. Used by callers that need to drop a
+    /// specific dangerous tool from an otherwise-unchanged belt (e.g. the
+    /// `flows_build` builder path dropping the live-run `run_flow` tool).
+    ///
+    /// Caveat: because an empty set is the "all visible" sentinel, hiding *every*
+    /// remaining tool collapses back to "all visible". Callers use this to drop
+    /// a handful of tools from a much larger belt, where that can't happen.
+    pub fn hide_tools(&mut self, names: &[&str]) {
+        if self.visible_tool_names.is_empty() {
+            self.visible_tool_names = self
+                .tool_specs
+                .iter()
+                .map(|spec| spec.name.clone())
+                .collect();
+        }
+        for name in names {
+            self.visible_tool_names.remove(*name);
+        }
         self.rebuild_tool_policy_session();
     }
 
@@ -343,17 +389,42 @@ impl Agent {
     /// Drain and return memory citations collected for the latest completed turn.
     pub fn take_last_turn_citations(
         &mut self,
-    ) -> Vec<crate::openhuman::agent::memory_loader::MemoryCitation> {
+    ) -> Vec<crate::openhuman::agent_memory::memory_loader::MemoryCitation> {
         std::mem::take(&mut self.last_turn_citations)
+    }
+
+    /// Borrow the holistic token/cost/context totals for the latest completed
+    /// turn (parent + sub-agents) **without consuming them**. `None` until a
+    /// turn has run.
+    ///
+    /// This is the public, non-draining counterpart to
+    /// [`take_last_turn_usage_totals`](Self::take_last_turn_usage_totals): a
+    /// downstream crate embedding OpenHuman as a library (e.g. the OpenCompany
+    /// hosting platform's cost-metering hook) can read per-turn token and USD
+    /// totals after [`Agent::turn`](crate::openhuman::agent::Agent) returns,
+    /// while leaving the value in place for the web-channel drain path.
+    pub fn last_turn_usage(
+        &self,
+    ) -> Option<&crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage> {
+        self.last_turn_usage_totals.as_ref()
     }
 
     /// Drain and return the holistic token/cost/context totals for the latest
     /// completed turn (parent + sub-agents). `None` until a turn has run.
     /// Consumed by web-channel delivery to populate the `chat_done` usage fields.
-    pub fn take_last_turn_usage_totals(
+    pub(crate) fn take_last_turn_usage_totals(
         &mut self,
     ) -> Option<crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage> {
         self.last_turn_usage_totals.take()
+    }
+
+    /// Whether the most recently completed [`Self::turn`] / [`Self::run_single`]
+    /// paused because it hit `max_tool_iterations`, rather than finishing
+    /// naturally (see the field doc on `last_turn_hit_cap`). `false` before
+    /// any turn has run. Not draining — unlike the usage totals above, a
+    /// caller may reasonably check this more than once per turn.
+    pub fn last_turn_hit_cap(&self) -> bool {
+        self.last_turn_hit_cap
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -416,6 +487,7 @@ impl Agent {
             Some(AgentError::EmptyProviderResponse { .. }) => Some("empty_provider_response"),
             Some(AgentError::CompactionFailed { .. }) => Some("compaction_failed"),
             Some(AgentError::PermissionDenied { .. }) => Some("permission_denied"),
+            Some(AgentError::RegistryValidationFailed { .. }) => Some("registry_validation_failed"),
             Some(AgentError::Other(_)) | None => None,
         };
 

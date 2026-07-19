@@ -487,12 +487,12 @@ impl SessionStore for FileSessionStore {
             .join("signed_pre_keys")
             .join(format!("{}.enc", sanitize(&key_id)));
         self.encrypt_and_write(&path, &json)
-            .map_err(|e| Error::InvalidArgument(e))?;
+            .map_err(Error::InvalidArgument)?;
 
         // Also persist the active signed pre-key ID.
         let active_path = self.dir.join("active_signed_pre_key.enc");
         self.encrypt_and_write(&active_path, &key_id)
-            .map_err(|e| Error::InvalidArgument(e))?;
+            .map_err(Error::InvalidArgument)?;
 
         let mut cache = self.cache.lock().await;
         cache.signed_pre_keys.insert(key_id.clone(), pre_key);
@@ -533,7 +533,7 @@ impl SessionStore for FileSessionStore {
             .join("pre_keys")
             .join(format!("{}.enc", sanitize(&key_id)));
         self.encrypt_and_write(&path, &json)
-            .map_err(|e| Error::InvalidArgument(e))?;
+            .map_err(Error::InvalidArgument)?;
 
         let mut cache = self.cache.lock().await;
         cache.pre_keys.insert(key_id, pre_key);
@@ -561,7 +561,7 @@ impl SessionStore for FileSessionStore {
             .join("sessions")
             .join(format!("{}.enc", sanitize(address)));
         self.encrypt_and_write(&path, &json)
-            .map_err(|e| Error::InvalidArgument(e))?;
+            .map_err(Error::InvalidArgument)?;
 
         let mut cache = self.cache.lock().await;
         cache.sessions.insert(address.to_string(), session);

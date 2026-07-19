@@ -15,10 +15,19 @@ vi.mock('../components/SettingsHeader', () => ({
   default: ({ title }: { title: string }) => <h1>{title}</h1>,
 }));
 
-function renderPanel(fontSize: 'small' | 'medium' | 'large' | 'xlarge' = 'medium') {
+function renderPanel(
+  fontSize: 'small' | 'medium' | 'large' | 'xlarge' = 'medium',
+  customFontSizePx: number | null = null
+) {
   return renderWithProviders(<AppearancePanel />, {
     preloadedState: {
-      theme: { mode: 'system', tabBarLabels: 'hover', fontSize, agentMessageViewMode: 'bubbles' },
+      theme: {
+        mode: 'system',
+        tabBarLabels: 'hover',
+        fontSize,
+        customFontSizePx,
+        agentMessageViewMode: 'bubbles',
+      },
     },
   });
 }
@@ -46,6 +55,31 @@ describe('<AppearancePanel /> font size', () => {
     fireEvent.click(xlarge);
 
     expect(store.getState().theme.fontSize).toBe('xlarge');
+  });
+
+  it('reflects the effective size on the slider and highlights a matching preset', () => {
+    // 18px == the Large preset, so the slider reads 18 and Large stays checked.
+    const { getByTestId, getByRole } = renderPanel('medium', 18);
+    expect((getByTestId('font-size-slider') as HTMLInputElement).value).toBe('18');
+    const group = getByRole('radiogroup', { name: 'settings.appearance.fontSizeAria' });
+    expect(within(group).getByRole('radio', { name: /fontSizeLarge/ })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+  });
+
+  it('dispatches a clamped custom px as the slider moves', () => {
+    const { getByTestId, store } = renderPanel('medium');
+    fireEvent.change(getByTestId('font-size-slider'), { target: { value: '26' } });
+    expect(store.getState().theme.customFontSizePx).toBe(26);
+  });
+
+  it('commits the numeric field on blur, clamped to the supported range', () => {
+    const { getByTestId, store } = renderPanel('medium');
+    const field = within(getByTestId('font-size-custom-number')).getByRole('spinbutton');
+    fireEvent.change(field, { target: { value: '99' } });
+    fireEvent.blur(field);
+    expect(store.getState().theme.customFontSizePx).toBe(28);
   });
 
   it('toggles assistant text mode for chat output', () => {

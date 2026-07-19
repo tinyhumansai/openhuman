@@ -31,7 +31,7 @@
 //! register_native_global::<AgentTurnRequest, AgentTurnResponse, _, _>(
 //!     "agent.run_turn",
 //!     |req| async move {
-//!         let text = run_tool_call_loop(/* ... */).await
+//!         let text = run_agent_turn(/* ... */).await
 //!             .map_err(|e| e.to_string())?;
 //!         Ok(AgentTurnResponse::new(text))
 //!     },

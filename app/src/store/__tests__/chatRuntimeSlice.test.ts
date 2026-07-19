@@ -25,6 +25,16 @@ import reducer, {
   setStreamingAssistantForThread,
   setTaskBoardForThread,
   setToolTimelineForThread,
+  streamDeltaReceived,
+  subagentAwaitingUser,
+  subagentDone,
+  subagentIterationStarted,
+  subagentSpawned,
+  subagentToolCallReceived,
+  subagentToolResultReceived,
+  toolArgsDeltaReceived,
+  toolCallReceived,
+  toolResultReceived,
   upsertArtifactFailedForThread,
   upsertArtifactInProgressForThread,
   upsertArtifactReadyForThread,
@@ -108,6 +118,7 @@ describe('chatRuntimeSlice', () => {
             id: 'call-1',
             name: 'search',
             round: 1,
+            seq: 0,
             status: 'running',
             argsBuffer: '{"q":"hello"}',
           },
@@ -116,7 +127,14 @@ describe('chatRuntimeSlice', () => {
     );
 
     expect(withTimeline.toolTimelineByThread['thread-1']).toEqual([
-      { id: 'call-1', name: 'search', round: 1, status: 'running', argsBuffer: '{"q":"hello"}' },
+      {
+        id: 'call-1',
+        name: 'search',
+        round: 1,
+        seq: 0,
+        status: 'running',
+        argsBuffer: '{"q":"hello"}',
+      },
     ]);
 
     const cleared = reducer(withTimeline, clearToolTimelineForThread({ threadId: 'thread-1' }));
@@ -213,6 +231,7 @@ describe('chatRuntimeSlice', () => {
         id: 'tc-1',
         name: 'shell',
         round: 3,
+        seq: 0,
         status: 'running',
         argsBuffer: '{"cmd":"ls"}',
         displayName: undefined,
@@ -468,7 +487,7 @@ describe('chatRuntimeSlice', () => {
       ),
       setToolTimelineForThread({
         threadId: 'thread-1',
-        entries: [{ id: 'call-1', name: 'search', round: 1, status: 'running' }],
+        entries: [{ id: 'call-1', name: 'search', round: 1, seq: 0, status: 'running' }],
       })
     );
 
@@ -903,5 +922,462 @@ describe('chatRuntimeSlice', () => {
       expect(state.parallelStreamsByThread).toEqual({});
       expect(state.parallelRequestThreads).toEqual({});
     });
+  });
+});
+
+describe('toolCallReceived (Phase 3 reducer-side merge)', () => {
+  it('appends a new running row with a generated id and records the processing pointer', () => {
+    const state = reducer(
+      undefined,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'shell' })
+    );
+    const rows = state.toolTimelineByThread['t1'];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: 't1:0:0:shell', name: 'shell', status: 'running' });
+    // Fold-in of the processing-transcript pointer (was a second dispatch).
+    expect(state.processingByThread['t1']).toEqual([
+      { kind: 'toolCall', round: 0, seq: 0, callId: 't1:0:0:shell' },
+    ]);
+  });
+
+  it('upserts an existing row by toolCallId instead of duplicating', () => {
+    let state = reducer(
+      undefined,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'shell', toolCallId: 'call-1' })
+    );
+    state = reducer(
+      state,
+      toolCallReceived({ threadId: 't1', round: 1, toolName: 'shell', toolCallId: 'call-1' })
+    );
+    const rows = state.toolTimelineByThread['t1'];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].round).toBe(1);
+    // The row keeps its original `seq` across the upsert — issue order is set
+    // once, at first creation, and must not shift on a later update event.
+    expect(rows[0].seq).toBe(0);
+    // Processing pointer is recorded once for the stable callId.
+    expect(state.processingByThread['t1']).toHaveLength(1);
+  });
+
+  it('assigns a monotonically increasing seq to each newly created row per thread', () => {
+    let state = reducer(
+      undefined,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'search', toolCallId: 'c1' })
+    );
+    state = reducer(
+      state,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'search', toolCallId: 'c2' })
+    );
+    state = reducer(
+      state,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'search', toolCallId: 'c3' })
+    );
+    const rows = state.toolTimelineByThread['t1'];
+    expect(rows.map(r => r.seq)).toEqual([0, 1, 2]);
+    // A different thread gets its own independent counter.
+    state = reducer(
+      state,
+      toolCallReceived({ threadId: 't2', round: 0, toolName: 'search', toolCallId: 'd1' })
+    );
+    expect(state.toolTimelineByThread['t2'][0].seq).toBe(0);
+  });
+
+  it('keeps the seq from first creation when args arrive before the tool_call event', () => {
+    // A `tool_args_delta` for call B can race ahead of call A's `tool_call`
+    // event when the agent issues two parallel calls in one turn. The row
+    // created by whichever event lands first gets seq 0; the row's `seq`
+    // must not change when the (later) sibling event for the same call
+    // arrives and only updates the existing row in place.
+    let state = reducer(
+      undefined,
+      toolArgsDeltaReceived({
+        threadId: 't1',
+        round: 0,
+        delta: '{"q":"b"}',
+        toolName: 'search',
+        toolCallId: 'call-b',
+      })
+    );
+    state = reducer(
+      state,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'search', toolCallId: 'call-a' })
+    );
+    // call-b's row was created first (seq 0) even though call-a's
+    // `tool_call` event is semantically "first" in the pair — the point is
+    // that whichever event creates the row locks in the seq, and a later
+    // `toolCallReceived` for that same id does not reassign it.
+    state = reducer(
+      state,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'search', toolCallId: 'call-b' })
+    );
+    const rows = state.toolTimelineByThread['t1'];
+    const rowB = rows.find(r => r.id === 'call-b');
+    const rowA = rows.find(r => r.id === 'call-a');
+    expect(rowB?.seq).toBe(0);
+    expect(rowA?.seq).toBe(1);
+    // Re-receiving call-b's tool_call event (args arrived first) must not
+    // bump its seq to a later value.
+    expect(rowB?.seq).toBe(0);
+  });
+});
+
+describe('toolResultReceived (Phase 3 reducer-side merge)', () => {
+  const withRunningRow = () =>
+    reducer(
+      undefined,
+      setToolTimelineForThread({
+        threadId: 't1',
+        entries: [{ id: 'call-1', name: 'shell', round: 0, seq: 0, status: 'running' }],
+      })
+    );
+
+  it('settles the row matched by toolCallId, attaching output', () => {
+    const state = reducer(
+      withRunningRow(),
+      toolResultReceived({
+        threadId: 't1',
+        round: 0,
+        toolName: 'shell',
+        toolCallId: 'call-1',
+        success: true,
+        output: 'done',
+      })
+    );
+    expect(state.toolTimelineByThread['t1'][0]).toMatchObject({
+      status: 'success',
+      result: 'done',
+    });
+  });
+
+  it('falls back to the (only) running row of the same name+round when no id matches', () => {
+    const state = reducer(
+      withRunningRow(),
+      toolResultReceived({ threadId: 't1', round: 0, toolName: 'shell', success: false })
+    );
+    expect(state.toolTimelineByThread['t1'][0].status).toBe('error');
+  });
+
+  it('FIFO: settles the oldest (not newest) running row of the same name+round when no id matches', () => {
+    // Two parallel `get_tool_contract` calls with the same name+round and no
+    // toolCallId on the result (mirrors a legacy/incomplete socket payload).
+    // The fallback must settle the row that was issued FIRST (lowest seq),
+    // not the most recently created one — otherwise a result for the first
+    // call can incorrectly settle the second call's still-running row.
+    let state = reducer(
+      undefined,
+      setToolTimelineForThread({
+        threadId: 't1',
+        entries: [
+          { id: 'call-old', name: 'get_tool_contract', round: 0, seq: 0, status: 'running' },
+          { id: 'call-new', name: 'get_tool_contract', round: 0, seq: 1, status: 'running' },
+        ],
+      })
+    );
+    state = reducer(
+      state,
+      toolResultReceived({
+        threadId: 't1',
+        round: 0,
+        toolName: 'get_tool_contract',
+        success: true,
+        output: 'first result',
+      })
+    );
+    const rows = state.toolTimelineByThread['t1'];
+    const oldRow = rows.find(r => r.id === 'call-old');
+    const newRow = rows.find(r => r.id === 'call-new');
+    expect(oldRow?.status).toBe('success');
+    expect(oldRow?.result).toBe('first result');
+    // The newer call's row is untouched — still running, awaiting its own result.
+    expect(newRow?.status).toBe('running');
+    expect(newRow?.result).toBeUndefined();
+  });
+
+  it('is a no-op when nothing matches (mirrors the provider changed-guard)', () => {
+    const before = withRunningRow();
+    const after = reducer(
+      before,
+      toolResultReceived({ threadId: 't1', round: 9, toolName: 'other', success: true })
+    );
+    expect(after.toolTimelineByThread['t1']).toEqual(before.toolTimelineByThread['t1']);
+  });
+});
+
+describe('streamDeltaReceived (Phase 3 reducer-side merge)', () => {
+  it('appends a content delta to the primary stream and coalesces processing narration', () => {
+    let state = reducer(
+      undefined,
+      streamDeltaReceived({
+        threadId: 't1',
+        requestId: 'r1',
+        round: 0,
+        delta: 'Hel',
+        channel: 'content',
+      })
+    );
+    state = reducer(
+      state,
+      streamDeltaReceived({
+        threadId: 't1',
+        requestId: 'r1',
+        round: 0,
+        delta: 'lo',
+        channel: 'content',
+      })
+    );
+    expect(state.streamingAssistantByThread['t1']).toEqual({
+      requestId: 'r1',
+      content: 'Hello',
+      thinking: '',
+    });
+    // Two deltas coalesce into one narration block.
+    expect(state.processingByThread['t1']).toEqual([
+      { kind: 'narration', round: 0, seq: 0, text: 'Hello' },
+    ]);
+  });
+
+  it('starts a fresh preview when the requestId changes (drops the prior tail)', () => {
+    let state = reducer(
+      undefined,
+      streamDeltaReceived({
+        threadId: 't1',
+        requestId: 'r1',
+        round: 0,
+        delta: 'old',
+        channel: 'content',
+      })
+    );
+    state = reducer(
+      state,
+      streamDeltaReceived({
+        threadId: 't1',
+        requestId: 'r2',
+        round: 0,
+        delta: 'new',
+        channel: 'thinking',
+      })
+    );
+    expect(state.streamingAssistantByThread['t1']).toEqual({
+      requestId: 'r2',
+      content: '',
+      thinking: 'new',
+    });
+  });
+
+  it('routes a forked (parallel) turn into its own lane without touching the primary or processing', () => {
+    let state = reducer(
+      undefined,
+      registerParallelRequest({ threadId: 't1', requestId: 'branch' })
+    );
+    state = reducer(
+      state,
+      streamDeltaReceived({
+        threadId: 't1',
+        requestId: 'branch',
+        round: 0,
+        delta: 'B',
+        channel: 'content',
+      })
+    );
+    expect(state.parallelStreamsByThread['t1']['branch']).toEqual({
+      requestId: 'branch',
+      content: 'B',
+      thinking: '',
+    });
+    expect(state.streamingAssistantByThread['t1']).toBeUndefined();
+    expect(state.processingByThread['t1']).toBeUndefined();
+  });
+});
+
+describe('subagent event reducers (Phase 3)', () => {
+  const spawn = (threadId = 't1') =>
+    reducer(
+      undefined,
+      subagentSpawned({
+        threadId,
+        round: 0,
+        rowId: 't1:subagent:task-1:researcher',
+        taskId: 'task-1',
+        agentId: 'researcher',
+        displayName: 'Researcher',
+      })
+    );
+
+  it('subagentSpawned collapses the parent spawn row into the subagent row', () => {
+    // Seed a running parent delegate row for round 0.
+    let state = reducer(
+      undefined,
+      setToolTimelineForThread({
+        threadId: 't1',
+        entries: [
+          {
+            id: 'spawn-1',
+            name: 'spawn_subagent',
+            round: 0,
+            seq: 0,
+            status: 'running',
+            detail: 'go research',
+          },
+        ],
+      })
+    );
+    state = reducer(
+      state,
+      subagentSpawned({
+        threadId: 't1',
+        round: 0,
+        rowId: 't1:subagent:task-1:researcher',
+        taskId: 'task-1',
+        agentId: 'researcher',
+      })
+    );
+    const rows = state.toolTimelineByThread['t1'];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: 't1:subagent:task-1:researcher',
+      name: 'subagent:researcher',
+      status: 'running',
+      detail: 'go research', // carried from the collapsed spawn row's prompt
+    });
+    expect(rows[0].subagent).toMatchObject({ taskId: 'task-1', agentId: 'researcher' });
+  });
+
+  it('subagentToolCallReceived appends and de-dupes on callId; result settles it', () => {
+    let state = spawn();
+    const row = 't1:subagent:task-1:researcher';
+    state = reducer(
+      state,
+      subagentToolCallReceived({ threadId: 't1', rowId: row, callId: 'c1', toolName: 'grep' })
+    );
+    // Redelivery is a no-op.
+    state = reducer(
+      state,
+      subagentToolCallReceived({ threadId: 't1', rowId: row, callId: 'c1', toolName: 'grep' })
+    );
+    let sub = state.toolTimelineByThread['t1'][0].subagent!;
+    expect(sub.toolCalls).toHaveLength(1);
+    expect(sub.toolCalls[0].status).toBe('running');
+
+    state = reducer(
+      state,
+      subagentToolResultReceived({
+        threadId: 't1',
+        rowId: row,
+        callId: 'c1',
+        success: true,
+        result: 'ok',
+      })
+    );
+    sub = state.toolTimelineByThread['t1'][0].subagent!;
+    expect(sub.toolCalls[0]).toMatchObject({ status: 'success', result: 'ok' });
+  });
+
+  it('subagentDone settles the row + metadata; awaiting/iteration update in place', () => {
+    let state = spawn();
+    const row = 't1:subagent:task-1:researcher';
+    state = reducer(
+      state,
+      subagentIterationStarted({
+        threadId: 't1',
+        rowId: row,
+        childIteration: 2,
+        childMaxIterations: 5,
+      })
+    );
+    expect(state.toolTimelineByThread['t1'][0].subagent).toMatchObject({
+      childIteration: 2,
+      childMaxIterations: 5,
+    });
+
+    const awaiting = reducer(state, subagentAwaitingUser({ threadId: 't1', rowId: row }));
+    expect(awaiting.toolTimelineByThread['t1'][0].status).toBe('awaiting_user');
+
+    const done = reducer(
+      state,
+      subagentDone({ threadId: 't1', rowId: row, success: true, iterations: 3, elapsedMs: 42 })
+    );
+    expect(done.toolTimelineByThread['t1'][0]).toMatchObject({ status: 'success' });
+    expect(done.toolTimelineByThread['t1'][0].subagent).toMatchObject({
+      iterations: 3,
+      elapsedMs: 42,
+    });
+  });
+
+  it('settles an awaiting_user row on done (it must not stay stuck)', () => {
+    let state = spawn();
+    const row = 't1:subagent:task-1:researcher';
+    state = reducer(state, subagentAwaitingUser({ threadId: 't1', rowId: row }));
+    expect(state.toolTimelineByThread['t1'][0].status).toBe('awaiting_user');
+    state = reducer(state, subagentDone({ threadId: 't1', rowId: row, success: true }));
+    expect(state.toolTimelineByThread['t1'][0].status).toBe('success');
+  });
+
+  it('done is a no-op once the row is terminal (already settled)', () => {
+    let state = spawn();
+    const row = 't1:subagent:task-1:researcher';
+    state = reducer(state, subagentDone({ threadId: 't1', rowId: row, success: true }));
+    // A second done cannot re-settle a terminal row.
+    const again = reducer(state, subagentDone({ threadId: 't1', rowId: row, success: false }));
+    expect(again.toolTimelineByThread['t1'][0].status).toBe('success');
+  });
+
+  it('subagentSpawned is idempotent — a redelivered event does not duplicate the row', () => {
+    let state = spawn();
+    const before = state.toolTimelineByThread['t1'].length;
+    state = reducer(
+      state,
+      subagentSpawned({
+        threadId: 't1',
+        round: 0,
+        rowId: 't1:subagent:task-1:researcher',
+        taskId: 'task-1',
+        agentId: 'researcher',
+      })
+    );
+    expect(state.toolTimelineByThread['t1']).toHaveLength(before);
+  });
+});
+
+describe('toolArgsDeltaReceived (Phase 3 reducer-side merge)', () => {
+  it('creates a running row when args arrive before the tool_call, then appends', () => {
+    let state = reducer(
+      undefined,
+      toolArgsDeltaReceived({
+        threadId: 't1',
+        round: 0,
+        delta: '{"q":',
+        toolName: 'search',
+        toolCallId: 'c1',
+      })
+    );
+    state = reducer(
+      state,
+      toolArgsDeltaReceived({ threadId: 't1', round: 0, delta: '"hi"}', toolCallId: 'c1' })
+    );
+    const rows = state.toolTimelineByThread['t1'];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: 'c1',
+      name: 'search',
+      status: 'running',
+      argsBuffer: '{"q":"hi"}',
+    });
+  });
+
+  it('falls back to the newest running row of the same name+round when no id matches', () => {
+    let state = reducer(
+      undefined,
+      setToolTimelineForThread({
+        threadId: 't1',
+        entries: [
+          { id: 'r1', name: 'search', round: 0, seq: 0, status: 'running', argsBuffer: '{' },
+        ],
+      })
+    );
+    state = reducer(
+      state,
+      toolArgsDeltaReceived({ threadId: 't1', round: 0, delta: '}', toolName: 'search' })
+    );
+    expect(state.toolTimelineByThread['t1'][0].argsBuffer).toBe('{}');
   });
 });

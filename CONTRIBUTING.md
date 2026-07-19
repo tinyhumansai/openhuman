@@ -198,7 +198,7 @@ cargo check --manifest-path Cargo.toml
 cargo check --manifest-path app/src-tauri/Cargo.toml
 ```
 
-If you only changed docs in a normal local workflow, `pnpm format:check` is usually the only validation you need. AI-authored or remote-agent PRs must still follow [`docs/agent-workflows/codex-pr-checklist.md`](docs/agent-workflows/codex-pr-checklist.md) and report any blocked commands with the exact command and error.
+If you only changed docs in a normal local workflow, `pnpm format:check` is usually the only validation you need. AI-authored or remote-agent PRs must still fill in the AI Authored PR Metadata section of the PR template and report any blocked commands with the exact command and error.
 
 ### 6. Run tests and checks
 
@@ -217,7 +217,7 @@ Merge-gate context:
 
 - PRs must meet the checks enforced by CI and keep changed-line coverage at or above 80%.
 - For code changes, run the smallest relevant local checks before you push.
-- For AI-authored or remote-agent PRs, also follow [`docs/agent-workflows/codex-pr-checklist.md`](docs/agent-workflows/codex-pr-checklist.md).
+- For AI-authored or remote-agent PRs, also fill in the AI Authored PR Metadata section of the PR template.
 
 ### 7. Local data and user-facing state
 
@@ -301,13 +301,6 @@ git checkout -b docs/your-change
 5. Call out any blocked validation commands with the exact command and error.
 
 If you are contributing through a coding agent or remote environment, include the metadata required by the PR template and the Codex PR checklist.
-
-### Contributor rewards
-
-Maintainers can reward eligible contributors through the automated workflow in
-[`docs/CONTRIBUTOR-REWARDS.md`](docs/CONTRIBUTOR-REWARDS.md). First merged pull
-requests are handled automatically, and maintainers can apply the `reward user`
-label to manually start the same Discord and merch invite flow.
 
 ## Project Conventions
 

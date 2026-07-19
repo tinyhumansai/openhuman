@@ -100,10 +100,16 @@ export const clearAllAppData = async ({
     }
   }
 
-  // 3. Delete workspace folder + restart core. The core RPC removes both the
-  //    active openhuman_dir and the default `~/.openhuman`, then we restart
-  //    the sidecar so it boots from a clean slate.
-  await resetOpenHumanDataAndRestartCore();
+  // 3. Delete the signed-in user's data dir + restart core. We pass `userId`
+  //    explicitly: step 2's `clearSession()` already ran `auth_clear_session`,
+  //    which removes the `active_user.toml` marker. If the reset resolved its
+  //    target from that (now-absent) marker it would fall back to the pre-login
+  //    `users/local` dir and delete an empty directory — leaving the real
+  //    user's memory, sources, conversations, and history under `users/<id>`
+  //    fully intact. That marker/ordering gap is the root cause of #4950
+  //    ("Clear App Data does nothing"). Passing the id the caller already holds
+  //    pins the deletion to the correct user regardless of marker state.
+  await resetOpenHumanDataAndRestartCore(userId);
 
   // 4. Purge redux-persist + browser storage. `persistor.purge()` wipes the
   //    persisted backend; `clearUserScopedStorage` removes only the active

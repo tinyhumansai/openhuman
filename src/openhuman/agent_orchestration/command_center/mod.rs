@@ -5,7 +5,7 @@
 //! a normalized status model (needs-input / working / completed / failed /
 //! stopped) so users can see what is in flight, what is blocked on them, and
 //! what finished. Live run state already persists to the ledger via the spawn
-//! tools + `channels::providers::web::progress_bridge`; this module only
+//! tools + `web_chat::progress_bridge`; this module only
 //! projects and groups it for display.
 //!
 //! Control verbs (stop / retry / continue / follow-up) live in [`control`]:

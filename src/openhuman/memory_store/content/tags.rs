@@ -48,6 +48,13 @@ pub fn update_chunk_tags(abs_path: &Path, tags: &[String]) -> anyhow::Result<()>
     let new_bytes = rewrite_tags(&old_bytes, &augmented)
         .map_err(|e| anyhow::anyhow!("rewrite_tags {:?}: {e}", abs_path))?;
 
+    // The tag rewrite must only ever touch front-matter. Verify the body is
+    // byte-identical before committing so a front-matter parse regression (or a
+    // newline-injected field) fails loud here instead of silently drifting the
+    // on-disk body from the DB content_sha256 and truncating retrieval (#4689).
+    // Mirrors the post-rewrite guard in `update_summary_tags`.
+    ensure_tag_rewrite_preserves_body(&old_bytes, &new_bytes, abs_path)?;
+
     // Write the new content atomically via a sibling temp file.
     let parent = abs_path.parent().unwrap_or_else(|| Path::new("."));
     let tmp_name = format!(".tmp_tags_{}.md", crate_temp_id());
@@ -189,6 +196,33 @@ pub fn update_summary_tags(config: &Config, summary_id: &str) -> anyhow::Result<
         tags.len()
     );
     Ok(())
+}
+
+/// Guard for [`update_chunk_tags`]: the body (front-matter excluded) must be
+/// byte-identical before and after a tag rewrite. A drift here would desync the
+/// on-disk body from the DB `content_sha256` and silently truncate retrieval
+/// (#4689), so surface it as a loud error rather than committing the rewrite.
+fn ensure_tag_rewrite_preserves_body(
+    old_bytes: &[u8],
+    new_bytes: &[u8],
+    abs_path: &Path,
+) -> anyhow::Result<()> {
+    let body = |bytes: &[u8]| -> Option<String> {
+        std::str::from_utf8(bytes)
+            .ok()
+            .and_then(split_front_matter)
+            .map(|(_, body)| body.to_string())
+    };
+    // Require BOTH sides to parse AND match. Comparing `Option`s directly would
+    // let two un-parseable sides (`None == None`) pass — the exact silent-drift
+    // case this guard exists to catch — so treat an unparseable body as a failure.
+    match (body(old_bytes), body(new_bytes)) {
+        (Some(a), Some(b)) if a == b => Ok(()),
+        _ => Err(anyhow::anyhow!(
+            "[content_store::tags] update_chunk_tags would mutate or invalidate the body for {:?} — aborting rewrite",
+            abs_path
+        )),
+    }
 }
 
 /// Slugify an entity kind string for use in an Obsidian hierarchical tag.
@@ -422,6 +456,31 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("nonexistent.md");
         assert!(update_chunk_tags(&path, &["p/X".into()]).is_ok());
+    }
+
+    #[test]
+    fn ensure_tag_rewrite_preserves_body_accepts_equal_bodies() {
+        let p = std::path::Path::new("x.md");
+        // Same body, different front-matter → allowed.
+        let old = b"---\nk: v\n---\nBODY";
+        let new = b"---\nk: other\ntags:\n  - t\n---\nBODY";
+        assert!(ensure_tag_rewrite_preserves_body(old, new, p).is_ok());
+    }
+
+    #[test]
+    fn ensure_tag_rewrite_preserves_body_rejects_body_drift() {
+        let p = std::path::Path::new("x.md");
+        let old = b"---\nk: v\n---\nBODY";
+        let drifted = b"---\nk: v\n---\nDIFFERENT BODY";
+        assert!(ensure_tag_rewrite_preserves_body(old, drifted, p).is_err());
+    }
+
+    #[test]
+    fn ensure_tag_rewrite_preserves_body_rejects_unparseable_bodies() {
+        // Both sides lack front-matter → both parse to None. The guard must still
+        // fail rather than let `None == None` pass silently.
+        let p = std::path::Path::new("x.md");
+        assert!(ensure_tag_rewrite_preserves_body(b"no front matter", b"still none", p).is_err());
     }
 
     #[test]

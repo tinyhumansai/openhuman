@@ -1,14 +1,14 @@
 ---
 description: >-
-  The mascot joins meetings as a real participant: listens, takes notes, speaks
-  back into the call, animates its face into the camera grid, and uses tools
-  mid-meeting. More than a notetaker.
+  The mascot joins Google Meet, Zoom, Teams, and Webex as a real participant:
+  listens, streams a live transcript, speaks back when addressed, auto-joins
+  from your calendar, and uses tools mid-meeting. More than a notetaker.
 icon: video
 ---
 
 # Meeting Agents
 
-The mascot's flagship integration is the **Meeting Agent**: the same character you talk to on your desktop can join a Google Meet on your behalf, sit in the participant grid as an animated face, hear everyone in the room, talk back into the call with its own voice, and reach for tools while the meeting is happening.
+The mascot's flagship integration is the **Meeting Agent**: the same character you talk to on your desktop can join a meeting on your behalf (**Google Meet, Zoom, Microsoft Teams, or Webex**), sit in the participant grid as an animated face, hear everyone in the room, talk back into the call with its own voice, and reach for tools while the meeting is happening.
 
 It is not a notetaker. A notetaker sits silently and produces a transcript. A meeting agent participates - it answers questions, looks things up live, remembers prior meetings with the same people, and contributes when you (or it) decide it has something useful to add.
 
@@ -69,9 +69,32 @@ A meeting agent that only transcribes is a tool. A meeting agent that participat
 
 The result, in practice, is that participants stop treating it like a bot and start treating it like a colleague who happens to be very fast at looking things up.
 
+## The Meetings page
+
+Everything meeting-related lives on one redesigned page (**Intelligence → Meetings**):
+
+* **Join any platform.** A composer with platform chips (Google Meet / Zoom / Teams / Webex) where the URL placeholder adapts per platform and "Your name" auto-fills from your connected account. Tick *active mode* and the bot answers when addressed (the wake phrase is derived as `Hey {your agent's name}`); leave it off for listen-only.
+* **Live transcript, during the call.** Transcript turns stream into the app in real time while the meeting is running. The in-progress line renders greyed until finalized, then the authoritative final transcript takes over when the call ends.
+* **Meeting history, master-detail.** Recent calls (up to 200) sit in a rail; select one for the full detail: platform, participants, duration, an AI **summary** with headline, key points and an action-item checklist, and the complete **transcript**.
+
+## Calendar auto-join
+
+Connect your Google Calendar once through Recall's hosted OAuth with **read-only scopes only** (`calendar.events.readonly` + your email), and OpenHuman sees your upcoming meetings and can join them automatically. Bots are still scheduled and owned by OpenHuman (your mascot, your credits), not by a third party.
+
+Auto-join is policy-driven: **ask each time / always / never**, globally and **per platform** (your Zoom standups can auto-join while Teams stays manual). Set a **reply display name** in the defaults drawer and calendar joins come up in reply mode, where the bot answers when addressed. Leave it unset and calendar joins stay listen-only.
+
+## Wake words that fail closed
+
+The wake-word gate is owner-scoped and deliberately conservative:
+
+* Only the configured **call owner** (or people the owner has allowlisted) can wake the bot into a tool-backed turn. Non-owners get a greeting or a polite refusal.
+* The owner can grant someone mid-call just by saying "allow" / "go ahead" / "let them in" (a 2-minute pending window).
+* With no owner configured, **no wake ever fires**. The bot also never wakes on its own TTS echo, and heavy per-speaker dedup and cooldowns absorb caption re-emits.
+
 ## Setup, controls, privacy
 
-- **Joining a call.** You can hand the mascot a Google Meet link from the desktop app; it will open the embedded Meet webview, join with the configured display name, and switch its camera tile to the mascot canvas.
+- **Joining a call.** Hand the mascot a meeting link from the Meetings page (or let calendar auto-join do it); it joins with the configured display name and switches its camera tile to the mascot canvas.
+- **Summaries on your terms.** The auto-summarize policy (ask / always / never) decides whether a call gets an AI summary at the end; transcript ingestion into memory is a separate toggle.
 - **Mic and camera control.** The agent's mic is the TTS injection stream, not your real microphone. The agent's camera is the mascot frame producer, not your real webcam. You can mute the agent's mic from the app at any time, the same way you'd mute yourself in Meet.
 - **Transcripts and memory.** Live transcripts land in the [Memory Tree](../obsidian-wiki/memory-tree.md) the same way any other source does - under the people in the call, the project, and the topics that came up. They are local-first and follow the project's [Privacy & Security](../privacy-and-security.md) rules.
 - **No covert recording.** The agent appears as a normal participant in the grid; everyone in the call can see it and see when it's speaking.

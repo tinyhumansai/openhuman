@@ -12,7 +12,6 @@
 //! Sub-agents always run in "typed" mode: a narrow archetype-specific
 //! prompt with a filtered tool list, on a cheaper model where applicable.
 //!
-use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{
@@ -22,10 +21,11 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::memory_conversations::{
     self as conversations, ConversationMessage, CreateConversationThread,
 };
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Spawns a sub-agent of the requested type to handle a delegated task.
 ///
@@ -75,7 +75,16 @@ impl Tool for SpawnSubagentTool {
 
     fn description(&self) -> &str {
         "Delegate a task to a specialised sub-agent only when direct \
-         response or direct tools are insufficient. See the Delegation \
+         response or direct tools are insufficient. Handles ONE delegated task \
+         per call: by default it runs as a reusable async worker and returns \
+         immediately — pass `blocking: true` to run it inline and get the \
+         sub-agent's final output back in this turn. To run several independent \
+         workers at once (e.g. \"a separate researcher for each X\", a council \
+         of opinions, or \"fan out over N items\"), use `spawn_parallel_agents` \
+         with one task per worker — a SINGLE call that launches them \
+         concurrently. Do NOT call this tool in a loop to fan out: repeated \
+         `spawn_subagent` calls each delegate a single task and never launch \
+         workers concurrently, which serializes the whole request. See the Delegation \
          Guide in the system prompt for available agent_ids and when to \
          use each. When delegating to `integrations_agent`, you MUST also pass \
          `toolkit=\"<name>\"` naming the Composio integration the \
@@ -155,6 +164,16 @@ impl Tool for SpawnSubagentTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         // ── Argument extraction with back-compat ───────────────────────
         let agent_id = args
             .get("agent_id")
@@ -433,7 +452,7 @@ impl Tool for SpawnSubagentTool {
                 "[spawn_subagent] routing to reusable async sub-agent by default"
             );
             return super::spawn_async_subagent::SpawnAsyncSubagentTool::new()
-                .execute(async_args)
+                .execute_with_context(async_args, ToolCallOptions::default(), tool_context)
                 .await;
         }
 
@@ -462,13 +481,13 @@ impl Tool for SpawnSubagentTool {
             .ok()
         });
 
-        publish_global(DomainEvent::SubagentSpawned {
-            parent_session: parent_session.clone(),
-            agent_id: definition.id.clone(),
-            mode: "typed".to_string(),
-            task_id: task_id.clone(),
-            prompt_chars: prompt.chars().count(),
-        });
+        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_spawned(
+            parent_session.clone(),
+            definition.id.clone(),
+            "typed".to_string(),
+            task_id.clone(),
+            prompt.chars().count(),
+        );
 
         // Mirror the spawn onto the parent's per-turn progress sink so the
         // web-channel bridge can stream a live subagent row into the
@@ -483,6 +502,7 @@ impl Tool for SpawnSubagentTool {
                     mode: "typed".to_string(),
                     dedicated_thread,
                     prompt_chars: prompt.chars().count(),
+                    prompt: prompt.clone(),
                     worker_thread_id: worker_thread_id.clone(),
                     display_name: Some(definition.display_name().to_string()),
                 })
@@ -490,6 +510,19 @@ impl Tool for SpawnSubagentTool {
         }
 
         // ── Run the sub-agent ──────────────────────────────────────────
+        let workspace_descriptor = tool_context.and_then(|ctx| ctx.workspace.clone());
+        let worktree_action_dir = workspace_descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.root.clone());
+        if let Some(descriptor) = workspace_descriptor.as_ref() {
+            tracing::debug!(
+                task_id = %task_id,
+                agent_id = %definition.id,
+                workspace_root = %descriptor.root.display(),
+                policy_id = %descriptor.policy_id,
+                "[spawn_subagent] using ToolExecutionContext workspace root"
+            );
+        }
         let options = SubagentRunOptions {
             skill_filter_override: None,
             toolkit_override,
@@ -499,7 +532,8 @@ impl Tool for SpawnSubagentTool {
             worker_thread_id: worker_thread_id.clone(),
             initial_history: None,
             checkpoint_dir: None,
-            worktree_action_dir: None,
+            worktree_action_dir,
+            workspace_descriptor,
             run_queue: None,
         };
 
@@ -516,12 +550,12 @@ impl Tool for SpawnSubagentTool {
                         // awaiting event and return structured envelope so
                         // the orchestrator can relay the question and later
                         // call continue_subagent.
-                        publish_global(DomainEvent::SubagentAwaitingUser {
+                        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_awaiting_user(
                             parent_session,
-                            task_id: outcome.task_id.clone(),
-                            agent_id: outcome.agent_id.clone(),
-                            question: question.clone(),
-                        });
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            question.clone(),
+                        );
                         if let Some(ref tx) = progress_sink {
                             let _ = tx
                                 .send(AgentProgress::SubagentAwaitingUser {
@@ -541,14 +575,14 @@ impl Tool for SpawnSubagentTool {
                         Ok(ToolResult::success(envelope))
                     }
                     SubagentRunStatus::Completed => {
-                        publish_global(DomainEvent::SubagentCompleted {
+                        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
                             parent_session,
-                            task_id: outcome.task_id.clone(),
-                            agent_id: outcome.agent_id.clone(),
-                            elapsed_ms: outcome.elapsed.as_millis() as u64,
-                            output_chars: outcome.output.chars().count(),
-                            iterations: outcome.iterations,
-                        });
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            outcome.elapsed.as_millis() as u64,
+                            outcome.output.chars().count(),
+                            outcome.iterations,
+                        );
 
                         if let Some(ref tx) = progress_sink {
                             let _ = tx
@@ -558,6 +592,7 @@ impl Tool for SpawnSubagentTool {
                                     elapsed_ms: outcome.elapsed.as_millis() as u64,
                                     iterations: outcome.iterations as u32,
                                     output_chars: outcome.output.chars().count(),
+                                    output: outcome.output.clone(),
                                     worktree_path: None,
                                     changed_files: Vec::new(),
                                     dirty_status: None,
@@ -613,14 +648,14 @@ impl Tool for SpawnSubagentTool {
                             iterations = outcome.iterations,
                             "[spawn_subagent] sub-agent stopped incomplete — returning structured handback"
                         );
-                        publish_global(DomainEvent::SubagentCompleted {
+                        crate::openhuman::agent_orchestration::subagent_events::publish_subagent_completed(
                             parent_session,
-                            task_id: outcome.task_id.clone(),
-                            agent_id: outcome.agent_id.clone(),
-                            elapsed_ms: outcome.elapsed.as_millis() as u64,
-                            output_chars: outcome.output.chars().count(),
-                            iterations: outcome.iterations,
-                        });
+                            outcome.task_id.clone(),
+                            outcome.agent_id.clone(),
+                            outcome.elapsed.as_millis() as u64,
+                            outcome.output.chars().count(),
+                            outcome.iterations,
+                        );
                         if let Some(ref tx) = progress_sink {
                             let _ = tx
                                 .send(AgentProgress::SubagentCompleted {
@@ -629,6 +664,7 @@ impl Tool for SpawnSubagentTool {
                                     elapsed_ms: outcome.elapsed.as_millis() as u64,
                                     iterations: outcome.iterations as u32,
                                     output_chars: outcome.output.chars().count(),
+                                    output: outcome.output.clone(),
                                     worktree_path: None,
                                     changed_files: Vec::new(),
                                     dirty_status: None,
@@ -670,12 +706,12 @@ impl Tool for SpawnSubagentTool {
                     error_kind = %error_kind,
                     "[spawn_subagent] sub-agent execution failed"
                 );
-                publish_global(DomainEvent::SubagentFailed {
+                crate::openhuman::agent_orchestration::subagent_events::publish_subagent_failed(
                     parent_session,
-                    task_id: task_id.clone(),
-                    agent_id: definition.id.clone(),
-                    error: message.clone(),
-                });
+                    task_id.clone(),
+                    definition.id.clone(),
+                    message.clone(),
+                );
 
                 if let Some(ref tx) = progress_sink {
                     let _ = tx
@@ -827,7 +863,7 @@ fn render_worker_thread_result(
 ///
 /// Returns text the model reads literally; the orchestrator paraphrases
 /// it into a user-facing reply. Keep the *intent* stable across
-/// rewordings — the "Settings → Connections → {toolkit}" path is
+/// rewordings — the "Connections → {toolkit}" path is
 /// load-bearing for the UI navigation tests.
 pub(crate) fn describe_unconnected_state(toolkit: &str, status: Option<&str>) -> String {
     // Keep the original (trimmed) status separately so the
@@ -842,14 +878,14 @@ pub(crate) fn describe_unconnected_state(toolkit: &str, status: Option<&str>) ->
         Some("INITIATED") | Some("INITIALIZING") | Some("PENDING") => format!(
             "Integration '{toolkit}' has an OAuth flow in progress but it hasn't reached \
              ACTIVE yet. Do NOT retry this spawn. Tell the user the authorization is \
-             pending and ask them to finish the browser OAuth flow (Settings → \
-             Connections → '{toolkit}') before retrying. If they already closed the \
-             browser tab, they can restart the connection from the same Settings page."
+             pending and ask them to finish the browser OAuth flow (Connections → \
+             '{toolkit}') before retrying. If they already closed the \
+             browser tab, they can restart the connection from the same Connections page."
         ),
         Some("EXPIRED") => format!(
             "Integration '{toolkit}' is connected but the OAuth token has expired. \
              Do NOT retry this spawn. Tell the user the connection expired and ask \
-             them to reconnect '{toolkit}' at Settings → Connections → '{toolkit}' \
+             them to reconnect '{toolkit}' at Connections → '{toolkit}' \
              before retrying the original request."
         ),
         Some("FAILED") | Some("ERROR") => {
@@ -861,7 +897,7 @@ pub(crate) fn describe_unconnected_state(toolkit: &str, status: Option<&str>) ->
             format!(
                 "Integration '{toolkit}' has a previous OAuth attempt in a `{raw}` state. \
                  Do NOT retry this spawn. Tell the user the connection failed and ask them \
-                 to reconnect '{toolkit}' at Settings → Connections → '{toolkit}' before \
+                 to reconnect '{toolkit}' at Connections → '{toolkit}' before \
                  retrying the original request."
             )
         }
@@ -874,13 +910,13 @@ pub(crate) fn describe_unconnected_state(toolkit: &str, status: Option<&str>) ->
                 "Integration '{toolkit}' has a connection row but its status is `{raw}`, \
                  which is not yet usable. Do NOT retry this spawn. Tell the user the \
                  connection is in an unusable state and ask them to reconnect '{toolkit}' \
-                 at Settings → Connections → '{toolkit}'."
+                 at Connections → '{toolkit}'."
             )
         }
         _ => format!(
             "Integration '{toolkit}' is available but the user has not authorized it \
              yet. Do NOT retry this spawn. Tell the user the integration is available \
-             and ask them to authorize '{toolkit}' in Settings → Connections → \
+             and ask them to authorize '{toolkit}' in Connections → \
              '{toolkit}' before retrying the original request."
         ),
     }
@@ -909,7 +945,8 @@ mod tests {
 
     #[test]
     fn build_worker_thread_title_collapses_whitespace_and_caps_length() {
-        let prompt = "  draft\n a very long\tplan that\nrambles ".to_string() + &"x".repeat(200);
+        let prompt =
+            "  draft\n a very long\tplan that\nrambles ".to_string() + "x".repeat(200).as_str();
         let title = build_worker_thread_title(&prompt);
         assert!(title.starts_with("draft a very long plan"));
         assert!(title.chars().count() <= WORKER_THREAD_TITLE_MAX_CHARS + 1);
@@ -1182,7 +1219,7 @@ mod tests {
             msg.contains("OAuth flow in progress"),
             "INITIATED must surface the in-progress wording: {msg}"
         );
-        assert!(msg.contains("Settings → Connections → 'gmail'"));
+        assert!(msg.contains("Connections → 'gmail'"));
         // The legacy "not authorized yet" copy must NOT leak into the
         // pending-OAuth branch — that was the user-perception bug
         // from #2365 (Settings UI showed Gmail connected, agent said
@@ -1209,6 +1246,8 @@ mod tests {
         let msg = describe_unconnected_state("gmail", Some("EXPIRED"));
         assert!(msg.contains("OAuth token has expired"));
         assert!(msg.contains("reconnect 'gmail'"));
+        assert!(msg.contains("Connections → 'gmail'"));
+        assert!(!msg.contains("Settings → Connections"));
         assert!(!msg.contains("OAuth flow in progress"));
     }
 
@@ -1222,6 +1261,8 @@ mod tests {
                 "{status} must be quoted verbatim, not collapsed to a single label: {msg}"
             );
             assert!(msg.contains("reconnect 'gmail'"));
+            assert!(msg.contains("Connections → 'gmail'"));
+            assert!(!msg.contains("Settings → Connections"));
         }
     }
 
@@ -1255,6 +1296,8 @@ mod tests {
                 msg.contains(&expected),
                 "unknown status `{raw}` must be quoted verbatim (not its uppercased form): {msg}"
             );
+            assert!(msg.contains("Connections → 'gmail'"));
+            assert!(!msg.contains("Settings → Connections"));
         }
     }
 
@@ -1286,7 +1329,7 @@ mod tests {
             msg.contains("has not authorized it yet"),
             "None must hit the legacy never-connected copy: {msg}"
         );
-        assert!(msg.contains("Settings → Connections → 'gmail'"));
+        assert!(msg.contains("Connections → 'gmail'"));
     }
 
     #[test]

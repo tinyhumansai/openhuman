@@ -7,6 +7,86 @@ use std::sync::Arc;
 
 use crate::openhuman::inference::provider::Provider;
 
+pub(crate) fn resolve_subagent_source(
+    spec: &crate::openhuman::agent::harness::definition::ModelSpec,
+    agent_id: &str,
+    config: Option<&crate::openhuman::config::Config>,
+    parent_source: crate::openhuman::tinyagents::TurnModelSource,
+    parent_model: String,
+    is_team_lead: bool,
+    model_override: Option<&str>,
+    temperature: f64,
+) -> (crate::openhuman::tinyagents::TurnModelSource, String) {
+    use crate::openhuman::agent::harness::definition::ModelSpec;
+    if let Some(model) = model_override
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        tracing::debug!(
+            agent_id,
+            model,
+            "[subagent_runner] using inline model override"
+        );
+        return (parent_source, model.to_string());
+    }
+    if let Some(model) = config.and_then(|cfg| cfg.configured_agent_model(agent_id, is_team_lead)) {
+        tracing::debug!(
+            agent_id,
+            model,
+            "[subagent_runner] using config-level model pin"
+        );
+        return (parent_source, model.to_string());
+    }
+    match spec {
+        ModelSpec::Hint(workload) => match config {
+            Some(config) => {
+                match crate::openhuman::inference::provider::create_chat_model_with_model_id(
+                    workload,
+                    config,
+                    temperature,
+                ) {
+                    Ok((_model, model_id)) => {
+                        tracing::info!(
+                            agent_id,
+                            role = workload,
+                            model = %model_id,
+                            "[subagent_runner] resolved crate-native workload source"
+                        );
+                        (
+                            crate::openhuman::tinyagents::TurnModelSource::new_crate_native(
+                                workload.clone(),
+                                Arc::new(config.clone()),
+                            ),
+                            model_id,
+                        )
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            agent_id,
+                            role = workload,
+                            %error,
+                            parent_model,
+                            "[subagent_runner] workload model build failed; inheriting parent source"
+                        );
+                        (parent_source, parent_model)
+                    }
+                }
+            }
+            None => {
+                tracing::warn!(
+                    agent_id,
+                    role = workload,
+                    parent_model,
+                    "[subagent_runner] config unavailable; inheriting parent source"
+                );
+                (parent_source, parent_model)
+            }
+        },
+        ModelSpec::Inherit => (parent_source, parent_model),
+        ModelSpec::Exact(model) => (parent_source, model.clone()),
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Provider / model resolution
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,9 +157,11 @@ pub(crate) fn resolve_subagent_provider(
                 match crate::openhuman::inference::provider::create_chat_provider(workload, cfg) {
                     Ok((p, m)) => {
                         log::info!(
-                        "[subagent_runner] role={} agent_id={} resolved via workload factory model={}",
-                        workload, agent_id, m
-                    );
+                            "[subagent_runner] role={} agent_id={} resolved via workload factory model={}",
+                            workload,
+                            agent_id,
+                            m
+                        );
                         (std::sync::Arc::from(p), m)
                     }
                     Err(e) => {
@@ -153,8 +235,8 @@ pub(crate) fn user_is_signed_in_to_composio(config: &crate::openhuman::config::C
 /// `composio.mode` toggle is honoured per execute — see
 /// [`crate::openhuman::composio::ComposioActionTool`] and issue #1710.
 pub(crate) struct LazyToolkitResolver {
-    pub(crate) config: std::sync::Arc<crate::openhuman::config::Config>,
-    pub(crate) actions: Vec<crate::openhuman::context::prompt::ConnectedIntegrationTool>,
+    pub(super) config: std::sync::Arc<crate::openhuman::config::Config>,
+    pub(super) actions: Vec<crate::openhuman::context::prompt::ConnectedIntegrationTool>,
 }
 
 /// Minimum normalized-slug length before the prefix/superstring tier in
@@ -165,6 +247,14 @@ pub(crate) struct LazyToolkitResolver {
 const TIER4_MIN_SLUG_LEN: usize = 8;
 
 impl LazyToolkitResolver {
+    /// NOTE (contract gate, #4853): this builds a *fresh* `ComposioActionTool`
+    /// — and therefore a fresh, empty `ContractGate` — on every call. The gate's
+    /// surface-once state lives in the tool instance, so if a future wiring
+    /// resolves a new tool per invocation the gate would surface the full
+    /// contract on every call and the retry would never see `first_time == false`
+    /// to proceed. When this path is wired to actually dispatch, cache the
+    /// resolved tool (and its gate) per turn so a given action can proceed after
+    /// its contract has been surfaced once.
     pub(super) fn resolve(&self, name: &str) -> Option<Box<dyn crate::openhuman::tools::Tool>> {
         let action = self.find_action(name)?;
         Some(Box::new(
@@ -277,7 +367,7 @@ impl LazyToolkitResolver {
 /// drift (`GOOGLESLIDES_BATCH_UPDATE` vs `googleslides_batch_update`) so
 /// near-miss tool slugs still resolve, while genuinely different slugs
 /// (e.g. a hallucinated `GMAIL_GET_LAST_3_MESSAGES`) stay distinct.
-pub(crate) fn normalize_slug(s: &str) -> String {
+pub(super) fn normalize_slug(s: &str) -> String {
     s.chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .map(|c| c.to_ascii_lowercase())

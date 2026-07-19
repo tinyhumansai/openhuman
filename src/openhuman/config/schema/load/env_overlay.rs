@@ -531,6 +531,21 @@ impl Config {
                 _ => {}
             }
         }
+
+        // Opt-in: export prompt/reply content on trace spans (default off — a
+        // deliberate PII reversal). Token/cost export is unaffected by this flag.
+        if let Some(flag) = env.get("OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => {
+                    self.observability.agent_tracing.capture_content = true
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.observability.agent_tracing.capture_content = false
+                }
+                _ => {}
+            }
+        }
     }
 
     fn apply_learning_env<E: super::env::EnvLookup + ?Sized>(&mut self, env: &E) {
@@ -925,8 +940,8 @@ impl Config {
             }
         }
         // "Super context" — harness-driven first-turn context collection.
-        // On by default; `OPENHUMAN_SUPER_CONTEXT=0` opts out. Accepts
-        // the canonical short name and the namespaced form.
+        // Off by default (expensive); `OPENHUMAN_SUPER_CONTEXT=1` opts in.
+        // Accepts the canonical short name and the namespaced form.
         if let Some(flag) = env
             .get("OPENHUMAN_SUPER_CONTEXT")
             .or_else(|| env.get("OPENHUMAN_CONTEXT_SUPER_CONTEXT_ENABLED"))

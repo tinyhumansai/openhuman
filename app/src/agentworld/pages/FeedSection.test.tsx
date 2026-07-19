@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { PaymentRequiredError } from '../../lib/agentworld/invokeApiClient';
 import { fetchWalletStatus } from '../../services/walletApi';
 import { apiClient } from '../AgentWorldShell';
-import FeedSection from './FeedSection';
+import FeedSection, { FEED_PAGE_SIZE } from './FeedSection';
 
 vi.mock('../AgentWorldShell', () => ({
   apiClient: {
@@ -41,8 +41,24 @@ vi.mock('../AgentWorldShell', () => ({
       likePost: vi.fn(),
       unlikePost: vi.fn(),
     },
+    streams: { start: vi.fn(), stop: vi.fn(), list: vi.fn().mockResolvedValue({ streams: [] }) },
     directory: { reverse: vi.fn() },
   },
+}));
+
+// ── Mock useTinyplaceStream hook ──────────────────────────────────────────────
+// vi.hoisted so the mock is available inside the vi.mock factory (which is
+// itself hoisted above the imports). Default: idle (no live push yet).
+const { mockUseTinyplaceStream } = vi.hoisted(() => ({
+  mockUseTinyplaceStream: vi.fn((_streamId?: string) => ({
+    messages: [] as unknown[],
+    status: 'idle',
+    clearMessages: vi.fn(),
+  })),
+}));
+
+vi.mock('../hooks/useTinyplaceStream', () => ({
+  useTinyplaceStream: (streamId?: string) => mockUseTinyplaceStream(streamId),
 }));
 
 vi.mock('../../services/walletApi', () => ({ fetchWalletStatus: vi.fn() }));
@@ -102,6 +118,11 @@ const samplePostDetail = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Feed real-time stream defaults (#4926): start resolves the canonical
+  // feed:<agentId> id; the hook is idle until a test overrides it.
+  vi.mocked(apiClient.streams.start).mockResolvedValue({ streamId: `feed:${MY_AGENT_ID}` });
+  vi.mocked(apiClient.streams.stop).mockResolvedValue(undefined);
+  mockUseTinyplaceStream.mockReturnValue({ messages: [], status: 'idle', clearMessages: vi.fn() });
   vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [], count: 0 });
   vi.mocked(apiClient.graphql.post).mockResolvedValue(samplePostDetail);
   vi.mocked(apiClient.graphql.user).mockResolvedValue({
@@ -737,5 +758,279 @@ describe('delete actions', () => {
     });
     // Detail refetched after delete
     expect(vi.mocked(apiClient.graphql.post)).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── Feed real-time stream (#4926) ────────────────────────────────────────────
+
+describe('feed real-time stream', () => {
+  test("starts the viewer's own feed stream on mount", async () => {
+    render(<FeedSection />);
+    // Wallet resolves to MY_AGENT_ID, so the panel subscribes to feed:<id>.
+    // Before the fix nothing in FeedSection subscribed to any stream.
+    await waitFor(() => {
+      expect(vi.mocked(apiClient.streams.start)).toHaveBeenCalledWith('feed', MY_AGENT_ID);
+    });
+  });
+
+  test('does not start a feed stream when no wallet is configured', async () => {
+    // No solana account → agentId is null → nothing to subscribe to.
+    vi.mocked(fetchWalletStatus).mockResolvedValue({ accounts: [] } as any);
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getByText(/set up your wallet/i)).toBeInTheDocument();
+    });
+    expect(vi.mocked(apiClient.streams.start)).not.toHaveBeenCalled();
+  });
+
+  test('refetches the home feed when a feed stream event arrives (no manual refresh)', async () => {
+    const { rerender } = render(<FeedSection />);
+    // Wait for the initial wallet-gated fetch to land.
+    await waitFor(() => {
+      expect(vi.mocked(apiClient.graphql.homeFeed)).toHaveBeenCalled();
+    });
+    const callsBefore = vi.mocked(apiClient.graphql.homeFeed).mock.calls.length;
+
+    // A new event lands on the viewer's feed stream. Keep `status` idle so this
+    // asserts the *event* drives the refetch — not a status transition.
+    mockUseTinyplaceStream.mockReturnValue({
+      messages: [{ stream_id: `feed:${MY_AGENT_ID}`, kind: 'feed', message: {} }],
+      status: 'idle',
+      clearMessages: vi.fn(),
+    });
+    rerender(<FeedSection />);
+
+    // The feed re-fetches on its own. Fails before the fix (feed only fetched on
+    // mount + explicit refetch), passes after.
+    await waitFor(() => {
+      expect(vi.mocked(apiClient.graphql.homeFeed).mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+  });
+
+  test('shows the Live indicator once the feed stream is connected', async () => {
+    mockUseTinyplaceStream.mockReturnValue({
+      messages: [],
+      status: 'connected',
+      clearMessages: vi.fn(),
+    });
+    render(<FeedSection />);
+    expect(await screen.findByTestId('feed-live-indicator')).toBeInTheDocument();
+  });
+
+  test('stops the feed stream it started when the panel unmounts', async () => {
+    const { unmount } = render(<FeedSection />);
+    await waitFor(() => {
+      expect(vi.mocked(apiClient.streams.start)).toHaveBeenCalledWith('feed', MY_AGENT_ID);
+    });
+
+    // Teardown must stop the started stream with its resolved id, not leak it
+    // (the gap CodeRabbit flagged on the sibling DM PR #4988).
+    unmount();
+    await waitFor(() => {
+      expect(vi.mocked(apiClient.streams.stop)).toHaveBeenCalledWith(`feed:${MY_AGENT_ID}`);
+    });
+  });
+
+  test('a live event merges new posts without collapsing expanded "Load more" pages', async () => {
+    const user = userEvent.setup();
+    const liveItem = {
+      ...sampleFeedItem,
+      post: {
+        ...samplePost,
+        postId: 'post-live',
+        body: 'LIVENEWPOST',
+        createdAt: new Date(Date.UTC(2026, 1, 1)).toISOString(),
+      },
+    };
+    vi.mocked(apiClient.graphql.homeFeed)
+      .mockResolvedValueOnce(buildFeedPage(FEED_PAGE_SIZE, 0)) // mount: page one
+      .mockResolvedValueOnce(buildFeedPage(FEED_PAGE_SIZE, FEED_PAGE_SIZE)) // Load more: page two
+      // The live-event merge refetches page one; it now carries a brand-new post.
+      .mockResolvedValue({
+        items: [liveItem, ...buildFeedPage(FEED_PAGE_SIZE - 1, 0).items],
+        count: 1000,
+      });
+
+    const { rerender } = render(<FeedSection />);
+    await waitFor(() => expect(screen.getAllByText('PAGEDPOST')).toHaveLength(FEED_PAGE_SIZE));
+
+    // Expand to two pages (100 items).
+    await user.click(screen.getByRole('button', { name: /load more/i }));
+    await waitFor(() => expect(screen.getAllByText('PAGEDPOST')).toHaveLength(FEED_PAGE_SIZE * 2));
+
+    // A live event arrives on the viewer's feed stream.
+    mockUseTinyplaceStream.mockReturnValue({
+      messages: [{ stream_id: `feed:${MY_AGENT_ID}`, kind: 'feed', message: {} }],
+      status: 'idle',
+      clearMessages: vi.fn(),
+    });
+    rerender(<FeedSection />);
+
+    // The new post surfaces at the top…
+    expect(await screen.findByText('LIVENEWPOST')).toBeInTheDocument();
+    // …and the two expanded pages are NOT collapsed back to page one — the bug
+    // oxoxDev flagged: resetting to firstPageFeedState would drop these to 49.
+    expect(screen.getAllByText('PAGEDPOST')).toHaveLength(FEED_PAGE_SIZE * 2);
+  });
+
+  test('keeps refreshing after the stream buffer caps at 100 events', async () => {
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue(buildFeedPage(3, 0));
+    const { rerender } = render(<FeedSection />);
+    await waitFor(() => expect(vi.mocked(apiClient.graphql.homeFeed)).toHaveBeenCalled());
+
+    // `useTinyplaceStream` caps `messages` at 100. Simulate a full buffer whose
+    // newest element (index 99) has a distinct identity per event.
+    const full = (tag: string) =>
+      Array.from({ length: 100 }, (_, i) => ({
+        stream_id: `feed:${MY_AGENT_ID}`,
+        kind: 'feed',
+        message: { seq: i === 99 ? tag : String(i) },
+      }));
+
+    mockUseTinyplaceStream.mockReturnValue({
+      messages: full('a'),
+      status: 'idle',
+      clearMessages: vi.fn(),
+    });
+    rerender(<FeedSection />);
+    await waitFor(() =>
+      expect(vi.mocked(apiClient.graphql.homeFeed).mock.calls.length).toBeGreaterThanOrEqual(2)
+    );
+    const callsAfterFirst = vi.mocked(apiClient.graphql.homeFeed).mock.calls.length;
+
+    // A further event shifts the buffer (drop oldest, append new): length STAYS
+    // 100 but the newest element is a fresh object. A length-keyed effect would
+    // never fire again here; keying on last-message identity still does.
+    mockUseTinyplaceStream.mockReturnValue({
+      messages: full('b'),
+      status: 'idle',
+      clearMessages: vi.fn(),
+    });
+    rerender(<FeedSection />);
+    await waitFor(() =>
+      expect(vi.mocked(apiClient.graphql.homeFeed).mock.calls.length).toBeGreaterThan(
+        callsAfterFirst
+      )
+    );
+  });
+});
+
+// ── Pagination (offset-based "Load more", #4923) ─────────────────────────────
+
+/** Build a home-feed page of `n` items with sequential ids from `start`. */
+function buildFeedPage(n: number, start = 0) {
+  const items = Array.from({ length: n }, (_, i) => {
+    const idx = start + i;
+    return {
+      ...sampleFeedItem,
+      post: {
+        ...samplePost,
+        postId: `post-${String(idx).padStart(4, '0')}`,
+        // Shared body so pages are countable via getAllByText; distinct,
+        // decreasing timestamps keep the newest-first sort deterministic.
+        body: 'PAGEDPOST',
+        createdAt: new Date(Date.UTC(2026, 0, 1) - idx * 60_000).toISOString(),
+      },
+    };
+  });
+  return { items, count: 1000 };
+}
+
+describe('Feed pagination', () => {
+  test('requests the first page with limit + offset 0', async () => {
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getByText(samplePost.body)).toBeInTheDocument();
+    });
+    expect(apiClient.graphql.homeFeed).toHaveBeenNthCalledWith(1, {
+      limit: FEED_PAGE_SIZE,
+      offset: 0,
+      includeSelf: true,
+    });
+  });
+
+  test('hides Load more when the first page is shorter than a full page', async () => {
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue(buildFeedPage(3));
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getAllByText('PAGEDPOST')).toHaveLength(3);
+    });
+    expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
+  });
+
+  test('shows Load more when the first page fills the page size', async () => {
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue(buildFeedPage(FEED_PAGE_SIZE));
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument();
+    });
+  });
+
+  test('clicking Load more fetches the next offset, appends items, then stops', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.graphql.homeFeed)
+      .mockResolvedValueOnce(buildFeedPage(FEED_PAGE_SIZE, 0))
+      .mockResolvedValueOnce(buildFeedPage(3, FEED_PAGE_SIZE));
+
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getAllByText('PAGEDPOST')).toHaveLength(FEED_PAGE_SIZE);
+    });
+
+    await user.click(screen.getByRole('button', { name: /load more/i }));
+
+    // Second page appended (50 + 3 = 53) and the control disappears because the
+    // short page signals the feed is exhausted.
+    await waitFor(() => {
+      expect(screen.getAllByText('PAGEDPOST')).toHaveLength(FEED_PAGE_SIZE + 3);
+    });
+    expect(apiClient.graphql.homeFeed).toHaveBeenNthCalledWith(2, {
+      limit: FEED_PAGE_SIZE,
+      offset: FEED_PAGE_SIZE,
+      includeSelf: true,
+    });
+    expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
+  });
+
+  test('deduplicates overlapping items across pages', async () => {
+    const user = userEvent.setup();
+    // Second page repeats the last id of the first page (post-0049) plus new rows.
+    vi.mocked(apiClient.graphql.homeFeed)
+      .mockResolvedValueOnce(buildFeedPage(FEED_PAGE_SIZE, 0))
+      .mockResolvedValueOnce(buildFeedPage(FEED_PAGE_SIZE, FEED_PAGE_SIZE - 1));
+
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getAllByText('PAGEDPOST')).toHaveLength(FEED_PAGE_SIZE);
+    });
+
+    await user.click(screen.getByRole('button', { name: /load more/i }));
+
+    // 50 initial + 50 returned − 1 overlapping (post-0049) = 99 unique items.
+    await waitFor(() => {
+      expect(screen.getAllByText('PAGEDPOST')).toHaveLength(2 * FEED_PAGE_SIZE - 1);
+    });
+  });
+
+  test('keeps items and surfaces an error when Load more fails', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.graphql.homeFeed)
+      .mockResolvedValueOnce(buildFeedPage(FEED_PAGE_SIZE, 0))
+      .mockRejectedValueOnce(new Error('network failure'));
+
+    render(<FeedSection />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /load more/i }));
+
+    // Existing items stay; an error message appears; the control remains for retry.
+    await waitFor(() => {
+      expect(screen.getByText(/could not load more posts/i)).toBeInTheDocument();
+    });
+    expect(screen.getAllByText('PAGEDPOST')).toHaveLength(FEED_PAGE_SIZE);
+    expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument();
   });
 });

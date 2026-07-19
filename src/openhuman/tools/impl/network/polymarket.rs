@@ -171,7 +171,6 @@ impl PolymarketTool {
         let cached_credentials = config
             .derived_clob_credentials
             .clone()
-            .map(PolymarketClobCredentials::from)
             .filter(PolymarketClobCredentials::is_complete);
 
         Self {
@@ -575,6 +574,31 @@ impl PolymarketTool {
             return Ok(creds.clone());
         }
 
+        // Egress spine (privacy epic S2/S7, #4436/#4441): deriving CLOB
+        // credentials sends the wallet address + L1 EIP-712 signature to
+        // Polymarket's `/auth/api-key` (and `/auth/derive-api-key` fallback)
+        // directly on `self.http`, which does NOT pass through the
+        // `send_with_retry` egress chokepoint. Refuse BEFORE that round-trip
+        // under LocalOnly so no credential material leaves the device, then
+        // disclose the destination for a permitted derive — mirroring
+        // `send_with_retry` so this off-device transfer produces the same
+        // `ExternalTransferPending` disclosure as every other egress point. A
+        // cached-credential hit (checked above) never reaches here, so a
+        // permitted local read is unaffected — every `self.http` path is now
+        // gated and disclosed (this + `send_with_retry`).
+        {
+            use crate::openhuman::security::egress::{DataKind, EgressDescriptor};
+            let host = reqwest::Url::parse(&self.clob_base_url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "clob.polymarket.com".to_string());
+            let desc = EgressDescriptor::network_fetch(host).with_data_kind(DataKind::Metadata);
+            if let Some(msg) = crate::openhuman::security::egress::local_only_tool_block(&desc) {
+                anyhow::bail!("{msg}");
+            }
+            crate::openhuman::security::egress::emit_external_transfer(desc);
+        }
+
         ensure_https(&self.clob_base_url)?;
         let creds =
             derive_credentials(&self.http, wallet, &self.clob_base_url, POLY_CHAIN_ID, user)
@@ -613,7 +637,7 @@ impl PolymarketTool {
             .map_err(anyhow::Error::msg)
             .context("Failed to load config for persisting Polymarket credentials")?;
 
-        config.integrations.polymarket.derived_clob_credentials = Some(creds.clone().into());
+        config.integrations.polymarket.derived_clob_credentials = Some(creds.clone());
         config
             .save()
             .await
@@ -926,6 +950,30 @@ impl PolymarketTool {
         let url = format!("{base_url}{path}");
         let method_label = method.as_str().to_string();
 
+        // Egress spine (privacy epic S2/S7, #4436/#4441): every Polymarket
+        // read/write funnels through here — the single network chokepoint for
+        // this tool. Enforce local-only (refuse before any request leaves the
+        // device), then disclose the destination for permitted calls. Body =>
+        // tool arguments, headers => metadata also ride along.
+        {
+            use crate::openhuman::security::egress::{DataKind, EgressDescriptor};
+            let host = reqwest::Url::parse(&url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "unknown".to_string());
+            let mut desc = EgressDescriptor::network_fetch(host);
+            if body.is_some() {
+                desc = desc.with_data_kind(DataKind::ToolArguments);
+            }
+            if headers.is_some() {
+                desc = desc.with_data_kind(DataKind::Metadata);
+            }
+            if let Some(msg) = crate::openhuman::security::egress::local_only_tool_block(&desc) {
+                anyhow::bail!("{msg}");
+            }
+            crate::openhuman::security::egress::emit_external_transfer(desc);
+        }
+
         for attempt in 1..=MAX_RETRY_ATTEMPTS {
             let mut request = self.http.request(method.clone(), &url);
             if !query.is_empty() {
@@ -1144,10 +1192,10 @@ impl Tool for PolymarketTool {
         // rejected by the CLOB. Credential derivation is similarly
         // single-flight (see ensure_clob_credentials OnceCell). Reads remain
         // concurrency-safe.
-        match args.get("action").and_then(Value::as_str) {
-            Some("place_order") | Some("cancel_order") => false,
-            _ => true,
-        }
+        !matches!(
+            args.get("action").and_then(Value::as_str),
+            Some("place_order") | Some("cancel_order")
+        )
     }
 
     async fn execute(&self, args: Value) -> Result<ToolResult> {
@@ -1371,6 +1419,56 @@ fn parse_nonce_value(value: &Value) -> Option<u64> {
     }
 }
 
-#[cfg(test)]
+// These tests seed a real wallet (`wallet::setup` + `WalletAccount` with
+// `derivation_path`) to exercise wallet-signed Polymarket CLOB writes, so they
+// require the `web3` feature. With web3 off the wallet is compiled out and the
+// Polymarket write path degrades to a "wallet disabled" error (via the wallet
+// stub), so there is nothing here to test. The tool itself still compiles in
+// both configs against the stub — only these signing tests are gated.
+#[cfg(all(test, feature = "web3"))]
 #[path = "polymarket_tests.rs"]
 mod tests;
+
+// Feature-off counterpart: with `web3` compiled out the wallet stub's
+// `secret_material` returns the disabled error, so any wallet-signed Polymarket
+// write must surface that instead of silently succeeding. The signing-heavy
+// happy-path tests above cannot run (no wallet), so this narrow test locks in
+// the degraded contract for the slim build.
+#[cfg(all(test, not(feature = "web3")))]
+mod tests_web3_disabled {
+    use super::*;
+    use crate::openhuman::config::PolymarketConfig;
+    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
+    use std::sync::Arc;
+
+    fn write_tool_with_eoa(user: &str) -> PolymarketTool {
+        let config = PolymarketConfig {
+            enabled: true,
+            eoa_address: Some(user.to_string()),
+            ..PolymarketConfig::default()
+        };
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Supervised,
+            ..SecurityPolicy::default()
+        });
+        PolymarketTool::new(&config, security)
+    }
+
+    #[tokio::test]
+    async fn signer_resolution_reports_wallet_disabled() {
+        // A configured EOA lets user-address resolution short-circuit, so the
+        // failure comes from `secret_material` (the wallet stub), proving the
+        // write path degrades to the disabled error rather than panicking or
+        // succeeding without a signer.
+        let tool = write_tool_with_eoa("0x000000000000000000000000000000000000dEaD");
+        let err = tool
+            .resolve_signer_and_user(None)
+            .await
+            .expect_err("wallet-signed writes must fail when web3 is compiled out");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("web3/wallet feature disabled at compile time"),
+            "expected the stable compile-time-disabled marker, got: {msg}"
+        );
+    }
+}

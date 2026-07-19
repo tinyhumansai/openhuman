@@ -6,12 +6,13 @@
 //! same path-sandboxing + rate-limiting as `file_read`.
 
 use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use regex::Regex;
 use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
+use tinyagents::harness::tool::ToolExecutionContext;
 use walkdir::WalkDir;
 
 const DEFAULT_MAX_MATCHES: usize = 200;
@@ -77,6 +78,25 @@ impl Tool for GrepTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, context).await
+    }
+}
+
+impl GrepTool {
+    async fn execute_in_context(
+        &self,
+        args: serde_json::Value,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let pattern = args
             .get("pattern")
             .and_then(|v| v.as_str())
@@ -108,13 +128,15 @@ impl Tool for GrepTool {
             Err(e) => return Ok(ToolResult::error(format!("Invalid regex: {e}"))),
         };
 
+        let path_policy = super::security_for_tool_context(&self.security, context, "grep");
+
         // Security check: validate path string, resolve symlinks, confirm workspace containment.
-        let resolved_root = match self.security.validate_path(sub_path).await {
+        let resolved_root = match path_policy.validate_path(sub_path).await {
             Ok(p) => p,
             Err(msg) => return Ok(ToolResult::error(msg)),
         };
 
-        let workspace = self.security.workspace_dir.clone();
+        let workspace = path_policy.action_dir.clone();
         let result = tokio::task::spawn_blocking(move || {
             scan_for_matches(&resolved_root, &workspace, &regex, max_matches)
         })

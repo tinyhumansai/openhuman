@@ -185,6 +185,12 @@ pub struct WebChannelEvent {
     /// `tool_result` events.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Structured, user-facing classification of a failed tool call (class,
+    /// category, plain-language cause + next action). Present on `tool_result`
+    /// events when the tool failed; the chat "View processing" timeline renders
+    /// the "why / what to do next" pair. `None` on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<serde_json::Value>,
     /// Optional citations attached to `chat_done` payloads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub citations: Option<serde_json::Value>,
@@ -357,6 +363,11 @@ struct ChatStartPayload {
 #[derive(Debug, Deserialize)]
 struct ChatCancelPayload {
     thread_id: String,
+    /// The request this cancel targets. When the client passes the id of the
+    /// turn it started, the cancel is scoped to that turn so a late cancel for a
+    /// timed-out request can't kill the next turn on the thread (#4760).
+    #[serde(default)]
+    request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -494,7 +505,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                 );
 
                     // Trigger the web channel's chat logic.
-                    match crate::openhuman::channels::providers::web::start_chat(
+                    match crate::openhuman::web_chat::start_chat(
                         &client_id,
                         &payload.thread_id,
                         &payload.message,
@@ -503,7 +514,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                         payload.profile_id,
                         payload.locale,
                         payload.queue_mode,
-                        crate::openhuman::channels::providers::web::ChatRequestMetadata::default(),
+                        crate::openhuman::web_chat::ChatRequestMetadata::default(),
                     )
                     .await
                     {
@@ -545,9 +556,10 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                         client_id,
                         payload.thread_id
                     );
-                    let _ = crate::openhuman::channels::providers::web::cancel_chat(
+                    let _ = crate::openhuman::web_chat::cancel_chat_scoped(
                         &client_id,
                         &payload.thread_id,
+                        payload.request_id.as_deref(),
                     )
                     .await;
                 },
@@ -595,7 +607,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     // 1. Web channel events → per-client rooms.
     let io_web = io.clone();
     tokio::spawn(async move {
-        let mut rx = crate::openhuman::channels::providers::web::subscribe_web_channel_events();
+        let mut rx = crate::openhuman::web_chat::subscribe_web_channel_events();
         loop {
             let event = match rx.recv().await {
                 Ok(event) => event,
@@ -624,6 +636,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_agent_meetings = io.clone();
     let io_tinyplace = io.clone();
     let io_channel_status = io.clone();
+    let io_orchestration = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -709,6 +722,30 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             }
         }
         log::debug!("[socketio] core_notification bridge stopped");
+    });
+
+    // 5b. Orchestration chat activity → broadcast to all clients so the
+    //     TinyPlaceOrchestrationTab targeted-refetches the affected chat live
+    //     (stage 7). Mirrors the overlay/notification fire-and-forget pattern.
+    tokio::spawn(async move {
+        let mut rx = crate::openhuman::orchestration::subscribe_orchestration_socket();
+        loop {
+            let payload = match rx.recv().await {
+                Ok(payload) => payload,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} orchestration events due to lag",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            log::debug!("[socketio] broadcast orchestration:message");
+            let _ = io_orchestration.emit("orchestration:message", &payload);
+            let _ = io_orchestration.emit("orchestration_message", &payload);
+        }
+        log::debug!("[socketio] orchestration bridge stopped");
     });
 
     // 6. SessionExpired events → broadcast to all clients so the UI can
@@ -1016,6 +1053,83 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                         "failed_required": failed_required,
                     });
                     let _ = io_memory_sync.emit("init:completed", &payload);
+                }
+                // Live per-step progress of an in-flight flow run (issue G2).
+                // Best-effort: the durable `flow_runs` row is the source of
+                // truth and the Workflows UI keeps a 2s poller as fallback, so
+                // a dropped event here (broadcast lag) only delays the live
+                // update, never corrupts run history.
+                crate::core::event_bus::DomainEvent::FlowRunProgress {
+                    run_id,
+                    node_id,
+                    status,
+                } => {
+                    let payload = serde_json::json!({
+                        "run_id": run_id,
+                        "node_id": node_id,
+                        "status": status,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast flow_run_progress run_id={} node_id={} status={}",
+                        run_id,
+                        node_id,
+                        status
+                    );
+                    let _ = io_memory_sync.emit("flow:run_progress", &payload);
+                    let _ = io_memory_sync.emit("flow_run_progress", &payload);
+                }
+                // A saved flow's definition changed (create/update/delete/
+                // enable). Broadcast so an open Workflows list/canvas refetches
+                // — most importantly, so an agent `save_workflow` becomes
+                // visible in a canvas the user has open (audit F6). Best-effort;
+                // the UI's refetch-on-focus is the backstop.
+                crate::core::event_bus::DomainEvent::FlowChanged {
+                    flow_id,
+                    kind,
+                    actor,
+                } => {
+                    let payload = serde_json::json!({
+                        "flow_id": flow_id,
+                        "kind": kind,
+                        "actor": actor,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast flow_changed flow_id={} kind={} actor={}",
+                        flow_id,
+                        kind,
+                        actor
+                    );
+                    let _ = io_memory_sync.emit("flow:changed", &payload);
+                    let _ = io_memory_sync.emit("flow_changed", &payload);
+                }
+                // A Workflow-origin tool call parked in the `ApprovalGate`
+                // (flow-approval-surface, PR2/PR3). Broadcast — not
+                // room-scoped like `ApprovalRequested`'s `approval_request`
+                // bridge — because a flow run has no chat thread/client to
+                // target; the Workflows UI listens process-wide and filters
+                // by `flow_id`/`run_id` client-side.
+                crate::core::event_bus::DomainEvent::FlowApprovalRequested {
+                    request_id,
+                    flow_id,
+                    run_id,
+                    tool_name,
+                    summary,
+                } => {
+                    let payload = serde_json::json!({
+                        "request_id": request_id,
+                        "flow_id": flow_id,
+                        "run_id": run_id,
+                        "tool_name": tool_name,
+                        "summary": summary,
+                    });
+                    log::info!(
+                        "[socketio] broadcast flow_approval_request request_id={} flow_id={} run_id={} tool={}",
+                        request_id,
+                        flow_id,
+                        run_id,
+                        tool_name
+                    );
+                    let _ = io_memory_sync.emit("flow_approval_request", &payload);
                 }
                 _ => {}
             }

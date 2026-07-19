@@ -2,9 +2,8 @@
 //!
 //! Native tool-output compaction (Stage 1a) may replace a large tool result
 //! with a compacted view and a `retrieve_tool_output("<hash>")` sentinel,
-//! stashing the original in the CCR store
-//! ([`crate::openhuman::agent::harness::compaction::store`]). This tool hands
-//! the original back on demand, so even lossy compaction stays reversible.
+//! stashing the original in the TokenJuice store. This tool hands the original
+//! back on demand, so even lossy compaction stays reversible.
 //!
 //! Read-only, no side effects, no path/network access.
 

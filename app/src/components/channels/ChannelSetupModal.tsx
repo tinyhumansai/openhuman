@@ -10,7 +10,9 @@ import { useT } from '../../lib/i18n/I18nContext';
 import type { ChannelDefinition, ChannelType } from '../../types/channels';
 import { CloseIcon } from '../ui';
 import Button from '../ui/Button';
+import ChannelConnectHelp from './ChannelConnectHelp';
 import { renderChannelIcon } from './channelIcon';
+import CredentialChannelConfig from './CredentialChannelConfig';
 import DiscordConfig from './DiscordConfig';
 import TelegramConfig from './TelegramConfig';
 import YuanbaoConfig from './YuanbaoConfig';
@@ -20,9 +22,11 @@ interface ChannelSetupModalProps {
   onClose: () => void;
 }
 
-function ChannelConfigContent({ definition }: { definition: ChannelDefinition }) {
-  const { t } = useT();
-  const channelId = definition.id as ChannelType;
+function renderChannelConfig(
+  definition: ChannelDefinition,
+  channelId: ChannelType,
+  t: (key: string, fallback?: string) => string
+) {
   switch (channelId) {
     case 'telegram':
       return <TelegramConfig definition={definition} />;
@@ -30,6 +34,13 @@ function ChannelConfigContent({ definition }: { definition: ChannelDefinition })
       return <DiscordConfig definition={definition} />;
     case 'yuanbao':
       return <YuanbaoConfig definition={definition} />;
+    // Credential-form channels (Lark/DingTalk/Email) render the same generic
+    // form here as on the Channels page — otherwise clicking their Skills-grid
+    // tile fell through to "config not available" (#4280 review).
+    case 'lark':
+    case 'dingtalk':
+    case 'email':
+      return <CredentialChannelConfig definition={definition} />;
     default:
       return (
         <p className="text-sm text-content-faint py-4">
@@ -37,6 +48,17 @@ function ChannelConfigContent({ definition }: { definition: ChannelDefinition })
         </p>
       );
   }
+}
+
+function ChannelConfigContent({ definition }: { definition: ChannelDefinition }) {
+  const { t } = useT();
+  const channelId = definition.id as ChannelType;
+  return (
+    <div className="space-y-3">
+      <ChannelConnectHelp channelId={channelId} />
+      {renderChannelConfig(definition, channelId, t)}
+    </div>
+  );
 }
 
 export default function ChannelSetupModal({ definition, onClose }: ChannelSetupModalProps) {

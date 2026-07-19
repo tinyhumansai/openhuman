@@ -553,19 +553,23 @@ fn start_hotkey_listener(
         // rdev calls TSMGetInputSourceProperty off the main thread; macOS 26
         // enforces main-queue-only access and crashes the process. Only the
         // Fn/Globe key is safe via the Swift globe listener. (#2677)
-        return Err(format!(
+        Err(format!(
             "voice server hotkey '{}' is not supported on macOS — \
              only 'fn' (Fn/Globe key) is safe. rdev calls \
              TSMGetInputSourceProperty off the main thread on macOS 26, \
              causing EXC_BREAKPOINT. Set hotkey = \"fn\" in voice config \
              (issue #2677).",
             hotkey_str
-        ));
+        ))
     }
 
     // Non-macOS: rdev-based listener for all keys.
     #[cfg(not(target_os = "macos"))]
     {
+        // `server_cancel` is only consumed by the macOS Swift-globe listener
+        // branch above; the rdev listener manages its own lifecycle, so bind it
+        // here to keep the shared signature warning-free on non-macOS.
+        let _ = server_cancel;
         let combo = hotkey::parse_hotkey(hotkey_str)?;
         let (handle, rx) = hotkey::start_listener(combo, mode)?;
         Ok((HotkeyListenerKind::Rdev(handle), rx))

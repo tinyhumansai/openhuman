@@ -101,28 +101,6 @@ async fn clear_empties_all_lanes() {
 }
 
 #[tokio::test]
-async fn has_pending_injections_true_for_steers() {
-    let q = RunQueue::new();
-    assert!(!q.has_pending_injections().await);
-    q.push(msg("steer me", QueueMode::Steer)).await;
-    assert!(q.has_pending_injections().await);
-}
-
-#[tokio::test]
-async fn has_pending_injections_true_for_collects() {
-    let q = RunQueue::new();
-    q.push(msg("ctx", QueueMode::Collect)).await;
-    assert!(q.has_pending_injections().await);
-}
-
-#[tokio::test]
-async fn has_pending_injections_false_for_followups_only() {
-    let q = RunQueue::new();
-    q.push(msg("later", QueueMode::Followup)).await;
-    assert!(!q.has_pending_injections().await);
-}
-
-#[tokio::test]
 async fn drain_does_not_affect_other_lanes() {
     let q = RunQueue::new();
     q.push(msg("s", QueueMode::Steer)).await;

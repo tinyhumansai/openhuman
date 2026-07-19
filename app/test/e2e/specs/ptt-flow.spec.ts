@@ -2,8 +2,6 @@
 /**
  * E2E: global push-to-talk (PTT) end-to-end flow with mocked STT.
  *
- * Task 14 from `docs/superpowers/plans/2026-06-02-global-ptt.md`.
- *
  * What this spec exercises (top to bottom):
  *
  *   UI:
@@ -49,7 +47,6 @@
  *        wire). We spy on `__TAURI_INTERNALS__.invoke` before the press to
  *        capture the call payload.
  *
- * Plan: docs/superpowers/plans/2026-06-02-global-ptt.md (Task 14).
  * Spec: docs/superpowers/specs/2026-06-02-global-ptt-design.md.
  *
  * Limitations / notes for follow-up sessions:

@@ -11,9 +11,15 @@ export async function handleAuth(ctx) {
   const { method, url, res, origin } = ctx;
   const mockBehavior = behavior();
 
+  // Login-token consume. The core POSTs to `/auth/login-token/consume` with the
+  // token in a JSON body `{ token, audience? }` and parses `{ success, data: { jwt } }`
+  // (see src/api/rest.rs `consume_login_token`). The legacy path-param route
+  // `/telegram/login-tokens/:token/consume` was removed backend-side but is kept
+  // here as a harmless alias in case an older client is exercised.
   if (
     method === "POST" &&
-    /^\/telegram\/login-tokens\/[^/]+\/consume\/?$/.test(url)
+    (/^\/auth\/login-token\/consume\/?$/.test(url) ||
+      /^\/telegram\/login-tokens\/[^/]+\/consume\/?$/.test(url))
   ) {
     if (mockBehavior.token === "expired") {
       json(res, 401, { success: false, error: "Token expired or invalid" });
@@ -24,7 +30,7 @@ export async function handleAuth(ctx) {
       return true;
     }
     const jwt = mockBehavior.jwt ? `${MOCK_JWT}-${mockBehavior.jwt}` : MOCK_JWT;
-    json(res, 200, { success: true, data: { jwtToken: jwt } });
+    json(res, 200, { success: true, data: { jwt } });
     return true;
   }
 

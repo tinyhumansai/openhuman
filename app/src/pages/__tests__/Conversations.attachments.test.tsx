@@ -4,10 +4,10 @@
  * attachment-only sends, and user bubble image rendering.
  */
 import { combineReducers, configureStore } from '@reduxjs/toolkit';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SidebarSlotOutlet, SidebarSlotProvider } from '../../components/layout/shell/SidebarSlot';
 import agentProfileReducer from '../../store/agentProfileSlice';
@@ -17,6 +17,10 @@ import threadReducer from '../../store/threadSlice';
 import type { Thread } from '../../types/thread';
 
 // ── Hoisted mock state ──────────────────────────────────────────────────────
+
+const TINY_PNG_DATA_URI = 'data:image/png;base64,iVBORw0KGgo=';
+const originalCreateObjectURL = URL.createObjectURL;
+const originalRevokeObjectURL = URL.revokeObjectURL;
 
 const {
   mockGetThreads,
@@ -247,7 +251,7 @@ async function renderWithSelectedThread() {
     socket: socketState('connected'),
   });
 
-  const { default: Conversations } = await import('../Conversations');
+  const { default: Conversations } = await import('../../features/conversations/Conversations');
 
   render(
     <Provider store={store}>
@@ -267,8 +271,16 @@ async function renderWithSelectedThread() {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe('Conversations — attachment feature', () => {
+  let objectUrlCounter = 0;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    objectUrlCounter = 0;
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => `blob:conversation-attachment-${++objectUrlCounter}`),
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
     mockVisionState.vision = true;
     mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
     mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
@@ -284,6 +296,18 @@ describe('Conversations — attachment feature', () => {
       shouldShowBudgetCompletedMessage: false,
       isLoading: false,
       refresh: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: originalCreateObjectURL,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: originalRevokeObjectURL,
     });
   });
 
@@ -539,7 +563,7 @@ describe('Conversations — attachment feature', () => {
 
   it('renders image thumbnails in user message bubble from extraMetadata', async () => {
     const thread = makeThread({ id: 'img-thread', title: 'Img Thread' });
-    const dataUri = 'data:image/png;base64,abc123';
+    const dataUri = TINY_PNG_DATA_URI;
     const message = {
       id: 'msg-1',
       content: 'look at this',
@@ -567,7 +591,7 @@ describe('Conversations — attachment feature', () => {
       socket: socketState('connected'),
     });
 
-    const { default: Conversations } = await import('../Conversations');
+    const { default: Conversations } = await import('../../features/conversations/Conversations');
 
     render(
       <Provider store={store}>
@@ -581,9 +605,10 @@ describe('Conversations — attachment feature', () => {
     );
 
     await waitFor(() => {
-      const img = document.querySelector(`img[src="${dataUri}"]`);
+      const img = document.querySelector('img[src^="blob:conversation-attachment-"]');
       expect(img).not.toBeNull();
     });
+    expect(URL.createObjectURL).toHaveBeenCalled();
   });
 
   it('renders a document filename chip in the user bubble from attachmentKinds/Names', async () => {
@@ -619,7 +644,7 @@ describe('Conversations — attachment feature', () => {
       socket: socketState('connected'),
     });
 
-    const { default: Conversations } = await import('../Conversations');
+    const { default: Conversations } = await import('../../features/conversations/Conversations');
 
     render(
       <Provider store={store}>
@@ -672,7 +697,7 @@ describe('Conversations — attachment feature', () => {
       socket: socketState('connected'),
     });
 
-    const { default: Conversations } = await import('../Conversations');
+    const { default: Conversations } = await import('../../features/conversations/Conversations');
 
     render(
       <Provider store={store}>
@@ -699,7 +724,7 @@ describe('Conversations — attachment feature', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
     const thread = makeThread({ id: 'legacy-thread', title: 'Legacy Thread' });
-    const dataUri = 'data:image/png;base64,legacy123';
+    const dataUri = TINY_PNG_DATA_URI;
     const message = {
       id: 'msg-legacy-1',
       content: `read this [IMAGE:${dataUri}] and [FILE:data:application/pdf;base64,xyz]`,
@@ -727,7 +752,7 @@ describe('Conversations — attachment feature', () => {
       socket: socketState('connected'),
     });
 
-    const { default: Conversations } = await import('../Conversations');
+    const { default: Conversations } = await import('../../features/conversations/Conversations');
 
     render(
       <Provider store={store}>
@@ -742,9 +767,10 @@ describe('Conversations — attachment feature', () => {
 
     // The image marker's data URI still renders as an <img> (parsed out for display)...
     await waitFor(() => {
-      const img = document.querySelector(`img[src="${dataUri}"]`);
+      const img = document.querySelector('img[src^="blob:conversation-attachment-"]');
       expect(img).not.toBeNull();
     });
+    expect(URL.createObjectURL).toHaveBeenCalled();
 
     // ...but the raw marker syntax must never leak into the rendered bubble text.
     expect(document.body.textContent).not.toContain('[IMAGE:');

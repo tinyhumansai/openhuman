@@ -28,6 +28,7 @@ import Button from '../../ui/Button';
 import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsRow, SettingsSection, SettingsStatusLine, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import ComposioTriagePanel from './ComposioTriagePanel';
 
 type Mode = 'backend' | 'direct';
 
@@ -394,6 +395,16 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
             />
           </div>
         )}
+
+        {/* Integration-trigger triage config (formerly the standalone
+            Settings → Developer → Composio triggers page), merged in here so
+            all Composio configuration lives on one Connections surface. */}
+        <div className="border-t border-line pt-5">
+          <h3 className="mb-3 text-sm font-semibold text-content">
+            {t('settings.developerMenu.composio.title')}
+          </h3>
+          <ComposioTriagePanel embedded />
+        </div>
       </div>
     </PanelPage>
   );

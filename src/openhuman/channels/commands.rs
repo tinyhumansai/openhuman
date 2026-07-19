@@ -8,8 +8,6 @@ use super::irc;
 use super::irc::IrcChannel;
 use super::lark::LarkChannel;
 use super::linq::LinqChannel;
-#[cfg(feature = "channel-matrix")]
-use super::matrix::MatrixChannel;
 use super::qq::QQChannel;
 use super::signal::SignalChannel;
 use super::slack::SlackChannel;
@@ -66,13 +64,14 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
     if let Some(ref dc) = config.channels_config.discord {
         channels.push((
             "Discord",
-            Arc::new(DiscordChannel::new(
+            Arc::new(DiscordChannel::with_http_client(
                 dc.bot_token.clone(),
                 dc.guild_id.clone(),
                 dc.channel_id.clone(),
                 dc.allowed_users.clone(),
                 dc.listen_to_bots,
                 dc.mention_only,
+                crate::openhuman::config::build_runtime_proxy_client("channel.discord"),
             )),
         ));
     }
@@ -80,10 +79,11 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
     if let Some(ref sl) = config.channels_config.slack {
         channels.push((
             "Slack",
-            Arc::new(SlackChannel::new(
+            Arc::new(SlackChannel::with_http_client(
                 sl.bot_token.clone(),
                 sl.channel_id.clone(),
                 sl.allowed_users.clone(),
+                crate::openhuman::config::build_runtime_proxy_client("channel.slack"),
             )),
         ));
     }
@@ -95,38 +95,28 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
         ));
     }
 
-    #[cfg(feature = "channel-matrix")]
-    if let Some(ref mx) = config.channels_config.matrix {
-        channels.push((
-            "Matrix",
-            Arc::new(MatrixChannel::new_with_session_hint(
-                mx.homeserver.clone(),
-                mx.access_token.clone(),
-                mx.room_id.clone(),
-                mx.allowed_users.clone(),
-                mx.user_id.clone(),
-                mx.device_id.clone(),
-            )),
-        ));
-    }
-
-    #[cfg(not(feature = "channel-matrix"))]
     if config.channels_config.matrix.is_some() {
         tracing::warn!(
-            "Matrix channel is configured but this build was compiled without `channel-matrix`; skipping Matrix health check."
+            "Matrix channel is configured but Matrix support was removed from this build; skipping Matrix health check."
         );
     }
 
     if let Some(ref sig) = config.channels_config.signal {
         channels.push((
             "Signal",
-            Arc::new(SignalChannel::new(
+            Arc::new(SignalChannel::with_http_client(
                 sig.http_url.clone(),
                 sig.account.clone(),
                 sig.group_id.clone(),
                 sig.allowed_from.clone(),
                 sig.ignore_attachments,
                 sig.ignore_stories,
+                crate::openhuman::config::apply_runtime_proxy_to_builder(
+                    reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10)),
+                    "channel.signal",
+                )
+                .build()
+                .expect("Signal HTTP client should build"),
             )),
         ));
     }
@@ -139,11 +129,14 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
                 if wa.is_cloud_config() {
                     channels.push((
                         "WhatsApp",
-                        Arc::new(WhatsAppChannel::new(
+                        Arc::new(WhatsAppChannel::with_http_client(
                             wa.access_token.clone().unwrap_or_default(),
                             wa.phone_number_id.clone().unwrap_or_default(),
                             wa.verify_token.clone().unwrap_or_default(),
                             wa.allowed_numbers.clone(),
+                            crate::openhuman::config::build_runtime_proxy_client(
+                                "channel.whatsapp",
+                            ),
                         )),
                     ));
                 } else {
@@ -217,10 +210,11 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
     if let Some(ref dt) = config.channels_config.dingtalk {
         channels.push((
             "DingTalk",
-            Arc::new(DingTalkChannel::new(
+            Arc::new(DingTalkChannel::with_http_client(
                 dt.client_id.clone(),
                 dt.client_secret.clone(),
                 dt.allowed_users.clone(),
+                crate::openhuman::config::build_runtime_proxy_client("channel.dingtalk"),
             )),
         ));
     }
@@ -228,10 +222,11 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
     if let Some(ref qq) = config.channels_config.qq {
         channels.push((
             "QQ",
-            Arc::new(QQChannel::new(
+            Arc::new(QQChannel::with_http_client(
                 qq.app_id.clone(),
                 qq.app_secret.clone(),
                 qq.allowed_users.clone(),
+                crate::openhuman::config::build_runtime_proxy_client("channel.qq"),
             )),
         ));
     }

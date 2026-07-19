@@ -6,8 +6,8 @@ use crate::openhuman::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::runtime_node::types::{ExecuteToolOutcome, RuntimeToolSummary};
-use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::{self, Tool, ToolCallOptions, ToolScope};
+use crate::openhuman::security::{CommandClass, SecurityPolicy};
+use crate::openhuman::tools::{self, PermissionLevel, Tool, ToolCallOptions, ToolScope};
 use tracing::{debug, trace};
 
 fn tool_scope_label(scope: ToolScope) -> &'static str {
@@ -27,6 +27,51 @@ fn summarize_tool(tool: &dyn Tool) -> RuntimeToolSummary {
         scope: tool_scope_label(tool.scope()).to_string(),
         supports_markdown: tool.supports_markdown(),
         parameters: tool.parameters_schema(),
+    }
+}
+
+fn classify_shell_tool_call(security: &SecurityPolicy, args: &serde_json::Value) -> CommandClass {
+    let command = args
+        .get("command")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let mut class = security.classify_command(command);
+    if let Some(declared) = args
+        .get("category")
+        .and_then(|value| value.as_str())
+        .and_then(SecurityPolicy::parse_declared_class)
+    {
+        class = class.max(declared);
+    }
+    class
+}
+
+fn command_class_for_tool(
+    security: &SecurityPolicy,
+    tool: &dyn Tool,
+    args: &serde_json::Value,
+) -> CommandClass {
+    if tool.name() == "shell" {
+        return classify_shell_tool_call(security, args);
+    }
+
+    let permission = tool.permission_level_with_args(args);
+    match permission {
+        PermissionLevel::None | PermissionLevel::ReadOnly => {
+            if tool.external_effect_with_args(args) {
+                CommandClass::Network
+            } else {
+                CommandClass::Read
+            }
+        }
+        PermissionLevel::Write | PermissionLevel::Execute => {
+            if tool.external_effect_with_args(args) {
+                CommandClass::Network
+            } else {
+                CommandClass::Write
+            }
+        }
+        PermissionLevel::Dangerous => CommandClass::Destructive,
     }
 }
 
@@ -102,6 +147,36 @@ pub fn list_tools(config: &Config) -> Result<Vec<RuntimeToolSummary>, String> {
         "[runtime_node::ops] list_tools: done"
     );
     Ok(summaries)
+}
+
+pub fn classify_tool_call(
+    config: &Config,
+    tool_name: &str,
+    args: &serde_json::Value,
+) -> Result<CommandClass, String> {
+    debug!(tool_name, "[runtime_node::ops] classify_tool_call: start");
+    let security =
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let tools = build_runtime_tools(config)?;
+    let tool = tools
+        .into_iter()
+        .find(|tool| tool.name() == tool_name)
+        .ok_or_else(|| {
+            debug!(
+                tool_name,
+                "[runtime_node::ops] classify_tool_call: tool not found"
+            );
+            format!("unknown tool `{tool_name}`")
+        })?;
+    let class = command_class_for_tool(&security, tool.as_ref(), args);
+    debug!(
+        tool_name,
+        ?class,
+        permission = %tool.permission_level_with_args(args),
+        external_effect = tool.external_effect_with_args(args),
+        "[runtime_node::ops] classify_tool_call: done"
+    );
+    Ok(class)
 }
 
 pub async fn execute_tool(
@@ -212,10 +287,44 @@ mod tests {
         async fn execute(
             &self,
             _args: serde_json::Value,
-        ) -> anyhow::Result<crate::openhuman::workflows::types::ToolResult> {
-            Ok(crate::openhuman::workflows::types::ToolResult::success(
-                "ok",
-            ))
+        ) -> anyhow::Result<crate::openhuman::skills::types::ToolResult> {
+            Ok(crate::openhuman::skills::types::ToolResult::success("ok"))
+        }
+    }
+
+    struct PolicyTool {
+        name: &'static str,
+        permission: PermissionLevel,
+        external_effect: bool,
+    }
+
+    #[async_trait]
+    impl Tool for PolicyTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            "Policy test tool"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            json!({"type": "object"})
+        }
+
+        fn permission_level(&self) -> PermissionLevel {
+            self.permission
+        }
+
+        fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+            self.external_effect
+        }
+
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+        ) -> anyhow::Result<crate::openhuman::skills::types::ToolResult> {
+            Ok(crate::openhuman::skills::types::ToolResult::success("ok"))
         }
     }
 
@@ -233,5 +342,85 @@ mod tests {
         assert_eq!(tool_scope_label(ToolScope::All), "all");
         assert_eq!(tool_scope_label(ToolScope::AgentOnly), "agent_only");
         assert_eq!(tool_scope_label(ToolScope::CliRpcOnly), "cli_rpc_only");
+    }
+
+    #[test]
+    fn command_class_for_tool_maps_metadata_to_policy_buckets() {
+        let security = SecurityPolicy::default();
+
+        let read = PolicyTool {
+            name: "read_tool",
+            permission: PermissionLevel::ReadOnly,
+            external_effect: false,
+        };
+        assert_eq!(
+            command_class_for_tool(&security, &read, &json!({})),
+            CommandClass::Read
+        );
+
+        let write = PolicyTool {
+            name: "write_tool",
+            permission: PermissionLevel::Write,
+            external_effect: false,
+        };
+        assert_eq!(
+            command_class_for_tool(&security, &write, &json!({})),
+            CommandClass::Write
+        );
+
+        let outbound = PolicyTool {
+            name: "outbound_tool",
+            permission: PermissionLevel::Write,
+            external_effect: true,
+        };
+        assert_eq!(
+            command_class_for_tool(&security, &outbound, &json!({})),
+            CommandClass::Network
+        );
+
+        let dangerous = PolicyTool {
+            name: "dangerous_tool",
+            permission: PermissionLevel::Dangerous,
+            external_effect: true,
+        };
+        assert_eq!(
+            command_class_for_tool(&security, &dangerous, &json!({})),
+            CommandClass::Destructive
+        );
+    }
+
+    #[test]
+    fn command_class_for_shell_uses_command_args() {
+        let security = SecurityPolicy::default();
+        let shell = PolicyTool {
+            name: "shell",
+            permission: PermissionLevel::Execute,
+            external_effect: true,
+        };
+
+        assert_eq!(
+            command_class_for_tool(&security, &shell, &json!({"command": "ls src"})),
+            CommandClass::Read
+        );
+        assert_eq!(
+            command_class_for_tool(&security, &shell, &json!({"command": "touch out.txt"})),
+            CommandClass::Write
+        );
+        assert_eq!(
+            command_class_for_tool(
+                &security,
+                &shell,
+                &json!({"command": "curl https://example.com"})
+            ),
+            CommandClass::Network
+        );
+        assert_eq!(
+            command_class_for_tool(
+                &security,
+                &shell,
+                &json!({"command": "cat Cargo.toml", "category": "destructive"})
+            ),
+            CommandClass::Destructive
+        );
     }
 }

@@ -1,12 +1,139 @@
 //! Tool: update_memory_md — append or update sections in MEMORY.md or SKILL.md.
 
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Allowed workspace markdown files this tool may modify.
 const ALLOWED_FILES: &[&str] = &["MEMORY.md", "SKILL.md"];
+
+/// Process-global registry of per-workspace write locks (#4458).
+///
+/// `update_memory_md` performs a read-modify-write on `MEMORY.md`/`SKILL.md`.
+/// The per-run `MemoryProtocolTracker` has zero cross-run awareness, so two
+/// concurrent runs (parallel forks, cron) racing the same workspace file would
+/// otherwise clobber each other's append. We serialize every write to a given
+/// workspace directory through a shared async mutex, keyed by the canonicalized
+/// (falling back to raw) workspace path, so concurrent index updates queue
+/// instead of racing. Combined with the temp-file + atomic-rename write below,
+/// a killed process can never leave a truncated file.
+static WORKSPACE_WRITE_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Monotonic counter for temp-file uniqueness within a process.
+static TEMP_FILE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Return (creating if needed) the shared async write lock for `workspace_dir`.
+///
+/// The lock key is the canonicalized workspace path when it resolves (so two
+/// spellings of the same directory share one lock), else the raw path.
+fn workspace_write_lock(workspace_dir: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    let key = workspace_dir
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_dir.to_path_buf());
+    let mut map = WORKSPACE_WRITE_LOCKS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    Arc::clone(
+        map.entry(key)
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+    )
+}
+
+/// Acquire an **inter-process** advisory write lock for `workspace_dir` (#4458).
+///
+/// [`WORKSPACE_WRITE_LOCKS`] only serializes writers inside this OS process, but
+/// cron launches work via separate `tokio::process::Command` subprocesses that
+/// don't share that mutex — so two cron runs could still clobber the same
+/// `MEMORY.md` mid read-modify-write. This takes an `fs2` exclusive `flock` on a
+/// sentinel `.memory-write.lock` file in the workspace; the returned `File`
+/// holds the lock until it is dropped (end of the write). `flock` acquisition
+/// blocks, so it runs on a blocking thread.
+async fn acquire_cross_process_write_lock(workspace_dir: &Path) -> anyhow::Result<std::fs::File> {
+    let lock_path = workspace_dir.join(".memory-write.lock");
+    tokio::task::spawn_blocking(move || {
+        use fs2::FileExt;
+        if let Some(parent) = lock_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // Reject a symlinked lock file: a project-controlled `.memory-write.lock`
+        // symlink (including a dangling one) could otherwise redirect this
+        // create/open/lock to a path OUTSIDE the already-containment-checked
+        // workspace, bypassing the symlink hardening applied to MEMORY.md /
+        // SKILL.md. If it exists it must be a regular file.
+        if let Ok(meta) = std::fs::symlink_metadata(&lock_path) {
+            if meta.file_type().is_symlink() {
+                return Err(anyhow::anyhow!(
+                    "workspace lock file {lock_path:?} is a symlink; refusing to follow it"
+                ));
+            }
+        }
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create(true).write(true).truncate(false);
+        #[cfg(unix)]
+        {
+            // O_NOFOLLOW closes the TOCTOU window: if a symlink is swapped in
+            // after the check above, the open fails (ELOOP) rather than follows.
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.custom_flags(libc::O_NOFOLLOW);
+        }
+        let file = opts
+            .open(&lock_path)
+            .map_err(|e| anyhow::anyhow!("open workspace lock file {lock_path:?}: {e}"))?;
+        file.lock_exclusive()
+            .map_err(|e| anyhow::anyhow!("acquire workspace write flock: {e}"))?;
+        Ok::<std::fs::File, anyhow::Error>(file)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("workspace lock task join failed: {e}"))?
+}
+
+/// Atomically replace `path`'s contents with `content`.
+///
+/// Writes to a sibling temp file in the same directory (so the rename stays on
+/// one filesystem and is atomic) and `rename`s it over the target. A crash
+/// mid-write leaves either the old file or the complete new file — never a
+/// half-written truncation. Callers MUST hold the per-workspace write lock so
+/// the read-modify-write is serialized end-to-end.
+async fn atomic_write(path: &Path, file: &str, content: &str) -> anyhow::Result<()> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("target path has no parent directory"))?;
+    let seq = TEMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp_name = format!(".{file}.{}.{seq}.tmp", std::process::id());
+    let tmp_path = dir.join(tmp_name);
+
+    tracing::debug!(
+        tmp = %tmp_path.display(),
+        target = %path.display(),
+        bytes = content.len(),
+        "[update_memory_md] atomic write: staging temp file"
+    );
+
+    if let Err(e) = tokio::fs::write(&tmp_path, content).await {
+        // Clean up a partially-written temp file so a failed stage doesn't
+        // litter the workspace (CodeRabbit: temp not cleaned on initial write).
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(anyhow::anyhow!("Failed to stage temp file for {file}: {e}"));
+    }
+
+    if let Err(e) = tokio::fs::rename(&tmp_path, path).await {
+        // Best-effort cleanup so a failed rename doesn't litter the workspace.
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(anyhow::anyhow!("Failed to atomically write {file}: {e}"));
+    }
+
+    tracing::debug!(
+        target = %path.display(),
+        "[update_memory_md] atomic write: rename committed"
+    );
+    Ok(())
+}
 
 /// Appends or replaces a named section in MEMORY.md or SKILL.md.
 ///
@@ -21,6 +148,18 @@ pub struct UpdateMemoryMdTool {
 impl UpdateMemoryMdTool {
     pub fn new(workspace_dir: PathBuf) -> Self {
         Self { workspace_dir }
+    }
+
+    fn workspace_dir_for_context(&self, context: Option<&ToolExecutionContext>) -> PathBuf {
+        if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+            tracing::debug!(
+                workspace_root = %workspace.root.display(),
+                policy_id = %workspace.policy_id,
+                "[update_memory_md] using TinyAgents workspace descriptor as workspace dir"
+            );
+            return workspace.root.clone();
+        }
+        self.workspace_dir.clone()
     }
 }
 
@@ -69,6 +208,17 @@ impl Tool for UpdateMemoryMdTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let workspace_dir = self.workspace_dir_for_context(context);
         let file = args
             .get("file")
             .and_then(|v| v.as_str())
@@ -91,15 +241,15 @@ impl Tool for UpdateMemoryMdTool {
             )));
         }
 
-        let target_path = self.workspace_dir.join(file);
+        let target_path = workspace_dir.join(file);
 
         // Prevent symlink-based workspace escape.
         let workspace_canon = self
-            .workspace_dir
+            .workspace_dir_for_context(context)
             .canonicalize()
             .map_err(|e| anyhow::anyhow!("Failed to canonicalize workspace: {e}"))?;
         // Check parent dir exists and canonicalize to detect symlinks.
-        let parent = target_path.parent().unwrap_or(&self.workspace_dir);
+        let parent = target_path.parent().unwrap_or(&workspace_dir);
         let parent_canon = parent
             .canonicalize()
             .unwrap_or_else(|_| parent.to_path_buf());
@@ -110,6 +260,20 @@ impl Tool for UpdateMemoryMdTool {
         }
 
         tracing::debug!("[update_memory_md] action={action} file={file} path={target_path:?}");
+
+        // #4458: serialize the whole read-modify-write against concurrent runs
+        // targeting the same workspace. The guard is held across read + atomic
+        // write so no interleaving append can be lost.
+        let lock = workspace_write_lock(&workspace_dir);
+        let _guard = lock.lock().await;
+        // Also take a cross-process advisory lock so cron subprocesses (which
+        // don't share the in-process mutex above) can't clobber the same file
+        // mid-RMW. Held across read + atomic write; released on drop.
+        let _file_lock = acquire_cross_process_write_lock(&workspace_dir).await?;
+        tracing::debug!(
+            workspace = %workspace_dir.display(),
+            "[update_memory_md] acquired per-workspace write lock (in-process + cross-process flock)"
+        );
 
         match action {
             "append" => self.do_append(&target_path, file, content).await,
@@ -148,9 +312,7 @@ impl UpdateMemoryMdTool {
         };
         let new_content = format!("{existing}{separator}{content}\n");
 
-        tokio::fs::write(path, &new_content)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to write {file}: {e}"))?;
+        atomic_write(path, file, &new_content).await?;
 
         let bytes = new_content.len();
         tracing::info!(
@@ -218,8 +380,7 @@ impl UpdateMemoryMdTool {
             format!("{existing}{separator}{heading}\n{content}\n")
         };
 
-        std::fs::write(path, &new_file_content)
-            .map_err(|e| anyhow::anyhow!("Failed to write {file}: {e}"))?;
+        atomic_write(path, file, &new_file_content).await?;
 
         tracing::info!(
             "[update_memory_md] replaced section '{}' in {file} ({} bytes written)",

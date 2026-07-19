@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::openhuman::memory_tools::{
-    ToolMemoryPriority, ToolMemoryRule, ToolMemorySource, ToolMemoryStore,
+    tool_memory_store, ToolMemoryPriority, ToolMemoryRule, ToolMemorySource, ToolMemoryStore,
 };
 use crate::rpc::RpcOutcome;
 
@@ -62,7 +62,7 @@ pub struct ToolRulesForPromptParams {
 
 async fn open_store() -> Result<ToolMemoryStore, String> {
     let client = active_memory_client().await?;
-    Ok(ToolMemoryStore::new(client.memory_handle()))
+    Ok(tool_memory_store(client.memory_handle()))
 }
 
 /// Upsert a tool-scoped memory rule.

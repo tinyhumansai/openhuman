@@ -8,10 +8,11 @@
 
 use crate::openhuman::file_state;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 
@@ -65,6 +66,25 @@ impl Tool for EditFileTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, context).await
+    }
+}
+
+impl EditFileTool {
+    async fn execute_in_context(
+        &self,
+        args: serde_json::Value,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let path = args
             .get("path")
             .and_then(|v| v.as_str())
@@ -107,7 +127,8 @@ impl Tool for EditFileTool {
             ));
         }
 
-        let full = self.security.action_dir.join(path);
+        let path_policy = super::security_for_tool_context(&self.security, context, "edit");
+        let full = path_policy.action_dir.join(path);
 
         // Symlink check must happen on the *unresolved* path —
         // `canonicalize` resolves symlinks, so checking after that point
@@ -122,7 +143,7 @@ impl Tool for EditFileTool {
         }
 
         // Security check: validate path string, resolve symlinks, confirm workspace containment.
-        let resolved = match self.security.validate_path(path).await {
+        let resolved = match path_policy.validate_path(path).await {
             Ok(p) => p,
             Err(msg) => return Ok(ToolResult::error(msg)),
         };

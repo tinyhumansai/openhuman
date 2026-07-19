@@ -27,3 +27,30 @@ pub fn autonomous_iter_cap() -> Option<usize> {
 pub async fn with_autonomous_iter_cap<F: Future>(cap: usize, fut: F) -> F::Output {
     AUTONOMOUS_ITER_CAP.scope(cap, fut).await
 }
+
+/// Lift a sub-agent's per-agent iteration `base` to the active autonomous cap
+/// when one is in scope (issue #4463).
+///
+/// Autonomous task/skill runs (`task_dispatcher` / `skill_runtime`) scope an
+/// [`with_autonomous_iter_cap`] of `TASK_RUN_MAX_ITERATIONS` /
+/// `WORKFLOW_RUN_MAX_ITERATIONS` around the whole tree so an unattended run
+/// continues until it's done or a circuit breaker trips, rather than stopping at
+/// a specialist sub-agent's normal cap (e.g. 10). The migration to the tinyagents
+/// harness dropped every reader of [`autonomous_iter_cap`], so those setters
+/// became dead knobs and sub-agents silently reverted to the normal cap. This is
+/// the restored reader: sub-agent iteration computations run their
+/// `effective_max_iterations()` through it so the lift takes effect again. The
+/// cost budget + repeated-failure breakers remain the primary runaway guards.
+pub fn subagent_iter_cap_with_autonomous_lift(base: usize) -> usize {
+    match autonomous_iter_cap() {
+        Some(cap) if cap > base => {
+            tracing::debug!(
+                base,
+                autonomous_cap = cap,
+                "[subagent_runner:autonomous] lifting sub-agent iteration cap for autonomous run"
+            );
+            cap
+        }
+        _ => base,
+    }
+}

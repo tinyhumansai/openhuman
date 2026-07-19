@@ -167,7 +167,7 @@ fn select_utxos(
     fee_sats: u64,
 ) -> Result<(Vec<EsploraUtxo>, u64), String> {
     let mut sorted = utxos.to_vec();
-    sorted.sort_by(|a, b| b.value.cmp(&a.value));
+    sorted.sort_by_key(|item| std::cmp::Reverse(item.value));
     let target = amount_sats
         .checked_add(fee_sats)
         .ok_or_else(|| "amount + fee overflow".to_string())?;
@@ -277,7 +277,7 @@ pub async fn execute_btc_quote(mut quote: PreparedTransaction) -> Result<Executi
         witness.push(public_key.to_bytes());
         witnesses.push(witness);
     }
-    for (input, witness) in tx.input.iter_mut().zip(witnesses.into_iter()) {
+    for (input, witness) in tx.input.iter_mut().zip(witnesses) {
         input.witness = witness;
     }
 

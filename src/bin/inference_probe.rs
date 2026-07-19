@@ -32,10 +32,11 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use openhuman_core::openhuman::agent::Agent;
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::inference::provider::create_chat_provider;
-use openhuman_core::openhuman::inference::provider::traits::{ChatMessage, ChatRequest};
-use openhuman_core::openhuman::tools::traits::ToolSpec;
+use openhuman_core::openhuman::inference::provider::create_chat_model_with_model_id;
 use serde_json::json;
+use tinyagents::harness::message::Message;
+use tinyagents::harness::model::ModelRequest;
+use tinyagents::harness::tool::ToolSchema;
 
 #[derive(Parser, Debug)]
 #[command(name = "inference-probe")]
@@ -117,14 +118,16 @@ async fn run_harness(config: &Config, prompt: &str) -> Result<()> {
 }
 
 async fn run_raw(config: &Config, role: &str, raw_mode: &str, prompt: &str) -> Result<()> {
-    let (provider, model_name) =
-        create_chat_provider(role, config).context("create_chat_provider failed")?;
+    let (chat_model, model_name) = create_chat_model_with_model_id(role, config, 0.4)
+        .context("create_chat_model_with_model_id failed")?;
     eprintln!("[probe] mode = raw");
     eprintln!("[probe] role = {role}");
     eprintln!("[probe] resolved model = {model_name}");
     eprintln!(
-        "[probe] provider.supports_native_tools() = {}",
-        provider.supports_native_tools()
+        "[probe] model.profile.tool_calling = {}",
+        chat_model
+            .profile()
+            .is_some_and(|profile| profile.tool_calling)
     );
     eprintln!("[probe] raw_mode = {raw_mode}");
 
@@ -149,14 +152,14 @@ Emit tool calls as `<tool_call>name[arg1|arg2]</tool_call>` blocks.
         "You are a helpful assistant. Use the provided tools when the user asks something \
          a tool can answer.";
 
-    let (system, tools_for_request): (&str, Option<Vec<ToolSpec>>) = match raw_mode {
+    let (system, tools_for_request): (&str, Option<Vec<ToolSchema>>) = match raw_mode {
         "native" => (
             native_system,
             Some(vec![
-                ToolSpec {
-                    name: "get_weather".into(),
-                    description: "Get the current weather for a city.".into(),
-                    parameters: json!({
+                ToolSchema::new(
+                    "get_weather",
+                    "Get the current weather for a city.",
+                    json!({
                         "type": "object",
                         "properties": {
                             "city": {"type": "string"},
@@ -164,67 +167,62 @@ Emit tool calls as `<tool_call>name[arg1|arg2]</tool_call>` blocks.
                         },
                         "required": ["city"]
                     }),
-                },
-                ToolSpec {
-                    name: "list_files".into(),
-                    description: "List files in a directory.".into(),
-                    parameters: json!({
+                ),
+                ToolSchema::new(
+                    "list_files",
+                    "List files in a directory.",
+                    json!({
                         "type": "object",
                         "properties": {"path": {"type": "string"}},
                         "required": ["path"]
                     }),
-                },
+                ),
             ]),
         ),
         "pformat" => (pformat_system, None),
         other => anyhow::bail!("unknown --raw-mode {other:?}"),
     };
 
-    let messages = vec![
-        ChatMessage::system(system),
-        ChatMessage::user(prompt.to_string()),
-    ];
+    let mut request = ModelRequest::new(vec![Message::system(system), Message::user(prompt)])
+        .with_model(model_name.clone())
+        .with_temperature(0.4);
+    if let Some(tools) = tools_for_request {
+        request = request.with_tools(tools);
+    }
 
-    let request = ChatRequest {
-        messages: &messages,
-        tools: tools_for_request.as_deref(),
-        stream: None,
-        max_tokens: None,
-    };
-
-    eprintln!("[probe] >>> raw provider.chat()...");
+    eprintln!("[probe] >>> raw ChatModel::invoke()...");
     let started = std::time::Instant::now();
-    let response = provider
-        .chat(request, &model_name, 0.4)
+    let response = chat_model
+        .invoke(&(), request)
         .await
-        .context("provider.chat() failed")?;
+        .context("ChatModel::invoke() failed")?;
     let elapsed = started.elapsed();
     eprintln!("[probe] <<< {elapsed:?}");
 
     println!();
     println!("=== RAW RESPONSE TEXT ===");
-    println!("{}", response.text_or_empty());
+    println!("{}", response.text());
     println!("=== /RAW RESPONSE TEXT ===");
 
-    let text = response.text_or_empty();
+    let text = response.text();
     let saw_pformat = text.contains("<tool_call>") || text.contains("<toolcall>");
-    let saw_native = !response.tool_calls.is_empty();
+    let saw_native = !response.tool_calls().is_empty();
     eprintln!(
         "[probe] response.tool_calls.len() = {}",
-        response.tool_calls.len()
+        response.tool_calls().len()
     );
     eprintln!(
         "[probe] response contains <tool_call> tag = {}",
         saw_pformat
     );
     if saw_native {
-        for tc in &response.tool_calls {
+        for tc in response.tool_calls() {
             // Print tool name + arg byte-count only — raw arguments may
             // contain user content / secrets and must not land in logs.
             eprintln!(
                 "[probe]   native tool_call name={} arg_bytes={}",
                 tc.name,
-                tc.arguments.len()
+                tc.arguments.to_string().len()
             );
         }
     }

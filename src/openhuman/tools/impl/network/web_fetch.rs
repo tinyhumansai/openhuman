@@ -141,10 +141,37 @@ impl Tool for WebFetchTool {
             ));
         }
 
+        // Local-only enforcement (privacy epic S7, #4441): refuse the fetch under
+        // LocalOnly before URL validation / DNS. The post-validation
+        // `emit_external_transfer` below stays the S2 disclosure point.
+        {
+            let host = reqwest::Url::parse(raw_url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "unknown".to_string());
+            if let Some(msg) = crate::openhuman::security::egress::local_only_tool_block(
+                &crate::openhuman::security::egress::EgressDescriptor::network_fetch(host),
+            ) {
+                return Ok(ToolResult::error(msg));
+            }
+        }
+
         let url = match validate_url_with_dns_check(raw_url, &self.allowed_domains).await {
             Ok(u) => u,
             Err(e) => return Ok(ToolResult::error(format!("URL rejected: {e}"))),
         };
+
+        // Egress spine (privacy epic S2, #4436): disclose the fetch destination
+        // before contacting the host.
+        {
+            let host = reqwest::Url::parse(&url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_else(|| "unknown".to_string());
+            crate::openhuman::security::egress::emit_external_transfer(
+                crate::openhuman::security::egress::EgressDescriptor::network_fetch(host),
+            );
+        }
 
         // Disable automatic redirect following: reqwest follows up to 10
         // redirects by default, and a redirect target may be on a host
@@ -277,6 +304,29 @@ mod tests {
         let tool = WebFetchTool::new(test_security(), vec!["example.com".into()], None, None);
         let result = tool.execute(json!({ "url": "not-a-url" })).await.unwrap();
         assert!(result.is_error);
+    }
+
+    #[tokio::test]
+    async fn web_fetch_blocked_under_local_only_privacy_mode() {
+        // Privacy epic S7 (#4441): under LocalOnly the fetch is refused with a
+        // `[policy-blocked]` result before any URL validation / network.
+        let _mode = super::super::local_only_scope();
+        let tool = WebFetchTool::new(test_security(), vec!["example.com".into()], None, None);
+        let result = tool
+            .execute(json!({ "url": "https://example.com/data" }))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(
+            result.output().contains("[policy-blocked]"),
+            "got: {}",
+            result.output()
+        );
+        assert!(
+            result.output().contains("Local-only"),
+            "got: {}",
+            result.output()
+        );
     }
 
     #[test]

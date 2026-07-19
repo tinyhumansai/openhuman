@@ -4,9 +4,9 @@
  * The page loads the agent directory via `apiClient.graphql.agents()` and
  * renders one of: loading skeleton / payment_required / error (generic + wallet
  * locked) / empty / populated grid of agent cards. Each card derives a handle,
- * initials, avatar colour and skills/tags from the raw `AgentCard`, and toggles
- * a "selected" ring on click / Enter / Space. We mock the apiClient so no RPC
- * fires and the render stays deterministic.
+ * initials, avatar colour and skills/tags from the raw `AgentCard`, and opens
+ * that agent's profile modal on click / Enter / Space (GH-4927). We mock the
+ * apiClient so no RPC fires and the render stays deterministic.
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -21,7 +21,7 @@ import DirectorySection from './DirectorySection';
 
 vi.mock('../AgentWorldShell', () => ({
   apiClient: {
-    graphql: { agents: vi.fn() },
+    graphql: { agents: vi.fn(), user: vi.fn() },
     follows: {
       stats: vi.fn(),
       followers: vi.fn(),
@@ -35,6 +35,7 @@ vi.mock('../AgentWorldShell', () => ({
 vi.mock('../../services/walletApi', () => ({ fetchWalletStatus: vi.fn() }));
 
 const listAgents = vi.mocked(apiClient.graphql.agents);
+const getUser = vi.mocked(apiClient.graphql.user);
 const walletStatus = vi.mocked(fetchWalletStatus);
 const followFollow = vi.mocked(apiClient.follows.follow);
 const followUnfollow = vi.mocked(apiClient.follows.unfollow);
@@ -50,6 +51,8 @@ beforeEach(() => {
     followerCount: 0,
     followingCount: 0,
   });
+  // Default: no richer GraphQL profile — the modal degrades to the card data.
+  getUser.mockResolvedValue(null);
 });
 
 // ── Loading state ──────────────────────────────────────────────────────────────
@@ -222,8 +225,14 @@ describe('populated directory grid', () => {
 
 // ── Interactions ────────────────────────────────────────────────────────────────
 
-describe('card selection', () => {
-  test('toggles the selected ring on click', async () => {
+describe('card opens the profile (GH-4927)', () => {
+  /** Grab the outer card div (role=button, tagName DIV — Follow is a <button>). */
+  function cardFor(text: string): HTMLElement {
+    const cards = screen.getAllByRole('button').filter(el => el.tagName === 'DIV');
+    return cards.find(c => within(c).queryByText(text)) as HTMLElement;
+  }
+
+  test('clicking a card opens its profile modal and fetches the full profile', async () => {
     const user = userEvent.setup();
     listAgents.mockResolvedValueOnce({
       agents: [{ agentId: 'agent-007', username: 'clicky', name: 'Clicky' }],
@@ -231,21 +240,67 @@ describe('card selection', () => {
     render(<DirectorySection />);
     await screen.findByText('@clicky');
 
-    // The card is a div[role=button]; the Follow button is a <button type=button>.
-    // Select the outer card div by its data-testid class (cursor-pointer).
-    const card = screen.getAllByRole('button').find(el => el.tagName === 'DIV') as HTMLElement;
-    // Not selected initially.
-    expect(card.className).not.toContain('ring-1');
+    // No modal until the card is activated.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
-    await user.click(card);
-    expect(card.className).toContain('ring-1');
+    await user.click(cardFor('@clicky'));
 
-    // Clicking again deselects.
-    await user.click(card);
-    expect(card.className).not.toContain('ring-1');
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByTestId('agent-profile-modal')).toBeInTheDocument();
+    // Title is the agent handle.
+    expect(within(dialog).getByText('@clicky')).toBeInTheDocument();
+    // The richer profile is requested by agentId.
+    expect(getUser).toHaveBeenCalledWith('agent-007');
   });
 
-  test('toggles selection with the Enter key', async () => {
+  test('renders the fetched profile bio + verified badge', async () => {
+    const user = userEvent.setup();
+    listAgents.mockResolvedValueOnce({
+      agents: [{ agentId: 'agent-042', username: 'rich', name: 'Rich' }],
+    });
+    getUser.mockResolvedValueOnce({
+      cryptoId: 'agent-042',
+      actorType: 'agent',
+      displayName: 'Rich',
+      bio: 'Builds delightful things.',
+      private: false,
+      createdAt: '2026-01-02T00:00:00Z',
+      updatedAt: '2026-01-02T00:00:00Z',
+      verified: true,
+      attestations: [],
+      agentCard: null,
+      identities: null,
+    });
+    render(<DirectorySection />);
+    await screen.findByText('@rich');
+
+    await user.click(cardFor('@rich'));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Builds delightful things.')).toBeInTheDocument();
+    expect(within(dialog).getByText('Verified')).toBeInTheDocument();
+    // No load-failure notice on a successful fetch.
+    expect(within(dialog).queryByTestId('agent-profile-load-notice')).not.toBeInTheDocument();
+  });
+
+  test('degrades to card data with a notice when the profile is unavailable', async () => {
+    const user = userEvent.setup();
+    listAgents.mockResolvedValueOnce({
+      agents: [{ agentId: 'agent-050', username: 'bare', name: 'Bare', description: 'Card blurb' }],
+    });
+    getUser.mockRejectedValueOnce(new Error('graphql unavailable'));
+    render(<DirectorySection />);
+    await screen.findByText('@bare');
+
+    await user.click(cardFor('@bare'));
+
+    const dialog = await screen.findByRole('dialog');
+    // Falls back to the card's description and shows the soft notice.
+    expect(await within(dialog).findByText('Card blurb')).toBeInTheDocument();
+    expect(within(dialog).getByTestId('agent-profile-load-notice')).toBeInTheDocument();
+  });
+
+  test('opens the profile with the Enter key', async () => {
     const user = userEvent.setup();
     listAgents.mockResolvedValueOnce({
       agents: [{ agentId: 'agent-008', username: 'enterkey', name: 'EnterKey' }],
@@ -253,13 +308,12 @@ describe('card selection', () => {
     render(<DirectorySection />);
     await screen.findByText('@enterkey');
 
-    const card = screen.getAllByRole('button').find(el => el.tagName === 'DIV') as HTMLElement;
-    card.focus();
+    cardFor('@enterkey').focus();
     await user.keyboard('{Enter}');
-    expect(card.className).toContain('ring-1');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
-  test('toggles selection with the Space key', async () => {
+  test('opens the profile with the Space key', async () => {
     const user = userEvent.setup();
     listAgents.mockResolvedValueOnce({
       agents: [{ agentId: 'agent-009', username: 'spacer', name: 'Spacer' }],
@@ -267,13 +321,12 @@ describe('card selection', () => {
     render(<DirectorySection />);
     await screen.findByText('@spacer');
 
-    const card = screen.getAllByRole('button').find(el => el.tagName === 'DIV') as HTMLElement;
-    card.focus();
+    cardFor('@spacer').focus();
     await user.keyboard('[Space]');
-    expect(card.className).toContain('ring-1');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
-  test('ignores other keys', async () => {
+  test('other keys do not open the profile', async () => {
     const user = userEvent.setup();
     listAgents.mockResolvedValueOnce({
       agents: [{ agentId: 'agent-010', username: 'idle', name: 'Idle' }],
@@ -281,32 +334,26 @@ describe('card selection', () => {
     render(<DirectorySection />);
     await screen.findByText('@idle');
 
-    const card = screen.getAllByRole('button').find(el => el.tagName === 'DIV') as HTMLElement;
-    card.focus();
+    cardFor('@idle').focus();
     await user.keyboard('{Escape}');
-    expect(card.className).not.toContain('ring-1');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  test('selecting one card leaves the other unaffected', async () => {
+  test('closing the modal returns to the grid', async () => {
     const user = userEvent.setup();
     listAgents.mockResolvedValueOnce({
-      agents: [
-        { agentId: 'agent-011', username: 'alpha', name: 'Alpha' },
-        { agentId: 'agent-012', username: 'beta', name: 'Beta' },
-      ],
+      agents: [{ agentId: 'agent-011', username: 'closer', name: 'Closer' }],
     });
     render(<DirectorySection />);
-    await screen.findByText('@alpha');
+    await screen.findByText('@closer');
 
-    // Card divs have role=button; Follow <button>s also have role=button.
-    // Filter for the outer card divs only.
-    const cards = screen.getAllByRole('button').filter(el => el.tagName === 'DIV');
-    const alphaCard = cards.find(c => within(c).queryByText('@alpha')) as HTMLElement;
-    const betaCard = cards.find(c => within(c).queryByText('@beta')) as HTMLElement;
+    await user.click(cardFor('@closer'));
+    const dialog = await screen.findByRole('dialog');
 
-    await user.click(alphaCard);
-    expect(alphaCard.className).toContain('ring-1');
-    expect(betaCard.className).not.toContain('ring-1');
+    await user.click(within(dialog).getByRole('button', { name: /close/i }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
   });
 });
 
@@ -401,6 +448,34 @@ describe('follow button', () => {
     await user.click(followBtn);
     expect(followFollow).toHaveBeenCalledWith('other-agent-003');
     expect(await screen.findByText('Following')).toBeInTheDocument();
+  });
+
+  test('keyboard activation on Follow does not open the profile modal (a11y, #4927)', async () => {
+    const user = userEvent.setup();
+    listAgents.mockResolvedValueOnce({
+      agents: [
+        {
+          agentId: 'other-agent-kbd',
+          username: 'kbduser',
+          name: 'Kbd',
+          viewerIsFollowing: false,
+          followerCount: 0,
+        },
+      ],
+    });
+    followFollow.mockResolvedValueOnce({
+      follower: 'MyWaLLetAddr123',
+      followee: 'other-agent-kbd',
+      createdAt: '',
+    });
+    render(<DirectorySection />);
+    const followBtn = await screen.findByText('Follow');
+    followBtn.focus();
+    // Enter on the focused Follow button must follow — the card's keydown handler
+    // must NOT hijack the bubbled event to open the profile modal.
+    await user.keyboard('{Enter}');
+    expect(followFollow).toHaveBeenCalledWith('other-agent-kbd');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   test('uses GraphQL follow edges and count-only stats fallback without follow-list fan-out', async () => {

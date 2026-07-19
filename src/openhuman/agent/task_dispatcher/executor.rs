@@ -6,7 +6,10 @@
 
 use std::path::Path;
 
-use crate::openhuman::agent::harness::definition::{AgentDefinitionRegistry, PromptSource};
+use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
+// Only read by the `skills`-gated workflow-resolution branch below.
+#[cfg(feature = "skills")]
+use crate::openhuman::agent::harness::definition::PromptSource;
 use crate::openhuman::agent::harness::session::Agent;
 use crate::openhuman::agent::harness::subagent_runner::with_autonomous_iter_cap;
 use crate::openhuman::agent::task_board::TaskCardStatus;
@@ -69,8 +72,16 @@ pub(super) fn resolve_executor(workspace_dir: &Path, assigned: Option<&str>) -> 
     }
 
     // 2) Workflow (#2824): the same autonomous run, seeded with SKILL.md.
-    if let Some(skill) = crate::openhuman::workflows::registry::get_workflow(workspace_dir, handle)
-    {
+    //
+    // `#[cfg]` rather than a stubbed `get_workflow`: the real one returns
+    // `Option<WorkflowDefinition>`, which flattens in `AgentDefinition` and is
+    // destructured just below — stubbing it would mean re-declaring that
+    // struct in the disabled facade (exactly the type duplication the skills
+    // carve-out exists to avoid). With the domain compiled out no handle can
+    // ever resolve to a skill, so falling through to (3) is the correct
+    // behaviour, not a degradation.
+    #[cfg(feature = "skills")]
+    if let Some(skill) = crate::openhuman::skills::registry::get_workflow(workspace_dir, handle) {
         let guidelines = match &skill.definition.system_prompt {
             PromptSource::Inline(s) => truncate_chars(s, EXECUTOR_PREAMBLE_MAX_CHARS),
             _ => String::new(),
@@ -136,7 +147,6 @@ pub(super) async fn run_autonomous(
     run_id: &str,
     session_thread_id: Option<String>,
 ) -> Result<String, String> {
-    config.agent.max_tool_iterations = TASK_RUN_MAX_ITERATIONS;
     // Match skill-run egress handling: only widen to the permissive default
     // when the operator hasn't configured an explicit allow-list. See the
     // threat-model note above on why `*` is the default here.
@@ -152,6 +162,20 @@ pub(super) async fn run_autonomous(
         executor.profile.as_ref(),
     )
     .map_err(|e| format!("build agent: {e:#}"))?;
+    // Issue #4868 — apply the autonomous task-run iteration budget AFTER
+    // construction. The session builder now stamps the resolved agent
+    // definition's own cap onto the agent; an autonomous task run
+    // intentionally needs a much larger budget (200), so this must be a
+    // post-construction override rather than a pre-set on `config` (which
+    // the builder would otherwise clobber).
+    agent.set_max_tool_iterations(TASK_RUN_MAX_ITERATIONS);
+    tracing::debug!(
+        agent_id = %executor.agent_id,
+        run_id = %run_id,
+        max_tool_iterations = TASK_RUN_MAX_ITERATIONS,
+        "[task_dispatcher] pinned autonomous task-run iteration budget post-construction \
+         (overrides the session builder's per-definition cap)"
+    );
     agent.set_event_context(run_id.to_string(), "task");
     agent.set_agent_definition_name(format!(
         "task-{}-{}",
@@ -171,13 +195,20 @@ pub(super) async fn run_autonomous(
     if let Some(thread_id) = session_thread_id.as_deref() {
         let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(64);
         agent.set_on_progress(Some(progress_tx));
-        crate::openhuman::channels::providers::web::spawn_progress_bridge(
+        crate::openhuman::web_chat::spawn_progress_bridge(
             progress_rx,
             "system".to_string(),
             thread_id.to_string(),
             run_id.to_string(),
             crate::openhuman::threads::turn_state::TurnStateStore::new(workspace_dir.clone()),
-            crate::openhuman::channels::providers::web::ChatRequestMetadata::default(),
+            crate::openhuman::web_chat::ChatRequestMetadata {
+                // Trace attribution: mark the run autonomous and carry the
+                // resolved executor agent so Langfuse traces read
+                // `agent.turn:<agent_id>` with channel.source=autonomous.
+                source: Some("autonomous".to_string()),
+                agent_id: Some(executor.agent_id.clone()),
+                ..Default::default()
+            },
             config.clone(),
         );
     }
@@ -220,7 +251,7 @@ pub(super) async fn run_autonomous(
     if let Some(thread_id) = session_thread_id.as_deref() {
         match &result {
             Ok(response) => {
-                crate::openhuman::channels::providers::presentation::deliver_response(
+                crate::openhuman::web_chat::presentation::deliver_response(
                     "system",
                     thread_id,
                     run_id,
@@ -234,7 +265,7 @@ pub(super) async fn run_autonomous(
                 .await;
             }
             Err(err) => {
-                crate::openhuman::channels::providers::web::publish_web_channel_event(
+                crate::openhuman::web_chat::publish_web_channel_event(
                     crate::core::socketio::WebChannelEvent {
                         event: "chat_error".to_string(),
                         client_id: "system".to_string(),

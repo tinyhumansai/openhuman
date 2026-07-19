@@ -22,7 +22,7 @@
 //!   ← subagent_runner::run_inner_loop / run_typed_mode / run_subagent
 //!   ← SkillDelegationTool::execute   (delegate_to_integrations_agent)
 //!   ← Agent::execute_tool_call / execute_tools / turn
-//!   ← channels::providers::web::run_chat_task
+//!   ← web_chat::run_chat_task
 //! ```
 //!
 //! The crash trigger is `composio_list_tools` reloading the config from
@@ -50,7 +50,7 @@
 //! ## What this test does
 //!
 //! Faithful reproduction in cargo-test is awkward: we can't easily
-//! rebuild the upper chat-channel layers (`channels::providers::web::
+//! rebuild the upper chat-channel layers (`web_chat::
 //! run_chat_task → Agent::turn → execute_tools → SkillDelegationTool`)
 //! without standing up an HTTP + Socket.IO stack. We drive the production
 //! path from `run_subagent` downward — i.e. everything below
@@ -345,13 +345,16 @@ async fn drive_subagent() {
     let parent = ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: ["integrations_agent".to_string()].into_iter().collect(),
-        provider: provider.clone(),
+        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(
+            provider.clone(),
+        ),
         all_tools: Arc::new(vec![]),
         all_tool_specs: Arc::new(vec![]),
         visible_tool_names: std::collections::HashSet::new(),
         model_name: "test-model".into(),
         temperature: 0.4,
         workspace_dir: std::env::temp_dir(),
+        workspace_descriptor: None,
         memory: Arc::new(StubMemory),
         agent_config: AgentConfig::default(),
         workflows: Arc::new(vec![]),

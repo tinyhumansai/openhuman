@@ -19,7 +19,7 @@ import HumanPage from './HumanPage';
 
 // ── Heavy dependency stubs ────────────────────────────────────────────────
 
-vi.mock('../../pages/Conversations', () => ({
+vi.mock('../conversations/Conversations', () => ({
   default: () => <div data-testid="conversations-stub" />,
 }));
 

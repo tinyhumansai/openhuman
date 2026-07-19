@@ -140,3 +140,58 @@ fn load_dotenv_for_cli_reads_cwd_dotenv_without_overwriting_existing_env() {
     );
     assert_eq!(loaded_app_env.as_deref(), Some("production"));
 }
+
+// --- `mcp` compile-time gate (#4799) ------------------------------------
+
+/// With the `mcp` feature compiled out, `openhuman mcp` must fail with a
+/// diagnostic that names the BUILD as the cause — not a generic
+/// "unknown namespace" error.
+///
+/// Why this matters enough to test: the naive way to gate the CLI is to delete
+/// the `"mcp" | "mcp-server"` match arm. That is WRONG — `mcp` would fall
+/// through to generic namespace resolution and die with `unknown namespace:
+/// mcp`, which reads like the user typo'd a command rather than like a
+/// property of this build. Instead `cli.rs` is untouched and the arm resolves
+/// to `mcp_server::stub::run_stdio_from_cli`, which bails with the message
+/// asserted below. An MCP host (Claude Desktop, Cursor, …) spawning
+/// `openhuman mcp` therefore gets a non-zero exit + a one-line reason on
+/// stderr instead of hanging on stdout that never speaks JSON-RPC.
+#[test]
+#[cfg(not(feature = "mcp"))]
+fn mcp_subcommand_reports_disabled_build_when_gate_off() {
+    let _guard = env_lock();
+
+    let err = crate::core::cli::run_from_cli_args(&["mcp".to_string()])
+        .expect_err("`openhuman mcp` must fail when the `mcp` feature is compiled out");
+    let msg = err.to_string();
+
+    assert!(
+        msg.contains("mcp feature disabled"),
+        "error must name the compile-time gate as the cause; got: {msg}"
+    );
+    assert!(
+        msg.contains("--features mcp"),
+        "error must tell the user how to get a working build; got: {msg}"
+    );
+    assert!(
+        !msg.contains("unknown namespace"),
+        "must NOT degrade into generic namespace resolution — that reads like a typo, \
+         not a build fact; got: {msg}"
+    );
+}
+
+/// The `mcp-server` alias must behave identically to `mcp` — both arms route
+/// to the same stub, so neither can silently regress into the fall-through.
+#[test]
+#[cfg(not(feature = "mcp"))]
+fn mcp_server_alias_reports_disabled_build_when_gate_off() {
+    let _guard = env_lock();
+
+    let err = crate::core::cli::run_from_cli_args(&["mcp-server".to_string()])
+        .expect_err("`openhuman mcp-server` must fail when the `mcp` feature is compiled out");
+
+    assert!(
+        err.to_string().contains("mcp feature disabled"),
+        "the `mcp-server` alias must give the same build-fact diagnostic as `mcp`"
+    );
+}

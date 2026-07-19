@@ -129,13 +129,16 @@ fn stub_parent_context() -> ParentExecutionContext {
         allowed_subagent_ids: ["test".to_string(), "researcher".to_string()]
             .into_iter()
             .collect(),
-        provider: Arc::new(StubProvider),
+        turn_model_source: openhuman_core::openhuman::tinyagents::TurnModelSource::new(Arc::new(
+            StubProvider,
+        )),
         all_tools: Arc::new(vec![]),
         all_tool_specs: Arc::new(vec![]),
         visible_tool_names: std::collections::HashSet::new(),
         model_name: "stub-model".into(),
         temperature: 0.4,
         workspace_dir: std::path::PathBuf::from("/tmp"),
+        workspace_descriptor: None,
         memory: Arc::new(StubMemory),
         agent_config: AgentConfig::default(),
         workflows: Arc::new(vec![]),

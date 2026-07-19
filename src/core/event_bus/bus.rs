@@ -321,6 +321,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn panicking_subscriber_does_not_stop_the_bus_or_starve_peers() {
+        // The per-subscriber `catch_unwind` (bus.rs) exists precisely so one
+        // handler panicking cannot kill its own dispatch loop or starve other
+        // subscribers. Nothing exercised it before (plan.md §4 P0 #4).
+        let bus = EventBus::create(16);
+
+        // Subscriber A panics on its FIRST event, then processes normally.
+        let a_calls = Arc::new(AtomicUsize::new(0));
+        let a_success = Arc::new(AtomicUsize::new(0));
+        let a_calls_c = Arc::clone(&a_calls);
+        let a_success_c = Arc::clone(&a_success);
+        let _ha = bus.on("panicky", move |_| {
+            let calls = Arc::clone(&a_calls_c);
+            let success = Arc::clone(&a_success_c);
+            Box::pin(async move {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    panic!("boom in handler");
+                }
+                success.fetch_add(1, Ordering::SeqCst);
+            })
+        });
+
+        // Subscriber B is a well-behaved peer that just counts.
+        let b_count = Arc::new(AtomicUsize::new(0));
+        let b_c = Arc::clone(&b_count);
+        let _hb = bus.on("steady", move |_| {
+            let c = Arc::clone(&b_c);
+            Box::pin(async move {
+                c.fetch_add(1, Ordering::SeqCst);
+            })
+        });
+
+        // Event 1: A panics (must be caught), B counts.
+        bus.publish(DomainEvent::SystemStartup {
+            component: "e1".into(),
+        });
+        sleep(Duration::from_millis(50)).await;
+        // Event 2: A must recover and process; B counts again.
+        bus.publish(DomainEvent::SystemStartup {
+            component: "e2".into(),
+        });
+        sleep(Duration::from_millis(50)).await;
+
+        assert_eq!(
+            a_calls.load(Ordering::SeqCst),
+            2,
+            "the panicked handler's own loop must survive and be invoked for the next event"
+        );
+        assert_eq!(
+            a_success.load(Ordering::SeqCst),
+            1,
+            "the handler must process the event that follows the one it panicked on"
+        );
+        assert_eq!(
+            b_count.load(Ordering::SeqCst),
+            2,
+            "a co-subscriber must keep receiving every event despite a peer panicking"
+        );
+    }
+
+    #[tokio::test]
     async fn domain_filtering_works() {
         use super::super::subscriber::EventHandler;
 

@@ -30,7 +30,9 @@ use rusqlite::{params, types::Type, Connection};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory_store::safety::sanitize_text;
 
-use super::types::{ApprovalAuditEntry, ApprovalDecision, ExecutionOutcome, PendingApproval};
+use super::types::{
+    ApprovalAuditEntry, ApprovalDecision, ApprovalSourceContext, ExecutionOutcome, PendingApproval,
+};
 
 /// SQL schema applied on every `with_connection` call.
 ///
@@ -55,12 +57,25 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     decision          TEXT,
     executed_at       TEXT,
     execution_outcome TEXT,
-    execution_error   TEXT
+    execution_error   TEXT,
+    source_context    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pending_approvals_pending
     ON pending_approvals(decided_at);
 CREATE INDEX IF NOT EXISTS idx_pending_approvals_session
     ON pending_approvals(session_id);
+
+-- Per-flow tool trust (flow-approval-surface, issue B-flows-approval PR2):
+-- an `ApproveAlwaysForFlow` decision inserts a row here instead of the
+-- global `autonomy.auto_approve` allowlist, so the grant is scoped to one
+-- workflow's runs (including scheduled/triggered ones) rather than every
+-- flow that happens to call the same tool.
+CREATE TABLE IF NOT EXISTS flow_tool_trust (
+    flow_id    TEXT NOT NULL,
+    tool_name  TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (flow_id, tool_name)
+);
 ";
 
 /// Idempotently add the post-execution audit columns to an existing
@@ -93,6 +108,10 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
         (
             "execution_error",
             "ALTER TABLE pending_approvals ADD COLUMN execution_error TEXT",
+        ),
+        (
+            "source_context",
+            "ALTER TABLE pending_approvals ADD COLUMN source_context TEXT",
         ),
     ] {
         if !have.contains(col) {
@@ -187,11 +206,17 @@ pub fn insert_pending(config: &Config, pending: &PendingApproval, session_id: &s
             .context("[approval::store] serialize args_redacted")?;
         let created = pending.created_at.to_rfc3339();
         let expires = pending.expires_at.map(|t| t.to_rfc3339());
+        let source_context = pending
+            .source_context
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("[approval::store] serialize source_context")?;
         conn.execute(
             "INSERT INTO pending_approvals
                 (request_id, tool_name, action_summary, args_redacted,
-                 session_id, created_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 session_id, created_at, expires_at, source_context)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 pending.request_id,
                 pending.tool_name,
@@ -200,6 +225,7 @@ pub fn insert_pending(config: &Config, pending: &PendingApproval, session_id: &s
                 session_id,
                 created,
                 expires,
+                source_context,
             ],
         )
         .context("[approval::store] insert pending row")?;
@@ -229,7 +255,7 @@ pub fn list_pending(config: &Config) -> Result<Vec<PendingApproval>> {
         let mut stmt = conn
             .prepare(
                 "SELECT request_id, tool_name, action_summary, args_redacted,
-                        session_id, created_at, expires_at
+                        session_id, created_at, expires_at, source_context
                  FROM pending_approvals
                  WHERE decided_at IS NULL
                  ORDER BY created_at ASC",
@@ -300,7 +326,7 @@ pub fn decide(
         let mut stmt = conn
             .prepare(
                 "SELECT request_id, tool_name, action_summary, args_redacted,
-                        session_id, created_at, expires_at
+                        session_id, created_at, expires_at, source_context
                  FROM pending_approvals WHERE request_id = ?1",
             )
             .context("[approval::store] prepare select decided")?;
@@ -419,6 +445,63 @@ pub fn purge_session(config: &Config, session_id: &str) -> Result<usize> {
     })
 }
 
+/// Filter [`list_pending`] down to the rows correlated with a specific flow
+/// run (`source_context == Flow { flow_id, run_id, .. }`). The table has no
+/// dedicated index for this — pending rows are always few (parked, awaiting
+/// a live decision), so a full scan + JSON-decode filter in Rust is simpler
+/// than a JSON1 SQL predicate and avoids a SQLite extension dependency.
+pub fn list_pending_for_flow_run(
+    config: &Config,
+    flow_id: &str,
+    run_id: &str,
+) -> Result<Vec<PendingApproval>> {
+    let all = list_pending(config)?;
+    Ok(all
+        .into_iter()
+        .filter(|row| {
+            matches!(
+                &row.source_context,
+                Some(ApprovalSourceContext::Flow { flow_id: f, run_id: r, .. })
+                    if f == flow_id && r == run_id
+            )
+        })
+        .collect())
+}
+
+/// Grant "approve always for this flow" trust to a `(flow_id, tool_name)`
+/// pair — inserted when the user picks `ApproveAlwaysForFlow` on a
+/// flow-origin park. `INSERT OR IGNORE` makes re-granting an already-trusted
+/// pair a harmless no-op rather than a primary-key error.
+pub fn insert_flow_trust(config: &Config, flow_id: &str, tool_name: &str) -> Result<()> {
+    with_connection(config, |conn| {
+        conn.execute(
+            "INSERT OR IGNORE INTO flow_tool_trust (flow_id, tool_name, created_at)
+             VALUES (?1, ?2, ?3)",
+            params![flow_id, tool_name, Utc::now().to_rfc3339()],
+        )
+        .context("[approval::store] insert_flow_trust")?;
+        Ok(())
+    })
+}
+
+/// Whether `(flow_id, tool_name)` was previously granted "approve always for
+/// this flow" trust. Consulted by [`super::gate::ApprovalGate::intercept_audited`]
+/// before parking a `Workflow`-origin tool call.
+pub fn is_flow_tool_trusted(config: &Config, flow_id: &str, tool_name: &str) -> Result<bool> {
+    with_connection(config, |conn| {
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM flow_tool_trust WHERE flow_id = ?1 AND tool_name = ?2
+                 )",
+                params![flow_id, tool_name],
+                |row| row.get(0),
+            )
+            .context("[approval::store] is_flow_tool_trusted")?;
+        Ok(exists)
+    })
+}
+
 fn expire_stale_with_now(conn: &Connection, now: DateTime<Utc>) -> Result<usize> {
     let now_rfc3339 = now.to_rfc3339();
     let deny = ApprovalDecision::Deny.as_str();
@@ -485,6 +568,23 @@ fn row_to_pending(row: &rusqlite::Row<'_>) -> rusqlite::Result<PendingApproval> 
     let args_redacted = serde_json::from_str(&args_str).unwrap_or(serde_json::Value::Null);
     let created_str: String = row.get(5)?;
     let expires_opt: Option<String> = row.get(6)?;
+    // Column 7 (`source_context`) is absent on rows written before this
+    // migration and on every plain chat-routed park — tolerate both a
+    // missing column read error and a NULL value as "no context" rather
+    // than failing the whole row decode (older SELECTs on a freshly
+    // migrated DB may race the column add on some SQLite builds).
+    let source_context_str: Option<String> = row.get(7).unwrap_or(None);
+    let source_context = source_context_str.as_deref().and_then(|raw| {
+        serde_json::from_str::<ApprovalSourceContext>(raw)
+            .map_err(|err| {
+                tracing::warn!(
+                    error = %err,
+                    "[approval::store] failed to decode source_context JSON — treating as absent"
+                );
+                err
+            })
+            .ok()
+    });
 
     // Note: column index 4 (`session_id`) is read on the SELECT but
     // intentionally not surfaced — see `PendingApproval` doc-comment.
@@ -495,6 +595,7 @@ fn row_to_pending(row: &rusqlite::Row<'_>) -> rusqlite::Result<PendingApproval> 
         args_redacted,
         created_at: parse_rfc3339(&created_str),
         expires_at: expires_opt.as_deref().map(parse_rfc3339),
+        source_context,
     })
 }
 
@@ -546,6 +647,7 @@ mod tests {
             args_redacted: json!({ "action": "execute", "tool_slug": "SLACK_SEND" }),
             created_at: Utc::now(),
             expires_at,
+            source_context: None,
         }
     }
 
@@ -1159,5 +1261,113 @@ mod tests {
                 || err.to_string().contains("premature end of input"),
             "unexpected error: {err}"
         );
+    }
+
+    // ── source_context / flow_tool_trust (flow-approval-surface, PR2) ──────
+
+    fn flow_sample(request_id: &str, flow_id: &str, run_id: &str) -> PendingApproval {
+        PendingApproval::new(
+            request_id,
+            "composio",
+            "send slack message",
+            json!({ "action": "execute" }),
+            Some(Utc::now() + Duration::minutes(10)),
+        )
+        .with_source_context(ApprovalSourceContext::Flow {
+            flow_id: flow_id.to_string(),
+            run_id: run_id.to_string(),
+            node_id: None,
+        })
+    }
+
+    #[test]
+    fn insert_pending_round_trips_flow_source_context() {
+        let (config, _dir) = test_config();
+        let pending = flow_sample("flow-req-1", "flow-1", "run-1");
+        insert_pending(&config, &pending, "sess-A").unwrap();
+
+        let rows = list_pending(&config).unwrap();
+        assert_eq!(rows.len(), 1);
+        match &rows[0].source_context {
+            Some(ApprovalSourceContext::Flow {
+                flow_id, run_id, ..
+            }) => {
+                assert_eq!(flow_id, "flow-1");
+                assert_eq!(run_id, "run-1");
+            }
+            other => panic!("expected Flow source_context, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn insert_pending_without_source_context_round_trips_none() {
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("chat-req-1", "sess-A"), "sess-A").unwrap();
+        let rows = list_pending(&config).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].source_context.is_none(),
+            "chat-routed rows must not carry a source_context"
+        );
+    }
+
+    #[test]
+    fn decide_preserves_source_context_on_the_returned_row() {
+        let (config, _dir) = test_config();
+        let pending = flow_sample("flow-req-2", "flow-2", "run-2");
+        insert_pending(&config, &pending, "sess-A").unwrap();
+
+        let decided = decide(
+            &config,
+            "flow-req-2",
+            ApprovalDecision::ApproveAlwaysForFlow,
+        )
+        .unwrap()
+        .expect("decided row");
+        match decided.source_context {
+            Some(ApprovalSourceContext::Flow {
+                flow_id, run_id, ..
+            }) => {
+                assert_eq!(flow_id, "flow-2");
+                assert_eq!(run_id, "run-2");
+            }
+            other => panic!("expected Flow source_context on decided row, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_pending_for_flow_run_filters_to_the_matching_flow_and_run() {
+        let (config, _dir) = test_config();
+        insert_pending(&config, &flow_sample("a", "flow-1", "run-1"), "sess-A").unwrap();
+        insert_pending(&config, &flow_sample("b", "flow-1", "run-2"), "sess-A").unwrap();
+        insert_pending(&config, &flow_sample("c", "flow-2", "run-1"), "sess-A").unwrap();
+        insert_pending(&config, &sample("d", "sess-A"), "sess-A").unwrap();
+
+        let rows = list_pending_for_flow_run(&config, "flow-1", "run-1").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].request_id, "a");
+    }
+
+    #[test]
+    fn flow_tool_trust_round_trips() {
+        let (config, _dir) = test_config();
+        assert!(!is_flow_tool_trusted(&config, "flow-1", "composio").unwrap());
+
+        insert_flow_trust(&config, "flow-1", "composio").unwrap();
+
+        assert!(is_flow_tool_trusted(&config, "flow-1", "composio").unwrap());
+        // A different tool on the same flow, or the same tool on a different
+        // flow, must not be trusted by the one grant.
+        assert!(!is_flow_tool_trusted(&config, "flow-1", "pushover").unwrap());
+        assert!(!is_flow_tool_trusted(&config, "flow-2", "composio").unwrap());
+    }
+
+    #[test]
+    fn insert_flow_trust_is_idempotent() {
+        let (config, _dir) = test_config();
+        insert_flow_trust(&config, "flow-1", "composio").unwrap();
+        // A second grant of the same pair must not error (INSERT OR IGNORE).
+        insert_flow_trust(&config, "flow-1", "composio").unwrap();
+        assert!(is_flow_tool_trusted(&config, "flow-1", "composio").unwrap());
     }
 }

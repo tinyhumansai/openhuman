@@ -191,14 +191,16 @@ async fn handle_connection(
     // while waiting for the producer's next tick.
     let writer = tokio::spawn(async move {
         let initial = latest_rx.borrow().clone();
-        if !initial.is_empty() {
-            if sink
+        if !initial.is_empty()
+            && sink
                 .send(Message::Binary((*initial).clone()))
                 .await
                 .is_err()
-            {
-                return;
-            }
+        {
+            log::debug!(
+                "[meet-video] initial WebSocket frame send failed; closing writer peer_transport=disconnected"
+            );
+            return;
         }
         while latest_rx.changed().await.is_ok() {
             let frame = latest_rx.borrow().clone();
@@ -237,7 +239,6 @@ async fn handle_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures_util::{SinkExt as _, StreamExt as _};
     use tokio_tungstenite::connect_async;
 
     #[tokio::test]

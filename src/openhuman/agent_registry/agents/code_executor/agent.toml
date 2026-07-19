@@ -46,5 +46,9 @@ named = [
     "todowrite",
     "plan_exit",
     "web_fetch",
+    "storage_upload_file",
+    "storage_download_file",
+    "storage_list_files",
+    "storage_get_link",
     "lsp",
 ]

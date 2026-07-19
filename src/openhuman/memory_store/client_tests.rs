@@ -110,6 +110,77 @@ async fn clear_namespace_removes_all_docs_in_namespace() {
 }
 
 #[tokio::test]
+async fn store_skill_sync_with_secret_like_title_uses_stable_document_id_as_key() {
+    // Regression for #4947 (Bug 2): a Composio provider sync passes the
+    // provider's human-readable title as the document title, but the upsert
+    // *key* must be the stable opaque `document_id` (`gmail:<message_id>`),
+    // NOT the title. Some email subjects legitimately look secret-like
+    // (verification codes, token-rotation notices), and `upsert_document`
+    // rejects any secret-like namespace/key. Because gmail's tinycortex
+    // pipeline does not tolerate scope errors, one such subject would abort
+    // the entire scheduled sync with `document namespace/key cannot contain
+    // secrets`, leaving the source stale ("Last synced 17d ago").
+    let (_tmp, client) = make_client();
+
+    // A subject that trips the secret guard. Assert the precondition so the
+    // test cannot silently pass if the detector's patterns change.
+    let secret_like_title = "Security alert: token glpat-aaaaaaaaaaaaaaaaaaaa was created";
+    assert!(
+        crate::openhuman::memory_store::safety::has_likely_secret(secret_like_title),
+        "test title must trip the secret detector for this regression to be meaningful"
+    );
+
+    // With a stable document_id provided, the write must succeed — the key is
+    // the opaque id, not the secret-like subject. Before the fix the key was
+    // the title and this returned the secrets error.
+    client
+        .store_skill_sync(
+            "gmail",
+            "conn-1",
+            secret_like_title,
+            "email body",
+            Some("composio-provider-incremental".into()),
+            None,
+            Some("medium".into()),
+            None,
+            None,
+            Some("gmail:19af23bc00112233".into()),
+        )
+        .await
+        .expect("secret-like subject must not block a stable-id-keyed sync write");
+
+    // The document is persisted and keyed by the stable id, so a second sync
+    // of the same message dedups (updates in place) rather than duplicating.
+    client
+        .store_skill_sync(
+            "gmail",
+            "conn-1",
+            secret_like_title,
+            "email body v2",
+            Some("composio-provider-incremental".into()),
+            None,
+            Some("medium".into()),
+            None,
+            None,
+            Some("gmail:19af23bc00112233".into()),
+        )
+        .await
+        .expect("re-sync of same message id must succeed");
+
+    let docs = client.list_documents(Some("skill-gmail")).await.unwrap();
+    let arr = docs
+        .get("documents")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(
+        arr.len(),
+        1,
+        "stable-id key must dedupe both syncs into a single document"
+    );
+}
+
+#[tokio::test]
 async fn clear_skill_memory_targets_prefixed_namespace() {
     let (_tmp, client) = make_client();
     // `store_skill_sync` prefixes the namespace with "skill-<id>".

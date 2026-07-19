@@ -7,8 +7,9 @@
 //! with a mock. This module supplies the **production** worker: every stage runs
 //! through [`run_subagent`] (the same dispatch path `spawn_subagent` uses), and
 //! the run is made durable/resumable by checkpointing the typed
-//! [`DelegationState`] to the openhuman session DB through
-//! [`SqlRunLedgerCheckpointer`].
+//! [`DelegationState`] through the crate
+//! [`SqliteCheckpointer`](tinyagents::graph::SqliteCheckpointer) at a dedicated
+//! `graph_checkpoints.db` under the workspace.
 //!
 //! Layering: the delegation *graph* lives in the `tinyagents` adapter seam; this
 //! production glue lives in `agent_orchestration`, which already depends on both
@@ -24,8 +25,9 @@ use crate::openhuman::config::Config;
 use crate::openhuman::tinyagents::delegation::{
     run_delegation, DelegationConfig, DelegationStage, DelegationStageOutput, DelegationState,
 };
-use crate::openhuman::tinyagents::SqlRunLedgerCheckpointer;
 use tinyagents::graph::checkpoint::Checkpointer;
+use tinyagents::graph::SqliteCheckpointer;
+use tinyagents::harness::workspace::WorkspaceDescriptor;
 use tinyagents::CancellationToken;
 
 const LOG_TARGET: &str = "agent_orchestration::delegation";
@@ -41,15 +43,28 @@ const LOG_TARGET: &str = "agent_orchestration::delegation";
 /// parent is built so the nested `run_subagent` calls still resolve a provider,
 /// tool registry, memory, and model (mirroring the workflow engine + team
 /// runtime).
-pub async fn run_subagent_delegation(
+pub(crate) async fn run_subagent_delegation(
     config: Arc<Config>,
     definition: AgentDefinition,
     task_prompt: String,
     max_revisions: usize,
+    parent_workspace_descriptor: Option<WorkspaceDescriptor>,
 ) -> Result<DelegationState, String> {
     let thread_id = format!("delegrun-{}", uuid::Uuid::new_v4());
-    let checkpointer: Arc<dyn Checkpointer<DelegationState>> =
-        Arc::new(SqlRunLedgerCheckpointer::new(config.clone()));
+    // Durable graph checkpoints ride the crate's `SqliteCheckpointer` (issue
+    // #4249, 04.3) at a dedicated `graph_checkpoints.db` under the workspace —
+    // a separate SQLite file from OpenHuman's session-db pool, so the crate's
+    // owned connection never contends on the run-ledger locks. Nothing outside
+    // the retired `SqlRunLedgerCheckpointer` read the old `graph_checkpoints`
+    // run-ledger table, so no row migration is needed: pre-swap in-flight
+    // durable graphs simply expire (orphaned tasks are reconciled at boot per
+    // 07.2). Checkpoint metadata (thread/checkpoint/parent/run ids) stays
+    // inspectable through the crate `Checkpointer` API.
+    let checkpoint_db = config.workspace_dir.join("graph_checkpoints.db");
+    let checkpointer: Arc<dyn Checkpointer<DelegationState>> = Arc::new(
+        SqliteCheckpointer::<DelegationState>::open(&checkpoint_db)
+            .map_err(|e| format!("open durable graph checkpoint store: {e}"))?,
+    );
 
     tracing::info!(
         target: LOG_TARGET,
@@ -58,16 +73,34 @@ pub async fn run_subagent_delegation(
         max_revisions,
         "[delegation] starting durable sub-agent delegation"
     );
+    if let Some(descriptor) = parent_workspace_descriptor.as_ref() {
+        tracing::debug!(
+            target: LOG_TARGET,
+            agent_id = %definition.id,
+            thread_id = %thread_id,
+            workspace_root = %descriptor.root.display(),
+            policy_id = %descriptor.policy_id,
+            "[delegation] using ToolExecutionContext workspace root"
+        );
+    }
 
     let run = async move {
         // Re-entrant per-stage worker: clones its captures each call so the graph
         // node handler stays `Fn` while each stage dispatches a fresh sub-agent.
+        let parent_workspace_descriptor = parent_workspace_descriptor.clone();
         let run_stage = move |stage: DelegationStage, state: DelegationState| {
             let definition = definition.clone();
             let task = task_prompt.clone();
+            let workspace_descriptor = parent_workspace_descriptor.clone();
             async move {
                 let prompt = build_stage_prompt(stage, &task, &state);
-                match run_subagent(&definition, &prompt, delegation_subagent_options()).await {
+                match run_subagent(
+                    &definition,
+                    &prompt,
+                    delegation_subagent_options(workspace_descriptor),
+                )
+                .await
+                {
                     Ok(outcome) => {
                         let approved = matches!(stage, DelegationStage::Review)
                             && review_approves(&outcome.output);
@@ -86,6 +119,11 @@ pub async fn run_subagent_delegation(
             checkpointer: Some(checkpointer),
             thread_id: Some(thread_id),
             cancel: CancellationToken::new(),
+            // Automated (non-human-gated) delegation: the reviewer stage decides
+            // approve/revise on its own. The durable human-approval interrupt
+            // (see `tinyagents::delegation::run_delegation_durable`) is opt-in and
+            // stays off here until a human-review delegation surface wires it.
+            ..DelegationConfig::default()
         };
         run_delegation(delegation_config, run_stage).await
     };
@@ -149,7 +187,12 @@ fn review_approves(output: &str) -> bool {
 
 /// Default sub-agent options for a delegation stage — a fresh UUID task id per
 /// call (so retries/revisions don't collide), everything else inherited.
-fn delegation_subagent_options() -> SubagentRunOptions {
+fn delegation_subagent_options(
+    workspace_descriptor: Option<WorkspaceDescriptor>,
+) -> SubagentRunOptions {
+    let worktree_action_dir = workspace_descriptor
+        .as_ref()
+        .map(|descriptor| descriptor.root.clone());
     SubagentRunOptions {
         skill_filter_override: None,
         toolkit_override: None,
@@ -159,7 +202,8 @@ fn delegation_subagent_options() -> SubagentRunOptions {
         worker_thread_id: None,
         initial_history: None,
         checkpoint_dir: None,
-        worktree_action_dir: None,
+        worktree_action_dir,
+        workspace_descriptor,
         run_queue: None,
     }
 }

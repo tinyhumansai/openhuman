@@ -39,15 +39,11 @@ impl Default for CapabilityProviderConfig {
 /// Trust state for an external capability provider.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum CapabilityProviderTrustState {
     /// Provider metadata is accepted, but capabilities from it are not trusted.
+    #[default]
     Untrusted,
     /// Provider is explicitly trusted by local config.
     Trusted,
-}
-
-impl Default for CapabilityProviderTrustState {
-    fn default() -> Self {
-        Self::Untrusted
-    }
 }

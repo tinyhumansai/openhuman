@@ -14,6 +14,12 @@ const DERIVED_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
 });
 
+const CODING_SESSION_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Raw,
+    destinations: &["Configured OpenHuman inference provider"],
+});
+
 // Vision sub-agent ships the attached image (raw pixels) to the managed
 // multimodal model for analysis.
 const IMAGE_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
@@ -508,6 +514,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.coding_session_memory",
+        name: "Coding-Agent Session Memory",
+        domain: "memory_sources",
+        category: CapabilityCategory::Intelligence,
+        description: "Discover local Codex and Claude Code session histories, retain only human-authored decisions and corrections, and distill them into a durable TinyCortex persona memory pack. Tool output, reasoning, developer prompts, and subagent traffic are excluded before inference.",
+        how_to: "Brain > Sources > Coding-agent sessions > Ingest new sessions. Programmatic: openhuman.memory_sources_coding_session_status and openhuman.memory_sources_ingest_coding_sessions (RPC).",
+        status: CapabilityStatus::Beta,
+        privacy: CODING_SESSION_TO_BACKEND,
+    },
+    Capability {
         id: "intelligence.memory_sync_schedule",
         name: "Memory Sync Schedule",
         domain: "config",
@@ -539,7 +555,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
              model name and embedding dimensions are tunable per provider. The \
              legacy `inference_embed` RPC is aliased to `embeddings_embed` so \
              existing callers continue to work.",
-        how_to: "Settings > AI > Embeddings",
+        how_to: "Connections → API keys → Embeddings",
         status: CapabilityStatus::Beta,
         // Privacy depends on the selected provider — see
         // `intelligence.embedding_provider_test` for the per-provider data
@@ -560,7 +576,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
              the model, dimensions, and any auth/error surface so a \
              misconfigured key doesn't get discovered halfway through a 50k \
              chunk backfill.",
-        how_to: "Settings > AI > Embeddings > Test Connection",
+        how_to: "Connections → API keys → Embeddings → Test Connection",
         // The probe payload routes to whichever provider the user has
         // selected — managed cloud (default), OpenAI, Cohere, or a custom
         // OpenAI-compatible endpoint. Using `DERIVED_TO_BACKEND` here would
@@ -621,6 +637,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "intelligence.language_workflows",
+        name: "Language Workflows (Rhai)",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "The orchestrator can author and run small Rhai workflow scripts to express ad-hoc control flow over delegated work — parallel fan-out, loops, and dedup-then-verify pipelines that fixed spawn/parallel primitives cannot. Each script runs bounded and fail-closed (per-cell timeout, per-session caps on tool/model/agent calls and recursion depth), and every effectful step still passes the same approval and permission gates as a direct tool call. Progress rides the existing tool-call timeline.",
+        how_to: "Runs automatically when the orchestrator chooses the `rhai_workflows` tool; disable with OPENHUMAN_RHAI_WORKFLOWS=0 or the read-only autonomy tier",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "intelligence.agent_library",
         name: "Agents Library",
         domain: "intelligence",
@@ -646,7 +672,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "intelligence",
         category: CapabilityCategory::Intelligence,
         description: "Backfill the last 6 days of Slack history into the memory tree and keep it up to date by flushing each closed 6-hour UTC bucket. Driven by an authenticated Slack connection (OAuth via Composio).",
-        how_to: "Settings > Messaging Channels > Slack",
+        how_to: "Connections > OAuth > Slack",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
     },
@@ -656,7 +682,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "intelligence",
         category: CapabilityCategory::Intelligence,
         description: "Incrementally sync ClickUp tasks assigned to the authenticated user into the Memory Tree on a 30-minute cadence, with an initial backfill on first connect. Only tasks the user is directly assigned to are ingested. Driven by an authenticated ClickUp connection (OAuth via Composio).",
-        how_to: "Settings > Connections > ClickUp",
+        how_to: "Connections > OAuth > ClickUp",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
     },
@@ -716,7 +742,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "workflows",
         category: CapabilityCategory::Workflows,
         description: "Open workflow setup and update workflow-specific configuration.",
-        how_to: "Intelligence > Workflows > Setup or Settings > Connections",
+        how_to: "Intelligence > Workflows > Setup or Connections",
         status: CapabilityStatus::Stable,
         privacy: None,
     },
@@ -726,7 +752,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "workflows",
         category: CapabilityCategory::Workflows,
         description: "See whether a workflow-backed integration is connected, offline, or needs setup.",
-        how_to: "Intelligence > Workflows or Settings > Connections",
+        how_to: "Intelligence > Workflows or Connections",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -777,7 +803,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "workflows",
         category: CapabilityCategory::Workflows,
         description: "Browse the dedicated connections hub for external workflow-backed integrations.",
-        how_to: "Settings > Connections",
+        how_to: "Connections",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -824,7 +850,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "workflows",
         category: CapabilityCategory::Workflows,
         description: "Connect Google services for email, contacts, and calendar workflows.",
-        how_to: "Settings > Connections",
+        how_to: "Connections > OAuth",
         status: CapabilityStatus::ComingSoon,
         privacy: LOCAL_CREDENTIALS,
     },
@@ -834,7 +860,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "workflows",
         category: CapabilityCategory::Workflows,
         description: "Connect Notion for workspace sync and productivity workflows.",
-        how_to: "Settings > Connections",
+        how_to: "Connections > OAuth",
         status: CapabilityStatus::ComingSoon,
         privacy: LOCAL_CREDENTIALS,
     },
@@ -844,7 +870,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "workflows",
         category: CapabilityCategory::Workflows,
         description: "Set up local EVM, BTC, Solana, and Tron wallet identities from one recovery phrase.",
-        how_to: "Settings > Crypto > Recovery Phrase or Settings > Connections",
+        how_to: "Settings > Crypto > Recovery Phrase or Connections",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_CREDENTIALS,
     },
@@ -884,7 +910,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "workflows",
         category: CapabilityCategory::Workflows,
         description: "Connect supported exchanges for trading and portfolio workflows.",
-        how_to: "Settings > Connections",
+        how_to: "Connections",
         status: CapabilityStatus::ComingSoon,
         privacy: None,
     },
@@ -924,7 +950,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "local_ai",
         category: CapabilityCategory::LocalAI,
         description: "Select Ollama, LM Studio, MLX, or a generic local OpenAI-compatible server as the local model provider and configure the endpoint.",
-        how_to: "Settings > AI > providers, or use provider strings: ollama:<model>, lmstudio:<model>, mlx:<model>, local-openai:<model>",
+        how_to: "Connections → API keys → LLM, or use provider strings: ollama:<model>, lmstudio:<model>, mlx:<model>, local-openai:<model>",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -1238,8 +1264,8 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         name: "Connect Messaging Platforms",
         domain: "channels",
         category: CapabilityCategory::Channels,
-        description: "Connect supported messaging platforms such as Telegram, Discord, or Slack.",
-        how_to: "Settings > Messaging Channels",
+        description: "Connect supported messaging platforms such as Telegram or Discord.",
+        how_to: "Connections > Channels",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -1250,7 +1276,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         category: CapabilityCategory::Channels,
         description:
             "Operate OpenHuman from Telegram with slash commands: /status, /sessions, /new, and /help.",
-        how_to: "Settings > Messaging Channels > Telegram (connect), then message the bot",
+        how_to: "Connections > Channels > Telegram (connect), then message the bot",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -1260,7 +1286,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "channels",
         category: CapabilityCategory::Channels,
         description: "Disconnect a previously configured messaging platform.",
-        how_to: "Settings > Messaging Channels",
+        how_to: "Connections > Channels",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -1270,7 +1296,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "channels",
         category: CapabilityCategory::Channels,
         description: "Validate platform credentials or connection state before using a channel.",
-        how_to: "Settings > Messaging Channels",
+        how_to: "Connections > Channels",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -1280,7 +1306,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "channels",
         category: CapabilityCategory::Channels,
         description: "Choose which messaging channel should be used by default.",
-        how_to: "Settings > Messaging Channels",
+        how_to: "Connections > Channels",
         status: CapabilityStatus::Beta,
         privacy: None,
     },
@@ -1352,7 +1378,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "settings",
         category: CapabilityCategory::Settings,
         description: "Configure managed, local, custom, and built-in BYOK LLM providers, including SumoPod and other OpenAI-compatible gateways, plus per-workload routing preferences.",
-        how_to: "Settings > AI",
+        how_to: "Connections → API keys → LLM",
         status: CapabilityStatus::Stable,
         privacy: None,
     },
@@ -1479,6 +1505,21 @@ pub(super) const CAPABILITIES: &[Capability] = &[
                       filters, then enrich them onto the agent's todo board and (for proactive \
                       sources) start an agent working on them.",
         how_to: "Settings > Task Sources",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
+        id: "automation.discover_workflows",
+        name: "Suggested Workflows (Flow Scout)",
+        domain: "flows",
+        category: CapabilityCategory::Automation,
+        description: "A read-only discovery agent (\"Flow Scout\") reads your memory, past \
+                      conversations, known people, connected apps, and existing flows to figure \
+                      out which automations would actually help you, then proposes a handful of \
+                      concrete, buildable workflow suggestions. Each card explains why it was \
+                      suggested; \"Build this\" hands it to the workflow builder to author a real \
+                      flow you review and save. Discovery never creates, enables, or runs a flow.",
+        how_to: "Flows > Suggested for you > Discover",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,
     },
@@ -1780,5 +1821,22 @@ pub(super) const CAPABILITIES: &[Capability] = &[
                  \"when writing Rust, prefer Result over unwrap\".",
         status: CapabilityStatus::Stable,
         privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "intelligence.session_orchestration",
+        name: "Session Orchestration",
+        domain: "orchestration",
+        category: CapabilityCategory::Intelligence,
+        description: "Coordinate wrapped Claude Code / Codex sessions over tiny.place: the device \
+                      forwards session DMs to the hosted orchestration brain, which reasons, \
+                      replies, and steers on its own cadence server-side. The device executes the \
+                      effects the brain pushes back (send the reply, mirror an eviction into local \
+                      memory), renders the hosted read surface, and can run the paid Medulla API \
+                      directly with its local contact, session-history, and send-to-agent tools.",
+        how_to: "Intelligence > Orchestration (pair a wrapped session, then chat via the Master \
+                 window), or call openhuman.orchestration_run. Prompt, graph, and resource \
+                 overrides live under [orchestration.medulla] in config.toml.",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
     },
 ];

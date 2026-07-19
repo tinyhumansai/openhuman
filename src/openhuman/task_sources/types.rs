@@ -116,18 +116,14 @@ impl FilterSpec {
 /// How enriched tasks are routed once fetched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SourceTarget {
     /// Append a todo card AND dispatch a triage turn so an agent may
     /// start working immediately (triage still gates noise).
+    #[default]
     AgentTodoProactive,
     /// Append a todo card only; never auto-start an agent turn.
     TodoOnly,
-}
-
-impl Default for SourceTarget {
-    fn default() -> Self {
-        Self::AgentTodoProactive
-    }
 }
 
 /// Why a fetch ran — mirrors the provider `SyncReason` semantics.

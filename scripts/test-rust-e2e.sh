@@ -126,6 +126,14 @@ echo "[rust-e2e] Mock backend healthy."
 export BACKEND_URL="$MOCK_API_URL"
 export VITE_BACKEND_URL="$MOCK_API_URL"
 
+# The agent-harness E2E surface drives very large async futures in debug builds
+# (the typed sub-agent runner + the full agentic brain turn exercised by
+# json_rpc_meet_agent_session_lifecycle). The default Rust test-thread stack
+# (2 MiB) overflows on that dispatch depth — a stack overflow in otherwise-correct
+# tests, not a logic failure. Mirror scripts/test-rust-with-mock.sh and give the
+# suite a larger stack unless the caller already pinned one explicitly.
+export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
+
 cd "$REPO_ROOT"
 source "$HOME/.cargo/env" 2>/dev/null || true
 RUSTC_BIN="$(command -v rustc)"

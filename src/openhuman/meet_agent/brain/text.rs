@@ -56,7 +56,7 @@ pub(crate) fn strip_for_speech(text: &str) -> String {
             continue;
         }
         let cleaned: String = trimmed
-            .trim_start_matches(|c: char| c == '-' || c == '*' || c == '#' || c == '>')
+            .trim_start_matches(['-', '*', '#', '>'])
             .trim()
             .chars()
             .filter(|c| !matches!(c, '*' | '`' | '_' | '#'))
@@ -112,7 +112,7 @@ pub(super) fn strip_untagged_reasoning(text: &str) -> String {
         "responding with",
     ];
     let sentences: Vec<&str> = text
-        .split_inclusive(|c: char| matches!(c, '.' | '!' | '?'))
+        .split_inclusive(['.', '!', '?'])
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .collect();

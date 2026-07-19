@@ -47,6 +47,17 @@ fn jwt_with_payload(payload: serde_json::Value) -> String {
     format!("eyJhbGciOiJIUzI1NiJ9.{payload}.sig")
 }
 
+fn count_reembed_backfill_jobs(config: &Config) -> i64 {
+    crate::openhuman::memory_store::chunks::store::with_connection(config, |conn| {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_jobs WHERE kind = 'reembed_backfill'",
+            [],
+            |row| row.get(0),
+        )?)
+    })
+    .unwrap()
+}
+
 async fn spawn_auth_me_status(status: StatusCode) -> String {
     let app = Router::new().route("/auth/me", get(move || async move { status }));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -272,6 +283,84 @@ async fn store_session_defers_minimal_live_jwt_when_auth_me_transient_and_allowe
         state.user,
         Some(json!({ "pendingBackendValidation": true })),
         "deferred fallback must not copy identity claims from an unverified JWT or callback payload"
+    );
+}
+
+#[tokio::test]
+async fn store_session_requeues_reembed_backfill_after_login() {
+    use crate::openhuman::memory_store::chunks::store::{upsert_chunks, upsert_staged_chunks_tx};
+    use crate::openhuman::memory_store::chunks::types::{
+        chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+    };
+    use crate::openhuman::memory_store::content as content_store;
+    use chrono::TimeZone;
+
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_status(StatusCode::SERVICE_UNAVAILABLE).await);
+
+    let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+    let chunk = Chunk {
+        id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "login-reembed-seed"),
+        content: "memory content that needs embedding after the user logs in".into(),
+        metadata: Metadata {
+            source_kind: SourceKind::Chat,
+            source_id: "slack:#eng".into(),
+            owner: "alice".into(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: vec![],
+            source_ref: Some(SourceRef::new("slack://x")),
+            path_scope: None,
+        },
+        token_count: 12,
+        seq_in_source: 0,
+        created_at: ts,
+        partial_message: false,
+    };
+    upsert_chunks(&config, &[chunk.clone()]).unwrap();
+    let content_root = config.memory_tree_content_root();
+    std::fs::create_dir_all(&content_root).unwrap();
+    let staged = content_store::stage_chunks(&content_root, &[chunk]).unwrap();
+    crate::openhuman::memory_store::chunks::store::with_connection(&config, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        upsert_staged_chunks_tx(&tx, &staged)?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(
+        count_reembed_backfill_jobs(&config),
+        0,
+        "precondition: no active reembed backfill job exists before login"
+    );
+
+    let token = jwt_with_payload(json!({
+        "sub": "unverified-jwt-user",
+        "email": "jwt@example.test",
+        "name": "Unverified JWT User",
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let result = store_session_with_deferred_validation(&config, &token, None, Some(json!({})))
+        .await
+        .unwrap();
+
+    let log_text = result.logs.join(" ");
+    assert!(
+        log_text.contains("memory re-embed backfill checked after login"),
+        "store_session should report the post-login backfill probe, got: {log_text}"
+    );
+    assert_eq!(
+        count_reembed_backfill_jobs(&config),
+        1,
+        "login must enqueue exactly one reembed_backfill chain for uncovered rows"
     );
 }
 
@@ -1000,4 +1089,57 @@ async fn each_account_workspace_holds_its_own_credential_data() {
     // Sanity: both found their own entry, neither crossed over.
     assert_eq!(result_a.value[0].provider, "anthropic");
     assert_eq!(result_b.value[0].provider, "anthropic");
+}
+
+/// #3490 regression: `start_login_gated_services` must launch its services
+/// concurrently (independent `tokio::spawn` tasks) and return, rather than
+/// awaiting them serially. With an all-disabled config every `start_if_enabled`
+/// is a no-op, so this drives the spawn/await/join orchestration (the changed
+/// code path) deterministically — no microphone, model, or network is touched —
+/// and asserts the function completes promptly instead of blocking.
+///
+/// A serial regression here would still pass functionally, but the concurrent
+/// structure is what collapses the readiness latency from the sum of the
+/// per-service cold-starts to the slowest single one; this test guards that the
+/// orchestration keeps returning (and never deadlocks/panics on join).
+#[tokio::test]
+async fn start_login_gated_services_completes_with_all_services_disabled() {
+    // Serialize with the other env-mutating tests: this test sets a process-wide
+    // opt-in env var below, and the lock keeps it from leaking into a
+    // concurrently-running `store_session` test that would then start real
+    // background services. (These are the same semantics `TEST_ENV_LOCK` gives
+    // the HOME-mutating tests.)
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = TempDir::new().unwrap();
+    // Under `#[cfg(test)]` `start_login_gated_services` skips the real services
+    // by default (they leak across the parallel test run); opt this one test
+    // back in so it actually drives the concurrent spawn/await path it guards.
+    // Only presence is checked, so the value (a temp path) is irrelevant.
+    let _run_services =
+        EnvVarGuard::set_to_path("OPENHUMAN_RUN_LOGIN_GATED_SERVICES_IN_TEST", tmp.path());
+
+    let mut config = Config::default();
+    // Every service is disabled so each `start_if_enabled` is a no-op: the test
+    // exercises the concurrent spawn/await machinery (the changed code) without
+    // touching the mic, a model, the screen, or the network. orchestration
+    // defaults ENABLED, so it must be turned off explicitly; the rest are set
+    // too, independent of future default changes.
+    config.local_ai.runtime_enabled = false;
+    config.voice_server.auto_start = false;
+    config.voice_server.always_on_enabled = false;
+    config.screen_intelligence.enabled = false;
+    config.autocomplete.enabled = false;
+    config.orchestration.enabled = false;
+
+    // Bound the wait so a serial-blocking regression (or a hung join) fails the
+    // test instead of hanging CI. Every service no-ops, so this resolves almost
+    // immediately; the generous ceiling only guards against a deadlock.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        start_login_gated_services(&config),
+    )
+    .await
+    .expect("start_login_gated_services must return, not block");
 }

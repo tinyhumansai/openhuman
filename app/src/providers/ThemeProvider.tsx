@@ -4,9 +4,9 @@ import { findFamily, resolveFamilyVariant } from '../lib/theme/presets';
 import type { Theme } from '../lib/theme/types';
 import { useAppSelector } from '../store/hooks';
 import {
-  FONT_SIZE_PX,
   selectActiveFamilyId,
   selectEffectiveTheme,
+  selectRootFontSizePx,
   selectThemeVariant,
 } from '../store/themeSlice';
 
@@ -22,11 +22,12 @@ import {
  *   and any remaining `dark:` utilities activate together.
  * - `theme.mode === system` (active id `system`) also subscribes to
  *   `prefers-color-scheme` so OS-level flips re-apply live without a reload.
- * - `theme.fontSize` → the `<html>` inline `font-size` (rem-based Tailwind text
- *   utilities scale off this), unchanged from before.
+ * - The root `<html>` inline `font-size` (rem-based Tailwind text utilities
+ *   scale off this) is driven by `selectRootFontSizePx`: a fine-tuned custom px
+ *   (issue #4246) overrides the `theme.fontSize` preset when set.
  */
 const ThemeProvider = ({ children }: { children: ReactNode }) => {
-  const fontSize = useAppSelector(state => state.theme.fontSize);
+  const rootFontSizePx = useAppSelector(selectRootFontSizePx);
   const themeVariant = useAppSelector(selectThemeVariant);
   const activeFamilyId = useAppSelector(selectActiveFamilyId);
   const effectiveTheme = useAppSelector(selectEffectiveTheme);
@@ -75,13 +76,13 @@ const ThemeProvider = ({ children }: { children: ReactNode }) => {
     });
   }, []);
 
-  // Apply the global font size to <html>.
+  // Apply the global font size to <html> — a fine-tuned custom px overrides the
+  // preset (issue #4246), resolved in selectRootFontSizePx.
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const px = FONT_SIZE_PX[fontSize] ?? FONT_SIZE_PX.medium;
-    console.debug('[theme] applying root font-size', { fontSize, px });
-    document.documentElement.style.fontSize = px;
-  }, [fontSize]);
+    console.debug('[theme] applying root font-size', { px: rootFontSizePx });
+    document.documentElement.style.fontSize = rootFontSizePx;
+  }, [rootFontSizePx]);
 
   // Apply the active theme whenever it changes.
   useEffect(() => {

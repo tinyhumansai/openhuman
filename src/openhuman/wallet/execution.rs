@@ -278,7 +278,7 @@ pub(crate) struct QuoteOwner {
 /// channel from which a `quote_id` could leak.
 ///
 // SAFETY: relies on the inline `.await` chain in
-// `channels/providers/web.rs::run_chat_task`. `tokio::task_local!` propagates
+// `web_chat::run_chat_task`. `tokio::task_local!` propagates
 // across `.await` but **not** across `tokio::spawn`. If the chat path ever
 // detaches the tool loop onto a freshly-spawned task without wrapping it in
 // `APPROVAL_CHAT_CONTEXT.scope(...)`, this helper will silently start
@@ -354,7 +354,7 @@ pub(crate) fn validate_calldata(data: &str) -> Result<String, String> {
         return Err("calldata must be 0x-prefixed hex".to_string());
     }
     let body = &trimmed[2..];
-    if body.len() % 2 != 0 {
+    if !body.len().is_multiple_of(2) {
         return Err("calldata hex must be byte-aligned".to_string());
     }
     if !body.chars().all(|c| c.is_ascii_hexdigit()) {

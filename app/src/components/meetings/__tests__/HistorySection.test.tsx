@@ -33,13 +33,26 @@ beforeEach(() => {
 
 const NOW = Date.now();
 
+// Anchor the day-grouped fixtures to noon UTC of their respective days. The
+// history rail buckets by UTC calendar day (`utcDayKey`), so a `NOW - 1h`
+// timestamp lands in *yesterday's* bucket when the suite runs just after
+// 00:00 UTC — CI hit this and the "Today" group vanished. Noon UTC always
+// shares its day's key regardless of wall-clock time, making grouping
+// deterministic. (No future-filtering in `groupRecords`, so a noon-today
+// timestamp that is technically ahead of `now` still groups as Today.)
+const noonTodayUtc = (() => {
+  const d = new Date();
+  d.setUTCHours(12, 0, 0, 0);
+  return d.getTime();
+})();
+
 const todayCall: MeetCallRecord = {
   request_id: 'req-today',
   meet_url: 'https://meet.google.com/abc-def-ghi',
   bot_display_name: 'OpenHuman',
   owner_display_name: 'Alice',
-  started_at_ms: NOW - 3600000,
-  ended_at_ms: NOW - 3000000,
+  started_at_ms: noonTodayUtc,
+  ended_at_ms: noonTodayUtc + 600000,
   listened_seconds: 300,
   spoken_seconds: 60,
   turn_count: 5,
@@ -51,8 +64,8 @@ const yesterdayCall: MeetCallRecord = {
   meet_url: 'https://zoom.us/j/999888',
   bot_display_name: 'OpenHuman',
   owner_display_name: 'Bob',
-  started_at_ms: NOW - 86400000 - 3600000,
-  ended_at_ms: NOW - 86400000 - 3000000,
+  started_at_ms: noonTodayUtc - 86400000,
+  ended_at_ms: noonTodayUtc - 86400000 + 600000,
   listened_seconds: 120,
   spoken_seconds: 30,
   turn_count: 2,

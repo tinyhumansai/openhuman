@@ -1249,6 +1249,8 @@ async fn apply_meet_settings_updates_all_meeting_assistant_fields() {
             auto_summarize_policy: Some(AutoSummarizePolicy::Never),
             listen_only_default: Some(false),
             ingest_backend_transcripts: Some(true),
+            // Whitespace is trimmed on apply so the anchor match is clean.
+            reply_display_name: Some("  Alex Kim  ".to_string()),
             ..Default::default()
         },
     )
@@ -1258,6 +1260,7 @@ async fn apply_meet_settings_updates_all_meeting_assistant_fields() {
     assert_eq!(cfg.meet.auto_summarize_policy, AutoSummarizePolicy::Never);
     assert!(!cfg.meet.listen_only_default);
     assert!(cfg.meet.ingest_backend_transcripts);
+    assert_eq!(cfg.meet.reply_display_name, "Alex Kim");
 
     // No-op patch must leave the prior values untouched.
     let _ = apply_meet_settings(&mut cfg, MeetSettingsPatch::default())
@@ -1267,6 +1270,7 @@ async fn apply_meet_settings_updates_all_meeting_assistant_fields() {
     assert_eq!(cfg.meet.auto_summarize_policy, AutoSummarizePolicy::Never);
     assert!(!cfg.meet.listen_only_default);
     assert!(cfg.meet.ingest_backend_transcripts);
+    assert_eq!(cfg.meet.reply_display_name, "Alex Kim");
 }
 
 #[tokio::test]

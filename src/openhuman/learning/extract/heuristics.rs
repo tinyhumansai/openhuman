@@ -232,7 +232,7 @@ pub fn record_turn(
         // ── B. Edit-window detector ───────────────────────────────────────
         if let Some(prev_at) = prev_agent_at {
             let gap = user_timestamp - prev_at;
-            if gap >= 0.0 && gap < EDIT_WINDOW_SECS {
+            if (0.0..EDIT_WINDOW_SECS).contains(&gap) {
                 let lower = user_message.to_ascii_lowercase();
                 // Pattern → (key, value) pairs.
                 let patterns: &[(&str, &str, &str)] = &[
@@ -413,8 +413,6 @@ mod heuristics_tests {
     #[test]
     fn length_ratio_emits_compressed_when_user_msgs_shrink() {
         let session = fresh_session_id();
-        let buf = Buffer::new(1024);
-
         // First 15 turns: high ratio (user talks a lot).
         let now = now_secs();
         for i in 0..15 {

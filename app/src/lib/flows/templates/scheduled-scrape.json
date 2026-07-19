@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "name": "Scheduled scrape to memory",
+  "nodes": [
+    {
+      "id": "trigger",
+      "kind": "trigger",
+      "name": "Every 6 hours",
+      "config": { "trigger_kind": "schedule", "schedule": "0 */6 * * *" },
+      "ports": [],
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "fetch",
+      "kind": "http_request",
+      "name": "Fetch source",
+      "config": { "method": "GET", "url": "https://example.com/feed.json", "headers": {} },
+      "ports": [],
+      "position": { "x": 0, "y": 160 }
+    },
+    {
+      "id": "shape",
+      "kind": "transform",
+      "name": "Shape the item",
+      "config": { "set": { "title": "=item.title", "summary": "=item.summary" } },
+      "ports": [],
+      "position": { "x": 0, "y": 320 }
+    },
+    {
+      "id": "remember",
+      "kind": "tool_call",
+      "name": "Store in memory",
+      "config": { "slug": "", "args": {} },
+      "ports": [],
+      "position": { "x": 0, "y": 480 }
+    }
+  ],
+  "edges": [
+    { "from_node": "trigger", "from_port": "main", "to_node": "fetch", "to_port": "main" },
+    { "from_node": "fetch", "from_port": "main", "to_node": "shape", "to_port": "main" },
+    { "from_node": "shape", "from_port": "main", "to_node": "remember", "to_port": "main" }
+  ]
+}

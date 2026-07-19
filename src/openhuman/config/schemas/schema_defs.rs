@@ -227,6 +227,22 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
+        "get_privacy_mode" => ControllerSchema {
+            namespace: "config",
+            function: "get_privacy_mode",
+            description: "Get the active Privacy Mode (data-egress posture): local_only | standard | sensitive. Distinct from the autonomy access mode.",
+            inputs: vec![],
+            outputs: vec![json_output("mode", "Current privacy mode: local_only | standard | sensitive.")],
+        },
+        "set_privacy_mode" => ControllerSchema {
+            namespace: "config",
+            function: "set_privacy_mode",
+            description: "Set the Privacy Mode (data-egress posture). local_only blocks external model calls at the inference chokepoint. Applies live to active sessions without a restart.",
+            inputs: vec![
+                optional_string("mode", "Privacy mode: local_only | standard | sensitive."),
+            ],
+            outputs: vec![json_output("mode", "Updated privacy mode.")],
+        },
         "get_agent_settings" => ControllerSchema {
             namespace: "config",
             function: "get_agent_settings",
@@ -464,6 +480,14 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "watch_calendar",
                     "When true, the heartbeat watches the connected calendar to drive auto-join / ask-to-join, independent of meeting reminder notifications.",
                 ),
+                optional_string(
+                    "calendar_provider",
+                    "Calendar detection source for Google Meet: composio | recall.",
+                ),
+                optional_string(
+                    "reply_display_name",
+                    "The user's meeting display name, reused as the bot's reply anchor on join.",
+                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
@@ -513,6 +537,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "watch_calendar",
                     ty: TypeSchema::Bool,
                     comment: "Whether the heartbeat watches the calendar to drive auto-join / ask.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "calendar_provider",
+                    ty: TypeSchema::String,
+                    comment: "Calendar detection source for Google Meet: composio | recall.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "reply_display_name",
+                    ty: TypeSchema::String,
+                    comment: "The user's meeting display name, reused as the bot's reply anchor on join.",
                     required: false,
                 },
             ],
@@ -667,7 +703,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "get_data_paths",
             description:
                 "Resolve the OpenHuman data directories (current workspace, default ~/.openhuman, active workspace marker) that reset_local_data would remove. Read-only — performs no filesystem changes.",
-            inputs: vec![],
+            inputs: vec![optional_string(
+                "user_id",
+                "Resolve paths for this specific user id (users/<id>) instead of the active-user marker. Clear App Data passes this because it signs the user out — removing the marker — before deleting the data.",
+            )],
             outputs: vec![json_output(
                 "paths",
                 "Resolved data paths: current_openhuman_dir, default_openhuman_dir, active_workspace_marker_path.",

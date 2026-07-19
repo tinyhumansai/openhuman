@@ -185,9 +185,10 @@ impl Provider for PeakProvider {
 
 fn mock_parent(provider: Arc<dyn Provider>) -> ParentExecutionContext {
     ParentExecutionContext {
+        workspace_descriptor: None,
         agent_definition_id: "workflow_engine".to_string(),
         allowed_subagent_ids: HashSet::new(),
-        provider,
+        turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(provider),
         all_tools: Arc::new(Vec::<Box<dyn Tool>>::new()),
         all_tool_specs: Arc::new(Vec::<ToolSpec>::new()),
         visible_tool_names: std::collections::HashSet::new(),
@@ -326,6 +327,35 @@ async fn unit_phases_execute_in_dependency_order() {
             .unwrap_or_default()
             .contains("PHASE_OUTPUT_OK"),
         "summary should carry final phase output: {summary:?}"
+    );
+}
+
+/// Covers `run_engine_loop` — the `with_root_parent` wrapper around
+/// `drive_phases`. With a mock parent installed, `with_root_parent` reuses it
+/// (rather than building a real root), so the engine loop drives the run to
+/// completion under the mock provider. Mirrors the `drive_phases` happy path,
+/// but through the wrapper the live engine spawns on its background task.
+#[tokio::test]
+async fn run_engine_loop_completes_run_under_ambient_parent() {
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let (_dir, config) = test_config();
+    let provider = PeakProvider::default();
+    let def = linear_def(2, 8, 2);
+    let id = seed_run(
+        &config,
+        &def,
+        json!({ "question": "what is X?", "modelOverride": "test-model" }),
+    );
+
+    with_parent_context(mock_parent(Arc::new(provider.clone())), async {
+        run_engine_loop(&config, &id, def).await
+    })
+    .await;
+
+    assert_eq!(
+        status_of(&config, &id),
+        WorkflowRunStatus::Completed,
+        "run_engine_loop drove the run to completion through with_root_parent"
     );
 }
 

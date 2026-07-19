@@ -158,6 +158,7 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "intelligence.embedding_provider_test",
         "intelligence.github_repo_memory_source",
         "intelligence.memory_source_sync_controls",
+        "intelligence.coding_session_memory",
         "conversation.subagent_mascots",
     ] {
         assert!(
@@ -165,6 +166,22 @@ fn catalog_includes_additional_user_facing_surfaces() {
             "missing catalog capability `{expected}`"
         );
     }
+}
+
+#[test]
+fn coding_session_memory_discloses_inference_boundary() {
+    let capability = lookup("intelligence.coding_session_memory")
+        .expect("coding-session memory capability registered");
+    assert_eq!(capability.domain, "memory_sources");
+    assert!(capability.description.contains("Codex"));
+    assert!(capability.description.contains("Claude Code"));
+    let privacy = capability.privacy.expect("privacy disclosure");
+    assert!(privacy.leaves_device);
+    assert_eq!(privacy.data_kind, PrivacyDataKind::Raw);
+    assert_eq!(
+        privacy.destinations,
+        &["Configured OpenHuman inference provider"]
+    );
 }
 
 /// The two embeddings entries surface a Settings-side configuration panel.
@@ -187,16 +204,16 @@ fn embedding_provider_capabilities_share_domain_and_category() {
         "both embedding capabilities must land in the same UI category"
     );
 
-    // The Settings panel they describe is the same one — make sure the
+    // The settings surface they describe is the same one — make sure the
     // `how_to` strings point at it, not at an out-of-date breadcrumb.
     assert!(
-        config.how_to.contains("Settings") && config.how_to.contains("Embeddings"),
-        "config how_to must mention Settings > … > Embeddings, got: {}",
+        config.how_to.contains("Connections") && config.how_to.contains("Embeddings"),
+        "config how_to must mention Connections → … → Embeddings, got: {}",
         config.how_to
     );
     assert!(
-        test.how_to.contains("Settings") && test.how_to.contains("Embeddings"),
-        "test how_to must mention Settings > … > Embeddings, got: {}",
+        test.how_to.contains("Connections") && test.how_to.contains("Embeddings"),
+        "test how_to must mention Connections → … → Embeddings, got: {}",
         test.how_to
     );
 }
@@ -358,4 +375,49 @@ fn github_repo_memory_source_reports_github_destination() {
          the backend would mis-attribute the destination: {:?}",
         privacy.destinations
     );
+}
+
+/// #4884: capability `how_to` breadcrumbs are user-facing and searchable, and
+/// the agent paraphrases them. Guard against the stale navigation paths that
+/// sent users to menus that do not exist (`Settings > Connections`,
+/// `Settings > Messaging Channels`, `Settings > Automation & Channels`). The
+/// real destinations live under the top-level Connections page.
+#[test]
+fn catalog_how_to_uses_connections_nav_not_legacy_settings_paths() {
+    const LEGACY: [&str; 6] = [
+        "Settings > Connections",
+        "Settings → Connections",
+        "Settings > Messaging Channels",
+        "Settings → Messaging Channels",
+        "Settings > Automation & Channels",
+        "Settings → Automation & Channels",
+    ];
+    for capability in all_capabilities() {
+        for legacy in LEGACY {
+            assert!(
+                !capability.how_to.contains(legacy),
+                "capability `{}` how_to still points at the removed `{legacy}` path: {}",
+                capability.id,
+                capability.how_to
+            );
+        }
+    }
+
+    // Spot-check the corrected channel + Composio breadcrumbs.
+    let how_to = |id: &str| {
+        all_capabilities()
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap_or_else(|| panic!("missing capability `{id}`"))
+            .how_to
+    };
+    assert_eq!(
+        how_to("channels.connect_platform"),
+        "Connections > Channels"
+    );
+    assert_eq!(
+        how_to("intelligence.slack_memory_ingest"),
+        "Connections > OAuth > Slack"
+    );
+    assert_eq!(how_to("workflows.connect_google"), "Connections > OAuth");
 }

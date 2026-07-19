@@ -24,11 +24,14 @@
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
 use crate::openhuman::javascript::NodeBootstrap;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult, ToolTimeout};
+use crate::openhuman::tools::traits::{
+    PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolTimeout,
+};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Absolute ceiling a caller may request via `timeout_secs`. There is **no**
 /// default timeout — `node_exec` runs scripts that legitimately take minutes
@@ -141,6 +144,25 @@ impl Tool for NodeExecTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, context).await
+    }
+}
+
+impl NodeExecTool {
+    async fn execute_in_context(
+        &self,
+        args: serde_json::Value,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let inline_code = args
             .get("inline_code")
             .and_then(|v| v.as_str())
@@ -210,6 +232,8 @@ impl Tool for NodeExecTool {
             "[node_exec] starting invocation"
         );
 
+        let path_policy = super::security_for_tool_context(&self.security, context, "node_exec");
+
         let command = if let Some(code) = inline_code.as_deref() {
             format!(
                 "{} -e {}",
@@ -217,7 +241,7 @@ impl Tool for NodeExecTool {
                 shell_quote(code)
             )
         } else if let Some(path) = script_path.as_deref() {
-            let resolved_script = match resolve_script_path(&self.security.action_dir, path) {
+            let resolved_script = match resolve_script_path(&path_policy.action_dir, path) {
                 Ok(p) => p,
                 Err(msg) => return Ok(ToolResult::error(msg)),
             };
@@ -248,13 +272,13 @@ impl Tool for NodeExecTool {
             Some(crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed)
         ) {
             return Ok(self
-                .run_sandboxed(&command, &resolved.bin_dir, explicit_timeout)
+                .run_sandboxed(&path_policy, &command, &resolved.bin_dir, explicit_timeout)
                 .await);
         }
 
         let mut cmd = match self
             .runtime
-            .build_shell_command(&command, &self.security.action_dir)
+            .build_shell_command(&command, &path_policy.action_dir)
         {
             Ok(cmd) => cmd,
             Err(e) => {
@@ -339,12 +363,13 @@ impl NodeExecTool {
     ///
     /// Mirrors `ShellTool::run_sandboxed`. The sandbox policy is resolved
     /// from the current `RuntimeConfig` and rooted at
-    /// `security.action_dir`; on platforms without a real `cwd_jail`
+    /// the effective `security.action_dir`; on platforms without a real `cwd_jail`
     /// backend the local backend falls back to a documented noop with
     /// the in-Rust path-hardening guards from `SecurityPolicy` still
     /// applying (see CLAUDE.md "Action sandbox vs internal workspace").
     async fn run_sandboxed(
         &self,
+        security: &SecurityPolicy,
         command: &str,
         bin_dir: &std::path::Path,
         timeout: Option<Duration>,
@@ -382,7 +407,7 @@ impl NodeExecTool {
         // shell-family tools; tracked separately so it can be fixed uniformly.
         let policy = sandbox::resolve_sandbox_policy(
             crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed,
-            &self.security.action_dir,
+            &security.action_dir,
             &runtime_cfg,
             false,
         );
@@ -409,7 +434,7 @@ impl NodeExecTool {
         match sandbox::execute_in_sandbox(
             &policy,
             command,
-            &self.security.action_dir,
+            &security.action_dir,
             extra_env,
             effective,
         )

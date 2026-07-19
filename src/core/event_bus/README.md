@@ -38,6 +38,30 @@ In-process pub/sub plus typed request/response. Owns the global `EventBus` singl
 - `src/openhuman/tree_summarizer/{engine,bus}.rs` — async summarisation triggers.
 - `src/openhuman/composio/bus.rs`, `notifications/`, `learning/` — analytics fan-out.
 
+## Emission policy (tinyagents migration, 05.3)
+
+The canonical run record is the TinyAgents event journal + status store
+(`StoreEventJournal` / `FileStatusStore`, wired in `tinyagents/journal.rs`),
+not this bus. When adding agent-run instrumentation:
+
+- **Crate events/status first.** Per-run lifecycle, progress, usage, cache,
+  compression, tool-exposure, and steering signals ride the TinyAgents
+  `AgentEvent` stream and are persisted to the journal; a UI reconstructs a
+  run by replaying journal records (`journal::read_run_events`), not by
+  subscribing to this bus at run start.
+- **`DomainEvent` only for cross-domain product signals.** Publish onto this
+  bus only when a *different* OpenHuman domain (run ledger, notifications,
+  cron, cost footer, channel runtime) must react — i.e. the event crosses a
+  module boundary the crate stream does not serve. Subagent lifecycle
+  publishes go through the single typed owner
+  `agent_orchestration::subagent_events` (05.2), never hand-rolled
+  `publish_global(DomainEvent::Subagent*)`.
+- Run-inspection RPCs must read the journal/status store, not the bus.
+
+`DomainEvent` variants are a stable product surface — removing them is a
+non-goal; the migration re-sources their *emission* from journal projections,
+it does not delete the catalog.
+
 ## Tests
 
 - Unit: `bus_tests.rs`, `events_tests.rs`, `native_request_tests.rs`.

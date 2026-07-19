@@ -3,6 +3,7 @@
 mod agent;
 mod loader;
 mod model;
+mod privacy;
 mod sandbox;
 mod ui;
 
@@ -22,9 +23,10 @@ pub use agent::{
 
 pub use loader::{
     agent_server_status, client_config_json, core_rpc_url_from_env, get_config_snapshot,
-    get_dashboard_settings, get_data_paths, get_runtime_flags, load_and_get_client_config_snapshot,
-    load_and_get_config_snapshot, load_config_with_timeout, reload_config_snapshot_with_timeout,
-    reset_local_data, set_browser_allow_all, snapshot_config_json, RuntimeFlagsOut,
+    get_dashboard_settings, get_data_paths, get_data_paths_for_user, get_runtime_flags,
+    load_and_get_client_config_snapshot, load_and_get_config_snapshot, load_config_with_timeout,
+    reload_config_snapshot_with_timeout, reset_local_data, set_browser_allow_all,
+    snapshot_config_json, RuntimeFlagsOut,
 };
 // expose internal helpers needed by tests (ops_tests.rs uses super::*)
 #[cfg(test)]
@@ -32,8 +34,8 @@ pub(crate) use crate::openhuman::config::Config;
 #[cfg(test)]
 pub(crate) use loader::{
     active_workspace_marker_path, config_openhuman_dir, default_openhuman_dir, env_flag_enabled,
-    fallback_workspace_dir, reset_local_data_for_paths, reset_local_data_remove_error,
-    BROWSER_ALLOW_ALL_ENV, BROWSER_ALLOW_ALL_RPC_ENABLE_ENV,
+    fallback_workspace_dir, reset_local_data_for_paths, BROWSER_ALLOW_ALL_ENV,
+    BROWSER_ALLOW_ALL_RPC_ENABLE_ENV,
 };
 #[cfg(test)]
 pub(crate) use std::path::PathBuf;
@@ -45,6 +47,10 @@ pub use model::{
     load_and_apply_memory_settings, load_and_apply_model_settings, load_and_apply_runtime_settings,
     load_and_resolve_api_url, ComposioTriggerSettingsPatch, LocalAiSettingsPatch,
     MemorySettingsPatch, ModelSettingsPatch, RuntimeSettingsPatch,
+};
+
+pub use privacy::{
+    apply_privacy_settings, get_privacy_mode, load_and_apply_privacy_settings, PrivacySettingsPatch,
 };
 
 pub use sandbox::{

@@ -127,6 +127,16 @@ fn schema_join() -> ControllerSchema {
                 required: false,
             },
             FieldSchema {
+                name: "mascots",
+                ty: TypeSchema::Json,
+                comment: "Optional dual-mascot config (issue #4277): array of up to 2 slots, each \
+                          { mascotId, name?, riveColors?, voiceId? }. When present the backend renders \
+                          both mascots and alternates the speaker per reply. `name` (from the manifest) \
+                          enables name-addressed routing (\"Hey Toshi …\" → that slot). Absent falls \
+                          back to mascot_id.",
+                required: false,
+            },
+            FieldSchema {
                 name: "respond_to_participant",
                 ty: TypeSchema::String,
                 comment: "Only respond to this participant's messages. Case-insensitive substring match \

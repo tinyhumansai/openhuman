@@ -47,9 +47,9 @@ const ChannelConfigPanel = ({ selectedChannel, definitions }: ChannelConfigPanel
         {selectedChannel === 'telegram' && <TelegramConfig definition={definition} />}
         {selectedChannel === 'discord' && <DiscordConfig definition={definition} />}
         {selectedChannel === 'web' && <WebChannelConfig definition={definition} />}
-        {(selectedChannel === 'lark' || selectedChannel === 'dingtalk') && (
-          <CredentialChannelConfig definition={definition} />
-        )}
+        {(selectedChannel === 'lark' ||
+          selectedChannel === 'dingtalk' ||
+          selectedChannel === 'email') && <CredentialChannelConfig definition={definition} />}
       </section>
 
       <ChannelCapabilities capabilities={definition.capabilities} />

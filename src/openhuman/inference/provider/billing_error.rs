@@ -83,7 +83,7 @@ mod tests {
     /// Verbatim Anthropic BYO out-of-credits 400 body (Sentry TAURI-RUST-4MM).
     /// Direct provider — "anthropic API error", not the managed "OpenHuman API
     /// error". The classifier feeds the emit-site `classify_expected_error`
-    /// demotion, the agent `tool_loop` gate, the `web_errors` net, the
+    /// demotion, the agent turn's billing gate, the `web_errors` net, the
     /// `is_budget_event` before_send filter, AND the cron billing-halt, so
     /// pinning the exact wire body makes an Anthropic phrasing drift fail CI
     /// rather than silently re-flood Sentry (3793 events leaked before this).

@@ -133,13 +133,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_schemas_returns_two() {
-        assert_eq!(all_provider_surfaces_controller_schemas().len(), 2);
-    }
-
-    #[test]
-    fn all_controllers_returns_two() {
-        assert_eq!(all_provider_surfaces_registered_controllers().len(), 2);
+    fn schemas_and_controllers_stay_in_lockstep_with_list_queue_present() {
+        // Parity + known-op presence instead of a magic `== 2` count, which
+        // would break on any legitimate third controller (plan.md §3).
+        crate::core::all::assert_schema_controller_parity(
+            &all_provider_surfaces_controller_schemas(),
+            &all_provider_surfaces_registered_controllers(),
+            "list_queue",
+        );
     }
 
     #[test]

@@ -1,13 +1,11 @@
 //! Turn lifecycle: running a single interaction, executing tools, and
-//! wiring the context pipeline + sub-agent harness around them.
+//! wiring context stats + the sub-agent harness around them.
 
 mod context;
 mod core;
 mod graph;
 mod session_io;
 mod tools;
-
-pub(crate) use core::*;
 
 use crate::openhuman::agent::dispatcher::ParsedToolCall;
 

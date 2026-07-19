@@ -18,11 +18,44 @@ use crate::openhuman::agent::progress::AgentProgress;
 
 use super::store::TurnStateStore;
 use super::types::{
-    SubagentActivity, SubagentToolCall, SubagentTranscriptItem, ToolTimelineEntry,
-    ToolTimelineStatus, TranscriptItem, TurnLifecycle, TurnPhase, TurnState,
+    PersistedToolFailure, SubagentActivity, SubagentToolCall, SubagentTranscriptItem,
+    ToolTimelineEntry, ToolTimelineStatus, TranscriptItem, TurnLifecycle, TurnPhase, TurnState,
 };
 
 const MIRROR_LOG_PREFIX: &str = "[threads:turn_state:mirror]";
+
+/// Upper bound on the tool result text persisted per timeline row. The
+/// snapshot file is rewritten in full at every tool boundary, so this is
+/// deliberately tighter than the 256 KiB live-socket cap — it bounds the
+/// per-flush rewrite while still giving the rehydrated "View processing"
+/// panel a meaningful result preview.
+const MAX_PERSISTED_TOOL_OUTPUT: usize = 64 * 1024;
+
+/// Bytes reserved within the cap for the truncation marker so the final
+/// persisted payload (content + marker) never exceeds
+/// [`MAX_PERSISTED_TOOL_OUTPUT`].
+const TRUNCATION_MARKER_BUDGET: usize = 80;
+
+/// Cap `output` for snapshot persistence, slicing on a char boundary and
+/// appending a truncation marker when content was dropped. Returns `None`
+/// for empty output (payload capture off) so the field serializes away.
+fn cap_persisted_output(output: &str) -> Option<String> {
+    if output.is_empty() {
+        return None;
+    }
+    if output.len() <= MAX_PERSISTED_TOOL_OUTPUT {
+        return Some(output.to_string());
+    }
+    let mut end = MAX_PERSISTED_TOOL_OUTPUT.saturating_sub(TRUNCATION_MARKER_BUDGET);
+    while end > 0 && !output.is_char_boundary(end) {
+        end -= 1;
+    }
+    let omitted = output.len() - end;
+    Some(format!(
+        "{}\n…[truncated {omitted} bytes of tool output]",
+        &output[..end]
+    ))
+}
 
 /// In-process cursor that keeps the authoritative [`TurnState`] in sync
 /// with the agent loop and writes it through to a [`TurnStateStore`].
@@ -130,13 +163,19 @@ impl TurnStateMirror {
                         detail: display_detail.clone(),
                         source_tool_name: None,
                         subagent: None,
+                        failure: None,
+                        output: None,
                     });
                 }
                 self.flush();
                 true
             }
             AgentProgress::ToolCallCompleted {
-                call_id, success, ..
+                call_id,
+                success,
+                failure,
+                output,
+                ..
             } => {
                 if let Some(entry) = self
                     .state
@@ -150,6 +189,14 @@ impl TurnStateMirror {
                     } else {
                         ToolTimelineStatus::Error
                     };
+                    // Persist the plain-language failure so the explanation
+                    // survives a thread switch / cold boot (#4459). Clear it on
+                    // a (re-)success so a retried row doesn't keep stale copy.
+                    entry.failure = failure.as_ref().map(PersistedToolFailure::from);
+                    // Persist the (capped) result text so the rehydrated
+                    // timeline can show what the tool returned, matching the
+                    // live `tool_result` socket payload.
+                    entry.output = cap_persisted_output(output);
                 }
                 if self.state.active_tool.is_some() {
                     self.state.active_tool = None;
@@ -193,6 +240,8 @@ impl TurnStateMirror {
                         tool_calls: Vec::new(),
                         transcript: Vec::new(),
                     }),
+                    failure: None,
+                    output: None,
                 });
                 self.flush();
                 true
@@ -269,6 +318,8 @@ impl TurnStateMirror {
                             output_chars: None,
                             display_name: display_label.clone(),
                             detail: display_detail.clone(),
+                            failure: None,
+                            output: None,
                         });
                         // Mirror the call into the ordered transcript so the
                         // rehydrated thoughts interleave it at the right spot.
@@ -294,8 +345,10 @@ impl TurnStateMirror {
                 task_id,
                 call_id,
                 success,
+                output,
                 output_chars,
                 elapsed_ms,
+                failure,
                 ..
             } => {
                 if let Some(entry) = self.find_subagent_entry_mut(task_id) {
@@ -305,6 +358,7 @@ impl TurnStateMirror {
                         } else {
                             ToolTimelineStatus::Error
                         };
+                        let persisted_failure = failure.as_ref().map(PersistedToolFailure::from);
                         if let Some(call) = activity
                             .tool_calls
                             .iter_mut()
@@ -314,6 +368,10 @@ impl TurnStateMirror {
                             call.status = status;
                             call.elapsed_ms = Some(*elapsed_ms);
                             call.output_chars = Some(*output_chars);
+                            // Carry the child failure so a failed sub-agent row
+                            // keeps its explanation across a round-trip (#4459).
+                            call.failure = persisted_failure;
+                            call.output = cap_persisted_output(output);
                         }
                         // Keep the transcript's Tool item in lockstep so the
                         // rehydrated row shows the terminal status + timing.
@@ -399,6 +457,8 @@ impl TurnStateMirror {
                         detail: None,
                         source_tool_name: None,
                         subagent: None,
+                        failure: None,
+                        output: None,
                     });
                 }
                 false
@@ -417,12 +477,17 @@ impl TurnStateMirror {
                 self.flush();
                 true
             }
-            AgentProgress::TurnCostUpdated { .. } => {
-                // Cost updates don't change the turn-state snapshot
+            AgentProgress::TurnCostUpdated { .. } | AgentProgress::ModelCallCompleted { .. } => {
+                // Cost/usage updates don't change the turn-state snapshot
                 // shape (lifecycle / phase / active tool / etc.), so
                 // we just acknowledge them without flushing. Surfacing
                 // cost in the persisted snapshot would force a disk
                 // flush per LLM call — not worth it for telemetry.
+                false
+            }
+            AgentProgress::TurnContent { .. } => {
+                // Prompt/reply content is consumed by the tracing exporter, not
+                // the turn-state snapshot; nothing to mirror, no flush.
                 false
             }
         }

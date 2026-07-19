@@ -192,7 +192,9 @@ describe('Navigation — settings sub-panels', () => {
     expect(homeText).toBeTruthy();
 
     const hash = await browser.execute(() => window.location.hash);
-    expect(hash).toMatch(/^#\/home/);
+    // Home merged into the unified chat surface: navigateToHome() lands on
+    // #/chat (/home redirects there). Accept either.
+    expect(hash).toMatch(/^#\/(chat|home)/);
     console.log(`${LOG_PREFIX} N2.9: passed — home content: "${homeText}"`);
   });
 });

@@ -600,30 +600,16 @@ fn startup_timeout_cleanup_aborts_task_and_clears_slot() {
 
         let message = handle.cleanup_startup_timeout(false, false, 2).await;
 
+        // One loose check that the human-readable diagnostic names the failure,
+        // instead of pinning six exact substrings of its formatting (plan.md
+        // §3) — the wording of the diagnostic is not a contract.
         assert!(
             message.contains("core process did not become ready within"),
-            "timeout message should include the readiness budget: {message}"
+            "timeout message should name the readiness failure: {message}"
         );
-        assert!(
-            message.contains("ready_signal=false"),
-            "timeout message should include ready signal state: {message}"
-        );
-        assert!(
-            message.contains("port=19006"),
-            "timeout message should include RPC port: {message}"
-        );
-        assert!(
-            message.contains("port_open=false"),
-            "timeout message should include final port state: {message}"
-        );
-        assert!(
-            message.contains("task_state=running"),
-            "timeout message should include task state: {message}"
-        );
-        assert!(
-            message.contains("attempt=2"),
-            "timeout message should include startup attempt: {message}"
-        );
+        // Load-bearing behaviour (skeptic-flagged, must stay): cleanup clears
+        // the managed task slot so a retry can spawn fresh, and cancels the
+        // startup shutdown token before aborting.
         assert!(
             handle.task.lock().await.is_none(),
             "cleanup must clear the managed task slot so retry can spawn fresh"

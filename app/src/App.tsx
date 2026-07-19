@@ -11,6 +11,7 @@ import { PersistGate } from 'redux-persist/integration/react';
 
 import AppRoutes from './AppRoutes';
 import WebviewHost from './components/accounts/WebviewHost';
+import { AnalyticsPageTracker } from './components/analytics';
 import AnnouncementGate from './components/Announcement/AnnouncementGate';
 import AppBackground from './components/AppBackground';
 import AppUpdatePrompt from './components/AppUpdatePrompt';
@@ -29,6 +30,8 @@ import SecretPromptDialog from './components/mcp-setup/SecretPromptDialog';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
 import PersistRehydrationScreen from './components/PersistRehydrationScreen';
 import PttHotkeyManager from './components/PttHotkeyManager';
+import { AutomationHaltedBanner } from './components/safety/AutomationHaltedBanner';
+import { EmergencyStopButton } from './components/safety/EmergencyStopButton';
 import SecurityBanner from './components/SecurityBanner';
 import SettingsModal from './components/settings/modal/SettingsModal';
 import { resolveSettingsOverlay } from './components/settings/modal/settingsOverlay';
@@ -51,12 +54,12 @@ import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
 import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
 import ThemeProvider from './providers/ThemeProvider';
-import { trackPageView } from './services/analytics';
 import { startCoreHealthMonitor, stopCoreHealthMonitor } from './services/coreHealthMonitor';
 import {
   startInternetStatusListener,
   stopInternetStatusListener,
 } from './services/internetStatusListener';
+import { hydrateEmergencyState } from './services/safety/hydrateEmergencyState';
 import {
   hideWebviewAccount,
   startWebviewAccountService,
@@ -149,6 +152,7 @@ function App() {
                       <Router>
                         <CommandProvider>
                           <ServiceBlockingGate>
+                            <AnalyticsPageTracker />
                             <AppShell />
                             <SecurityBanner />
                             {!onMobile && <DictationHotkeyManager />}
@@ -231,11 +235,6 @@ export function AppShellDesktop() {
     navigate,
   ]);
 
-  // Track route changes as anonymous page views.
-  useEffect(() => {
-    trackPageView(location.pathname);
-  }, [location.pathname]);
-
   // Hide the active connected-app webview when we navigate away from the chat
   // surface. Provider CEF selection is intentionally route-independent; any
   // real route change clears that high-level selection so the native view
@@ -260,6 +259,16 @@ export function AppShellDesktop() {
   // the core is ready (once per boot). Extracted to a hook so it's testable.
   useNotchBootSync(isBootstrapping);
 
+  // Boot hydration: read the authoritative halt state from the core once on
+  // mount so the UI reflects any halt that was engaged before this window
+  // opened (e.g. another tab, CLI, or a crash-recovery scenario). Errors are
+  // swallowed inside hydrateEmergencyState so a degraded core never blanks the shell.
+  useEffect(() => {
+    void hydrateEmergencyState(dispatch);
+    // Intentionally runs once on mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const navType = useNavigationType();
 
@@ -276,7 +285,11 @@ export function AppShellDesktop() {
   const onHiddenChromePath = ['/', '/login'].some(
     path => location.pathname === path || location.pathname.startsWith(`${path}/`)
   );
-  const chromeless = !token || onOnboardingRoute || onHiddenChromePath;
+  // The workflow graph canvas (`/flows/:id`, `/flows/draft`) owns the full
+  // viewport for a focused builder — no app sidebar. The `/flows` list (and its
+  // in-page Runs / Discoveries sub-views on `?view=`) keep their chrome.
+  const onWorkflowCanvas = location.pathname.startsWith('/flows/');
+  const chromeless = !token || onOnboardingRoute || onHiddenChromePath || onWorkflowCanvas;
 
   // Desktop Settings is a modal overlay (the backgroundLocation pattern): when
   // the URL is a settings path we keep rendering the page *behind* it
@@ -291,11 +304,22 @@ export function AppShellDesktop() {
 
   const content = (
     <div ref={scrollRef} className="relative h-full overflow-y-auto">
+      {/* Automation halt banner — renders at the top of the content area when
+          emergency stop is engaged. Always visible during automation sessions. */}
+      <AutomationHaltedBanner />
       <GlobalUpsellBanner />
       <AppRoutes location={baseLocation} />
       {activeProviderAccount && !accountsOverlayOpen && (
         <div className="absolute inset-0 z-30">
+          {/* key on the account id so switching provider accounts fully
+              unmounts the previous host (running its cleanup → hideWebviewAccount)
+              and mounts a fresh one, instead of React reusing one instance with
+              new props. Guarantees deterministic hide-old-before-show-new
+              ordering and stops a deselected provider's CEF view from bleeding
+              into the newly-selected account's slot on rapid rail switches
+              (#4421). */}
           <WebviewHost
+            key={activeProviderAccount.id}
             accountId={activeProviderAccount.id}
             provider={activeProviderAccount.provider}
           />
@@ -324,6 +348,17 @@ export function AppShellDesktop() {
             exhaustion). Mounted outside the routes so entries survive route
             changes and background-job completion. */}
         <UserErrorCenter />
+        {/* Emergency Stop — persistent safety control pinned to the top-right,
+            clear of the chat composer (bottom) and the sidebar (left); the
+            macOS traffic lights sit top-left, so the top-right stays free. The
+            button hides itself while halted (the AutomationHaltedBanner's
+            Resume takes over). Only shown when the shell chrome is visible
+            (i.e. the user is authenticated and past onboarding). */}
+        {!chromeless && (
+          <div className="fixed top-3 right-4 z-50">
+            <EmergencyStopButton />
+          </div>
+        )}
         {/* Hidden Remotion-driven producer for the Meet camera. Mounts a
             640×480 JPEG frame stream to the Rust frame bus while a meet
             call is active; idle no-op otherwise. See

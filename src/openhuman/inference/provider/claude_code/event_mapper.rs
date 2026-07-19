@@ -280,6 +280,8 @@ fn parse_usage(v: &Value) -> UsageInfo {
         output_tokens: n("output_tokens"),
         context_window: 0,
         cached_input_tokens: n("cache_read_input_tokens"),
+        cache_creation_tokens: n("cache_creation_input_tokens"),
+        reasoning_tokens: 0,
         charged_amount_usd: 0.0,
     }
 }

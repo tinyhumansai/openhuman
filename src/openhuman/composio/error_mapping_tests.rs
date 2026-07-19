@@ -39,8 +39,7 @@ fn formats_gmail_insufficient_scope_as_missing_permissions_not_disconnected() {
     );
     assert!(mapped.contains("[composio:error:insufficient_scope]"));
     assert!(mapped.contains("connected gmail account is missing required permissions"));
-    assert!(mapped.contains("Settings"));
-    assert!(mapped.contains("Connections"));
+    assert!(mapped.contains("Connections → gmail"));
     assert!(mapped.contains("gmail"));
     assert!(!mapped.contains("not connected"));
     assert!(!mapped.contains("Settings → Skills"));
@@ -121,7 +120,7 @@ fn action_not_found_message_does_not_recommend_reauth() {
         "must not tell the user to reconnect a healthy connection: {mapped}"
     );
     assert!(
-        !mapped.contains("Settings → Connections"),
+        !mapped.contains("Connections →"),
         "must not show the re-auth CTA: {mapped}"
     );
 }
@@ -197,11 +196,7 @@ fn formats_trigger_permission_as_actionable_reconnect_guidance() {
         "expected toolkit branding: {mapped}"
     );
     assert!(
-        mapped.contains("Settings"),
-        "expected reconnect guidance: {mapped}"
-    );
-    assert!(
-        mapped.contains("Connections"),
+        mapped.contains("Connections → gmail"),
         "expected reconnect guidance: {mapped}"
     );
     assert!(

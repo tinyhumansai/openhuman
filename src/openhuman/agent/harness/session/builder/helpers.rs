@@ -1,7 +1,7 @@
 //! Utility helpers used during agent construction.
 
 use crate::openhuman::memory::Memory;
-use crate::openhuman::memory_tools::{ToolMemoryRule, ToolMemoryStore};
+use crate::openhuman::memory_tools::{tool_memory_store, ToolMemoryRule};
 use std::sync::Arc;
 
 /// (#1400) Best-effort synchronous prefetch of eager tool-scoped rules.
@@ -33,7 +33,7 @@ pub(super) fn prefetch_tool_memory_rules_blocking(
     let tool_names = tool_names.to_vec();
     tokio::task::block_in_place(|| {
         handle.block_on(async move {
-            let store = ToolMemoryStore::new(memory);
+            let store = tool_memory_store(memory);
             match store.rules_for_prompt(&tool_names).await {
                 Ok(grouped) => {
                     let mut flat: Vec<_> = grouped.into_values().flatten().collect();

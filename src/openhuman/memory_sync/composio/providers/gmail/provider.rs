@@ -9,11 +9,7 @@
 //!   4. Run [`ComposioProvider::post_process_action_result`] (bounded
 //!      HTML→text, normalise, sanitise) on the page so the LLM-facing chunk
 //!      content is cleaned, not raw.
-//!   5. Filter against `synced_ids` for an early-stop optimisation,
-//!      then ingest the new messages into the memory tree via
-//!      [`super::ingest::ingest_page_into_memory_tree`] — same pipeline
-//!      the standalone `gmail-backfill-3d` binary uses, mirroring the
-//!      Slack provider's `ingest_chat` pattern.
+//!   5. Delegate incremental filtering and document ingestion to tinycortex.
 //!   6. Paginate (up to budget) until no more results or all items in the
 //!      page are already synced.
 //!   7. Advance the cursor and save state.
@@ -25,10 +21,9 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::source::run_gmail_sync;
 use crate::openhuman::memory_sync::composio::providers::{
     pick_str, resolve_sync_interval_secs, ComposioProvider, CuratedTool, ProviderContext,
-    ProviderUserProfile, SyncOutcome, SyncReason,
+    ProviderUserProfile,
 };
 
 pub(super) const ACTION_GET_PROFILE: &str = "GMAIL_GET_PROFILE";
@@ -154,10 +149,6 @@ impl ComposioProvider for GmailProvider {
     /// `run_sync`; the Gmail-specific primitives — the account-email preamble,
     /// server-side `after:` depth window, adaptive page ceiling, all-synced
     /// stop, and batch ingest — live in [`super::source`].
-    async fn sync(&self, ctx: &ProviderContext, reason: SyncReason) -> Result<SyncOutcome, String> {
-        run_gmail_sync(ctx, reason).await
-    }
-
     async fn on_trigger(
         &self,
         ctx: &ProviderContext,
@@ -173,7 +164,16 @@ impl ComposioProvider for GmailProvider {
         if trigger.eq_ignore_ascii_case("GMAIL_NEW_GMAIL_MESSAGE")
             || trigger.eq_ignore_ascii_case("GMAIL_NEW_MESSAGE")
         {
-            if let Err(e) = self.sync(ctx, SyncReason::Manual).await {
+            let Some(connection_id) = ctx.connection_id.as_deref() else {
+                return Err("[composio:gmail] trigger missing connection_id".to_string());
+            };
+            if let Err(e) = crate::openhuman::tinycortex::run_composio_connection(
+                "gmail",
+                connection_id,
+                ctx.config.as_ref(),
+            )
+            .await
+            {
                 tracing::warn!(
                     error = %e,
                     "[composio:gmail] trigger-driven sync failed (non-fatal)"

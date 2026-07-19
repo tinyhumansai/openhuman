@@ -90,10 +90,10 @@ impl Tool for ScheduleTool {
         // (create/add/once/cancel/remove/pause/resume) persist or remove a
         // scheduled job and must go through the ApprovalGate
         // (GHSA-f46p-6vf9-64mm).
-        match args.get("action").and_then(|v| v.as_str()) {
-            Some("list") | Some("get") => false,
-            _ => true,
-        }
+        !matches!(
+            args.get("action").and_then(|v| v.as_str()),
+            Some("list") | Some("get")
+        )
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {

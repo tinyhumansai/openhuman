@@ -67,6 +67,13 @@ pub struct ComposioActionTool {
     /// Composio connection. Used when the sub-agent is spawned for a
     /// particular account (e.g. "send from my work Gmail").
     connection_id: Option<String>,
+    /// Per-turn contract gate (#4853). On the first call to this action the
+    /// gate surfaces the action's FULL live input schema/description so the
+    /// model composes well-formed arguments (e.g. correctly-quoted Gmail
+    /// queries) instead of guessing from the thin spawn-time schema; the retry
+    /// executes normally. Held per tool instance, which lives for one
+    /// `integrations_agent` spawn, so "seen" is scoped to that turn.
+    gate: super::contract_gate::ContractGate,
 }
 
 impl ComposioActionTool {
@@ -93,6 +100,7 @@ impl ComposioActionTool {
             description,
             parameters,
             connection_id,
+            gate: super::contract_gate::ContractGate::new(),
         }
     }
 }
@@ -184,6 +192,52 @@ impl Tool for ComposioActionTool {
             }
         }
 
+        // [#1710 Wave 4 / #4853] Reload the live config snapshot ONCE, up front,
+        // and use it for BOTH the contract-gate lookup and dispatch. A mid-session
+        // `composio.mode` / credential / workspace change must route the gate's
+        // live-catalog fetch and the actual execution through the SAME config;
+        // consulting the captured spawn-time `self.config` here would let the gate
+        // resolve (or skip) a contract against stale routing while dispatch used
+        // fresh routing. Anchored to this tool's original config path rather than
+        // re-resolving process-global `OPENHUMAN_WORKSPACE` (the tool is scoped to
+        // the user/workspace it was created for).
+        let live_config =
+            match config_rpc::reload_config_snapshot_with_timeout(self.config.as_ref()).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        tool = %self.action_name,
+                        error = %e,
+                        "[composio] per-action execute: load_config failed"
+                    );
+                    return Ok(ToolResult::error(format!(
+                        "{}: failed to load live config: {e}",
+                        self.action_name
+                    )));
+                }
+            };
+
+        // Contract gate (#4853): the per-action tool is built from the thin
+        // spawn-time `list_tools` schema (often `{"type":"object"}` with no
+        // field descriptions), so the model guesses argument formats — most
+        // visibly sending unquoted Gmail `query` strings that return zero
+        // results. On the first call this turn, surface the action's FULL live
+        // contract (input schema + description) as a recoverable tool error and
+        // let the retry — now with the schema in context — execute. Degrades to
+        // a normal execute whenever the contract can't be resolved (see
+        // `contract_gate::consult`), so an unconfigured/offline client never
+        // blocks the action. Uses `live_config` so gate routing matches dispatch.
+        match super::contract_gate::consult(&self.gate, &live_config, &self.action_name).await {
+            super::contract_gate::GateDecision::Surface(contract) => {
+                tracing::info!(
+                    tool = %self.action_name,
+                    "[composio][contract-gate] returning full contract before first execute"
+                );
+                return Ok(ToolResult::error(contract));
+            }
+            super::contract_gate::GateDecision::Proceed => {}
+        }
+
         // Inject `timeZone` / `singleEvents` defaults for Google
         // Calendar list slugs (issue #1714). The per-action surface is
         // the spawn-time tool an integrations sub-agent picks when it
@@ -202,31 +256,11 @@ impl Tool for ComposioActionTool {
             &iana,
         );
 
-        // Resolve the client through the mode-aware factory on every
-        // call so a direct-mode toggle takes effect immediately
-        // (#1710). The pre-baked-client variant of this code routed all
-        // executions through the backend tinyhumans tenant regardless
-        // of mode — silently breaking direct mode for tool execution.
-        // [#1710 Wave 4] Reload config fresh per execute so a mid-session
-        // `composio.mode` toggle takes effect at the very next tool call.
-        // Anchor the reload to this tool's original config path rather
-        // than re-resolving process-global `OPENHUMAN_WORKSPACE`; the
-        // tool is scoped to the user/workspace it was created for.
-        let live_config =
-            match config_rpc::reload_config_snapshot_with_timeout(self.config.as_ref()).await {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!(
-                        tool = %self.action_name,
-                        error = %e,
-                        "[composio] per-action execute: load_config failed"
-                    );
-                    return Ok(ToolResult::error(format!(
-                        "{}: failed to load live config: {e}",
-                        self.action_name
-                    )));
-                }
-            };
+        // Resolve the client through the mode-aware factory on every call so a
+        // direct-mode toggle takes effect immediately (#1710), reusing the
+        // `live_config` snapshot reloaded above so the gate lookup and this
+        // dispatch share identical routing. The pre-baked-client variant routed
+        // all executions through the backend tinyhumans tenant regardless of mode.
         let kind = match create_composio_client(&live_config) {
             Ok(kind) => kind,
             Err(e) => {
@@ -486,6 +520,77 @@ mod tests {
         assert!(
             !msg.contains("strict read-only"),
             "unset sandbox must never trigger the gate, got: {msg}"
+        );
+    }
+
+    // Seeds the flows/tinyflows live-catalog cache, so it only builds with the
+    // `flows` feature on (the gate degrades to a no-op when flows is off).
+    #[cfg(feature = "flows")]
+    #[tokio::test]
+    async fn contract_gate_surfaces_full_contract_then_proceeds_on_retry() {
+        // Regression for #4853: the FIRST per-action execute this turn must
+        // return the action's FULL live contract (so the model composes a
+        // well-formed query) instead of running with the thin spawn-time
+        // schema; the retry then proceeds to real dispatch. A unique toolkit is
+        // seeded so this is deterministic and never touches the network.
+        use crate::openhuman::config::TEST_ENV_LOCK;
+        use crate::openhuman::tinyflows::caps::{seed_live_catalog_cache, ToolContract};
+        let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let toolkit = "cgateexec";
+        let slug = "CGATEEXEC_FETCH_ITEMS";
+        seed_live_catalog_cache(
+            toolkit,
+            vec![ToolContract {
+                slug: slug.to_string(),
+                toolkit: toolkit.to_string(),
+                description: Some("Search items. Quote multi-word phrases.".to_string()),
+                required_args: vec!["query".to_string()],
+                input_schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": { "query": { "type": "string" } },
+                    "required": ["query"]
+                })),
+                output_fields: Vec::new(),
+                output_schema: None,
+                primary_array_path: None,
+                is_curated: false,
+            }],
+        );
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
+        let mut config = Config::default();
+        config.config_path = tmp.path().join("config.toml");
+        config.workspace_dir = tmp.path().join("workspace");
+        config.save().await.expect("save fake config to disk");
+
+        let t = ComposioActionTool::new(
+            Arc::new(config),
+            slug.to_string(),
+            "search items".to_string(),
+            None,
+        );
+
+        // First call: gate surfaces the contract (recoverable tool error).
+        let first = t.execute(serde_json::json!({})).await.unwrap();
+        assert!(
+            first.is_error,
+            "first call must surface a recoverable error"
+        );
+        let first_msg = error_text(&first);
+        assert!(
+            first_msg.contains("Input JSON schema"),
+            "first call must carry the full contract, got: {first_msg}"
+        );
+
+        // Retry: gate proceeds; dispatch fails downstream (no session token) but
+        // crucially NOT with the contract text — proving the gate did not block.
+        let second = t.execute(serde_json::json!({})).await.unwrap();
+        let second_msg = error_text(&second);
+        assert!(
+            !second_msg.contains("Input JSON schema"),
+            "retry must proceed past the gate to real dispatch, got: {second_msg}"
         );
     }
 

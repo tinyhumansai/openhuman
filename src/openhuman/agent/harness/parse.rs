@@ -1,9 +1,12 @@
+#[cfg(test)]
 use crate::openhuman::inference::provider::ToolCall;
+#[cfg(test)]
 use crate::openhuman::tools::Tool;
 use regex::Regex;
+use std::borrow::Cow;
 use std::sync::LazyLock;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct ParsedToolCall {
     pub name: String,
     pub arguments: serde_json::Value,
@@ -13,10 +16,6 @@ pub(crate) struct ParsedToolCall {
     pub id: Option<String>,
 }
 
-/// Find a tool by name in the registry.
-pub(crate) fn find_tool<'a>(tools: &'a [Box<dyn Tool>], name: &str) -> Option<&'a dyn Tool> {
-    tools.iter().find(|t| t.name() == name).map(|t| t.as_ref())
-}
 pub(crate) fn parse_arguments_value(raw: Option<&serde_json::Value>) -> serde_json::Value {
     match raw {
         Some(serde_json::Value::String(s)) => serde_json::from_str::<serde_json::Value>(s)
@@ -47,6 +46,7 @@ fn first_args_by_keys(obj: &serde_json::Value) -> serde_json::Value {
     parse_arguments_value(None)
 }
 
+#[cfg(test)]
 pub(crate) fn parse_tool_call_value(value: &serde_json::Value) -> Option<ParsedToolCall> {
     // Default to the permissive (tagged) behaviour: callers that reach a
     // value through an explicit tool-call marker (`tool_calls` array,
@@ -181,6 +181,72 @@ pub(crate) fn matching_tool_call_close_tag(open_tag: &str) -> Option<&'static st
         "<invoke>" => Some("</invoke>"),
         _ => None,
     }
+}
+
+/// A tool_call-family tag — `<tool_call>`, `<toolcall>`, `<tool-call>` — in ANY
+/// open/close variant, tolerating sentinel-token pipes, a slash, and whitespace
+/// leaked into the markers (`<|tool_call>`, `<tool_call|>`, `<|tool_call|>`,
+/// `</tool_call|>`, …). Deliberately excludes `<tool_calls>` (plural JSON key)
+/// and `<invoke …>` (its own attribute parser). Used only to *locate* tags;
+/// open/close is decided by pairing, not by this pattern.
+static TOOL_CALL_TAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)<[|/\s]*tool[_-]?call[|/\s]*>").unwrap());
+
+/// Repair `<tool_call>` markers a weak model garbled by leaking its native
+/// `<|…|>` sentinel-token pipes into the tags — e.g. `<|tool_call>call:{…}<tool_call|>`
+/// instead of `<tool_call>{…}</tool_call>`. Such shapes match no grammar, so the
+/// whole call is dropped as narrative text and the tool never runs (observed
+/// with a small Composio-toolkit sub-agent).
+///
+/// Format-agnostic by construction: find every tool_call-family tag (any
+/// pipe/slash garble) via [`TOOL_CALL_TAG_RE`] and pair them positionally —
+/// 1st = open, 2nd = close, 3rd = open, … — rewriting each pair to canonical
+/// `<tool_call>BODY</tool_call>` (and stripping a leading `call:` the model
+/// sometimes emits). This sidesteps the unreliable per-tag open/close guess a
+/// string-replace map needs. A trailing unpaired tag is left verbatim. Cheap
+/// `Borrowed` no-op unless a *piped* tag is actually present, so well-formed
+/// output — which the base parser already handles — and P-Format pipe args are
+/// untouched.
+fn normalize_garbled_tool_call_tags(s: &str) -> Cow<'_, str> {
+    // Garbling always leaks a `|` into a tag; no `|` anywhere → nothing to do.
+    if !s.contains('|') {
+        return Cow::Borrowed(s);
+    }
+    let tags: Vec<(usize, usize)> = TOOL_CALL_TAG_RE
+        .find_iter(s)
+        .map(|m| (m.start(), m.end()))
+        .collect();
+    // Need at least one open/close pair, and at least one tag must actually be
+    // garbled (contain a pipe) — otherwise the base parser handles it verbatim,
+    // and P-Format `name[a|b]` args (pipes in the BODY, not the tags) are left
+    // alone.
+    if tags.len() < 2 || !tags.iter().any(|&(a, b)| s[a..b].contains('|')) {
+        return Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut cursor = 0usize;
+    for pair in tags.chunks_exact(2) {
+        let (open_start, open_end) = pair[0];
+        let (close_start, close_end) = pair[1];
+        out.push_str(&s[cursor..open_start]); // text before the open tag, verbatim
+        out.push_str("<tool_call>");
+        out.push_str(strip_call_prefix(&s[open_end..close_start]));
+        out.push_str("</tool_call>");
+        cursor = close_end;
+    }
+    // Trailing text, plus any final unpaired tag, verbatim.
+    out.push_str(&s[cursor..]);
+    Cow::Owned(out)
+}
+
+/// Strip a leading `call:` some models emit right after the open tag, plus
+/// surrounding whitespace, so the JSON / P-Format body underneath parses.
+fn strip_call_prefix(body: &str) -> &str {
+    let trimmed = body.trim();
+    trimmed
+        .strip_prefix("call:")
+        .map(str::trim_start)
+        .unwrap_or(trimmed)
 }
 
 /// `<invoke` prefix shared by the bare (`<invoke>`) and Claude-native
@@ -500,6 +566,8 @@ pub(crate) fn parse_glm_style_tool_calls(
 ///
 /// Also supports JSON with `tool_calls` array from OpenAI-format responses.
 pub(crate) fn parse_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) {
+    let normalized = normalize_garbled_tool_call_tags(response);
+    let response = normalized.as_ref();
     let mut text_parts = Vec::new();
     let mut calls = Vec::new();
     let mut remaining = response;
@@ -709,6 +777,108 @@ pub(crate) fn parse_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) 
     (text_parts.join("\n"), calls)
 }
 
+/// P-Format-aware wrapper over [`parse_tool_calls`] (issue #4465).
+///
+/// The migrated tinyagents parse path
+/// (`crate::openhuman::tinyagents::model`) kept the XML/JSON/markdown/GLM
+/// grammars but dropped the legacy **P-Format** positional grammar
+/// (`<tool_call>name[arg1|arg2]</tool_call>`) — even though `PFormat` is the
+/// default [`ToolCallFormat`](crate::openhuman::context::prompt::ToolCallFormat)
+/// and ~10 builtin agent prompts still *teach* the `name[a|b]` form. A model
+/// that followed its own instructions therefore emitted calls that
+/// [`parse_tool_calls`] logged as "malformed `<tool_call>` JSON" and silently
+/// dropped, so the turn continued as if no tool was called.
+///
+/// This restores parity by walking the `<tool_call>`-family tags and, for each
+/// tag body, **preferring** the registry-driven P-Format parse
+/// ([`pformat::parse_call`](crate::openhuman::agent::pformat::parse_call)) and
+/// **falling back** to the JSON entry the canonical parser produced at the same
+/// ordinal position — the exact per-tag selection the legacy
+/// `PFormatToolDispatcher` performed. This makes it a strict superset of
+/// [`parse_tool_calls`]:
+///
+/// - An **empty** `registry` (native/JSON agents advertise no positional
+///   layout, or no tools at all) short-circuits to [`parse_tool_calls`], so
+///   nothing changes for non-PFormat callers.
+/// - A tag body that is not a valid `name[...]` positional call (e.g. a JSON
+///   `{"name":..}` body, or an unregistered tool name) leaves
+///   [`pformat::parse_call`](crate::openhuman::agent::pformat::parse_call)
+///   returning `None`, so the canonical JSON entry is used unchanged.
+pub(crate) fn parse_tool_calls_with_pformat(
+    response: &str,
+    registry: &crate::openhuman::agent::pformat::PFormatRegistry,
+) -> (String, Vec<ParsedToolCall>) {
+    let normalized = normalize_garbled_tool_call_tags(response);
+    let response = normalized.as_ref();
+    // Canonical parse first: narrative text + JSON/XML/markdown/GLM calls.
+    let (narrative, json_calls) = parse_tool_calls(response);
+
+    // Without a registry there is no positional layout to reconstruct — keep
+    // the canonical result verbatim (behaviour-neutral for non-PFormat paths).
+    if registry.is_empty() {
+        return (narrative, json_calls);
+    }
+
+    // Walk the tags ourselves, preferring a P-Format body per tag and falling
+    // back to the JSON entry the canonical parser produced at the same ordinal
+    // position (both walk the same ordered set of `<tool_call>`-family tags).
+    let mut combined: Vec<ParsedToolCall> = Vec::new();
+    let mut json_idx = 0usize;
+    let mut remaining = response;
+
+    while !remaining.is_empty() {
+        let Some((open_idx, open_tag)) = find_first_tag(remaining, &TOOL_CALL_OPEN_TAGS) else {
+            break;
+        };
+        let Some(close_tag) = matching_tool_call_close_tag(open_tag) else {
+            break;
+        };
+        let after_open = &remaining[open_idx + open_tag.len()..];
+        let Some(close_idx) = after_open.find(close_tag) else {
+            break;
+        };
+        let body = &after_open[..close_idx];
+
+        if let Some((name, arguments)) =
+            crate::openhuman::agent::pformat::parse_call(body, registry)
+        {
+            // Do NOT log the arguments — a p-format body carries tool arguments
+            // that may contain user data (bug-report-2026-05-26 A3 parity).
+            tracing::debug!(
+                tool = name.as_str(),
+                "[agent_parse] recovered P-Format tool call (name[arg|arg]) the JSON pass dropped"
+            );
+            combined.push(ParsedToolCall {
+                name,
+                arguments,
+                id: None,
+            });
+            // Do NOT advance `json_idx` here: a P-Format tag is one the JSON pass
+            // could not parse, so `parse_tool_calls` produced no `json_calls`
+            // entry for it. Advancing would shift every later JSON tag onto the
+            // wrong `json_calls` index and silently drop a real JSON call.
+        } else if let Some(json_call) = json_calls.get(json_idx) {
+            combined.push(json_call.clone());
+            json_idx += 1;
+        }
+
+        remaining = &after_open[close_idx + close_tag.len()..];
+    }
+
+    if combined.is_empty() {
+        // No `<tool_call>` tag recovered a positional call — the canonical
+        // result already covers JSON/XML/markdown/GLM grammars.
+        return (narrative, json_calls);
+    }
+
+    tracing::debug!(
+        parsed_tool_calls = combined.len(),
+        "[agent_parse] P-Format-aware parse produced combined tool-call set"
+    );
+    (narrative, combined)
+}
+
+#[cfg(test)]
 pub(crate) fn parse_structured_tool_calls(tool_calls: &[ToolCall]) -> Vec<ParsedToolCall> {
     tool_calls
         .iter()
@@ -730,6 +900,7 @@ pub(crate) fn parse_structured_tool_calls(tool_calls: &[ToolCall]) -> Vec<Parsed
 /// thinking mode rejects an `assistant` turn that carries `tool_calls` if its
 /// `reasoning_content` is not passed back (Sentry TAURI-RUST-4KB). Omitted from
 /// the JSON when empty, so non-reasoning models are unaffected.
+#[cfg(test)]
 pub(crate) fn build_native_assistant_history(
     text: &str,
     reasoning_content: Option<&str>,
@@ -784,6 +955,7 @@ pub(crate) fn build_native_assistant_history(
     entry.to_string()
 }
 
+#[cfg(test)]
 pub(crate) fn build_assistant_history_with_tool_calls(
     text: &str,
     tool_calls: &[ToolCall],
@@ -809,6 +981,7 @@ pub(crate) fn build_assistant_history_with_tool_calls(
 }
 
 /// Convert a tool registry to OpenAI function-calling format for native tool support.
+#[cfg(test)]
 pub(crate) fn tools_to_openai_format(tools_registry: &[Box<dyn Tool>]) -> Vec<serde_json::Value> {
     tools_registry
         .iter()

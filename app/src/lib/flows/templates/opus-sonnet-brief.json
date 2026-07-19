@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "name": "Research brief (Opus plans, Sonnet drafts)",
+  "nodes": [
+    {
+      "id": "trigger",
+      "kind": "trigger",
+      "name": "Run manually with a topic",
+      "config": { "trigger_kind": "manual" },
+      "ports": [],
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "planner",
+      "kind": "agent",
+      "name": "Plan the brief (reasoning tier)",
+      "config": {
+        "model": "reasoning-v1",
+        "input_context": "=run.trigger",
+        "prompt": "You are a research lead. The data above is the trigger payload (look for a `topic` field; if there is none, treat this as a request for a general research brief). Draft a concise research plan (3-5 steps) and pick one distinctive angle for the brief.",
+        "output_parser": {
+          "schema": {
+            "type": "object",
+            "required": ["plan", "angle"],
+            "properties": { "plan": { "type": "string" }, "angle": { "type": "string" } }
+          }
+        }
+      },
+      "ports": [],
+      "position": { "x": 0, "y": 160 }
+    },
+    {
+      "id": "drafter",
+      "kind": "agent",
+      "name": "Draft the brief (chat tier)",
+      "config": {
+        "model": "chat-v1",
+        "input_context": "=nodes.planner.item.json",
+        "prompt": "The data above is the plan and angle from the research lead (fields `plan` and `angle`). Using them, write a polished research brief (~300 words)."
+      },
+      "ports": [],
+      "position": { "x": 0, "y": 320 }
+    },
+    {
+      "id": "shape",
+      "kind": "transform",
+      "name": "Shape the result",
+      "config": {
+        "set": {
+          "topic": "=run.trigger.topic",
+          "plan": "=nodes.planner.item.json.plan",
+          "draft": "=nodes.drafter.item.text"
+        }
+      },
+      "ports": [],
+      "position": { "x": 0, "y": 480 }
+    }
+  ],
+  "edges": [
+    { "from_node": "trigger", "from_port": "main", "to_node": "planner", "to_port": "main" },
+    { "from_node": "planner", "from_port": "main", "to_node": "drafter", "to_port": "main" },
+    { "from_node": "drafter", "from_port": "main", "to_node": "shape", "to_port": "main" }
+  ]
+}

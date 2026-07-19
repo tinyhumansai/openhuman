@@ -1,3 +1,4 @@
+import createDebug from 'debug';
 import { useEffect, useLayoutEffect, useRef } from 'react';
 
 /**
@@ -17,12 +18,23 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
  * If the user manually scrolls up past the threshold we stop sticking, so they
  * can read history without being yanked down. Scrolling back to the bottom
  * re-engages stickiness on the next render.
+ *
+ * Root-cause note (copilot "chat gets stuck" bug): a naive `useEffect` that
+ * unconditionally calls `scrollTo(bottom)` on every dependency change (new
+ * message, streamed token, tool-timeline entry, …) fights a user who has
+ * scrolled up to read — it snaps them back down mid-read, which reads as the
+ * scroll container "locking up". This hook is the fix for that pattern:
+ * auto-scroll only fires while `stickingRef` is true (i.e. the user was
+ * already at/near the bottom), so scrolling up always disengages it.
  */
+
+const log = createDebug('app:hooks:stick-to-bottom');
 
 const STICK_THRESHOLD_PX = 80;
 
-function isNearBottom(el: HTMLElement): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_THRESHOLD_PX;
+/** Pure, independently-testable "is this container at/near the bottom?" check. */
+export function isNearBottom(el: HTMLElement, thresholdPx: number = STICK_THRESHOLD_PX): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= thresholdPx;
 }
 
 function snapToBottom(el: HTMLElement) {
@@ -42,6 +54,12 @@ export function useStickToBottom(
   // Tracks whether we should keep auto-scrolling. Flips to false when the user
   // scrolls up away from the bottom; flips back when they return.
   const stickingRef = useRef(true);
+  // Mirrors `threadKey` for the mount-only resize-observer effect's log lines
+  // below — kept current every render so the logs stay accurate even though
+  // that effect itself intentionally doesn't re-run on a thread change (the
+  // MutationObserver already re-binds the ResizeObserver on subtree swaps).
+  const threadKeyRef = useRef(threadKey);
+  threadKeyRef.current = threadKey;
 
   // ── Snap on message / thread / route changes ─────────────────────────────
   useLayoutEffect(() => {
@@ -51,18 +69,40 @@ export function useStickToBottom(
     }
     // Record the active thread on every render (including empty ones) so
     // the A → empty B → A navigation pattern is recognised as a thread
-    // change when A's messages re-arrive.
+    // change when A's messages re-arrive. Normalize `undefined` to `null`
+    // on BOTH sides of the comparison below — comparing the normalized
+    // previous value against a raw `threadKey` that happens to be
+    // `undefined` (rather than `null`) would make `threadChanged` true on
+    // every single run (`null !== undefined`), forcing an unwanted snap on
+    // every re-render for any caller whose "no thread yet" state is
+    // `undefined` instead of `null`. The param type explicitly allows
+    // `undefined`, so this normalization has to be symmetric.
     const previousThread = lastScrolledThreadRef.current;
-    lastScrolledThreadRef.current = threadKey ?? null;
+    const normalizedThreadKey = threadKey ?? null;
+    lastScrolledThreadRef.current = normalizedThreadKey;
     if (messages.length === 0) return;
     const container = containerRef.current;
     if (!container) return;
 
-    const threadChanged = previousThread !== threadKey;
+    const threadChanged = previousThread !== normalizedThreadKey;
     const firstScroll = !didInitialScrollRef.current;
     if (firstScroll || threadChanged || stickingRef.current) {
+      log(
+        'layout-effect: snap fired (firstScroll=%s threadChanged=%s sticking=%s) count=%d thread=%s',
+        firstScroll,
+        threadChanged,
+        stickingRef.current,
+        messages.length,
+        normalizedThreadKey ?? 'null'
+      );
       snapToBottom(container);
       stickingRef.current = true;
+    } else {
+      log(
+        'layout-effect: snap skipped (user scrolled up) count=%d thread=%s',
+        messages.length,
+        normalizedThreadKey ?? 'null'
+      );
     }
     didInitialScrollRef.current = true;
   }, [messages, threadKey, resetKey]);
@@ -72,7 +112,11 @@ export function useStickToBottom(
     const container = containerRef.current;
     if (!container) return;
     const onScroll = () => {
-      stickingRef.current = isNearBottom(container);
+      const atBottom = isNearBottom(container);
+      if (atBottom !== stickingRef.current) {
+        log('scroll: sticking %s -> %s (isNearBottom=%s)', stickingRef.current, atBottom, atBottom);
+      }
+      stickingRef.current = atBottom;
     };
     container.addEventListener('scroll', onScroll, { passive: true });
     return () => container.removeEventListener('scroll', onScroll);
@@ -91,7 +135,13 @@ export function useStickToBottom(
 
     const resizeObserver = new ResizeObserver(() => {
       if (stickingRef.current) {
+        log('resize-observer: snap fired (sticking) thread=%s', threadKeyRef.current ?? 'null');
         snapToBottom(container);
+      } else {
+        log(
+          'resize-observer: snap skipped (user scrolled up) thread=%s',
+          threadKeyRef.current ?? 'null'
+        );
       }
     });
 

@@ -10,14 +10,15 @@ use crate::openhuman::agent::dispatcher::ToolDispatcher;
 use crate::openhuman::agent::harness::archivist::ArchivistHook;
 use crate::openhuman::agent::harness::definition::TriggerMemoryAgent;
 use crate::openhuman::agent::hooks::PostTurnHook;
-use crate::openhuman::agent::memory_loader::MemoryLoader;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::tool_policy::ToolPolicy;
+use crate::openhuman::agent_memory::memory_loader::MemoryLoader;
 use crate::openhuman::agent_tool_policy::ToolPolicySession;
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::context::ContextManager;
-use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, Provider};
+use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage};
 use crate::openhuman::memory::Memory;
+use crate::openhuman::tinyagents::TurnModelSource;
 use crate::openhuman::tools::{Tool, ToolSpec};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,7 +29,10 @@ use std::sync::Arc;
 /// executes tools based on model requests, and interacts with the memory
 /// system to maintain context across turns.
 pub struct Agent {
-    pub(super) provider: Arc<dyn Provider>,
+    /// The turn's model source — builds this agent's tiered crate `ChatModel`
+    /// set per turn (issue #4249, Phase 3 / Motion A). Replaces the raw
+    /// `Arc<dyn Provider>`; the harness names crate model types only.
+    pub(super) turn_model_source: TurnModelSource,
     /// Full tool registry. Sub-agents pull from this via
     /// [`ParentExecutionContext::all_tools`].
     pub(super) tools: Arc<Vec<Box<dyn Tool>>>,
@@ -46,22 +50,21 @@ pub struct Agent {
     pub(super) visible_tool_names: std::collections::HashSet<String>,
     pub(super) tool_policy_session: ToolPolicySession,
     pub(super) memory: Arc<dyn Memory>,
-    // `Arc` (not `Box`) so the turn engine's parser seam can hold a cheap clone
-    // of the dispatcher without borrowing the `Agent` (which the turn observer
-    // borrows mutably) — see `engine::DispatcherParser`.
+    // `Arc` (not `Box`) so the tinyagents turn path can hold a cheap clone of
+    // the dispatcher without borrowing the `Agent` while session state mutates.
     pub(super) tool_dispatcher: Arc<dyn ToolDispatcher>,
     pub(super) memory_loader: Box<dyn MemoryLoader>,
     pub(super) config: crate::openhuman::config::AgentConfig,
     pub(super) model_name: String,
     /// User-configured vision capability for [`Self::model_name`], evaluated at
     /// session build from `model_vision_enabled(&model, config)`. Surfaced to the
-    /// turn engine's image gate via the `current_model_vision` task-local so a
+    /// tinyagents image gate via the `current_model_vision` task-local so a
     /// custom/BYOK model the user flagged can forward images. Defaults to `false`.
     pub(super) model_vision: bool,
     pub(super) temperature: f64,
     pub(super) workspace_dir: std::path::PathBuf,
     pub(super) action_dir: std::path::PathBuf,
-    pub(super) workflows: Vec<crate::openhuman::workflows::Workflow>,
+    pub(super) workflows: Vec<crate::openhuman::skills::Workflow>,
     /// Agent workflows discovered at session start.
     pub(super) auto_save: bool,
     /// Last memory context loaded for the current turn. Stored so it can
@@ -69,13 +72,24 @@ pub struct Agent {
     pub(super) last_memory_context: Option<String>,
     /// Citation metadata collected from memory recall for the most recent turn.
     /// Consumed by web-channel delivery to render source chips in the UI.
-    pub(super) last_turn_citations: Vec<crate::openhuman::agent::memory_loader::MemoryCitation>,
+    pub(super) last_turn_citations:
+        Vec<crate::openhuman::agent_memory::memory_loader::MemoryCitation>,
     /// Holistic token/cost/context accounting for the most recent turn (parent +
     /// any sub-agents spawned during it). Consumed by web-channel delivery to
     /// surface session token/cost/context meters in the UI footer. `None` until
     /// the first turn completes.
     pub(super) last_turn_usage_totals:
         Option<crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage>,
+    /// Whether the most recent turn's tinyagents loop paused because it hit
+    /// `max_tool_iterations` (`TinyagentsTurnOutcome::hit_cap`), rather than
+    /// finishing naturally. `false` until the first turn completes, and reset
+    /// on every subsequent turn — so it only ever reflects the LAST turn, not
+    /// "any turn ever". Consumed by callers that run a single headless turn
+    /// via [`run_single`](super::runtime) (e.g. `flows_build`) and need to
+    /// distinguish "the agent paused mid-work" from "the agent asked a
+    /// question" or "the agent finished" — `run_single` only returns the
+    /// checkpoint/final text, with no other signal for which case occurred.
+    pub(super) last_turn_hit_cap: bool,
     pub(super) history: Vec<ConversationMessage>,
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) learning_enabled: bool,
@@ -175,11 +189,11 @@ pub struct Agent {
     pub(super) omit_memory_md: bool,
     /// Optional payload-summarizer wired in at agent-build time.
     /// Currently set only for the orchestrator session
-    /// (see [`super::builder`]). When `Some`, oversized tool results
-    /// produced by [`Agent::execute_tool_call`] are routed through the
-    /// summarizer sub-agent before they enter agent history.
+    /// (see [`super::builder`]). TinyAgents `ToolOutputMiddleware` uses this
+    /// when oversized tool results need summarizer-subagent compression before
+    /// they enter agent history.
     pub(super) payload_summarizer:
-        Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
+        Option<Arc<dyn crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer>>,
     /// Mirrors the agent definition's `trigger_memory_agent` policy.
     /// `Always` runs the dedicated memory retrieval agent once before
     /// the user's prompt is sent to this agent.
@@ -310,7 +324,7 @@ pub struct Agent {
 
 /// A builder for creating `Agent` instances with custom configuration.
 pub struct AgentBuilder {
-    pub(super) provider: Option<Arc<dyn Provider>>,
+    pub(super) turn_model_source: Option<TurnModelSource>,
     pub(super) tools: Option<Vec<Box<dyn Tool>>>,
     /// When set, restricts which tools the main agent sees/calls.
     pub(super) visible_tool_names: Option<std::collections::HashSet<String>>,
@@ -329,7 +343,7 @@ pub struct AgentBuilder {
     pub(super) temperature: Option<f64>,
     pub(super) workspace_dir: Option<std::path::PathBuf>,
     pub(super) action_dir: Option<std::path::PathBuf>,
-    pub(super) workflows: Option<Vec<crate::openhuman::workflows::Workflow>>,
+    pub(super) workflows: Option<Vec<crate::openhuman::skills::Workflow>>,
     /// Agent workflows to surface in the prompt. Populated from `load_workflows`
     /// at session start; defaults to empty when not explicitly set.
     pub(super) auto_save: Option<bool>,
@@ -356,7 +370,7 @@ pub struct AgentBuilder {
     /// [`super::builder::Agent::build_session_agent_inner`] sets this
     /// to a `SubagentPayloadSummarizer` instance.
     pub(super) payload_summarizer:
-        Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
+        Option<Arc<dyn crate::openhuman::tinyagents::payload_summarizer::PayloadSummarizer>>,
     /// Forwarded to [`Agent::trigger_memory_agent`] at build time.
     pub(super) trigger_memory_agent: Option<TriggerMemoryAgent>,
     /// Per-agent TokenJuice tool-output compression profile.
@@ -386,7 +400,7 @@ mod tests {
 
         assert_eq!(builder.learning_enabled, default_builder.learning_enabled);
         assert_eq!(builder.auto_save, default_builder.auto_save);
-        assert!(builder.provider.is_none());
+        assert!(builder.turn_model_source.is_none());
         assert!(builder.tools.is_none());
         assert!(builder.memory.is_none());
         assert!(builder.event_session_id.is_none());

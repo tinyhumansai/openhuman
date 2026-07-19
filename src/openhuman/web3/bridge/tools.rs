@@ -11,11 +11,23 @@ use crate::openhuman::web3::{execute_tool_schema, ops, to_tool_result};
 pub struct Web3BridgeQuoteTool;
 pub struct Web3BridgeExecuteTool;
 
+impl Default for Web3BridgeQuoteTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Web3BridgeQuoteTool {
     pub fn new() -> Self {
         Self
     }
 }
+impl Default for Web3BridgeExecuteTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Web3BridgeExecuteTool {
     pub fn new() -> Self {
         Self

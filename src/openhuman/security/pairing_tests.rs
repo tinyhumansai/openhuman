@@ -316,3 +316,23 @@ async fn lockout_returns_remaining_seconds() {
         "Remaining lockout should be ~{PAIR_LOCKOUT_SECS}s, got {err}s"
     );
 }
+
+#[test]
+async fn invalidate_code_closes_the_bind_window() {
+    let (guard, _) = PairingGuard::new(true, &[]);
+    let code = guard.pairing_code().unwrap().to_string();
+
+    // A non-/bind onboarding path (e.g. Telegram `/start`) finishes the
+    // one-time flow by invalidating the code directly.
+    guard.invalidate_code();
+
+    assert!(guard.pairing_code().is_none(), "code must be cleared");
+    // The old code can no longer pair — the window is closed.
+    assert!(
+        guard.try_pair(&code).await.unwrap().is_none(),
+        "invalidated code must not pair a later sender"
+    );
+    // Idempotent.
+    guard.invalidate_code();
+    assert!(guard.pairing_code().is_none());
+}

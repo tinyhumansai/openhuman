@@ -663,14 +663,19 @@ impl AutomateBackend for RealBackend {
         // `automation` provider knob is a follow-up (see plan §5); routing through
         // `summarization` keeps M1 free of Config-schema churn while still keeping
         // the chat model out of the loop.
-        let (provider, model) = crate::openhuman::inference::provider::create_chat_provider(
+        use tinyagents::harness::message::Message;
+        use tinyagents::harness::model::ModelRequest;
+        let model = crate::openhuman::inference::provider::create_chat_model(
             "summarization",
             &self.config,
+            0.0,
         )
         .map_err(|e| format!("fast-model provider unavailable: {e}"))?;
-        provider
-            .chat_with_system(Some(system), user, &model, 0.0)
+        let request = ModelRequest::new(vec![Message::system(system), Message::user(user)]);
+        model
+            .invoke(&(), request)
             .await
+            .map(|response| response.text())
             .map_err(|e| format!("fast-model call failed: {e}"))
     }
 
@@ -719,13 +724,14 @@ impl AutomateBackend for RealBackend {
         description: &str,
     ) -> Result<Option<(i32, i32)>, String> {
         // Use the main `chat` provider's vision model (per plan): reliable UI
-        // grounding, and the fallback only fires when AX is empty (rare).
-        let (provider, model) =
-            crate::openhuman::inference::provider::create_chat_provider("chat", &self.config)
+        // grounding, and the fallback only fires when AX is empty (rare). The
+        // crate `ChatModel` bakes the resolved model + temperature; the vision
+        // request pins temperature 0.0 itself.
+        let model =
+            crate::openhuman::inference::provider::create_chat_model("chat", &self.config, 0.0)
                 .map_err(|e| format!("vision provider unavailable: {e}"))?;
         let coords =
-            super::vision_click::locate_via_vision(&*provider, &model, screenshot, description)
-                .await?;
+            super::vision_click::locate_via_vision(&model, screenshot, description).await?;
         Ok(coords.map(|(px, py)| super::vision_click::image_to_screen(geom, px, py)))
     }
 

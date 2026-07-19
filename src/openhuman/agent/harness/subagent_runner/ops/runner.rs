@@ -10,19 +10,24 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::openhuman::agent::harness::agent_graph::{AgentTurnRequest, AgentTurnUsage};
 use crate::openhuman::agent::harness::definition::{
     validate_tier_transition, AgentDefinition, AgentDefinitionRegistry, AgentTier, IterationPolicy,
-    PromptSource,
+    PromptSource, SandboxMode as AgentSandboxMode,
 };
-use crate::openhuman::agent::harness::fork_context::{current_parent, ParentExecutionContext};
+use crate::openhuman::agent::harness::fork_context::{
+    current_parent, with_parent_context, ParentExecutionContext,
+};
 use crate::openhuman::agent::harness::subagent_runner::extract_tool::ExtractFromResultTool;
 use crate::openhuman::agent::harness::subagent_runner::handoff::ResultHandoffCache;
+use crate::openhuman::agent::harness::subagent_runner::subagent_iter_cap_with_autonomous_lift;
 use crate::openhuman::agent::harness::subagent_runner::tool_prep::{
     build_text_mode_tool_instructions, filter_tool_indices, is_subagent_spawn_tool,
     load_prompt_source, top_k_for_toolkit,
 };
 use crate::openhuman::agent::harness::subagent_runner::types::{
-    SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome,
+    SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome, SubagentRunStatus,
+    SubagentUsage,
 };
 use crate::openhuman::agent::harness::{
     current_spawn_depth, with_current_sandbox_mode, with_spawn_depth, MAX_SPAWN_DEPTH,
@@ -32,11 +37,14 @@ use crate::openhuman::context::prompt::{
 };
 use crate::openhuman::file_state::with_file_state_agent_id;
 use crate::openhuman::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
+use crate::openhuman::memory_tree::retrieval::{fast_retrieve, FastRetrieveOptions, QueryResponse};
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
+use tinyagents::harness::tool::SandboxMode as TinyagentsSandboxMode;
+use tinyagents::harness::workspace::WorkspaceDescriptor;
 
 use super::prompt::{append_subagent_role_contract, dedup_tool_specs_by_name};
 use super::provider::{
-    resolve_subagent_provider, user_is_signed_in_to_composio, LazyToolkitResolver,
+    resolve_subagent_source, user_is_signed_in_to_composio, LazyToolkitResolver,
 };
 
 /// Runtime spawn-hierarchy gate decision for one delegation hop.
@@ -61,7 +69,7 @@ use super::provider::{
 /// boot loader walk); a forbidden hop is logged and becomes a
 /// [`SubagentRunError::TierViolation`]. Logging lives here (rather than at the
 /// call site) so the deny path is exercised by this fn's unit tests.
-pub(crate) fn tier_gate_decision(
+pub(super) fn tier_gate_decision(
     parent_def: Option<&AgentDefinition>,
     child: &AgentDefinition,
     parent_agent_id: &str,
@@ -91,6 +99,197 @@ pub(crate) fn tier_gate_decision(
     Ok(())
 }
 
+/// Definition id of the pure-retrieval memory agent, reached from chat as the
+/// `retrieve_memory` delegate and from other agents as `call_memory_agent`.
+const AGENT_MEMORY_ID: &str = "agent_memory";
+
+/// How many deterministic hits the memory fast path returns (#4677).
+const MEMORY_FAST_PATH_LIMIT: usize = 8;
+
+/// Whether the deterministic memory fast path (#4677) is enabled. Default on;
+/// `OPENHUMAN_MEMORY_FAST_PATH=0` (or `false`/`no`/`off`) forces the full
+/// model-driven walk, e.g. to A/B the two paths without a rebuild.
+fn memory_fast_path_enabled() -> bool {
+    parse_memory_fast_path_enabled(std::env::var("OPENHUMAN_MEMORY_FAST_PATH").ok().as_deref())
+}
+
+/// Pure core of [`memory_fast_path_enabled`], kept env-free for deterministic
+/// unit testing.
+fn parse_memory_fast_path_enabled(env_value: Option<&str>) -> bool {
+    !matches!(
+        env_value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("0") | Some("false") | Some("no") | Some("off")
+    )
+}
+
+/// Render deterministic retrieval hits into a compact, citable memory-context
+/// block for the parent turn. Returns `None` when there are no hits, so the
+/// caller falls back to the model-driven walk (the empty/degraded case is
+/// #4655's territory and still benefits from the model's judgement).
+fn format_deterministic_memory_hits(resp: &QueryResponse) -> Option<String> {
+    use std::fmt::Write as _;
+    if resp.hits.is_empty() {
+        return None;
+    }
+    const PER_HIT_CHARS: usize = 600;
+    let mut out = format!(
+        "Retrieved {} relevant memor{} via deterministic memory search:\n",
+        resp.hits.len(),
+        if resp.hits.len() == 1 { "y" } else { "ies" }
+    );
+    for (i, hit) in resp.hits.iter().enumerate() {
+        let content = hit.content.trim();
+        let body: String = content.chars().take(PER_HIT_CHARS).collect();
+        let ellipsis = if content.chars().count() > PER_HIT_CHARS {
+            " …"
+        } else {
+            ""
+        };
+        let scope = if hit.tree_scope.trim().is_empty() {
+            "memory"
+        } else {
+            hit.tree_scope.trim()
+        };
+        let _ = writeln!(
+            out,
+            "{}. [{scope}] {body}{ellipsis} (relevance {:.2})",
+            i + 1,
+            hit.score
+        );
+    }
+    Some(out)
+}
+
+/// Truncate `output` in place to the definition's `max_result_chars` cap (when
+/// set), appending a `[...truncated]` marker. Char-count based (not byte-length)
+/// to avoid panicking on a multi-byte UTF-8 sequence at the boundary.
+///
+/// Shared by the normal sub-agent path and the deterministic memory fast path so
+/// both honour a definition's cap. `agent_memory` sets no cap today (its output
+/// is self-bounded at 8 hits × 600 chars), but routing the fast path through the
+/// same helper keeps the two paths from silently diverging if one is ever added
+/// (YellowSnnowmann review).
+fn apply_max_result_chars(output: &mut String, cap: Option<usize>, agent_id: &str) {
+    let Some(cap) = cap else { return };
+    let original_chars = output.chars().count();
+    if original_chars <= cap {
+        return;
+    }
+    tracing::debug!(
+        agent_id = %agent_id,
+        original_chars,
+        cap,
+        "[subagent_runner] truncating oversized result to max_result_chars cap"
+    );
+    let byte_offset = output
+        .char_indices()
+        .nth(cap)
+        .map(|(i, _)| i)
+        .unwrap_or(output.len());
+    output.truncate(byte_offset);
+    output.push_str("\n[...truncated]");
+}
+
+/// Deterministic fast path for the pure-retrieval [`AGENT_MEMORY_ID`] sub-agent
+/// (#4677).
+///
+/// `agent_memory` otherwise runs a model-driven walk (≤ its `max_iterations`)
+/// whose per-iteration LLM round-trips dominate turn latency at ~30–40s per call
+/// *even when data is present*. [`fast_retrieve`] (E2GraphRAG: query-entity +
+/// dense/semantic recall over the same memory tree, no LLM in the loop) returns
+/// the same hits in a single deterministic pass. When it finds data we return
+/// those hits directly; when the fast path is disabled, errors, or finds nothing
+/// we return `None` so the caller runs the full sub-agent unchanged.
+///
+/// # Relevance guard (Codex review)
+///
+/// We only short-circuit for an **entity-grounded** query — one that yields at
+/// least one canonical entity or salient topic. Without grounding, `fast_retrieve`
+/// falls back to a pure global-dense pass that reranks/truncates whatever
+/// summaries exist, so a vague query against a populated profile would surface
+/// unrelated top-k memories as a "completed" retrieval instead of letting the
+/// model-driven agent judge relevance (or emit "no relevant memory found").
+/// Grounded queries keep the fast path; ungrounded ones defer to the full agent.
+async fn try_deterministic_memory_retrieval(
+    task_prompt: &str,
+    definition: &AgentDefinition,
+    task_id: &str,
+    started: Instant,
+) -> Option<SubagentRunOutcome> {
+    let agent_id = definition.id.as_str();
+    if !memory_fast_path_enabled() {
+        return None;
+    }
+    let query = task_prompt.trim();
+    if query.is_empty() {
+        return None;
+    }
+    let config = match crate::openhuman::config::Config::load_or_init().await {
+        Ok(config) => config,
+        Err(e) => {
+            tracing::warn!(
+                task_id = %task_id,
+                error = %format!("{e:#}"),
+                "[subagent_runner] agent_memory fast-path config load failed — falling back to model walk (#4677)"
+            );
+            return None;
+        }
+    };
+    // Relevance guard (Codex review): require entity/topic grounding before we
+    // let a deterministic pass stand in for the model's relevance judgement. The
+    // extraction here is deterministic and cheap (regex, or one spaCy call);
+    // `fast_retrieve` repeats it internally, which is the same work its first
+    // model-driven tool call would have done.
+    if crate::openhuman::memory_tree::nlp::extract_query_entities(&config, query)
+        .await
+        .is_empty()
+    {
+        tracing::debug!(
+            task_id = %task_id,
+            "[subagent_runner] agent_memory fast-path skipped — ungrounded query (no entities/topics); deferring to model walk (#4677)"
+        );
+        return None;
+    }
+    let opts = FastRetrieveOptions {
+        limit: MEMORY_FAST_PATH_LIMIT,
+        ..FastRetrieveOptions::default()
+    };
+    let resp = match fast_retrieve(&config, query, opts).await {
+        Ok(resp) => resp,
+        Err(e) => {
+            tracing::warn!(
+                task_id = %task_id,
+                error = %format!("{e:#}"),
+                "[subagent_runner] agent_memory fast-path retrieval errored — falling back to model walk (#4677)"
+            );
+            return None;
+        }
+    };
+    let mut output = format_deterministic_memory_hits(&resp)?;
+    // Honour the definition's `max_result_chars` cap just like the model-driven
+    // path (YellowSnnowmann review). No-op for `agent_memory` (uncapped, and the
+    // block above is already self-bounded), but keeps the paths from diverging.
+    apply_max_result_chars(&mut output, definition.max_result_chars, agent_id);
+    tracing::info!(
+        task_id = %task_id,
+        hits = resp.hits.len(),
+        total = resp.total,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "[subagent_runner] agent_memory deterministic fast-path hit — skipped the model walk (#4677)"
+    );
+    Some(SubagentRunOutcome {
+        task_id: task_id.to_string(),
+        agent_id: agent_id.to_string(),
+        output,
+        iterations: 0,
+        elapsed: started.elapsed(),
+        mode: SubagentMode::Typed,
+        status: SubagentRunStatus::Completed,
+        final_history: Vec::new(),
+        usage: SubagentUsage::default(),
+    })
+}
+
 /// Run a sub-agent based on its definition and a task prompt.
 ///
 /// This is the primary entry point for agent delegation. It performs the following:
@@ -109,16 +308,17 @@ pub async fn run_subagent(
     // Unconditionally heap-allocate the entire run_subagent body so
     // every caller doesn't have to carry this future's state inline.
     // Tools that delegate run inside the parent agent's already-deep
-    // `run_turn_engine` poll, so the parent's stack would otherwise pile
-    // (parent engine state + dispatch_subagent state + run_subagent's
-    // wrapper state + run_typed_mode state + child engine state) onto
-    // tokio's 2 MiB worker stack and abort with "thread
+    // turn poll (the boxed tinyagents harness drive future in
+    // `run_turn_via_tinyagents_shared`), so the parent's stack would
+    // otherwise pile (parent turn state + dispatch_subagent state +
+    // run_subagent's wrapper state + run_typed_mode state + child turn
+    // state) onto tokio's 2 MiB worker stack and abort with "thread
     // 'tokio-rt-worker' has overflowed its stack, fatal runtime error:
     // stack overflow" — observed at `[subagent_runner] dispatching
     // agent_id=researcher ...` in the `chat-harness-subagent` Playwright
-    // lane crash. The inner `Box::pin`s around `run_typed_mode` /
-    // `run_inner_loop` / child `run_turn_engine` further chunk the
-    // child's state so a single sub-agent run can't blow the stack either.
+    // lane crash. The inner `Box::pin`s around `run_typed_mode` and the
+    // child's tinyagents drive future further chunk the child's state so
+    // a single sub-agent run can't blow the stack either.
     Box::pin(async move {
         let parent = current_parent().ok_or(SubagentRunError::NoParentContext)?;
         let task_id = options
@@ -129,6 +329,11 @@ pub async fn run_subagent(
         let current_depth = current_spawn_depth();
         let attempted_depth = current_depth.saturating_add(1);
 
+        // Synchronous pre-dispatch projection of the single depth authority
+        // (`MAX_SPAWN_DEPTH`, also fed to the crate's `RunPolicy.limits.max_depth`).
+        // This surfaces `SpawnDepthExceeded` before a provider round-trip and
+        // across the MCP process hop; the crate's `TinyAgentsError::SubAgentDepth`
+        // maps onto this same error shape for over-deep in-process runs.
         if attempted_depth > MAX_SPAWN_DEPTH {
             tracing::warn!(
                 agent_id = %definition.id,
@@ -155,6 +360,21 @@ pub async fn run_subagent(
             AgentDefinitionRegistry::global().and_then(|reg| reg.get(&parent.agent_definition_id));
         tier_gate_decision(parent_def, definition, &parent.agent_definition_id, &task_id)?;
 
+        // Deterministic fast path for the pure-retrieval memory agent (#4677).
+        // Both `retrieve_memory` (chat delegate) and `call_memory_agent` land
+        // here via `run_subagent`; short-circuit with the E2GraphRAG hits when
+        // data is present so the happy path costs ~1 deterministic pass instead
+        // of a ≤6-iteration model walk (~30–40s of round-trips). Falls through
+        // to the full sub-agent when the fast path is disabled/errs/finds
+        // nothing (the empty/degraded case is handled by #4655).
+        if definition.id == AGENT_MEMORY_ID {
+            if let Some(outcome) =
+                try_deterministic_memory_retrieval(task_prompt, definition, &task_id, started).await
+            {
+                return Ok(outcome);
+            }
+        }
+
         tracing::info!(
             agent_id = %definition.id,
             task_id = %task_id,
@@ -168,35 +388,43 @@ pub async fn run_subagent(
         // Install the sub-agent's declared `sandbox_mode` as the active
         // task-local for every tool invocation inside this run.
         //
-        // When the worker opted into git-worktree isolation, also install
-        // its isolated checkout path as the `action_dir` override so acting
-        // tools (shell, git) operate inside that worktree instead of the
-        // shared `Config.action_dir`. When `worktree_action_dir` is `None`
-        // (the default / non-isolated path), no override scope is entered and
-        // behaviour is unchanged.
-        let worktree_action_dir = options.worktree_action_dir.clone();
-        if let Some(ref wt_dir) = worktree_action_dir {
+        // When the worker opted into git-worktree isolation, its isolated
+        // checkout is carried on the `WorkspaceDescriptor` prepared below and
+        // threaded onto the run's tinyagents `RunContext`
+        // (`run_turn_via_tinyagents_shared` → `RunContext::with_workspace`).
+        // Every tool call then receives it via
+        // `ToolExecutionContext::from_run_context`, so acting tools (shell, git)
+        // resolve their CWD to that worktree (`effective_action_dir_for_context`)
+        // instead of the shared `Config.action_dir` — no task-local override
+        // needed. When no descriptor is prepared (the default / non-isolated
+        // path), tools fall through to `security.action_dir` and behaviour is
+        // unchanged.
+        let mut parent_for_subagent = parent.clone();
+        parent_for_subagent.workspace_descriptor =
+            workspace_descriptor_for_subagent(definition, &options, &parent, &task_id);
+        if let Some(descriptor) = parent_for_subagent.workspace_descriptor.as_ref() {
             tracing::debug!(
                 agent_id = %definition.id,
                 task_id = %task_id,
-                worktree = %wt_dir.display(),
-                "[subagent_runner] installing worktree action_dir override"
+                worktree = %descriptor.root.display(),
+                policy_id = %descriptor.policy_id,
+                "[subagent_runner] worktree-isolated worker: descriptor will route acting-tool CWD"
             );
         }
         let mut outcome = with_spawn_depth(attempted_depth, async {
             with_file_state_agent_id(task_id.clone(), async {
                 with_current_sandbox_mode(definition.sandbox_mode, async {
-                    let run = run_typed_mode(definition, task_prompt, &options, &parent, &task_id);
-                    match worktree_action_dir {
-                        Some(wt_dir) => {
-                            crate::openhuman::agent::harness::with_action_dir_override(
-                                wt_dir,
-                                Box::pin(run),
-                            )
-                            .await
-                        }
-                        None => Box::pin(run).await,
-                    }
+                    with_parent_context(parent_for_subagent.clone(), async {
+                        Box::pin(run_typed_mode(
+                            definition,
+                            task_prompt,
+                            &options,
+                            &parent_for_subagent,
+                            &task_id,
+                        ))
+                        .await
+                    })
+                    .await
                 })
                 .await
             })
@@ -204,28 +432,9 @@ pub async fn run_subagent(
         })
         .await?;
 
-        // Truncate result to the definition's cap if set.
-        // Use char-count (not byte-length) to avoid panicking on
-        // multi-byte UTF-8 sequences at the truncation boundary.
-        if let Some(cap) = definition.max_result_chars {
-            let original_chars = outcome.output.chars().count();
-            if original_chars > cap {
-                tracing::debug!(
-                    agent_id = %definition.id,
-                    original_chars,
-                    cap,
-                    "[subagent_runner] truncating oversized result to max_result_chars cap"
-                );
-                let byte_offset = outcome
-                    .output
-                    .char_indices()
-                    .nth(cap)
-                    .map(|(i, _)| i)
-                    .unwrap_or(outcome.output.len());
-                outcome.output.truncate(byte_offset);
-                outcome.output.push_str("\n[...truncated]");
-            }
-        }
+        // Truncate result to the definition's cap if set (shared with the
+        // deterministic memory fast path via `apply_max_result_chars`).
+        apply_max_result_chars(&mut outcome.output, definition.max_result_chars, &definition.id);
 
         tracing::info!(
             agent_id = %definition.id,
@@ -241,6 +450,30 @@ pub async fn run_subagent(
         Ok(outcome)
     })
     .await
+}
+
+fn workspace_descriptor_for_subagent(
+    definition: &AgentDefinition,
+    options: &SubagentRunOptions,
+    parent: &ParentExecutionContext,
+    task_id: &str,
+) -> Option<WorkspaceDescriptor> {
+    if let Some(descriptor) = options.workspace_descriptor.clone() {
+        return Some(descriptor);
+    }
+    if let Some(descriptor) = parent.workspace_descriptor.clone() {
+        return Some(descriptor);
+    }
+    let root = options.worktree_action_dir.clone()?;
+    let sandbox = match definition.sandbox_mode {
+        AgentSandboxMode::Sandboxed => TinyagentsSandboxMode::Required,
+        AgentSandboxMode::None | AgentSandboxMode::ReadOnly => TinyagentsSandboxMode::Inherit,
+    };
+    Some(
+        WorkspaceDescriptor::new(root)
+            .with_policy_id(format!("openhuman.worktree:{task_id}"))
+            .with_sandbox(sandbox),
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -260,20 +493,44 @@ async fn run_typed_mode(
     task_id: &str,
 ) -> Result<SubagentRunOutcome, SubagentRunError> {
     let started = Instant::now();
+    match crate::openhuman::tinyagents::subagent_graph::run_subagent_pipeline_skeleton(
+        &definition.id,
+        task_id,
+    )
+    .await
+    {
+        Ok(phases) => {
+            tracing::debug!(
+                agent_id = %definition.id,
+                task_id,
+                phases = ?phases,
+                "[subagent_runner:graph] sub-agent pipeline skeleton completed"
+            );
+        }
+        Err(err) => {
+            tracing::warn!(
+                agent_id = %definition.id,
+                task_id,
+                error = %err,
+                "[subagent_runner:graph] sub-agent pipeline skeleton failed; continuing procedural runner"
+            );
+        }
+    }
 
-    // Resolve provider + model. See `resolve_subagent_provider` for the
+    // Resolve model source + model. See `resolve_subagent_source` for the
     // semantics of each ModelSpec variant. `Config::load_or_init()` is
     // async so the load is hoisted out of the helper — the helper itself
     // is sync and unit-tested.
     let config_loaded = crate::openhuman::config::Config::load_or_init().await;
-    let (subagent_provider, model) = resolve_subagent_provider(
+    let (mut subagent_source, model) = resolve_subagent_source(
         &definition.model,
         &definition.id,
         config_loaded.as_ref().ok(),
-        parent.provider.clone(),
+        parent.turn_model_source.clone(),
         parent.model_name.clone(),
         !definition.subagents.is_empty(),
         options.model_override.as_deref(),
+        definition.temperature,
     );
     let temperature = definition.temperature;
     let max_output_tokens = definition
@@ -559,30 +816,44 @@ async fn run_typed_mode(
         // id rather than dead-ending extraction.
         let summarization_tier =
             crate::openhuman::inference::provider::factory::summarization_tier_model().to_string();
-        let (extract_provider, extract_model): (
-            Arc<dyn crate::openhuman::inference::provider::Provider>,
-            String,
-        ) = match crate::openhuman::config::Config::load_or_init().await {
+        // The extract summarizer stays on the resolved `Provider` (the extract's own
+        // summarization resolution, incl. test-injected mocks + the managed-vs-local
+        // decision). It is NOT flipped to a role-resolved crate-native source: that
+        // would re-resolve "summarization" from config and bypass the resolved
+        // provider — production stays managed either way, but a test mock injected on
+        // the parent/extract provider would no longer be observed (issue #4249 P3-B:
+        // the extract flip is deferred; the turn-path flip goes through the primary
+        // producers instead).
+        let (extract_source, extract_model) = match crate::openhuman::config::Config::load_or_init()
+            .await
+        {
             Ok(cfg) => {
                 let route =
                     crate::openhuman::inference::provider::provider_for_role("summarization", &cfg);
                 let r = route.trim();
                 let route_is_managed = r.is_empty() || r == "cloud" || r == "openhuman";
-                if route_is_managed && !parent.provider.is_local_provider() {
-                    (parent.provider.clone(), summarization_tier.clone())
+                if route_is_managed && !parent.turn_model_source.is_local_provider() {
+                    (parent.turn_model_source.clone(), summarization_tier.clone())
                 } else {
-                    match crate::openhuman::inference::provider::create_chat_provider(
+                    match crate::openhuman::inference::provider::create_chat_model_with_model_id(
                         "summarization",
                         &cfg,
+                        parent.temperature,
                     ) {
-                        Ok((p, m)) => (Arc::from(p), m),
+                        Ok((_model, resolved_model)) => (
+                            crate::openhuman::tinyagents::TurnModelSource::new_crate_native(
+                                "summarization",
+                                Arc::new(cfg.clone()),
+                            ),
+                            resolved_model,
+                        ),
                         Err(e) => {
                             tracing::warn!(
                                 agent_id = %definition.id,
                                 error = %e,
                                 "[subagent_runner:typed] extract summarization provider build failed; falling back to parent provider"
                             );
-                            (parent.provider.clone(), summarization_tier.clone())
+                            (parent.turn_model_source.clone(), summarization_tier.clone())
                         }
                     }
                 }
@@ -593,12 +864,12 @@ async fn run_typed_mode(
                     error = %e,
                     "[subagent_runner:typed] config load failed for extract provider; falling back to parent provider + summarization-v1"
                 );
-                (parent.provider.clone(), summarization_tier.clone())
+                (parent.turn_model_source.clone(), summarization_tier.clone())
             }
         };
         dynamic_tools.push(Box::new(ExtractFromResultTool::new(
             cache.clone(),
-            extract_provider,
+            extract_source,
             extract_model,
             parent.workspace_dir.clone(),
             parent_chain,
@@ -638,7 +909,7 @@ async fn run_typed_mode(
         agent_id = %definition.id,
         model = %model,
         tool_count = allowed_names.len(),
-        max_iterations = definition.effective_max_iterations(),
+        max_iterations = subagent_iter_cap_with_autonomous_lift(definition.effective_max_iterations()),
         iteration_policy = ?definition.iteration_policy,
         "[subagent_runner:typed] resolved configuration"
     );
@@ -791,23 +1062,19 @@ async fn run_typed_mode(
     // dropped it, so integrations turns advertised native schemas the backend then
     // rejected). Wrapping the provider clears `native_tool_calling`, which makes
     // the model adapter skip native advertisement and fall back to XML parsing.
-    let subagent_provider: Arc<dyn crate::openhuman::inference::provider::Provider> =
-        if is_integrations_agent_with_toolkit {
-            if let Some(sys) = history.iter_mut().find(|m| m.role == "system") {
-                sys.content.push_str("\n\n");
-                sys.content
-                    .push_str(&build_text_mode_tool_instructions(&filtered_specs));
-            }
-            tracing::info!(
-                agent_id = %definition.id,
-                task_id = %task_id,
-                tool_count = filtered_specs.len(),
-                "[subagent_runner:text-mode] omitting native tool schemas; injected XML tool protocol into system prompt"
-            );
-            Arc::new(TextModeProvider::new(subagent_provider))
-        } else {
-            subagent_provider
-        };
+    if is_integrations_agent_with_toolkit {
+        if let Some(sys) = history.iter_mut().find(|m| m.role == "system") {
+            sys.content.push_str("\n\n");
+            sys.content.push_str(&build_text_mode_tool_instructions());
+        }
+        tracing::info!(
+            agent_id = %definition.id,
+            task_id = %task_id,
+            tool_count = filtered_specs.len(),
+            "[subagent_runner:text-mode] omitting native tool schemas; injected XML tool protocol into system prompt"
+        );
+        subagent_source = subagent_source.with_text_mode();
+    }
 
     // ── Run the inner tool-call loop ───────────────────────────────────
     // Resolve the sub-agent model's user-configured vision flag; defaults to
@@ -841,10 +1108,8 @@ async fn run_typed_mode(
     // graph; `Custom` hands the assembled turn to this agent's own graph runner
     // (declared in its `graph.rs::graph()`). Every built-in agent selects
     // `Default` today — the branch is the extension point.
-    use super::usage::AggregatedUsage;
-    use crate::openhuman::agent::harness::agent_graph::{
-        AgentGraph, AgentTurnRequest, AgentTurnUsage,
-    };
+    use super::graph::AggregatedUsage;
+    use crate::openhuman::agent::harness::agent_graph::AgentGraph;
     // Resolve the child transcript stem once — `{parent_chain}__{child_session_key}`
     // — so the sub-agent's raw transcript lands in `session_raw` under a filename
     // that chains the parent session (parity with the removed observer stem).
@@ -883,83 +1148,107 @@ async fn run_typed_mode(
         };
         format!("{parent_chain}__{child_session_key}")
     };
+    let workspace_descriptor =
+        workspace_descriptor_for_subagent(definition, options, parent, task_id);
+    if let Some(descriptor) = &workspace_descriptor {
+        tracing::debug!(
+            agent_id = %definition.id,
+            task_id,
+            root = %descriptor.root.display(),
+            policy_id = %descriptor.policy_id,
+            "[subagent_runner] prepared workspace descriptor for tinyagents run"
+        );
+    }
 
-    let (output, iterations, agg_usage, early_exit_tool, hit_cap) = match &definition.graph {
-        AgentGraph::Default => {
-            super::graph::run_subagent_via_graph(
-                subagent_provider.clone(),
-                &model,
-                temperature,
-                &mut history,
-                parent.all_tools.clone(),
-                dynamic_tools,
-                filtered_specs.clone(),
-                allowed_names,
-                definition.effective_max_iterations(),
-                options.run_queue.clone(),
-                parent.on_progress.clone(),
-                &definition.id,
-                task_id,
-                definition.iteration_policy == IterationPolicy::Extended,
-                options.worker_thread_id.clone(),
-                parent.workspace_dir.clone(),
-                max_output_tokens,
-                model_vision,
-                &transcript_stem,
-                // Sub-agent turns record their provider label as the literal
-                // "subagent" (parity with the legacy observer's TurnObserver
-                // provenance), distinguishing delegated spend from the parent's
-                // own channel in per-thread usage reads.
-                "subagent",
-                // Progressive-disclosure handoff cache (shared with the
-                // extract_from_result tool registered above).
-                handoff_cache.clone(),
-            )
-            .await?
-        }
-        AgentGraph::Custom(run) => {
-            let req = AgentTurnRequest {
-                provider: subagent_provider.clone(),
-                model: model.clone(),
-                temperature,
-                history: std::mem::take(&mut history),
-                parent_tools: parent.all_tools.clone(),
-                dynamic_tools,
-                specs: filtered_specs.clone(),
-                allowed_names,
-                max_iterations: definition.effective_max_iterations(),
-                run_queue: options.run_queue.clone(),
-                on_progress: parent.on_progress.clone(),
-                agent_id: definition.id.clone(),
-                task_id: task_id.to_string(),
-                extended_policy: definition.iteration_policy == IterationPolicy::Extended,
-                worker_thread_id: options.worker_thread_id.clone(),
-                workspace_dir: parent.workspace_dir.clone(),
-                max_output_tokens,
-                model_vision,
-            };
-            let res = run(req).await?;
-            history = res.history;
-            let AgentTurnUsage {
-                input_tokens,
-                output_tokens,
-                cached_input_tokens,
-                charged_amount_usd,
-            } = res.usage;
-            (
-                res.output,
-                res.iterations,
-                AggregatedUsage {
+    let (output, iterations, agg_usage, early_exit_tool, hit_cap, breaker_halt) =
+        match &definition.graph {
+            AgentGraph::Default => {
+                super::graph::run_subagent_via_graph(
+                    subagent_source.clone(),
+                    &model,
+                    temperature,
+                    &mut history,
+                    parent.all_tools.clone(),
+                    dynamic_tools,
+                    filtered_specs.clone(),
+                    allowed_names,
+                    subagent_iter_cap_with_autonomous_lift(definition.effective_max_iterations()),
+                    options.run_queue.clone(),
+                    parent.on_progress.clone(),
+                    &definition.id,
+                    task_id,
+                    definition.iteration_policy == IterationPolicy::Extended,
+                    options.worker_thread_id.clone(),
+                    parent.workspace_dir.clone(),
+                    workspace_descriptor.clone(),
+                    max_output_tokens,
+                    model_vision,
+                    &transcript_stem,
+                    // Sub-agent turns record their provider label as the literal
+                    // "subagent" (parity with the legacy observer's TurnObserver
+                    // provenance), distinguishing delegated spend from the parent's
+                    // own channel in per-thread usage reads.
+                    "subagent",
+                    // Progressive-disclosure handoff cache (shared with the
+                    // extract_from_result tool registered above).
+                    handoff_cache.clone(),
+                    // Agent-level TokenJuice profile → sub-agent context middleware
+                    // (#4466), so sub-agent tool outputs compact like the chat path.
+                    definition.effective_tokenjuice_compression(),
+                )
+                .await?
+            }
+            AgentGraph::Custom(run) => {
+                let req = AgentTurnRequest {
+                    turn_model_source: subagent_source.clone(),
+                    model: model.clone(),
+                    temperature,
+                    history: std::mem::take(&mut history),
+                    parent_tools: parent.all_tools.clone(),
+                    dynamic_tools,
+                    specs: filtered_specs.clone(),
+                    allowed_names,
+                    max_iterations: subagent_iter_cap_with_autonomous_lift(
+                        definition.effective_max_iterations(),
+                    ),
+                    run_queue: options.run_queue.clone(),
+                    on_progress: parent.on_progress.clone(),
+                    agent_id: definition.id.clone(),
+                    task_id: task_id.to_string(),
+                    extended_policy: definition.iteration_policy == IterationPolicy::Extended,
+                    worker_thread_id: options.worker_thread_id.clone(),
+                    workspace_dir: parent.workspace_dir.clone(),
+                    workspace_descriptor: workspace_descriptor.clone(),
+                    max_output_tokens,
+                    model_vision,
+                    transcript_stem: transcript_stem.clone(),
+                    provider_label: "subagent".to_string(),
+                    handoff_cache: handoff_cache.clone(),
+                    tokenjuice_compression: definition.effective_tokenjuice_compression(),
+                };
+                let res = run(req).await?;
+                history = res.history;
+                let AgentTurnUsage {
                     input_tokens,
                     output_tokens,
                     cached_input_tokens,
                     charged_amount_usd,
-                },
-                res.early_exit_tool,
-                res.hit_cap,
-            )
-        }
-    };
+                } = res.usage;
+                (
+                    res.output,
+                    res.iterations,
+                    AggregatedUsage {
+                        input_tokens,
+                        output_tokens,
+                        cached_input_tokens,
+                        charged_amount_usd,
+                    },
+                    res.early_exit_tool,
+                    res.hit_cap,
+                    res.breaker_halt,
+                )
+            }
+        };
 
     // Determine status: if the turn engine exited early because of
     // ask_user_clarification, checkpoint the history and return
@@ -1025,6 +1314,22 @@ async fn run_typed_mode(
             question,
             options: options_vec,
         }
+    } else if let Some(reason) = breaker_halt {
+        // The repeated-failure / repeat-progress circuit breaker halted the run
+        // (#4466). It is NOT a clean finish: `output` carries the breaker's
+        // root-cause summary, not a completed answer. Surface `Incomplete` with
+        // the halt reason so a delegating parent relays the blocker instead of
+        // treating the halted child as finished (the migrated path reported
+        // `hit_cap=false` → `Completed`, hiding the halt).
+        tracing::warn!(
+            task_id = %task_id,
+            agent_id = %definition.id,
+            reason = %reason,
+            "[subagent_runner] child halted by circuit breaker; reporting Incomplete (#4466)"
+        );
+        crate::openhuman::agent::harness::subagent_runner::types::SubagentRunStatus::Incomplete {
+            reason,
+        }
     } else if hit_cap {
         // The tinyagents run stopped at the model-call cap with work still
         // pending (graph summarized a resumable checkpoint into `output`).
@@ -1069,65 +1374,138 @@ async fn run_typed_mode(
         usage,
     })
 }
+#[cfg(test)]
+mod fast_path_tests {
+    use super::{
+        apply_max_result_chars, format_deterministic_memory_hits, parse_memory_fast_path_enabled,
+        MEMORY_FAST_PATH_LIMIT,
+    };
+    use crate::openhuman::memory_store::trees::types::TreeKind;
+    use crate::openhuman::memory_tree::retrieval::types::{NodeKind, QueryResponse, RetrievalHit};
+    use chrono::Utc;
 
-/// A [`Provider`] decorator that reports **no native tool calling**, forcing the
-/// tinyagents model adapter to omit native tool schemas and fall back to
-/// prompt-guided (`<tool_call>` XML) parsing. Everything else delegates to the
-/// inner provider. Used to run `integrations_agent` in text mode (its large
-/// toolkit would otherwise blow the provider's native tool-grammar ceiling).
-struct TextModeProvider {
-    inner: Arc<dyn crate::openhuman::inference::provider::Provider>,
-}
-
-impl TextModeProvider {
-    fn new(inner: Arc<dyn crate::openhuman::inference::provider::Provider>) -> Self {
-        Self { inner }
-    }
-}
-
-#[async_trait::async_trait]
-impl crate::openhuman::inference::provider::Provider for TextModeProvider {
-    fn capabilities(&self) -> crate::openhuman::inference::provider::traits::ProviderCapabilities {
-        let mut caps = self.inner.capabilities();
-        // The whole point: hide native tool calling so the adapter advertises none.
-        caps.native_tool_calling = false;
-        caps
-    }
-
-    async fn chat_with_system(
-        &self,
-        system_prompt: Option<&str>,
-        message: &str,
-        model: &str,
-        temperature: f64,
-    ) -> anyhow::Result<String> {
-        self.inner
-            .chat_with_system(system_prompt, message, model, temperature)
-            .await
+    fn hit(content: &str, scope: &str, score: f32) -> RetrievalHit {
+        RetrievalHit {
+            node_id: "n1".into(),
+            node_kind: NodeKind::Summary,
+            tree_id: "t1".into(),
+            tree_kind: TreeKind::Source,
+            tree_scope: scope.into(),
+            level: 1,
+            content: content.into(),
+            entities: vec![],
+            topics: vec![],
+            time_range_start: Utc::now(),
+            time_range_end: Utc::now(),
+            score,
+            child_ids: vec![],
+            source_ref: None,
+        }
     }
 
-    async fn chat(
-        &self,
-        request: crate::openhuman::inference::provider::ChatRequest<'_>,
-        model: &str,
-        temperature: f64,
-    ) -> anyhow::Result<crate::openhuman::inference::provider::ChatResponse> {
-        self.inner.chat(request, model, temperature).await
+    #[test]
+    fn fast_path_enabled_by_default_and_opt_out_parsing() {
+        // Unset / unrecognised → enabled (fast path on by default).
+        assert!(parse_memory_fast_path_enabled(None));
+        assert!(parse_memory_fast_path_enabled(Some("1")));
+        assert!(parse_memory_fast_path_enabled(Some("yes")));
+        // Explicit falsy values → disabled (fall back to the model walk).
+        for off in ["0", "false", "no", "off", " OFF ", "False"] {
+            assert!(
+                !parse_memory_fast_path_enabled(Some(off)),
+                "{off:?} must disable the fast path"
+            );
+        }
     }
 
-    fn supports_vision(&self) -> bool {
-        self.inner.supports_vision()
+    #[test]
+    fn format_returns_none_for_no_hits() {
+        // Empty response → None so the caller falls back to the full sub-agent
+        // (the empty/degraded case is #4655's territory, not this fast path).
+        let resp = QueryResponse::new(vec![], 0);
+        assert!(format_deterministic_memory_hits(&resp).is_none());
     }
 
-    fn supports_streaming(&self) -> bool {
-        self.inner.supports_streaming()
+    #[test]
+    fn format_renders_hits_with_scope_content_and_score() {
+        let resp = QueryResponse::new(
+            vec![
+                hit("Q3 OKR is to ship memory v2", "notes", 0.91),
+                hit("prefers concise replies", "profile", 0.80),
+            ],
+            2,
+        );
+        let out = format_deterministic_memory_hits(&resp).expect("hits present → Some");
+        assert!(out.contains("Retrieved 2 relevant memories"), "{out}");
+        assert!(out.contains("[notes] Q3 OKR is to ship memory v2"), "{out}");
+        assert!(out.contains("[profile] prefers concise replies"), "{out}");
+        assert!(out.contains("(relevance 0.91)"), "{out}");
+        // Numbered list, no LLM synthesis needed.
+        assert!(out.contains("1. ") && out.contains("2. "), "{out}");
     }
 
-    async fn effective_context_window(&self, model: &str) -> Option<u64> {
-        self.inner.effective_context_window(model).await
+    #[test]
+    fn format_singular_wording_for_one_hit() {
+        let resp = QueryResponse::new(vec![hit("only one", "memory", 0.5)], 1);
+        let out = format_deterministic_memory_hits(&resp).unwrap();
+        assert!(out.contains("Retrieved 1 relevant memory"), "{out}");
     }
 
-    async fn warmup(&self) -> anyhow::Result<()> {
-        self.inner.warmup().await
+    #[test]
+    fn format_truncates_oversized_hit_body() {
+        let big = "x".repeat(5_000);
+        let resp = QueryResponse::new(vec![hit(&big, "memory", 0.42)], 1);
+        let out = format_deterministic_memory_hits(&resp).unwrap();
+        assert!(
+            out.contains(" …"),
+            "oversized body must be ellipsised: {out}"
+        );
+        assert!(
+            out.chars().count() < big.chars().count(),
+            "output must be shorter than the raw 5k-char body"
+        );
+    }
+
+    #[test]
+    fn fast_path_limit_is_small_single_digit() {
+        // Guards against an accidental blow-up of the deterministic fan-out.
+        assert!(
+            (1..=16).contains(&MEMORY_FAST_PATH_LIMIT),
+            "fast-path limit should stay small: {MEMORY_FAST_PATH_LIMIT}"
+        );
+    }
+
+    #[test]
+    fn max_result_chars_none_is_noop() {
+        // No cap → output untouched (the `agent_memory` default).
+        let mut out = "hello world".to_string();
+        apply_max_result_chars(&mut out, None, "agent_memory");
+        assert_eq!(out, "hello world");
+    }
+
+    #[test]
+    fn max_result_chars_under_cap_is_noop() {
+        let mut out = "short".to_string();
+        apply_max_result_chars(&mut out, Some(100), "agent_memory");
+        assert_eq!(out, "short");
+    }
+
+    #[test]
+    fn max_result_chars_over_cap_truncates_with_marker() {
+        let mut out = "x".repeat(50);
+        apply_max_result_chars(&mut out, Some(10), "agent_memory");
+        assert!(out.starts_with(&"x".repeat(10)), "{out}");
+        assert!(out.ends_with("[...truncated]"), "{out}");
+        // 10 kept chars + the marker, and shorter than the 50-char original.
+        assert!(out.chars().count() < 50, "{out}");
+    }
+
+    #[test]
+    fn max_result_chars_truncates_on_char_boundary_for_multibyte() {
+        // Cap lands mid-run of multi-byte chars; must not panic or split a char.
+        let mut out = "é".repeat(20); // each 'é' is 2 bytes
+        apply_max_result_chars(&mut out, Some(5), "agent_memory");
+        assert!(out.starts_with(&"é".repeat(5)), "{out}");
+        assert!(out.ends_with("[...truncated]"), "{out}");
     }
 }

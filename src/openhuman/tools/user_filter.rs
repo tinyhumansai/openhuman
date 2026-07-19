@@ -167,7 +167,7 @@ const TOOL_FAMILIES: &[ToolFamily] = &[
     ToolFamily {
         id: "workflow_manage",
         rust_names: &[
-            "create_workflow",
+            "create_skill",
             "install_workflow_from_url",
             "uninstall_workflow",
         ],
@@ -180,7 +180,7 @@ const TOOL_FAMILIES: &[ToolFamily] = &[
     ToolFamily {
         id: "skill_manage",
         rust_names: &[
-            "create_workflow",
+            "create_skill",
             "install_workflow_from_url",
             "uninstall_workflow",
         ],
@@ -316,7 +316,7 @@ fn all_filterable_tool_names() -> HashSet<&'static str> {
 fn family_for_rust_name(name: &str) -> Option<&'static ToolFamily> {
     TOOL_FAMILIES
         .iter()
-        .find(|fam| fam.rust_names.iter().any(|n| *n == name))
+        .find(|fam| fam.rust_names.contains(&name))
 }
 
 /// Expand persisted tool-preference entries into Rust tool `name()` values.

@@ -8,13 +8,30 @@ use crate::openhuman::config::schema::{
 fn registry_entries_include_mcp_and_controller_tools() {
     let entries = registry_entries();
 
-    let memory_search = entries
-        .iter()
-        .find(|entry| entry.tool_id == "memory.search")
-        .expect("memory.search mcp tool");
-    assert_eq!(memory_search.transport, ToolRegistryTransport::McpStdio);
-    assert_eq!(memory_search.route["method"], json!("tools/call"));
-    assert_eq!(memory_search.health, ToolRegistryHealth::Available);
+    // The MCP-transport half of the inventory is sourced from
+    // `mcp_server::tool_specs()`, which the `mcp` feature compiles out (the
+    // stub returns an empty catalog). Only this half is gated — the
+    // controller half below must keep its coverage in BOTH builds.
+    #[cfg(feature = "mcp")]
+    {
+        let memory_search = entries
+            .iter()
+            .find(|entry| entry.tool_id == "memory.search")
+            .expect("memory.search mcp tool");
+        assert_eq!(memory_search.transport, ToolRegistryTransport::McpStdio);
+        assert_eq!(memory_search.route["method"], json!("tools/call"));
+        assert_eq!(memory_search.health, ToolRegistryHealth::Available);
+    }
+
+    // With `mcp` compiled out the registry must contain NO MCP-transport
+    // entries at all — the inventory degrades to controller tools only.
+    #[cfg(not(feature = "mcp"))]
+    assert!(
+        !entries
+            .iter()
+            .any(|entry| entry.transport == ToolRegistryTransport::McpStdio),
+        "no MCP-transport tools may be registered when the `mcp` feature is off"
+    );
 
     let web_search = entries
         .iter()
@@ -48,7 +65,12 @@ fn diagnostics_reports_inventory_and_policy_surfaces() {
 
     assert!(outcome.value.total_tools > 0);
     assert_eq!(outcome.value.total_tools, outcome.value.enabled_tools);
+    // MCP-transport tools only exist when the `mcp` feature is compiled in;
+    // with it off the count is legitimately zero (see `mcp_server::stub`).
+    #[cfg(feature = "mcp")]
     assert!(outcome.value.mcp_stdio_tools > 0);
+    #[cfg(not(feature = "mcp"))]
+    assert_eq!(outcome.value.mcp_stdio_tools, 0);
     assert!(outcome.value.json_rpc_tools > 0);
     assert!(outcome
         .value
@@ -207,8 +229,17 @@ fn insert_registry_entry_skips_duplicate_tool_id() {
 
 #[test]
 fn get_tool_trims_and_returns_exact_entry() {
-    let outcome = get_tool("  memory.search  ").expect("registry lookup");
-    assert_eq!(outcome.value.tool_id, "memory.search");
+    // `memory.search` is an MCP-transport entry, so it is absent when the `mcp`
+    // feature is compiled out. The behaviour under test here is id *trimming*,
+    // not MCP — so fall back to a controller-transport entry rather than gating
+    // the whole test away and losing that coverage in slim builds.
+    #[cfg(feature = "mcp")]
+    let tool_id = "memory.search";
+    #[cfg(not(feature = "mcp"))]
+    let tool_id = "tools.web_search";
+
+    let outcome = get_tool(&format!("  {tool_id}  ")).expect("registry lookup");
+    assert_eq!(outcome.value.tool_id, tool_id);
 }
 
 #[test]

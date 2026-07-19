@@ -4,6 +4,12 @@
 //! the test graph and exposes it through `CARGO_BIN_EXE_openhuman-core`. Running
 //! a nested `cargo build` from a lib unit test is prone to CI disk exhaustion.
 
+// Exercises the gated `mcp_client::McpStdioClient` transport, so the whole
+// suite is compiled only when the `mcp` feature is on — otherwise the slim
+// build's `cargo test --no-default-features --features tokenjuice-treesitter
+// --tests` fails to compile against the removed API (#4799).
+#![cfg(feature = "mcp")]
+
 use openhuman_core::openhuman::config::McpClientIdentityConfig;
 use openhuman_core::openhuman::mcp_client::McpStdioClient;
 use std::path::PathBuf;

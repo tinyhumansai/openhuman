@@ -67,7 +67,7 @@ describe.skip('Local model runtime flow', () => {
     await waitForWebView(15_000);
     await waitForAppReady(15_000);
 
-    const consume = await waitForRequest('POST', '/telegram/login-tokens/');
+    const consume = await waitForRequest('POST', '/auth/login-token/consume');
     expect(consume).toBeDefined();
 
     await walkOnboarding('[LocalModel]');

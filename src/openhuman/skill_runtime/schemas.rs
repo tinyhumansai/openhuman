@@ -9,8 +9,8 @@ use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
-use crate::openhuman::workflows::run_log;
-use crate::openhuman::workflows::schemas::resolve_workspace_dir;
+use crate::openhuman::skills::run_log;
+use crate::openhuman::skills::schemas::resolve_workspace_dir;
 use crate::rpc::RpcOutcome;
 
 use super::ops::{resolve_runtimes, RuntimeRequirement};

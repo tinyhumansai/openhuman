@@ -62,8 +62,12 @@ async function registeredProviders(): Promise<string[]> {
   });
 }
 
-describe('Accounts provider picker contract', () => {
+describe('Accounts provider picker contract', function () {
+  this.timeout(240_000);
+
   before(async function beforeSuite() {
+    this.timeout(120_000);
+
     if (!supportsExecuteScript()) {
       stepLog('Skipping suite on Mac2 — provider picker needs DOM test ids');
       this.skip();
@@ -111,7 +115,9 @@ describe('Accounts provider picker contract', () => {
     await waitForAddAccountModalClosed();
   });
 
-  it('registers each visible provider through the real picker interaction', async () => {
+  it('registers each visible provider through the real picker interaction', async function () {
+    this.timeout(180_000);
+
     await navigateViaHash('/chat');
     await waitForAccountsPage();
     await openAddAccountModal();

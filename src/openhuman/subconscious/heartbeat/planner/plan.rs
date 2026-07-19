@@ -46,7 +46,7 @@ pub(crate) fn plan_delivery_for_event(
             }
             // Wider grace window: heartbeat runs every few minutes, so
             // tiny post-start windows can miss real meetings.
-            if until_minutes <= 0 && until_minutes >= -10 {
+            if (-10..=0).contains(&until_minutes) {
                 return Some(PlannedDelivery {
                     stage: "starting_now",
                     title: format!("Meeting starting now: {}", event.title),
@@ -74,7 +74,7 @@ pub(crate) fn plan_delivery_for_event(
             }
             // Wider grace window for reminder due state to prevent misses
             // from tick alignment.
-            if until_minutes <= 0 && until_minutes >= -10 {
+            if (-10..=0).contains(&until_minutes) {
                 return Some(PlannedDelivery {
                     stage: "due",
                     title: format!("Reminder due: {}", event.title),

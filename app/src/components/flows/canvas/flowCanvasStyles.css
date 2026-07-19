@@ -1,0 +1,213 @@
+/**
+ * Minimal palette overrides so `@xyflow/react`'s default look picks up the
+ * app's ocean/sage/amber/coral theme tokens instead of its own defaults.
+ * `FlowCanvas.tsx` imports `@xyflow/react/dist/style.css` first, then this
+ * file, so these rules simply win on specificity/order.
+ *
+ * Dark mode follows this repo's actual convention — `:root.dark` (see
+ * `styles/tokens.css`'s header comment) — not a `data-theme` attribute or a
+ * `prefers-color-scheme` media query; both of those are conventions for
+ * *standalone Artifacts*, not this Tailwind `darkMode: 'class'` app.
+ */
+
+/*
+ * Contain React Flow's internal stacking. The `.react-flow` container sets no
+ * z-index of its own, so its descendants' z-indexes (edges, and especially the
+ * dragged `.react-flow__connectionline` at z-index 1001) leak into the shared
+ * context and can paint OVER our sibling overlays (node palette, toolbar, and
+ * the node-config "edit box" drawer at z-20) — the drawer then reads as clipped
+ * / behind the canvas. Isolating the subtree keeps those z-indexes internal, so
+ * the overlays reliably sit above the whole canvas.
+ */
+.flow-canvas .react-flow {
+  isolation: isolate;
+}
+
+.flow-canvas .react-flow__background {
+  background-color: rgb(var(--surface-canvas));
+}
+
+.flow-canvas .react-flow__background pattern circle {
+  fill: rgb(var(--line-strong));
+}
+
+.flow-canvas .react-flow__edge-path {
+  stroke: rgb(var(--line-strong));
+  stroke-width: 1.5;
+}
+
+.flow-canvas .react-flow__edge.selected .react-flow__edge-path,
+.flow-canvas .react-flow__edge:hover .react-flow__edge-path {
+  stroke: rgb(var(--primary-500));
+}
+
+.flow-canvas .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: rgb(var(--primary-500));
+  border: 1.5px solid rgb(var(--surface));
+}
+
+.flow-canvas .react-flow__controls {
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--line));
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  overflow: hidden;
+}
+
+.flow-canvas .react-flow__controls-button {
+  background: rgb(var(--surface));
+  border-bottom: 1px solid rgb(var(--line));
+  fill: rgb(var(--content-secondary));
+}
+
+.flow-canvas .react-flow__controls-button:hover {
+  background: rgb(var(--surface-hover));
+}
+
+.flow-canvas .react-flow__minimap {
+  background: rgb(var(--surface));
+  border: 1px solid rgb(var(--line));
+  border-radius: 0.75rem;
+}
+
+/*
+ * MiniMap node + viewport mask: React Flow paints these with hard-coded light
+ * greys (an `#e2e2e2` node fill + a translucent light mask) that read wrong on
+ * the dark theme. CSS `fill` wins over the SVG presentation attribute React
+ * Flow sets, so route both through theme tokens instead. `.react-flow__minimap`
+ * itself is already themed above.
+ */
+.flow-canvas .react-flow__minimap-node {
+  fill: rgb(var(--line-strong));
+  stroke: none;
+}
+
+.flow-canvas .react-flow__minimap-mask {
+  fill: rgb(var(--surface-canvas) / 0.6);
+}
+
+/*
+ * Connection line: the ghost edge drawn while dragging a new connection. React
+ * Flow's default stroke is near-black; use the primary accent (matching a
+ * hovered/selected edge) so it's visible on both themes.
+ */
+.flow-canvas .react-flow__connectionline .react-flow__connection-path,
+.flow-canvas .react-flow__connectionline path {
+  stroke: rgb(var(--primary-500));
+  stroke-width: 1.5;
+}
+
+/*
+ * Drag-select rectangle + the bounding box around a multi-node selection: the
+ * defaults are a fixed blue; tint them with the primary accent at low opacity.
+ */
+.flow-canvas .react-flow__selection,
+.flow-canvas .react-flow__nodesselection-rect {
+  background: rgb(var(--primary-500) / 0.08);
+  border: 1px solid rgb(var(--primary-500) / 0.6);
+}
+
+/*
+ * Handle connection feedback: while dragging a new edge React Flow (v12) flags
+ * the source handle (`.connectingfrom`), the hovered target (`.connectingto`),
+ * and a target that would form a valid edge (`.valid`). Paint the source
+ * primary, an invalid hovered target coral, and a valid one sage — so the
+ * port-aware `isValidConnection` result reads at a glance on both themes. The
+ * `.valid` rules come last so they win over the coral `.connectingto` default.
+ */
+.flow-canvas .react-flow__handle.connectingfrom {
+  background: rgb(var(--primary-500));
+}
+
+.flow-canvas .react-flow__handle.connectingto {
+  background: rgb(var(--coral-500));
+}
+
+.flow-canvas .react-flow__handle.connectingto.valid,
+.flow-canvas .react-flow__handle.valid {
+  background: rgb(var(--sage-500));
+}
+
+.flow-canvas .react-flow__attribution {
+  background: rgb(var(--surface) / 0.7);
+  color: rgb(var(--content-muted));
+}
+
+/*
+ * Validation highlight (Phase 3c): a node named by a hard validation error
+ * (invalid config / cycle / duplicate / unknown-node) gets a coral ring so the
+ * inline banner's message points at a visible culprit on the canvas. `.flow-node-error`
+ * is applied to the outer `.react-flow__node` wrapper via the node's `className`.
+ */
+.flow-canvas .react-flow__node.flow-node-error {
+  outline: 2px solid rgb(var(--coral-500));
+  outline-offset: 3px;
+  border-radius: 0.85rem;
+}
+
+/*
+ * Live run overlay (Phase 3e): while a run is in flight the canvas rings each
+ * node with its live status from `useFlowRunProgress` — n8n's signature
+ * running/success/error interaction. Classes are applied to the outer
+ * `.react-flow__node` wrapper via the node's `className` (composed alongside the
+ * validation `.flow-node-error` ring). `flow-node-failed` is kept distinct from
+ * the validation `.flow-node-error` so a *runtime* failure reads differently
+ * from a *config* error.
+ */
+.flow-canvas .react-flow__node.flow-node-running {
+  outline: 2px solid rgb(var(--primary-500));
+  outline-offset: 3px;
+  border-radius: 0.85rem;
+  animation: flow-node-run-pulse 1.2s ease-in-out infinite;
+}
+
+.flow-canvas .react-flow__node.flow-node-success {
+  outline: 2px solid rgb(var(--sage-500));
+  outline-offset: 3px;
+  border-radius: 0.85rem;
+}
+
+.flow-canvas .react-flow__node.flow-node-failed {
+  outline: 2px solid rgb(var(--coral-500));
+  outline-offset: 3px;
+  border-radius: 0.85rem;
+}
+
+/*
+ * Copilot diff overlay (Phase 5c): while the user reviews an agent proposal on
+ * the canvas, nodes the proposal ADDS get a sage ring (like a live-success
+ * highlight) and nodes it REMOVES are ghosted (dimmed + dashed coral ring) so
+ * the change reads diff-style before Accept/Reject. Applied via the node's
+ * `className` alongside the validation/run rings.
+ */
+.flow-canvas .react-flow__node.flow-node-added {
+  outline: 2px solid rgb(var(--sage-500));
+  outline-offset: 3px;
+  border-radius: 0.85rem;
+}
+
+.flow-canvas .react-flow__node.flow-node-removed {
+  outline: 2px dashed rgb(var(--coral-500));
+  outline-offset: 3px;
+  border-radius: 0.85rem;
+  opacity: 0.45;
+}
+
+@keyframes flow-node-run-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(var(--primary-500) / 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgb(var(--primary-500) / 0);
+  }
+}
+
+/* Respect reduced-motion: keep the ring, drop the pulse. */
+@media (prefers-reduced-motion: reduce) {
+  .flow-canvas .react-flow__node.flow-node-running {
+    animation: none;
+  }
+}

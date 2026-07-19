@@ -60,11 +60,19 @@ const CredentialChannelConfig = ({ definition }: CredentialChannelConfigProps) =
 
         const credentials: Record<string, string> = {};
         for (const field of spec.fields) {
-          const raw = fieldValues[compositeKey]?.[field.key] ?? '';
-          const val = field.field_type === 'boolean' ? raw : raw.trim();
-          // Booleans are always semantically set (checkbox is on or off), so an
-          // untouched required boolean must not fail the empty-value check.
-          if (field.required && field.field_type !== 'boolean' && !val) {
+          // Booleans are always semantically set (checkbox is on or off). Submit
+          // them unconditionally, seeding an untouched box from its declared
+          // default, so a default-on field like smtp_tls can actually be turned
+          // off from the form instead of silently reverting to the default.
+          if (field.field_type === 'boolean') {
+            const raw = fieldValues[compositeKey]?.[field.key];
+            const on =
+              raw === undefined || raw === '' ? (field.default_bool ?? false) : raw === 'true';
+            credentials[field.key] = on ? 'true' : 'false';
+            continue;
+          }
+          const val = (fieldValues[compositeKey]?.[field.key] ?? '').trim();
+          if (field.required && !val) {
             const label = t(`channels.${channel}.fields.${field.key}.label`, field.label);
             dispatch(
               setChannelConnectionStatus({

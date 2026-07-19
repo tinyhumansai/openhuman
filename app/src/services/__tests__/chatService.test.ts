@@ -5,7 +5,9 @@ import { socketService } from '../socketService';
 
 const mockCallCoreRpc = vi.fn();
 
-vi.mock('../socketService', () => ({ socketService: { getSocket: vi.fn() } }));
+vi.mock('../socketService', () => ({
+  socketService: { getSocket: vi.fn(), on: vi.fn(), off: vi.fn() },
+}));
 vi.mock('../coreRpcClient', () => ({
   callCoreRpc: (...args: unknown[]) => mockCallCoreRpc(...args),
 }));
@@ -35,6 +37,12 @@ function createMockSocket() {
   return { id: 'socket-1', on, off, emit };
 }
 
+function bindMockSocket(socket: ReturnType<typeof createMockSocket>) {
+  vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+  vi.mocked(socketService.on).mockImplementation((event, cb) => socket.on(event, cb as Handler));
+  vi.mocked(socketService.off).mockImplementation((event, cb) => socket.off(event, cb as Handler));
+}
+
 describe('chatService.subscribeChatEvents', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -43,7 +51,7 @@ describe('chatService.subscribeChatEvents', () => {
 
   it('subscribes to canonical snake_case chat events only', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
 
     subscribeChatEvents({
       onToolCall: () => {},
@@ -70,7 +78,7 @@ describe('chatService.subscribeChatEvents', () => {
 
   it('forwards inference_heartbeat through onInferenceHeartbeat (#4270)', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onInferenceHeartbeat = vi.fn();
 
     subscribeChatEvents({ onInferenceHeartbeat });
@@ -86,7 +94,7 @@ describe('chatService.subscribeChatEvents', () => {
 
   it('does not process alias events when only canonical subscriptions are active', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onDone = vi.fn();
 
     subscribeChatEvents({ onDone });
@@ -105,7 +113,7 @@ describe('chatService.subscribeChatEvents', () => {
   // refactor renames a socket event.
   it('subscribes and forwards live subagent events under canonical names', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
 
     const onSubagentSpawned = vi.fn();
     const onSubagentDone = vi.fn();
@@ -192,7 +200,7 @@ describe('chatService.subscribeChatEvents', () => {
 
   it('removes all handlers on cleanup', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
 
     const cleanup = subscribeChatEvents({ onToolCall: () => {}, onDone: () => {} });
     cleanup();
@@ -203,7 +211,7 @@ describe('chatService.subscribeChatEvents', () => {
 
   it('subscribes and forwards task board updates', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onTaskBoardUpdated = vi.fn();
 
     subscribeChatEvents({ onTaskBoardUpdated });
@@ -224,7 +232,7 @@ describe('chatService.subscribeChatEvents', () => {
 
   it('drops malformed artifact_ready payloads without crashing', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactReady = vi.fn();
     const onArtifactFailed = vi.fn();
 
@@ -331,7 +339,7 @@ describe('chatService.subscribeChatEvents', () => {
   // `onArtifactFailed` listener is wired but never fired.
   it('forwards a well-formed artifact_failed payload through onArtifactFailed', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactFailed = vi.fn();
 
     subscribeChatEvents({ onArtifactFailed });
@@ -367,7 +375,7 @@ describe('chatService.subscribeChatEvents', () => {
   // fires for the failed path.
   it('drops artifact_ready / artifact_failed envelopes with non-string thread_id', () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
     const onArtifactReady = vi.fn();
     const onArtifactFailed = vi.fn();
 
@@ -392,7 +400,7 @@ describe('chatService.subscribeChatEvents', () => {
 
   it('sends chat payload with consistent optional RPC params', async () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
 
     await chatSend({ threadId: 'thread-1', message: 'hello' });
 
@@ -410,7 +418,7 @@ describe('chatService.subscribeChatEvents', () => {
 
   it('forwards speak_reply, source, session_id when provided', async () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
 
     await chatSend({
       threadId: 'thread-1',
@@ -435,7 +443,7 @@ describe('chatService.subscribeChatEvents', () => {
 
   it('does not include the new fields when omitted', async () => {
     const socket = createMockSocket();
-    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    bindMockSocket(socket);
 
     await chatSend({ threadId: 'thread-1', message: 'hi' });
     const params = mockCallCoreRpc.mock.calls[0][0].params;

@@ -20,13 +20,13 @@
 //! are treated like retryable cloud failures: retry once, then fall
 //! through to local / Deferred.
 //!
-//! ## Why `run_tool_call_loop` doesn't care about `tools_registry = []`
+//! ## Why the turn path doesn't care about `tools_registry = []`
 //!
 //! The triage agent has `named = []` in its TOML (zero tools). The
-//! `run_tool_call_loop` implementation in
-//! `src/openhuman/agent/harness/tool_loop.rs` handles an empty registry
-//! by just doing a plain `chat_with_history` under the hood — no tool
-//! schemas are sent to the backend.
+//! tinyagents-backed turn path (`run_turn_via_tinyagents_shared` in
+//! `src/openhuman/tinyagents/mod.rs`) handles an empty registry by simply
+//! sending no tool schemas to the backend — the turn degrades to a plain
+//! chat completion.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -464,7 +464,7 @@ async fn try_arm(
     ];
 
     let request = AgentTurnRequest {
-        provider: Arc::clone(&resolved.provider),
+        turn_model_source: resolved.turn_model_source.clone(),
         history,
         tools_registry: Arc::new(Vec::new()),
         provider_name: resolved.provider_name.clone(),
@@ -647,7 +647,7 @@ fn is_prompt_guard_rejection(message: &str) -> bool {
 ///
 /// The vocabulary matches the OpenHuman backend's error copy and common
 /// third-party provider phrasing. It does **not** mirror the
-/// *semantics* of `channels/providers/web.rs` (a different code path);
+/// *semantics* of `web_chat/` (a different code path);
 /// it is an independent, conservative allowlist evaluated inline so the
 /// triage evaluator carries no cross-domain import.
 ///

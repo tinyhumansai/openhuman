@@ -2,9 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Summary of the subconscious engine status.
+/// Summary of a subconscious instance's status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubconsciousStatus {
+    /// Which world this row describes (`"memory"` | `"tinyplace"`). Defaulted to
+    /// `"memory"` when absent so older callers/serialized rows keep parsing.
+    #[serde(default = "default_instance")]
+    pub instance: String,
     pub enabled: bool,
     pub mode: String,
     pub provider_available: bool,
@@ -13,6 +17,10 @@ pub struct SubconsciousStatus {
     pub last_tick_at: Option<f64>,
     pub total_ticks: u64,
     pub consecutive_failures: u64,
+}
+
+fn default_instance() -> String {
+    "memory".to_string()
 }
 
 /// Result of a single subconscious tick.

@@ -156,7 +156,6 @@ pub async fn memory_learn_all(
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
-    use std::path::PathBuf;
 
     use serde_json::json;
     use tempfile::TempDir;

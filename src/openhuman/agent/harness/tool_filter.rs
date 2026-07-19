@@ -81,7 +81,7 @@ pub fn filter_actions_by_prompt(
         })
         .collect();
 
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|item| std::cmp::Reverse(item.0));
 
     // Only keep positively-scored results. Zero-overlap tools would add noise.
     scored
@@ -100,7 +100,7 @@ pub fn filter_actions_by_prompt(
 /// over-matching (e.g. "open" is deliberately excluded because it appears in
 /// both "open a PR" and "open PRs").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Verb {
+enum Verb {
     Create,
     Send,
     Read,

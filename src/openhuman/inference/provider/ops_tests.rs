@@ -1446,7 +1446,7 @@ async fn chat_completions_backend_401_publishes_session_expired() {
     .expect_err("backend 401 must surface as an error");
     let msg = err.to_string();
     assert!(
-        msg.contains("OpenHuman API error (401") && msg.contains("Invalid token"),
+        msg.contains("HTTP 401") && msg.contains("Invalid token"),
         "error must carry the backend 401 envelope: {msg}"
     );
 

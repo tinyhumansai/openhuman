@@ -70,6 +70,16 @@ const LOCK_TIMEOUT_MS: u64 = STALE_LOCK_AGE_MS + 5_000;
 const PERSIST_RETRY_ATTEMPTS: u32 = 6;
 const PERSIST_RETRY_BASE_MS: u64 = 100;
 
+type EncryptedProfileFields = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthProfileKind {
@@ -921,18 +931,7 @@ impl AuthProfilesStore {
     }
 
     /// Encrypt a profile's secret fields for JSON storage (keychain-unavailable path).
-    fn encrypt_for_json(
-        &self,
-        profile: &AuthProfile,
-    ) -> Result<(
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    )> {
+    fn encrypt_for_json(&self, profile: &AuthProfile) -> Result<EncryptedProfileFields> {
         let (access_token, refresh_token, id_token, expires_at, token_type, scope) =
             match (&profile.kind, &profile.token_set) {
                 (AuthProfileKind::OAuth, Some(token_set)) => (
@@ -1263,7 +1262,7 @@ impl AuthProfilesStore {
                     let is_already_exists = e
                         .chain()
                         .find_map(|e| e.downcast_ref::<std::io::Error>())
-                        .map_or(false, |ioe| ioe.kind() == std::io::ErrorKind::AlreadyExists);
+                        .is_some_and(|ioe| ioe.kind() == std::io::ErrorKind::AlreadyExists);
 
                     if is_already_exists {
                         // A lock file recording our own pid can only be a
@@ -1374,15 +1373,14 @@ impl AuthProfilesStore {
             .modified()
             .ok()
             .and_then(|mtime| std::time::SystemTime::now().duration_since(mtime).ok());
-        let too_old = age.map_or(false, |a| a >= Duration::from_millis(STALE_LOCK_AGE_MS));
+        let too_old = age.is_some_and(|a| a >= Duration::from_millis(STALE_LOCK_AGE_MS));
         // A pidless lock needs only a short grace: no healthy holder leaves the
         // file without a `pid=` line for more than the microsecond gap between
         // `create_new` and the write, so anything older is abandoned. If mtime
         // is unreadable (clock skew, platform limitation) default to stale —
         // no legitimate in-flight writer would be undetectable for that long.
-        let malformed_too_old = age.map_or(true, |a| {
-            a >= Duration::from_millis(MALFORMED_LOCK_GRACE_MS)
-        });
+        let malformed_too_old =
+            age.is_none_or(|a| a >= Duration::from_millis(MALFORMED_LOCK_GRACE_MS));
 
         let content = match fs::read_to_string(&self.lock_path) {
             Ok(s) => s,
@@ -1616,7 +1614,7 @@ fn in_process_lock_for(path: &Path) -> &'static Mutex<()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     // Deref the `&mut &'static Mutex<()>` to copy the `'static` reference out,
     // so the returned handle is not tied to the dropped `map` guard.
-    *map.entry(key)
+    map.entry(key)
         .or_insert_with(|| &*Box::leak(Box::new(Mutex::new(()))))
 }
 

@@ -579,11 +579,11 @@ async fn embeddings_embed_with_none_returns_empty_vectors() {
     let result = assert_no_rpc_error(&resp, "embeddings_embed none");
     let inner = result.get("result").unwrap_or(result);
 
-    // NoopEmbedding.embed() returns an empty vec — count and dimensions should both be 0.
+    // The inert TinyAgents adapter preserves input cardinality with empty vectors.
     assert_eq!(
         inner.get("count").and_then(Value::as_u64),
-        Some(0),
-        "noop provider should return count=0: {inner}"
+        Some(2),
+        "noop provider should preserve input count: {inner}"
     );
     assert_eq!(
         inner.get("dimensions").and_then(Value::as_u64),
@@ -594,10 +594,7 @@ async fn embeddings_embed_with_none_returns_empty_vectors() {
         .get("vectors")
         .and_then(Value::as_array)
         .expect("embed result must include 'vectors' array: {inner}");
-    assert!(
-        vectors.is_empty(),
-        "noop provider must return empty vectors array: {vectors:?}"
-    );
+    assert_eq!(vectors, &vec![json!([]), json!([])]);
 }
 
 #[tokio::test(flavor = "multi_thread")]

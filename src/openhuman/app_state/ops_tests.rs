@@ -210,6 +210,7 @@ fn runtime_snapshot_cache_hit_within_ttl() {
     *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
         snapshot: dummy.clone(),
         fetched_at: Instant::now(),
+        config_key: std::path::PathBuf::new(),
     });
 
     let cache = RUNTIME_SNAPSHOT_CACHE.lock();
@@ -229,6 +230,7 @@ fn runtime_snapshot_cache_miss_after_ttl() {
     *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
         snapshot: build_dummy_runtime_snapshot(),
         fetched_at: Instant::now() - (RUNTIME_SNAPSHOT_TTL + Duration::from_millis(100)),
+        config_key: std::path::PathBuf::new(),
     });
 
     let cache = RUNTIME_SNAPSHOT_CACHE.lock();
@@ -236,6 +238,72 @@ fn runtime_snapshot_cache_miss_after_ttl() {
     assert!(
         entry.fetched_at.elapsed() >= RUNTIME_SNAPSHOT_TTL,
         "stale entry should be past TTL"
+    );
+}
+
+#[test]
+fn fresh_cached_runtime_snapshot_returns_entry_within_ttl() {
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _reset = SnapshotCacheResetGuard;
+
+    let dummy = build_dummy_runtime_snapshot();
+    let cfg = Config::default();
+    *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
+        snapshot: dummy.clone(),
+        fetched_at: Instant::now(),
+        config_key: cfg.workspace_dir.clone(),
+    });
+
+    let served = fresh_cached_runtime_snapshot(&cfg, 1).expect("fresh entry should be served");
+    assert_eq!(served.autocomplete.phase, dummy.autocomplete.phase);
+}
+
+#[test]
+fn fresh_cached_runtime_snapshot_misses_when_stale_or_empty() {
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _reset = SnapshotCacheResetGuard;
+
+    let cfg = Config::default();
+
+    // Empty cache → miss (forces the single-flight rebuild path).
+    *RUNTIME_SNAPSHOT_CACHE.lock() = None;
+    assert!(fresh_cached_runtime_snapshot(&cfg, 2).is_none());
+
+    // Stale cache → miss, so the TTL bump can't silently keep serving old data.
+    *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
+        snapshot: build_dummy_runtime_snapshot(),
+        fetched_at: Instant::now() - (RUNTIME_SNAPSHOT_TTL + Duration::from_millis(100)),
+        config_key: cfg.workspace_dir.clone(),
+    });
+    assert!(fresh_cached_runtime_snapshot(&cfg, 3).is_none());
+}
+
+#[test]
+fn fresh_cached_runtime_snapshot_misses_on_config_key_mismatch() {
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _reset = SnapshotCacheResetGuard;
+
+    // A fresh entry cached for one workspace must never be served to another
+    // config — a second user, or an E2E harness with an injected service mock,
+    // has to rebuild against its own runtime instead of reading a foreign one.
+    let mut owner = Config::default();
+    owner.workspace_dir = std::path::PathBuf::from("/tmp/ws-owner");
+    let mut other = Config::default();
+    other.workspace_dir = std::path::PathBuf::from("/tmp/ws-other");
+
+    *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
+        snapshot: build_dummy_runtime_snapshot(),
+        fetched_at: Instant::now(),
+        config_key: owner.workspace_dir.clone(),
+    });
+
+    assert!(
+        fresh_cached_runtime_snapshot(&owner, 4).is_some(),
+        "a config reads back its own fresh snapshot"
+    );
+    assert!(
+        fresh_cached_runtime_snapshot(&other, 5).is_none(),
+        "a foreign config misses instead of serving the wrong runtime"
     );
 }
 

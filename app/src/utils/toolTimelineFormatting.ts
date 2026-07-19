@@ -72,6 +72,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   audio_generate_and_email_podcast: 'Generating & emailing podcast',
   composio_list_connections: 'Viewing your Connections',
   agent_prepare_context: 'Preparing context',
+  propose_workflow: 'Proposing workflow',
 };
 
 /**

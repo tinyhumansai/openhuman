@@ -1,6 +1,6 @@
 //! Background skill run spawning and outcome polling.
 //!
-//! `spawn_workflow_run_background` is re-used by both the `workflows_run`
+//! `spawn_workflow_run_background` is re-used by both the `skills_run`
 //! JSON-RPC controller and the `run_skill` agent tool (skill chaining).
 //! `await_run_outcome` lets the model poll a spawned run's log file for a
 //! terminal result without busy-waiting.
@@ -10,9 +10,9 @@ use serde_json::Value;
 use crate::openhuman::agent::harness::session::Agent;
 use crate::openhuman::agent::harness::subagent_runner::with_autonomous_iter_cap;
 use crate::openhuman::config::Config;
-use crate::openhuman::workflows::{preflight, registry, run_log};
+use crate::openhuman::skills::{preflight, registry, run_log};
 
-use crate::openhuman::workflows::schemas::resolve_workspace_dir;
+use crate::openhuman::skills::schemas::resolve_workspace_dir;
 
 /// Iteration cap for an autonomous skill run (orchestrator + sub-agents). High
 /// enough to "run until done", while the repeated-failure circuit breaker still
@@ -29,7 +29,7 @@ pub struct WorkflowRunStarted {
 }
 
 /// Spawn a single autonomous workflow_run as a detached `tokio::spawn`. Used by
-/// both the `openhuman.workflows_run` JSON-RPC controller and the `run_skill`
+/// both the `openhuman.skills_run` JSON-RPC controller and the `run_skill`
 /// agent tool (which lets the orchestrator chain one skill into another —
 /// e.g. `github-issue-crusher` → `pr-review-shepherd` once the draft PR is
 /// open).
@@ -147,7 +147,7 @@ pub async fn spawn_workflow_run_background(
 
     // Detached: build the orchestrator Agent inside the spawn so config /
     // toolchain are loaded fresh per run; the parent returns the handle
-    // immediately. Same flow handle_workflows_run used to inline — extracted
+    // immediately. Same flow handle_skills_run used to inline — extracted
     // so the `run_skill` agent tool can re-use it for skill chaining.
     let inherited_origin = crate::openhuman::agent::turn_origin::current()
         .unwrap_or(crate::openhuman::agent::turn_origin::AgentTurnOrigin::Cli);
@@ -176,7 +176,6 @@ pub async fn spawn_workflow_run_background(
                     return;
                 }
             };
-            config.agent.max_tool_iterations = WORKFLOW_RUN_MAX_ITERATIONS;
             // Only apply the permissive wildcard default when the operator
             // hasn't configured an explicit allow-list — preserve any
             // configured egress policy instead of unconditionally widening it.
@@ -196,6 +195,19 @@ pub async fn spawn_workflow_run_background(
                     return;
                 }
             };
+            // Issue #4868 — apply the workflow-run iteration budget AFTER
+            // construction. The session builder now stamps `orchestrator`'s
+            // definition cap (15) onto the agent; a full workflow run
+            // intentionally needs a much larger budget (200), so this must be
+            // a post-construction override rather than a pre-set on `config`
+            // (which the builder would otherwise clobber).
+            agent.set_max_tool_iterations(WORKFLOW_RUN_MAX_ITERATIONS);
+            tracing::debug!(
+                run_id = %run_id,
+                max_tool_iterations = WORKFLOW_RUN_MAX_ITERATIONS,
+                "[skills] workflow_run: pinned iteration budget post-construction (overrides \
+                 the session builder's orchestrator definition cap)"
+            );
             agent.set_event_context(run_id.clone(), "skill");
             agent.set_agent_definition_name(format!(
                 "orchestrator-skill-{}",
@@ -206,7 +218,7 @@ pub async fn spawn_workflow_run_background(
             let bridge = tokio::spawn(run_log::drain_to_log(rx, log_path.clone()));
 
             // Register the cancellation token now (after the run can actually
-            // start) so `workflows_cancel` can stop it; a config/agent-build
+            // start) so `skills_cancel` can stop it; a config/agent-build
             // failure above returns before this, leaving nothing to leak.
             let cancel_token = run_log::register_run_cancel(&run_id);
 
@@ -216,7 +228,7 @@ pub async fn spawn_workflow_run_background(
             // through the approval gate. Falls back to Cli for direct
             // user-initiated RPC / CLI flows.
             //
-            // Race the run against its cancellation token: if `workflows_cancel`
+            // Race the run against its cancellation token: if `skills_cancel`
             // fires the token, the run future is dropped (cancelled at its next
             // await) and we record a CANCELLED footer. `Some(_)` ⇒ ran to a
             // natural end; `None` ⇒ cancelled.

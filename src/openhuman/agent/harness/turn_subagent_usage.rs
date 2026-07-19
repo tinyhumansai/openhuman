@@ -9,10 +9,11 @@
 //! cost tracker.
 //!
 //! This module installs an [`Arc<Mutex<Vec<SubagentUsageEntry>>>`] as a
-//! task-local around the parent's `run_turn_engine` call. Synchronous
-//! delegations (`spawn_subagent`) run inline on the same tokio task, so the
-//! sub-agent runner can [`record_subagent_usage`] its totals into the active
-//! collector. After the engine returns, the parent [`drain`]s the collector to:
+//! task-local around the parent's turn future (the
+//! `run_turn_via_tinyagents_shared` drive). Synchronous delegations
+//! (`spawn_subagent`) run inline on the same tokio task, so the sub-agent
+//! runner can [`record_subagent_usage`] its totals into the active collector.
+//! After the turn returns, the parent [`drain`]s the collector to:
 //!
 //! 1. fold child tokens + USD into the turn's cumulative meters, and
 //! 2. attribute per-child spend for the `chat_done` breakdown (hover detail).
@@ -60,25 +61,26 @@ pub struct LastTurnUsage {
 }
 
 /// Shared, mutable list of sub-agent spend gathered during one parent turn.
-pub type TurnSubagentUsage = Arc<Mutex<Vec<SubagentUsageEntry>>>;
+type TurnSubagentUsage = Arc<Mutex<Vec<SubagentUsageEntry>>>;
 
 tokio::task_local! {
     /// Active per-turn sub-agent usage collector, installed around the parent's
-    /// `run_turn_engine` call. Absent outside a turn scope.
+    /// turn future (`run_turn_via_tinyagents_shared`). Absent outside a turn
+    /// scope.
     static TURN_SUBAGENT_USAGE: TurnSubagentUsage;
 }
 
 /// The collector active for the current turn, or `None` when no scope is in
 /// effect (e.g. a sub-agent running on a detached background task, or a direct
 /// CLI invocation).
-pub fn current_collector() -> Option<TurnSubagentUsage> {
+fn current_collector() -> Option<TurnSubagentUsage> {
     TURN_SUBAGENT_USAGE.try_with(|c| c.clone()).ok()
 }
 
 /// Record a finished sub-agent's token/cost totals into the active turn
 /// collector. No-op when there is no active scope. Called by the sub-agent
 /// runner once it has the run's aggregated usage.
-pub fn record_subagent_usage(task_id: &str, agent_id: &str, usage: SubagentUsage) {
+pub(crate) fn record_subagent_usage(task_id: &str, agent_id: &str, usage: SubagentUsage) {
     let Some(collector) = current_collector() else {
         tracing::trace!(
             task_id,
@@ -115,8 +117,8 @@ pub fn record_subagent_usage(task_id: &str, agent_id: &str, usage: SubagentUsage
 
 /// Run `future` with a fresh sub-agent usage collector installed, returning both
 /// the future's output and the gathered per-child entries. Intended call site is
-/// around the parent agent's `run_turn_engine` invocation.
-pub async fn with_turn_collector<F, R>(future: F) -> (R, Vec<SubagentUsageEntry>)
+/// around the parent agent's turn (`run_turn_via_tinyagents_shared`) invocation.
+pub(crate) async fn with_turn_collector<F, R>(future: F) -> (R, Vec<SubagentUsageEntry>)
 where
     F: std::future::Future<Output = R>,
 {
@@ -161,6 +163,35 @@ mod tests {
         assert_eq!(entries[0].usage.input_tokens, 10);
         assert_eq!(entries[1].agent_id, "coder");
         assert_eq!(entries[1].usage.charged_amount_usd, 0.02);
+    }
+
+    #[tokio::test]
+    async fn map_reduce_fanout_preserves_scope() {
+        use tinyagents::graph::parallel::{map_reduce, FailurePolicy, ParallelOptions};
+
+        let (result, entries) = with_turn_collector(async {
+            map_reduce(
+                vec![
+                    ("t1", "researcher", usage(10, 5, 0.01)),
+                    ("t2", "coder", usage(20, 8, 0.02)),
+                ],
+                ParallelOptions::default()
+                    .with_max_concurrency(2)
+                    .with_failure_policy(FailurePolicy::CollectAll),
+                |_index, (task_id, agent_id, usage)| async move {
+                    record_subagent_usage(task_id, agent_id, usage);
+                    Ok::<_, tinyagents::TinyAgentsError>(task_id)
+                },
+            )
+            .await
+        })
+        .await;
+
+        let outcome = result.expect("map_reduce should complete");
+        assert_eq!(outcome.outcomes.len(), 2);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].task_id, "t1");
+        assert_eq!(entries[1].agent_id, "coder");
     }
 
     #[tokio::test]

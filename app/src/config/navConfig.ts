@@ -5,6 +5,7 @@
  * This module is pure data — no JSX, no React imports.  Icons are owned by
  * BottomTabBar.tsx and mapped from tab.id.
  */
+import { BILLING_DASHBOARD_URL } from '../utils/links';
 
 // ── Tab bar ──────────────────────────────────────────────────────────────────
 
@@ -20,8 +21,12 @@ export interface NavTab {
 }
 
 /**
- * Ordered list of sidebar nav entries. Four entries:
- *   chat → human → brain → connections
+ * Ordered list of sidebar nav entries:
+ *   chat → human → brain → flows → orchestration → agent-world → connections
+ *
+ * The Orchestration tab (TinyPlace multi-agent coordination) sits right after
+ * Workflows; it was promoted out of the Brain sub-tab drawer into a first-class
+ * destination at `/orchestration`.
  *
  * Settings has no primary tab — it's reached via the gear icon in the sidebar
  * header. Chat is the default landing and the merged Home surface: its empty
@@ -36,6 +41,13 @@ export const NAV_TABS: NavTab[] = [
   { id: 'chat', labelKey: 'nav.chat', path: '/chat', walkthroughAttr: 'tab-chat' },
   { id: 'human', labelKey: 'nav.human', path: '/human', walkthroughAttr: 'tab-human' },
   { id: 'brain', labelKey: 'nav.brain', path: '/brain', walkthroughAttr: 'tab-brain' },
+  { id: 'flows', labelKey: 'nav.flows', path: '/flows', walkthroughAttr: 'tab-flows' },
+  {
+    id: 'orchestration',
+    labelKey: 'nav.orchestration',
+    path: '/orchestration',
+    walkthroughAttr: 'tab-orchestration',
+  },
   {
     id: 'agent-world',
     labelKey: 'nav.agentWorld',
@@ -92,8 +104,7 @@ export const AVATAR_MENU_ITEMS: AvatarMenuItem[] = [
   {
     id: 'billing',
     labelKey: 'nav.avatarMenu.billing',
-    // Resolved at runtime via BILLING_DASHBOARD_URL; placeholder keeps typing clean.
-    target: 'https://tinyhumans.ai/dashboard',
+    target: BILLING_DASHBOARD_URL,
     kind: 'openUrl',
     cloudOnly: true,
   },

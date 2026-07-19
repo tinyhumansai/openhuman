@@ -9,11 +9,11 @@ use crate::openhuman::agent::harness;
 use crate::openhuman::agent::harness::definition::TriggerMemoryAgent;
 use crate::openhuman::agent::harness::fork_context::ParentExecutionContext;
 use crate::openhuman::agent::hooks::{self, TurnContext};
-use crate::openhuman::agent::memory_loader::collect_recall_citations;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent_experience::{
     prepend_experience_block, render_experience_hits, AgentExperienceStore, ExperienceQuery,
 };
+use crate::openhuman::agent_memory::memory_loader::collect_recall_citations;
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage};
 use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::util::truncate_with_ellipsis;
@@ -44,16 +44,249 @@ use std::hash::{Hash, Hasher};
 ///   persisted `content`, so `seed_resume_from_messages` can't drop it) — that
 ///   is still a brand-new conversation and should get super context; AND
 /// - `enabled` — the `context.super_context_enabled` config flag is on.
+/// - `user_message` — the request is not an obvious context-free greeting or
+///   simple local action. Super context is useful when prior memory, profile,
+///   integrations, or web facts can change the answer; it is counterproductive
+///   for "hi"/"ciao" and straightforward local filesystem commands, where an
+///   auto-run scout only adds tool noise before the orchestrator sees intent.
+/// - `native_tool_calling` — provider-aware guardrail for #4361. Local
+///   providers (Ollama / LM Studio / MLX / llama.cpp) force
+///   `native_tool_calling=false`, so the harness serializes the **entire tool +
+///   integration catalog as prose** into the system prompt (the
+///   `PFormatToolDispatcher` path, `should_send_tool_specs()==false`). A weak
+///   local model then over-selects from that text menu and mis-routes a
+///   greeting into `composio_list_connections` or a local folder op into the
+///   calendar path (the reported v0.58 regression). For these providers we only
+///   auto-run the scout when the user *explicitly* asks for prior context or a
+///   connected integration; otherwise the extra scout just enlarges the surface
+///   the model can trip over. Native-tool-calling providers keep the broader
+///   behavior — structured tool specs make spurious tool-routing far rarer.
 ///
 /// Pulled out as a pure function so the gate (in particular the resume and
 /// orchestrator guards) is unit-testable without a full agent turn harness.
-fn should_run_super_context(
+fn super_context_skip_reason(
+    user_message: &str,
+    native_tool_calling: bool,
+) -> Option<&'static str> {
+    let normalized = user_message
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(|c: char| c.is_ascii_punctuation())
+        .to_ascii_lowercase();
+
+    if normalized.is_empty() {
+        return Some("empty_message");
+    }
+
+    if matches!(
+        normalized.as_str(),
+        "hi" | "hello"
+            | "hey"
+            | "yo"
+            | "ciao"
+            | "hola"
+            | "bonjour"
+            | "thanks"
+            | "thank you"
+            | "ok"
+            | "okay"
+            | "good morning"
+            | "good afternoon"
+            | "good evening"
+            | "good night"
+    ) {
+        return Some("context_free_greeting");
+    }
+
+    let local_action_candidate = strip_local_folder_action_lead_in(&normalized);
+    let starts_like_local_folder_action = [
+        // English
+        "create a folder ",
+        "create folder ",
+        "make a folder ",
+        "make folder ",
+        "create a directory ",
+        "create directory ",
+        "make a directory ",
+        "make directory ",
+        "mkdir ",
+        // Italian (#4361 repro: "Crea una cartella sul Desktop e chiamala
+        // PROVA"). Gemma-class local models mis-route the Italian phrasing into
+        // Calendar/Connections exactly as they do the English one, so the same
+        // folder-op suppression must be language-aware for the reported locale.
+        "crea una cartella ",
+        "crea la cartella ",
+        "crea cartella ",
+        "creare una cartella ",
+        "creare cartella ",
+        "crea una directory ",
+        "crea directory ",
+        "fai una cartella ",
+        "fammi una cartella ",
+        "nuova cartella ",
+    ]
+    .iter()
+    .any(|prefix| local_action_candidate.starts_with(prefix));
+
+    if starts_like_local_folder_action {
+        let context_hints = [
+            "discussed",
+            "mentioned",
+            "previous",
+            "earlier",
+            "last time",
+            "email",
+            "gmail",
+            "calendar",
+            "slack",
+            "notion",
+            "github",
+            "drive",
+            // Italian cues, mirroring the Italian folder-op detection above so a
+            // folder request that *does* reference prior context or an
+            // integration still earns a scout (#4361).
+            "discusso",
+            "parlato",
+            "calendario",
+            "precedente",
+        ];
+        if !context_hints.iter().any(|hint| normalized.contains(hint)) {
+            return Some("simple_local_filesystem_action");
+        }
+    }
+
+    // Provider-aware guardrail (#4361). On providers without native tool calling
+    // the whole tool/integration catalog is injected as prose, so an unrequested
+    // first-turn scout is exactly what tips a small local model into spurious
+    // integration tool-calls. Suppress super context for these providers unless
+    // the prompt explicitly references prior context or a connected integration
+    // (e.g. "show my connections", "schedule a meeting tomorrow at 3"), where the
+    // scout genuinely helps. Native-tool-calling providers are unaffected.
+    if !native_tool_calling && !mentions_context_or_integration(&normalized) {
+        return Some("non_native_provider_no_explicit_intent");
+    }
+
+    None
+}
+
+/// True when a first-turn prompt explicitly references prior conversation
+/// context or a connected integration — the cases where a context scout earns
+/// its cost. Used to keep super context ON for these prompts even on local
+/// (non-native-tool-calling) providers, where it is otherwise suppressed to
+/// avoid tipping weak models into spurious integration tool-calls (#4361).
+///
+/// `normalized` must already be whitespace-collapsed, punctuation-trimmed, and
+/// lowercased by `super_context_skip_reason`.
+fn mentions_context_or_integration(normalized: &str) -> bool {
+    const INTENT_HINTS: [&str; 37] = [
+        // prior-conversation / memory cues
+        "discussed",
+        "mentioned",
+        "previous",
+        "earlier",
+        "last time",
+        "remember",
+        "we talked",
+        "you said",
+        "my profile",
+        // connection / integration cues
+        "connection",
+        "connections",
+        "integration",
+        "integrations",
+        "connected",
+        // calendar / scheduling
+        "calendar",
+        "schedule",
+        "meeting",
+        "reminder",
+        "remind me",
+        "event",
+        // mail
+        "email",
+        "gmail",
+        "inbox",
+        // common connected apps
+        "slack",
+        "notion",
+        "github",
+        "drive",
+        "linkedin",
+        "whatsapp",
+        "telegram",
+        // Italian cues (#4361) — keep super context ON for an explicit
+        // context/integration ask in the reported locale. "calendario"/"email"/
+        // "gmail" already match via substring, so only the non-overlapping stems
+        // are listed here. Additive only: these can never *cause* a skip.
+        "connessione",  // connection
+        "connessioni",  // connections
+        "integrazione", // integration
+        "riunione",     // meeting
+        "promemoria",   // reminder
+        "ricordami",    // remind me
+        "agenda",       // agenda / calendar
+    ];
+    INTENT_HINTS.iter().any(|hint| normalized.contains(hint))
+}
+
+fn strip_local_folder_action_lead_in(message: &str) -> &str {
+    let mut candidate = message;
+    for _ in 0..3 {
+        let trimmed = candidate.trim_start();
+        let next = [
+            // English
+            "can you please ",
+            "could you please ",
+            "would you please ",
+            "can you ",
+            "could you ",
+            "would you ",
+            "please ",
+            "hey ",
+            "hello ",
+            "hi ",
+            // Italian (#4361)
+            "puoi per favore ",
+            "potresti per favore ",
+            "puoi per piacere ",
+            "puoi ",
+            "potresti ",
+            "per favore ",
+            "per piacere ",
+            "ciao ",
+            "ehi ",
+        ]
+        .iter()
+        .find_map(|lead_in| trimmed.strip_prefix(lead_in));
+
+        match next {
+            Some(rest) => candidate = rest,
+            None => return trimmed,
+        }
+    }
+    candidate.trim_start()
+}
+
+fn super_context_base_gate(
     is_orchestrator: bool,
     first_turn: bool,
     has_prior_conversation: bool,
     enabled: bool,
 ) -> bool {
     is_orchestrator && first_turn && !has_prior_conversation && enabled
+}
+
+fn should_run_super_context(
+    is_orchestrator: bool,
+    first_turn: bool,
+    has_prior_conversation: bool,
+    enabled: bool,
+    native_tool_calling: bool,
+    user_message: &str,
+) -> bool {
+    super_context_base_gate(is_orchestrator, first_turn, has_prior_conversation, enabled)
+        && super_context_skip_reason(user_message, native_tool_calling).is_none()
 }
 
 // `parse_context_bundle_has_enough_context` moved to
@@ -75,7 +308,13 @@ fn tool_records_from_conversation(
         if let ConversationMessage::AssistantToolCalls { tool_calls, .. } = msg {
             for call in tool_calls {
                 let outcome = tool_outcomes.iter().find(|o| o.call_id == call.id);
-                let success = outcome.map(|o| o.success).unwrap_or(true);
+                // Default a MISSING outcome to `false` (#4467, item 7): a call
+                // with no captured outcome is a hallucinated/unknown tool the
+                // crate recovered via `ReturnToolError` without running
+                // `after_tool` (so the capture sink never saw it). Recording it as
+                // succeeded misreports the timeline; real executed tools always
+                // have an outcome, so this only flips the genuinely-unknown case.
+                let success = outcome.map(|o| o.success).unwrap_or(false);
                 let output_summary = outcome
                     .map(|o| hooks::sanitize_tool_output(&o.content, &call.name, success))
                     .unwrap_or_default();
@@ -91,6 +330,23 @@ fn tool_records_from_conversation(
         }
     }
     records
+}
+
+/// Rewrite the **trailing** assistant `Chat` message in `history` to `text`,
+/// keeping the persisted transcript and the next turn's KV-cache prefix
+/// consistent with a repaired required-output reply (issue #4117). Only the last
+/// row is touched — when the tail is not an assistant `Chat` (defensive; a clean
+/// finish, a cap checkpoint, and the #4093 close all end on one) a fresh
+/// assistant message is appended rather than mutating an older entry.
+fn replace_last_assistant_reply(history: &mut Vec<ConversationMessage>, text: &str) {
+    match history.last_mut() {
+        Some(ConversationMessage::Chat(chat)) if chat.role == "assistant" => {
+            chat.content = text.to_string();
+        }
+        _ => history.push(ConversationMessage::Chat(ChatMessage::assistant(
+            text.to_string(),
+        ))),
+    }
 }
 
 fn render_agent_context_status_note(sources: &[harness::AgentContextPreparedSource]) -> String {
@@ -133,7 +389,6 @@ impl Agent {
     /// 6. **Background Tasks**: Triggers episodic memory indexing and facts
     ///    extraction asynchronously.
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
-        let turn_started = std::time::Instant::now();
         // Capture before any system-prompt push mutates `history`: this is the
         // signal that gates first-turn-only work (system prompt build, and the
         // "super context" harness-driven context-collection pass below).
@@ -330,8 +585,21 @@ impl Agent {
             let user_msg = user_message.to_string();
             let autosave_key = format!("user_msg:{}", uuid::Uuid::new_v4());
             let chars = user_msg.chars().count();
+            // Captured *before* `tokio::spawn` — the ambient thread id is a
+            // `tokio::task_local` (see `inference::provider::thread_context`)
+            // and does not propagate into a spawned task, so it must be read
+            // on this (still-scoped) task and moved in explicitly. Tagging
+            // this document with the live chat thread id is what lets the
+            // same-session exclusion filter (`UnifiedMemory::recall` /
+            // `memory_hybrid_search`) recognize and drop it later this same
+            // turn, so the agent's own on-demand memory search doesn't echo
+            // its own triggering request back as a "relevant" result.
+            let session_id_for_autosave =
+                crate::openhuman::inference::provider::thread_context::current_thread_id();
             log::debug!(
-                "[agent_autosave] enqueue user-message store key={autosave_key} chars={chars}"
+                "[agent_autosave] enqueue user-message store key={autosave_key} chars={chars} \
+                 session_id={}",
+                session_id_for_autosave.as_deref().unwrap_or("<none>")
             );
             tokio::spawn(async move {
                 match memory
@@ -340,7 +608,7 @@ impl Agent {
                         &autosave_key,
                         &user_msg,
                         MemoryCategory::Conversation,
-                        None,
+                        session_id_for_autosave.as_deref(),
                     )
                     .await
                 {
@@ -467,6 +735,29 @@ impl Agent {
             }
         }
 
+        // ── Active sub-agents (ambient fleet awareness) ──────────────────────
+        // When this agent has async/parallel workers registered under its own
+        // session, prepend a compact `[active_subagents]` roster (agent type,
+        // subagent_session_id, live status) so it tracks the fleet from the turn
+        // context instead of relying on remembered `[async_subagent_ref]` blocks
+        // that may have scrolled away. Children register under the parent's
+        // `session_id`, which is this agent's `event_session_id` (see
+        // `build_parent_execution_context`). Gated on presence: agents that never
+        // spawn get an empty block and no injection. Rides per-turn context (like
+        // the goal block) so status is always live.
+        if let Some(block) =
+            crate::openhuman::agent_orchestration::running_subagents::active_subagents_context_block(
+                &self.event_session_id,
+            )
+        {
+            log::info!(
+                "[running_subagents] injecting active_subagents block session={} ({} chars)",
+                self.event_session_id,
+                block.chars().count()
+            );
+            context.push_str(&block);
+        }
+
         let enriched = if context.is_empty() {
             log::info!("[agent] no memory context found — using raw user message");
             self.last_memory_context = None;
@@ -546,10 +837,6 @@ impl Agent {
         // model prompt, not in the Rust-side classifier. Sub-agents pick
         // their own tier via `ModelSpec::Hint(...)` in their definition.
         let effective_model = self.model_name.clone();
-        // Capture before `self` is borrowed by the turn observer below, so it can
-        // be installed as the `current_model_vision` task-local around the engine
-        // call (read by the image gate for custom/BYOK vision models).
-        let model_vision = self.model_vision;
         log::info!(
             "[agent_loop] model pinned model={} (per-turn classification disabled for KV cache stability)",
             effective_model
@@ -561,6 +848,7 @@ impl Agent {
         // model field with the post-classification effective model.
         let mut parent_context = self.build_parent_execution_context();
         parent_context.model_name = effective_model.clone();
+        let session_memory_parent_context = parent_context.clone();
 
         let mut agent_context_prepared_sources: Vec<harness::AgentContextPreparedSource> =
             Vec::new();
@@ -606,6 +894,25 @@ impl Agent {
             .cached_transcript_messages
             .as_ref()
             .is_some_and(|msgs| msgs.iter().any(|m| m.role == "assistant"));
+        // `should_send_tool_specs()` is true only when the provider receives a
+        // structured tool schema (native tool calling). For local providers it
+        // is false — the whole tool/integration catalog is prose in the prompt,
+        // which is the surface a weak model mis-routes on (#4361).
+        let native_tool_calling = self.tool_dispatcher.should_send_tool_specs();
+        let skip_reason_for_logging = super_context_skip_reason(user_message, native_tool_calling);
+        let base_gate = super_context_base_gate(
+            self.agent_definition_id == "orchestrator",
+            first_turn,
+            has_prior_conversation,
+            self.context.super_context_enabled(),
+        );
+        if base_gate {
+            if let Some(reason) = skip_reason_for_logging {
+                log::info!(
+                    "[agent_loop] super_context skipped for context-free first turn reason={reason} native_tool_calling={native_tool_calling}"
+                );
+            }
+        }
         // The scout no longer runs here imperatively: super context is now a
         // before_model **graph node** (`SuperContextMiddleware`, installed via
         // `context_mw.super_context` below). It runs the read-only `context_scout`
@@ -618,6 +925,8 @@ impl Agent {
             first_turn,
             has_prior_conversation,
             self.context.super_context_enabled(),
+            native_tool_calling,
+            user_message,
         );
         if run_super_context {
             log::info!(
@@ -661,31 +970,11 @@ impl Agent {
         self.context.tick_turn();
 
         let turn_body = async {
-            // Capture everything the engine seams need as locals/clones *before*
-            // the observer takes `&mut self`, so the borrow checker is happy:
-            // the tool source + parser + checkpoint hold clones disjoint from
-            // the `Agent`, and the observer alone borrows it mutably.
-            let dispatcher = self.tool_dispatcher.clone();
-            let provider = self.provider.clone();
-            let provider_name = self.event_channel().to_string();
+            // Keep the scalar turn settings outside the pinned future arguments;
+            // the TinyAgents session path reads provider/tool/multimodal state
+            // directly from `self` when preparing the request.
             let temperature = self.temperature;
             let max_iterations = self.config.max_tool_iterations;
-            // Source multimodal limits from the session's runtime config when
-            // present so [IMAGE:…] / [FILE:…] markers in user messages are
-            // resolved with the operator-configured caps (max files, max size,
-            // max extracted text). Without this, agents fall back to the
-            // crate-default caps and `MultimodalFileConfig::default()`
-            // disables file expansion entirely.
-            let multimodal = self
-                .integration_runtime_config
-                .as_ref()
-                .map(|c| c.multimodal.clone())
-                .unwrap_or_default();
-            let multimodal_files = self
-                .integration_runtime_config
-                .as_ref()
-                .map(|c| c.multimodal_files.clone())
-                .unwrap_or_default();
             let artifact_store = Some(
                 crate::openhuman::agent::harness::tool_result_artifacts::ToolResultArtifactStore::new(
                     self.action_dir.clone(),
@@ -703,6 +992,7 @@ impl Agent {
                 temperature,
                 max_iterations,
                 run_super_context,
+                artifact_store,
             ))
             .await
         }; // end of `turn_body` async block
@@ -712,10 +1002,13 @@ impl Agent {
         // read the parent's provider, tools, model, and workspace via
         // the PARENT_CONTEXT task-local.
         // Arm the thread-goal budget stop hook for this turn when an active,
-        // budgeted goal exists — it hard-stops the loop the moment running usage
-        // would exceed the cap (so an autonomous run can't blow past it between
-        // accounting points). Merge with any ambient stop hooks rather than
-        // clobbering them. No budgeted active goal → no extra hook, no wrap.
+        // budgeted goal exists — it votes to stop the loop as soon as running
+        // usage would exceed the cap. #4469 item 1: the stop is a graceful pause
+        // drained at the next iteration boundary, not an instantaneous abort, so
+        // the current tool round + one wrap-up summary call can still run past the
+        // cap (a small, bounded overshoot) before the partial transcript returns.
+        // Merge with any ambient stop hooks rather than clobbering them. No
+        // budgeted active goal → no extra hook, no wrap.
         let mut turn_stop_hooks = crate::openhuman::agent::stop_hooks::current_stop_hooks();
         if let Some(ref goal) = active_goal {
             if let Some(hook) =
@@ -786,7 +1079,8 @@ impl Agent {
         // later), which is the right amount of retry behaviour for a
         // librarian task that's idempotent across reruns.
         if result.is_ok() && self.context.should_extract_session_memory() {
-            self.spawn_session_memory_extraction().await;
+            self.spawn_session_memory_extraction(session_memory_parent_context)
+                .await;
             // Sibling pipeline (#1399): heuristic transcript ingestion
             // turns the just-written transcript into durable
             // conversational memory + reflections so a brand-new chat
@@ -807,7 +1101,7 @@ impl Agent {
     ///
     /// Full-fidelity with the legacy `run_turn_engine`: live tool-timeline /
     /// text-delta progress and the cost/token footer are mirrored from the
-    /// harness event stream via the [`OpenhumanEventBridge`] (tinyagents 0.2.0),
+    /// harness event stream via `OpenhumanEventBridge` (tinyagents harness),
     /// `[IMAGE:…]`/`[FILE:…]` markers are expanded for the provider, and history
     /// is trimmed to the provider's context window.
     async fn run_turn_via_tinyagents_session(
@@ -820,6 +1114,9 @@ impl Agent {
         // by `should_run_super_context` in `turn()`, before the user row was
         // pushed to history — so it can't be recomputed here).
         run_super_context: bool,
+        artifact_store: Option<
+            crate::openhuman::agent::harness::tool_result_artifacts::ToolResultArtifactStore,
+        >,
     ) -> Result<String> {
         let turn_started = std::time::Instant::now();
         // This turn's stamped user message is already the last entry in
@@ -856,10 +1153,22 @@ impl Agent {
             .as_ref()
             .map(|c| c.multimodal_files.clone())
             .unwrap_or_default();
+        // Resolve the effective context window and build the turn's tiered crate
+        // `ChatModel` set from the session source up front (issue #4249, Phase 3 /
+        // Motion A) — the harness holds crate model types, and the vision read
+        // below comes off the built models, not a raw provider.
+        let context_window = self
+            .turn_model_source
+            .effective_context_window(effective_model)
+            .await;
+        let turn_models =
+            self.turn_model_source
+                .build(effective_model, temperature, context_window)?;
+
         // Honor custom/BYOK vision models too: they can set `model_vision` even
         // when the provider capability bit is false, and must still rehydrate
         // `[IMAGE:…]` placeholders (else image chat silently degrades to text).
-        if (self.provider.supports_vision() || self.model_vision)
+        if (turn_models.supports_vision() || self.model_vision)
             && crate::openhuman::agent::multimodal::has_image_placeholders(&messages)
         {
             messages = crate::openhuman::agent::multimodal::rehydrate_image_placeholders(&messages);
@@ -880,24 +1189,22 @@ impl Agent {
             "[agent_loop] routing chat turn through the tinyagents harness"
         );
 
-        // Resolve the provider's effective context window so the harness can
-        // trim long threads to budget (autocompaction parity).
-        let context_window = self
-            .provider
-            .effective_context_window(effective_model)
-            .await;
-
         // Dispatch through the chat turn graph (this folder's `graph.rs`): a thin
         // wrapper over the shared tinyagents seam that pins the chat path's fixed
         // arguments (no child scope, no early-exit tools, graceful cap pause,
         // per-turn output cap) and runs the context-window summarization step.
         // Context middlewares sourced from this session's ContextManager: the
-        // per-tool-result byte cap + payload summarizer (after_tool), the
-        // cache-align warning and microcompact tool-body clearing (before_model).
+        // per-tool-result byte cap + payload summarizer (after_tool) and
+        // microcompact tool-body clearing (before_model). KV-cache-prefix drift
+        // detection is owned by the crate `PromptCacheGuardMiddleware` (fed by
+        // `PromptCacheSegmentMiddleware`); the warn-only `CacheAlignMiddleware`
+        // was deleted in C3.
         let context_mw = crate::openhuman::tinyagents::TurnContextMiddleware {
             tool_result_budget_bytes: self.context.tool_result_budget_bytes(),
             payload_summarizer: self.payload_summarizer.clone(),
-            cache_align: self.context.compaction_enabled(),
+            artifact_store,
+            tokenjuice_compaction_enabled: self.context.compaction_enabled(),
+            tokenjuice_compression: self.tokenjuice_compression,
             microcompact_keep_recent: self.context.microcompact_keep_recent(),
             // Honor the [context].enabled / autocompact_enabled opt-outs: when off,
             // the summarization middleware is not installed (no summarizer tokens,
@@ -914,6 +1221,9 @@ impl Agent {
             // Progressive-disclosure handoff is a sub-agent (integrations_agent)
             // concern; the top-level chat turn never sets it.
             handoff: None,
+            // Live transcript snapshotting is a sub-agent error-recovery concern
+            // (#4466); the chat path persists its transcript post-run.
+            transcript_snapshot: None,
         };
 
         // Gather any sub-agent spend delegated during this turn (synchronous
@@ -923,9 +1233,8 @@ impl Agent {
         let (outcome, subagent_usage_entries) =
             crate::openhuman::agent::harness::turn_subagent_usage::with_turn_collector(
                 super::graph::run_chat_turn_graph(super::graph::ChatTurnGraph {
-                    provider: self.provider.clone(),
+                    turn_models,
                     model: effective_model.to_string(),
-                    temperature,
                     messages,
                     tools: self.tools.clone(),
                     visible_tool_names: self
@@ -953,6 +1262,12 @@ impl Agent {
             .await;
         let outcome = outcome?;
 
+        // Record whether this turn paused at the tool-call cap (vs. finishing
+        // naturally) BEFORE anything below can early-return, so a caller
+        // inspecting `last_turn_hit_cap()` after `run_single` always reflects
+        // this turn, never a stale value from a prior one.
+        self.last_turn_hit_cap = outcome.hit_cap;
+
         // The stamped user turn is already in `self.history` (pushed by `turn()`),
         // so append only the structured messages this turn produced — assistant
         // tool calls + tool results + (for a clean finish) the final assistant —
@@ -978,10 +1293,11 @@ impl Agent {
             // cycle. Fold the extra call's usage into the turn accounting.
             let base = self.tool_dispatcher.to_provider_messages(&self.history);
             let (summary, summary_usage) = self
-                .summarize_iteration_checkpoint(
+                .summarize_turn_wrapup(
                     &base,
                     effective_model,
                     outcome.model_calls as u32 + 1,
+                    super::super::turn_checkpoint::MAX_ITER_CHECKPOINT_INSTRUCTION,
                 )
                 .await;
             if let Some(u) = summary_usage {
@@ -1007,13 +1323,126 @@ impl Agent {
             // A completion with no text and no tool calls is never a valid final
             // answer — surface it as an error instead of wedging the thread on a
             // blank reply (bug-report-2026-05-26 A1, defect B).
+            //
+            // #4457 (defect A): the empty terminal assistant response was already
+            // folded into `self.history` via `outcome.conversation` at the
+            // `history.extend` above (an empty `Chat(assistant(""))`). The #4093
+            // branch below pops that dangling blank row before re-prompting, but
+            // this `tool_calls == 0` path returned the error with the empty row
+            // still in history — so the *next* request carried an empty-content
+            // assistant message and strict providers (Anthropic: "text content
+            // blocks must be non-empty") 400 the whole thread, not just this turn.
+            // Pop the trailing empty assistant row before returning so a retry
+            // sends a clean transcript.
+            if matches!(
+                self.history.last(),
+                Some(ConversationMessage::Chat(msg))
+                    if msg.role == "assistant" && msg.content.trim().is_empty()
+            ) {
+                log::debug!(
+                    "[agent_loop] EmptyProviderResponse at iteration {}: popping dangling empty assistant row before returning — #4457 defect A",
+                    outcome.model_calls
+                );
+                self.history.pop();
+            }
             return Err(anyhow::Error::new(
                 crate::openhuman::agent::error::AgentError::EmptyProviderResponse {
                     iteration: outcome.model_calls,
                 },
             ));
+        } else if outcome.text.trim().is_empty() {
+            // #4093: the loop ran tool calls (tool_calls > 0, so the branch
+            // above did not fire) and then yielded a terminating response with
+            // no final text — the turn did work but would otherwise end
+            // silently, leaving the user with nothing. Enforce the
+            // "must produce a final response" terminal step: re-prompt the
+            // model (tools disabled) for a closing summary of what it did,
+            // falling back to a deterministic summary of the tool calls so the
+            // synthesized message is never itself empty. Fold the extra call's
+            // usage into the turn accounting, exactly like the cap path above.
+            let base = self.tool_dispatcher.to_provider_messages(&self.history);
+            let (summary, summary_usage) = self
+                .summarize_turn_wrapup(
+                    &base,
+                    effective_model,
+                    outcome.model_calls as u32 + 1,
+                    super::super::turn_checkpoint::FINAL_ANSWER_INSTRUCTION,
+                )
+                .await;
+            if let Some(u) = summary_usage {
+                input_tokens += u.input_tokens;
+                output_tokens += u.output_tokens;
+                cached_input_tokens += u.cached_input_tokens;
+                charged_amount_usd += u.charged_amount_usd;
+            }
+            let final_answer = if summary.trim().is_empty() {
+                super::super::turn_checkpoint::build_deterministic_final_summary(
+                    &tool_records_from_conversation(&outcome.conversation, &outcome.tool_outcomes),
+                )
+            } else {
+                summary
+            };
+            log::info!(
+                "[agent_loop] turn produced no final text after {} tool call(s); synthesized a closing summary ({} chars) — #4093",
+                outcome.tool_calls,
+                final_answer.chars().count()
+            );
+            // The empty terminal assistant response was already folded into
+            // `self.history` via `outcome.conversation` above (an empty
+            // `Chat(assistant(""))` — see `messages_to_conversation`). Drop that
+            // blank turn before appending the synthesized answer so the
+            // transcript and the next prompt don't carry a dangling empty
+            // assistant message immediately before the real reply (Codex review).
+            if matches!(
+                self.history.last(),
+                Some(ConversationMessage::Chat(msg))
+                    if msg.role == "assistant" && msg.content.trim().is_empty()
+            ) {
+                self.history.pop();
+            }
+            self.history
+                .push(ConversationMessage::Chat(ChatMessage::assistant(
+                    final_answer.clone(),
+                )));
+            final_answer
         } else {
             outcome.text.clone()
+        };
+
+        // Enforce the required structured-output contract (issue #4117) on the
+        // accepted reply — for ALL of the branches above (normal finish, cap
+        // checkpoint, #4093 synthesized close), since each delivers a reply
+        // downstream parsing depends on. When this agent must emit a JSON block
+        // every turn and the reply omitted it, validate-and-repair before the
+        // turn is accepted, reconciling with streaming (append-only when a live
+        // stream is attached, replace otherwise — see `enforce_required_output`).
+        // The trailing assistant message is rewritten to match, and the repair
+        // call's usage is folded into the turn accounting. `required_output`
+        // defaults to `None`, so existing agents are entirely unaffected.
+        let reply = if let Some(contract) = self.config.required_output.clone() {
+            match self
+                .enforce_required_output(
+                    &reply,
+                    &contract,
+                    effective_model,
+                    outcome.model_calls as u32 + 1,
+                )
+                .await
+            {
+                Some((repaired, repair_usage)) => {
+                    if let Some(u) = repair_usage {
+                        input_tokens += u.input_tokens;
+                        output_tokens += u.output_tokens;
+                        cached_input_tokens += u.cached_input_tokens;
+                        charged_amount_usd += u.charged_amount_usd;
+                    }
+                    replace_last_assistant_reply(&mut self.history, &repaired);
+                    repaired
+                }
+                None => reply,
+            }
+        } else {
+            reply
         };
         self.trim_history();
 
@@ -1083,6 +1512,34 @@ impl Agent {
             turn_started.elapsed().as_secs(),
         )
         .await;
+
+        // Content (prompt + reply) rides its own event so a tracing consumer can
+        // attach it to the turn span. Gated on the opt-in
+        // `observability.agent_tracing.capture_content` flag (#4454): with the
+        // default off, we don't even emit the content event, so prompt/reply text
+        // never reaches the span store or any exporter. The collector applies the
+        // same storage-level gate as defense in depth.
+        let capture_content = self
+            .integration_runtime_config
+            .as_ref()
+            .map(|c| c.observability.agent_tracing.capture_content)
+            .unwrap_or(false);
+        if capture_content {
+            log::debug!(
+                target: "agent-tracing",
+                "[agent-tracing] emitting TurnContent (capture_content=true)"
+            );
+            self.emit_progress(AgentProgress::TurnContent {
+                input: Some(user_message.to_string()),
+                output: Some(reply.clone()),
+            })
+            .await;
+        } else {
+            log::debug!(
+                target: "agent-tracing",
+                "[agent-tracing] skipping TurnContent emit (capture_content=false)"
+            );
+        }
 
         self.emit_progress(AgentProgress::TurnCompleted {
             iterations: outcome.model_calls as u32,
@@ -1282,24 +1739,55 @@ impl Agent {
 
 #[cfg(test)]
 mod super_context_gate_tests {
-    use super::{render_agent_context_status_note, should_run_super_context};
+    use super::{
+        mentions_context_or_integration, render_agent_context_status_note,
+        should_run_super_context, super_context_skip_reason,
+    };
     use crate::openhuman::agent::harness::AgentContextPreparedSource;
+
+    // Provider-aware convenience: `native_tool_calling` (5th arg) is `true` for
+    // these tests unless a case is specifically exercising the local
+    // (non-native-tool-calling) provider path (#4361). Native providers keep the
+    // original #4361/#4403 gate semantics.
+    const NATIVE: bool = true;
+    const LOCAL: bool = false;
 
     #[test]
     fn runs_only_on_first_turn_of_a_new_orchestrator_thread_when_enabled() {
         // Orchestrator, new thread, first turn, flag on → run.
-        assert!(should_run_super_context(true, true, false, true));
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            NATIVE,
+            "find the project we discussed yesterday"
+        ));
     }
 
     #[test]
     fn skips_when_flag_disabled() {
-        assert!(!should_run_super_context(true, true, false, false));
+        assert!(!should_run_super_context(
+            true,
+            true,
+            false,
+            false,
+            NATIVE,
+            "find the project we discussed yesterday"
+        ));
     }
 
     #[test]
     fn skips_on_later_turns() {
         // history non-empty → not the first turn.
-        assert!(!should_run_super_context(true, false, false, true));
+        assert!(!should_run_super_context(
+            true,
+            false,
+            false,
+            true,
+            NATIVE,
+            "find the project we discussed yesterday"
+        ));
     }
 
     #[test]
@@ -1308,7 +1796,14 @@ mod super_context_gate_tests {
         // `first_turn` is true) but a seeded prefix that includes a prior
         // assistant reply. Super context must NOT re-fire on these existing
         // conversations.
-        assert!(!should_run_super_context(true, true, true, true));
+        assert!(!should_run_super_context(
+            true,
+            true,
+            true,
+            true,
+            NATIVE,
+            "find the project we discussed yesterday"
+        ));
     }
 
     #[test]
@@ -1317,7 +1812,14 @@ mod super_context_gate_tests {
         // persisted *user* row (no assistant reply), so `has_prior_conversation`
         // is false. That is still a brand-new conversation — super context
         // should run.
-        assert!(should_run_super_context(true, true, false, true));
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            NATIVE,
+            "[IMAGE: screenshot.png]\nwhat is this?"
+        ));
     }
 
     #[test]
@@ -1326,7 +1828,282 @@ mod super_context_gate_tests {
         // `run_single()` flows (goals enrichment, cron/task agents,
         // specialist sub-agents). Even on a fresh first turn with the flag on,
         // super context must only run for the user-facing orchestrator.
-        assert!(!should_run_super_context(false, true, false, true));
+        assert!(!should_run_super_context(
+            false,
+            true,
+            false,
+            true,
+            NATIVE,
+            "find the project we discussed yesterday"
+        ));
+    }
+
+    #[test]
+    fn skips_context_free_greeting() {
+        // #4361 case: a bare greeting must never trigger a scout — on any
+        // provider. "Ciao" is the exact prompt from the issue report.
+        for native in [NATIVE, LOCAL] {
+            assert!(!should_run_super_context(
+                true, true, false, true, native, "Ciao"
+            ));
+            assert!(!should_run_super_context(
+                true, true, false, true, native, "hello!"
+            ));
+            assert_eq!(
+                super_context_skip_reason("Ciao", native),
+                Some("context_free_greeting")
+            );
+        }
+    }
+
+    #[test]
+    fn skips_simple_local_folder_creation() {
+        // #4361 case: "create a folder on Desktop called test" must not browse
+        // Calendar/Connections — on any provider.
+        for native in [NATIVE, LOCAL] {
+            assert!(
+                !should_run_super_context(
+                    true,
+                    true,
+                    false,
+                    true,
+                    native,
+                    "Create a folder on Desktop called test"
+                ),
+                "expected skip for local folder creation (native={native})"
+            );
+            assert!(!should_run_super_context(
+                true,
+                true,
+                false,
+                true,
+                native,
+                "Create a folder on Desktop named PROVA"
+            ));
+        }
+    }
+
+    #[test]
+    fn skips_simple_local_folder_creation_with_polite_lead_in() {
+        for message in [
+            "Please create a folder on Desktop named PROVA",
+            "Can you make a directory named invoices",
+            "Hey please create folder screenshots",
+        ] {
+            assert!(
+                !should_run_super_context(true, true, false, true, NATIVE, message),
+                "expected super context to skip for {message:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_super_context_for_local_action_with_context_hint() {
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            NATIVE,
+            "Create a folder for the project we discussed yesterday"
+        ));
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            NATIVE,
+            "Please create a folder for the project we discussed yesterday"
+        ));
+    }
+
+    #[test]
+    fn skips_italian_local_folder_creation() {
+        // #4361 exact repro: the Italian folder op must be recognized as a
+        // simple local filesystem action and NOT trigger a Calendar/Connections
+        // scout — on any provider. This is the string from the issue report.
+        for native in [NATIVE, LOCAL] {
+            assert!(
+                !should_run_super_context(
+                    true,
+                    true,
+                    false,
+                    true,
+                    native,
+                    "Crea una cartella sul Desktop e chiamala PROVA"
+                ),
+                "expected skip for Italian folder creation (native={native})"
+            );
+            // The reason must be the language-agnostic filesystem classification,
+            // not the provider fallback — so it holds even for native providers.
+            assert_eq!(
+                super_context_skip_reason("Crea una cartella sul Desktop e chiamala PROVA", NATIVE),
+                Some("simple_local_filesystem_action")
+            );
+        }
+    }
+
+    #[test]
+    fn skips_italian_local_folder_creation_variants_and_polite_lead_ins() {
+        for message in [
+            "Crea una cartella chiamata PROVA",
+            "Crea cartella screenshots",
+            "Creare una cartella sul desktop",
+            "Fai una cartella per le fatture",
+            "Nuova cartella documenti",
+            "Puoi creare una cartella chiamata PROVA",
+            "Per favore crea una cartella sul Desktop",
+            "Ciao puoi creare una cartella chiamata test",
+        ] {
+            assert_eq!(
+                super_context_skip_reason(message, NATIVE),
+                Some("simple_local_filesystem_action"),
+                "expected filesystem skip for {message:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_super_context_for_italian_local_action_with_context_hint() {
+        // An Italian folder op that references prior context / an integration
+        // should still earn a scout — the filesystem shortcut must not swallow
+        // it. Verified on a native provider (local providers add the separate
+        // provider gate, exercised elsewhere).
+        assert!(should_run_super_context(
+            true,
+            true,
+            false,
+            true,
+            NATIVE,
+            "Crea una cartella per il progetto di cui abbiamo parlato"
+        ));
+        assert_eq!(
+            super_context_skip_reason("Crea una cartella per la riunione in calendario", NATIVE),
+            None
+        );
+    }
+
+    // ── Provider-aware guardrail (#4361) ────────────────────────────────────
+    // On providers without native tool calling (Ollama / LM Studio / MLX /
+    // llama.cpp) the whole tool + integration catalog is injected as prose, so
+    // an unrequested first-turn scout is what tips weak models into spurious
+    // integration tool-calls. For these providers super context runs ONLY when
+    // the prompt explicitly references prior context or a connected integration.
+
+    #[test]
+    fn local_provider_skips_super_context_for_generic_prompt() {
+        // A generic first-turn ask with no context/integration cue: a native
+        // provider still scouts (broad behavior preserved), but a local provider
+        // suppresses it to keep the prose tool menu from mis-routing.
+        let msg = "write me a short poem about the sea";
+        assert!(should_run_super_context(
+            true, true, false, true, NATIVE, msg
+        ));
+        assert!(!should_run_super_context(
+            true, true, false, true, LOCAL, msg
+        ));
+        assert_eq!(
+            super_context_skip_reason(msg, LOCAL),
+            Some("non_native_provider_no_explicit_intent")
+        );
+        assert_eq!(super_context_skip_reason(msg, NATIVE), None);
+    }
+
+    #[test]
+    fn keeps_super_context_for_explicit_connection_intent() {
+        // #4361 case: "show my connections" is an explicit integration ask →
+        // super context is allowed on BOTH provider kinds.
+        let msg = "show my connections";
+        assert!(should_run_super_context(
+            true, true, false, true, NATIVE, msg
+        ));
+        assert!(should_run_super_context(
+            true, true, false, true, LOCAL, msg
+        ));
+        assert_eq!(super_context_skip_reason(msg, LOCAL), None);
+    }
+
+    #[test]
+    fn keeps_super_context_for_explicit_scheduling_intent() {
+        // #4361 case: "schedule a meeting tomorrow at 3" is an explicit
+        // integration ask → super context is allowed when integrations are
+        // enabled (the `enabled` flag), on BOTH provider kinds.
+        let msg = "schedule a meeting tomorrow at 3";
+        assert!(should_run_super_context(
+            true, true, false, true, NATIVE, msg
+        ));
+        assert!(should_run_super_context(
+            true, true, false, true, LOCAL, msg
+        ));
+        // Still gated by the config flag: disabled ⇒ no scout regardless.
+        assert!(!should_run_super_context(
+            true, true, false, false, LOCAL, msg
+        ));
+    }
+
+    #[test]
+    fn local_provider_keeps_super_context_for_explicit_italian_integration_intent() {
+        // Fix B, locale-aware: an explicit Italian integration ask must keep the
+        // scout ON even on a local (non-native-tool-calling) provider — the
+        // provider gate only suppresses *context-free* first turns. A generic
+        // Italian prompt with no cue is still suppressed on local providers.
+        for msg in [
+            "mostra le mie connessioni",    // show my connections
+            "fissa una riunione domani",    // schedule a meeting tomorrow
+            "aggiungilo al mio calendario", // add it to my calendar
+            "controlla la mia email",       // check my email
+        ] {
+            assert!(
+                should_run_super_context(true, true, false, true, LOCAL, msg),
+                "expected local provider to keep super context for {msg:?}"
+            );
+            assert_eq!(super_context_skip_reason(msg, LOCAL), None);
+        }
+
+        // A generic Italian ask (a poem) carries no integration cue → the local
+        // provider still suppresses it, while a native provider scouts.
+        let generic = "scrivimi una breve poesia sul mare";
+        assert!(should_run_super_context(
+            true, true, false, true, NATIVE, generic
+        ));
+        assert_eq!(
+            super_context_skip_reason(generic, LOCAL),
+            Some("non_native_provider_no_explicit_intent")
+        );
+    }
+
+    #[test]
+    fn mentions_context_or_integration_matches_expected_cues() {
+        for hit in [
+            "show my connections",
+            "schedule a meeting tomorrow at 3",
+            "check my gmail inbox",
+            "what did we discuss earlier",
+            "add it to my calendar",
+            "post this to slack",
+            // Italian cues (#4361)
+            "mostra le mie connessioni",
+            "fissa una riunione domani",
+            "aggiungilo al mio calendario",
+            "impostami un promemoria",
+            "controlla la mia email",
+        ] {
+            assert!(
+                mentions_context_or_integration(hit),
+                "expected context/integration cue in {hit:?}"
+            );
+        }
+        for miss in [
+            "write me a short poem about the sea",
+            "what is 2 plus 2",
+            "translate hola to english",
+            "scrivimi una breve poesia sul mare",
+        ] {
+            assert!(
+                !mentions_context_or_integration(miss),
+                "did not expect a cue in {miss:?}"
+            );
+        }
     }
 
     #[test]

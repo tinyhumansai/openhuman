@@ -17,6 +17,7 @@ import LedgerSection, {
   abbreviateAddress,
   formatAmount,
   formatLedgerAmount,
+  LEDGER_PAGE_SIZE,
   StatusBadge,
 } from './LedgerSection';
 
@@ -42,6 +43,15 @@ const sampleTransaction: GqlLedgerTransaction = {
   reference: { kind: 'identity.register', id: 'ref-1' },
   metadata: { identity: '@test-agent' },
 };
+
+/** Build `n` distinct SALE rows with sequential ids, starting at `start`. */
+function buildPage(n: number, start = 0): Array<GqlLedgerTransaction> {
+  return Array.from({ length: n }, (_, i) => ({
+    ...sampleTransaction,
+    txId: `tx-${String(start + i).padStart(4, '0')}`,
+    type: 'SALE',
+  }));
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -100,6 +110,117 @@ describe('Ledger list', () => {
     await waitFor(() => {
       expect(screen.getByText(/no transactions found/i)).toBeInTheDocument();
     });
+  });
+});
+
+// ── Pagination ────────────────────────────────────────────────────────────────
+
+describe('Ledger pagination', () => {
+  test('requests the first page with limit + offset 0', async () => {
+    vi.mocked(apiClient.graphql.ledgerTransactions).mockResolvedValue({
+      transactions: [sampleTransaction],
+      count: 1,
+    });
+    render(<LedgerSection />);
+    await waitFor(() => {
+      expect(screen.getByText('REGISTRATION')).toBeInTheDocument();
+    });
+    expect(apiClient.graphql.ledgerTransactions).toHaveBeenNthCalledWith(1, {
+      limit: LEDGER_PAGE_SIZE,
+      offset: 0,
+    });
+  });
+
+  test('hides Load more when the first page is shorter than a full page', async () => {
+    vi.mocked(apiClient.graphql.ledgerTransactions).mockResolvedValue({
+      transactions: buildPage(3),
+      count: 3,
+    });
+    render(<LedgerSection />);
+    await waitFor(() => {
+      expect(screen.getAllByText('SALE')).toHaveLength(3);
+    });
+    expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
+  });
+
+  test('shows Load more when the first page fills the page size', async () => {
+    vi.mocked(apiClient.graphql.ledgerTransactions).mockResolvedValue({
+      transactions: buildPage(LEDGER_PAGE_SIZE),
+      count: LEDGER_PAGE_SIZE,
+    });
+    render(<LedgerSection />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument();
+    });
+  });
+
+  test('clicking Load more fetches the next offset, appends rows, then stops', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.graphql.ledgerTransactions)
+      .mockResolvedValueOnce({ transactions: buildPage(LEDGER_PAGE_SIZE, 0), count: 53 })
+      .mockResolvedValueOnce({ transactions: buildPage(3, LEDGER_PAGE_SIZE), count: 53 });
+
+    render(<LedgerSection />);
+    await waitFor(() => {
+      expect(screen.getAllByText('SALE')).toHaveLength(LEDGER_PAGE_SIZE);
+    });
+
+    await user.click(screen.getByRole('button', { name: /load more/i }));
+
+    // Second page appended (50 + 3 = 53 rows) and the control disappears because
+    // the short page signals the ledger is exhausted.
+    await waitFor(() => {
+      expect(screen.getAllByText('SALE')).toHaveLength(LEDGER_PAGE_SIZE + 3);
+    });
+    expect(apiClient.graphql.ledgerTransactions).toHaveBeenNthCalledWith(2, {
+      limit: LEDGER_PAGE_SIZE,
+      offset: LEDGER_PAGE_SIZE,
+    });
+    expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
+  });
+
+  test('deduplicates overlapping rows across pages', async () => {
+    const user = userEvent.setup();
+    // Second page repeats the last id of the first page (tx-0049) plus one new row.
+    vi.mocked(apiClient.graphql.ledgerTransactions)
+      .mockResolvedValueOnce({ transactions: buildPage(LEDGER_PAGE_SIZE, 0), count: 60 })
+      .mockResolvedValueOnce({
+        transactions: buildPage(LEDGER_PAGE_SIZE, LEDGER_PAGE_SIZE - 1),
+        count: 60,
+      });
+
+    render(<LedgerSection />);
+    await waitFor(() => {
+      expect(screen.getAllByText('SALE')).toHaveLength(LEDGER_PAGE_SIZE);
+    });
+
+    await user.click(screen.getByRole('button', { name: /load more/i }));
+
+    // 50 initial + 50 returned − 1 overlapping (tx-0049) = 99 unique rows.
+    await waitFor(() => {
+      expect(screen.getAllByText('SALE')).toHaveLength(2 * LEDGER_PAGE_SIZE - 1);
+    });
+  });
+
+  test('keeps rows and surfaces an error when Load more fails', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.graphql.ledgerTransactions)
+      .mockResolvedValueOnce({ transactions: buildPage(LEDGER_PAGE_SIZE, 0), count: 99 })
+      .mockRejectedValueOnce(new Error('network failure'));
+
+    render(<LedgerSection />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /load more/i }));
+
+    // Existing rows stay; an error message appears; the control remains for retry.
+    await waitFor(() => {
+      expect(screen.getByText(/could not load more transactions/i)).toBeInTheDocument();
+    });
+    expect(screen.getAllByText('SALE')).toHaveLength(LEDGER_PAGE_SIZE);
+    expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument();
   });
 });
 

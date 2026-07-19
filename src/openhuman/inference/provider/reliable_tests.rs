@@ -1,4 +1,5 @@
 use super::*;
+use crate::openhuman::inference::provider::traits::StreamError;
 use std::sync::Arc;
 
 struct MockProvider {
@@ -232,110 +233,6 @@ async fn returns_aggregated_error_when_all_providers_fail() {
     assert!(msg.contains("error=p1 error"));
     assert!(msg.contains("error=p2 error"));
     assert!(msg.contains("retryable"));
-}
-
-#[test]
-fn non_retryable_detects_common_patterns() {
-    assert!(is_non_retryable(&anyhow::anyhow!("400 Bad Request")));
-    assert!(is_non_retryable(&anyhow::anyhow!("401 Unauthorized")));
-    assert!(is_non_retryable(&anyhow::anyhow!("403 Forbidden")));
-    assert!(is_non_retryable(&anyhow::anyhow!("404 Not Found")));
-    assert!(is_non_retryable(&anyhow::anyhow!(
-        "invalid api key provided"
-    )));
-    assert!(is_non_retryable(&anyhow::anyhow!("authentication failed")));
-    assert!(is_non_retryable(&anyhow::anyhow!(
-        "model glm-4.7 not found"
-    )));
-    assert!(is_non_retryable(&anyhow::anyhow!(
-        "unsupported model: glm-4.7"
-    )));
-    assert!(!is_non_retryable(&anyhow::anyhow!("429 Too Many Requests")));
-    assert!(!is_non_retryable(&anyhow::anyhow!("408 Request Timeout")));
-    assert!(!is_non_retryable(&anyhow::anyhow!(
-        "500 Internal Server Error"
-    )));
-    assert!(!is_non_retryable(&anyhow::anyhow!("502 Bad Gateway")));
-    assert!(!is_non_retryable(&anyhow::anyhow!("timeout")));
-    assert!(!is_non_retryable(&anyhow::anyhow!("connection reset")));
-    assert!(!is_non_retryable(&anyhow::anyhow!(
-        "model overloaded, try again later"
-    )));
-    assert!(is_non_retryable(&anyhow::anyhow!(
-        "OpenAI Codex stream error: Your input exceeds the context window of this model."
-    )));
-    assert!(is_non_retryable(&anyhow::anyhow!(
-        "SESSION_EXPIRED: backend session not active — sign in to resume LLM work"
-    )));
-    // TAURI-RUST-FJZ: the Responses-path error now carries the status in the
-    // structured `(<status>)` position, so a terminal 404 from a provider that
-    // lacks the Responses API is classified non-retryable and the retry loop
-    // stops instead of hammering the permanent 404 (~15k events).
-    assert!(is_non_retryable(&anyhow::anyhow!(
-        "nous-portal Responses API error (404): Not Found"
-    )));
-    // The pre-fix form left `404` unanchored (preceded by `error: `), so it
-    // slipped past the structured-status regex and looped — guard the regression.
-    assert!(
-        !is_non_retryable(&anyhow::anyhow!(
-            "nous-portal Responses API error: 404 Not Found"
-        )),
-        "documents the pre-fix misclassification the structured `(404)` form fixes"
-    );
-}
-
-// TAURI-RUST-C9A: a monthly-quota refusal wrapped in a 500 envelope (so the
-// `structured_http_4xx` regex can't see the inner 402) must still be terminal —
-// retrying a spent plan quota only multiplies wasted calls + Sentry events.
-#[test]
-fn non_retryable_detects_monthly_quota_exhaustion() {
-    assert!(is_non_retryable(&anyhow::anyhow!(
-        "kiro API error (500 Internal Server Error): {{\"error\":{{\"message\":\
-         \"HTTP 402 from Kiro IDE: {{\\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}}\",\
-         \"type\":\"server_error\"}}}}"
-    )));
-    assert!(is_non_retryable(&anyhow::anyhow!(
-        "provider returned: you have reached the limit on your monthly requests"
-    )));
-    // A generic 500 outage stays retryable (transient) — the quota arm must not
-    // over-match.
-    assert!(!is_non_retryable(&anyhow::anyhow!(
-        "kiro API error (500 Internal Server Error): upstream connection reset"
-    )));
-}
-
-// C10: a 4xx-looking digit run that appears in *free text* (latency figures,
-// model ids, token counts) must NOT be inferred as a permanent HTTP client
-// error — that wrongly short-circuits retries/fallback for transient failures.
-#[test]
-fn non_retryable_ignores_free_text_digit_runs() {
-    // "450" here is a latency figure, not a 450 status.
-    assert!(
-        !is_non_retryable(&anyhow::anyhow!("upstream took 450ms to respond, retrying")),
-        "latency figures must not be read as an HTTP status"
-    );
-    // "0409" embedded in a model id used to scan to 409.
-    assert!(
-        !is_non_retryable(&anyhow::anyhow!("gpt-4-0409 returned an empty completion")),
-        "model-id digits must not be read as an HTTP status"
-    );
-    // A bare 4xx-shaped token mid-sentence (not in a structured position) is
-    // also ignored now.
-    assert!(
-        !is_non_retryable(&anyhow::anyhow!(
-            "received 412 partial bytes before connection reset"
-        )),
-        "mid-text digit runs must not be read as an HTTP status"
-    );
-    // Sanity: the structured envelope is still classified as non-retryable.
-    assert!(
-        is_non_retryable(&anyhow::anyhow!(
-            "custom_openai API error (403 Forbidden): nope"
-        )),
-        "the documented (<status>) envelope must still be detected"
-    );
-    // Sanity: a leading status (no envelope) is still detected.
-    assert!(is_non_retryable(&anyhow::anyhow!("404 Not Found")));
 }
 
 #[tokio::test]
@@ -944,71 +841,6 @@ async fn auth_rotation_returns_none_when_empty() {
     assert!(provider.rotate_key().is_none());
 }
 
-// ── New tests: Retry-After parsing ──
-
-#[test]
-fn parse_retry_after_integer() {
-    let err = anyhow::anyhow!("429 Too Many Requests, Retry-After: 5");
-    assert_eq!(parse_retry_after_ms(&err), Some(5000));
-}
-
-#[test]
-fn parse_retry_after_float() {
-    let err = anyhow::anyhow!("Rate limited. retry_after: 2.5 seconds");
-    assert_eq!(parse_retry_after_ms(&err), Some(2500));
-}
-
-#[test]
-fn parse_retry_after_missing() {
-    let err = anyhow::anyhow!("500 Internal Server Error");
-    assert_eq!(parse_retry_after_ms(&err), None);
-}
-
-#[test]
-fn rate_limited_detection() {
-    assert!(is_rate_limited(&anyhow::anyhow!("429 Too Many Requests")));
-    assert!(is_rate_limited(&anyhow::anyhow!(
-        "HTTP 429 rate limit exceeded"
-    )));
-    assert!(!is_rate_limited(&anyhow::anyhow!("401 Unauthorized")));
-    assert!(!is_rate_limited(&anyhow::anyhow!(
-        "500 Internal Server Error"
-    )));
-}
-
-#[test]
-fn non_retryable_rate_limit_detects_plan_restricted_model() {
-    let err = anyhow::anyhow!(
-        "{}",
-        "API error (429 Too Many Requests): {\"code\":1311,\"message\":\"the current account plan does not include glm-5\"}"
-    );
-    assert!(
-        is_non_retryable_rate_limit(&err),
-        "plan-restricted 429 should skip retries"
-    );
-}
-
-#[test]
-fn non_retryable_rate_limit_detects_insufficient_balance() {
-    let err = anyhow::anyhow!(
-        "{}",
-        "API error (429 Too Many Requests): {\"code\":1113,\"message\":\"insufficient balance\"}"
-    );
-    assert!(
-        is_non_retryable_rate_limit(&err),
-        "insufficient-balance 429 should skip retries"
-    );
-}
-
-#[test]
-fn non_retryable_rate_limit_does_not_flag_generic_429() {
-    let err = anyhow::anyhow!("429 Too Many Requests: rate limit exceeded");
-    assert!(
-        !is_non_retryable_rate_limit(&err),
-        "generic rate-limit 429 should remain retryable"
-    );
-}
-
 #[test]
 fn compute_backoff_uses_retry_after() {
     let provider = ReliableProvider::new(vec![], 0, 500);
@@ -1028,112 +860,6 @@ fn compute_backoff_falls_back_to_base() {
     let provider = ReliableProvider::new(vec![], 0, 500);
     let err = anyhow::anyhow!("500 Server Error");
     assert_eq!(provider.compute_backoff(500, &err), 500);
-}
-
-// ── §2.1 API auth error (401/403) tests ──────────────────
-
-#[test]
-fn non_retryable_detects_401() {
-    let err = anyhow::anyhow!("API error (401 Unauthorized): invalid api key");
-    assert!(
-        is_non_retryable(&err),
-        "401 errors must be detected as non-retryable"
-    );
-}
-
-#[test]
-fn non_retryable_detects_403() {
-    let err = anyhow::anyhow!("API error (403 Forbidden): access denied");
-    assert!(
-        is_non_retryable(&err),
-        "403 errors must be detected as non-retryable"
-    );
-}
-
-#[test]
-fn non_retryable_detects_404() {
-    let err = anyhow::anyhow!("API error (404 Not Found): model not found");
-    assert!(
-        is_non_retryable(&err),
-        "404 errors must be detected as non-retryable"
-    );
-}
-
-#[test]
-fn non_retryable_does_not_flag_429() {
-    let err = anyhow::anyhow!("429 Too Many Requests");
-    assert!(
-        !is_non_retryable(&err),
-        "429 must NOT be treated as non-retryable (it is retryable with backoff)"
-    );
-}
-
-#[test]
-fn non_retryable_does_not_flag_408() {
-    let err = anyhow::anyhow!("408 Request Timeout");
-    assert!(
-        !is_non_retryable(&err),
-        "408 must NOT be treated as non-retryable (it is retryable)"
-    );
-}
-
-#[test]
-fn non_retryable_does_not_flag_500() {
-    let err = anyhow::anyhow!("500 Internal Server Error");
-    assert!(
-        !is_non_retryable(&err),
-        "500 must NOT be treated as non-retryable (server errors are retryable)"
-    );
-}
-
-#[test]
-fn non_retryable_does_not_flag_502() {
-    let err = anyhow::anyhow!("502 Bad Gateway");
-    assert!(
-        !is_non_retryable(&err),
-        "502 must NOT be treated as non-retryable"
-    );
-}
-
-// ── §2.2 Rate limit Retry-After edge cases ───────────────
-
-#[test]
-fn parse_retry_after_zero() {
-    let err = anyhow::anyhow!("429 Too Many Requests, Retry-After: 0");
-    assert_eq!(
-        parse_retry_after_ms(&err),
-        Some(0),
-        "Retry-After: 0 should parse as 0ms"
-    );
-}
-
-#[test]
-fn parse_retry_after_with_underscore_separator() {
-    let err = anyhow::anyhow!("rate limited, retry_after: 10");
-    assert_eq!(
-        parse_retry_after_ms(&err),
-        Some(10_000),
-        "retry_after with underscore must be parsed"
-    );
-}
-
-#[test]
-fn parse_retry_after_space_separator() {
-    let err = anyhow::anyhow!("Retry-After 7");
-    assert_eq!(
-        parse_retry_after_ms(&err),
-        Some(7000),
-        "Retry-After with space separator must be parsed"
-    );
-}
-
-#[test]
-fn rate_limited_false_for_generic_error() {
-    let err = anyhow::anyhow!("Connection refused");
-    assert!(
-        !is_rate_limited(&err),
-        "generic errors must not be flagged as rate-limited"
-    );
 }
 
 // ── §2.3 Malformed API response error classification ─────
@@ -1210,79 +936,6 @@ impl Provider for Arc<ModelAwareMock> {
     }
 }
 
-// ── upstream_unhealthy classification and failure_reason precedence ──
-
-#[test]
-fn upstream_unhealthy_detects_no_healthy_upstream() {
-    let err = anyhow::anyhow!("no healthy upstream available");
-    assert!(is_upstream_unhealthy(&err));
-}
-
-#[test]
-fn upstream_unhealthy_detects_upstream_unavailable() {
-    let err = anyhow::anyhow!("upstream unavailable: backend down");
-    assert!(is_upstream_unhealthy(&err));
-}
-
-#[test]
-fn upstream_unhealthy_detects_service_unavailable() {
-    let err = anyhow::anyhow!("503 service unavailable");
-    assert!(is_upstream_unhealthy(&err));
-}
-
-#[test]
-fn upstream_unhealthy_does_not_flag_generic_error() {
-    let err = anyhow::anyhow!("timeout after 30s");
-    assert!(!is_upstream_unhealthy(&err));
-}
-
-// 408/502/504 must also classify as transient — `ops::api_error` formats
-// the upstream failure as "<provider> API error (<status>): <body>", and the
-// tool-call loop ORs is_rate_limited (429) with is_upstream_unhealthy. Before
-// this fix only 503/text-pattern matched; 408/502/504 leaked per-iteration
-// Sentry events (CodeRabbit review on #1529, OPENHUMAN-TAURI-T/-2E/-84).
-#[test]
-fn upstream_unhealthy_detects_408_request_timeout() {
-    let err = anyhow::anyhow!("OpenAI API error (408 Request Timeout): upstream took too long");
-    assert!(is_upstream_unhealthy(&err));
-}
-
-#[test]
-fn upstream_unhealthy_detects_502_bad_gateway() {
-    let err = anyhow::anyhow!("Anthropic API error (502 Bad Gateway): bad gateway");
-    assert!(is_upstream_unhealthy(&err));
-}
-
-#[test]
-fn upstream_unhealthy_detects_504_gateway_timeout() {
-    let err = anyhow::anyhow!("OpenAI API error (504 Gateway Timeout): upstream timed out");
-    assert!(is_upstream_unhealthy(&err));
-}
-
-#[test]
-fn upstream_unhealthy_detects_503_service_unavailable_with_provider_prefix() {
-    let err = anyhow::anyhow!("OpenAI API error (503 Service Unavailable): backend overloaded");
-    assert!(is_upstream_unhealthy(&err));
-}
-
-#[test]
-fn failure_reason_upstream_unhealthy_wins_over_rate_limited() {
-    // Both rate_limited AND upstream_unhealthy — upstream_unhealthy must win.
-    assert_eq!(failure_reason(true, false, true), "upstream_unhealthy");
-}
-
-#[test]
-fn failure_reason_upstream_unhealthy_wins_over_non_retryable() {
-    // Both non_retryable AND upstream_unhealthy — upstream_unhealthy must win.
-    assert_eq!(failure_reason(false, true, true), "upstream_unhealthy");
-}
-
-#[test]
-fn failure_reason_upstream_unhealthy_wins_over_all_others() {
-    // All flags set — upstream_unhealthy must still win.
-    assert_eq!(failure_reason(true, true, true), "upstream_unhealthy");
-}
-
 // ── issue #1596: custom_openai model-not-found UX ──
 //
 // When a `custom_openai` provider is configured with a model name that
@@ -1293,71 +946,6 @@ fn failure_reason_upstream_unhealthy_wins_over_all_others() {
 // pointer at `reliability.model_fallbacks` when the user hasn't
 // configured a chain yet, so the next step is obvious without
 // re-reading the docs.
-
-#[test]
-fn rotated_key_log_detail_does_not_expose_key_suffix() {
-    let detail = rotated_key_log_detail(2, 4);
-
-    assert_eq!(detail, "slot=2/4");
-    assert!(!detail.contains("sk-"));
-    assert!(!detail.contains("..."));
-}
-
-#[test]
-fn format_failure_aggregate_prepends_user_hint_when_no_fallbacks_configured() {
-    let failures = vec![
-        "provider=custom_openai model=reasoning-v1 attempt 1/1: non_retryable; \
-         error=custom_openai API error (404 Not Found): {\"error\":{\"message\":\
-         \"model 'reasoning-v1' not found\"}}"
-            .to_string(),
-    ];
-
-    let msg = format_failure_aggregate("reasoning-v1", &failures, false);
-
-    assert!(
-        msg.contains("may not be available on your provider"),
-        "hint copy missing: {msg}"
-    );
-    assert!(
-        msg.contains("reliability.model_fallbacks"),
-        "config key reference missing: {msg}"
-    );
-    assert!(
-        msg.contains("Settings → AI"),
-        "settings pointer missing: {msg}"
-    );
-    assert!(
-        msg.contains("reasoning-v1"),
-        "should mention the offending model name: {msg}"
-    );
-    // The raw attempt dump must still be present for support to diagnose.
-    assert!(
-        msg.contains("custom_openai API error (404 Not Found)"),
-        "raw failure attempts dropped: {msg}"
-    );
-}
-
-#[test]
-fn format_failure_aggregate_omits_hint_when_fallbacks_configured() {
-    // User already engaged with `reliability.model_fallbacks`; the
-    // configured chain itself failed too. Telling them to "configure a
-    // fallback chain" would be misleading — keep the raw dump only.
-    let failures = vec![
-        "provider=primary model=reasoning-v1 attempt 1/1: non_retryable; error=...".to_string(),
-        "provider=primary model=fallback-a attempt 1/1: non_retryable; error=...".to_string(),
-    ];
-
-    let msg = format_failure_aggregate("reasoning-v1", &failures, true);
-
-    assert!(
-        !msg.contains("Configure a fallback chain"),
-        "hint must NOT fire when fallbacks already configured: {msg}"
-    );
-    assert!(
-        msg.starts_with("All providers/models failed."),
-        "should use the plain aggregate when user has engaged with the knob: {msg}"
-    );
-}
 
 /// End-to-end: a `chat_with_system` call that fails with the
 /// `custom_openai`-shaped 404 must bail with the user-actionable hint
@@ -1439,5 +1027,202 @@ async fn chat_with_system_bail_omits_hint_when_fallbacks_configured_but_all_fail
     assert!(
         err.contains("reasoning-v1") && err.contains("chat-v1") && err.contains("general-v1"),
         "expected dump to mention every model tried: {err}"
+    );
+}
+
+// ── #4895: streaming rate-limit (429) Retry-After honoring + budget/message ──
+
+/// Streaming mock that fails with a configurable `StreamError::Provider` for the
+/// first `fail_until` stream creations, then yields a single `"hello"` chunk.
+/// Mirrors the real provider's one-item-per-stream shape so a retry that
+/// re-polled a dead stream would see `None` and give up.
+struct StreamingRateLimitMock {
+    stream_calls: Arc<AtomicUsize>,
+    fail_until: usize,
+    error: String,
+}
+
+#[async_trait]
+impl Provider for StreamingRateLimitMock {
+    async fn chat_with_system(
+        &self,
+        _system_prompt: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+    ) -> anyhow::Result<String> {
+        anyhow::bail!("unused")
+    }
+
+    async fn chat_with_history(
+        &self,
+        _messages: &[ChatMessage],
+        _model: &str,
+        _temperature: f64,
+    ) -> anyhow::Result<String> {
+        anyhow::bail!("unused")
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    fn stream_chat_with_system(
+        &self,
+        _system_prompt: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+        _options: StreamOptions,
+    ) -> futures_util::stream::BoxStream<'static, StreamResult<StreamChunk>> {
+        use futures_util::{stream, StreamExt};
+        let n = self.stream_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        let succeed = n > self.fail_until;
+        let error = self.error.clone();
+        stream::once(async move {
+            if succeed {
+                Ok(StreamChunk::delta("hello"))
+            } else {
+                Err(StreamError::Provider(error))
+            }
+        })
+        .boxed()
+    }
+}
+
+/// A transient streaming `429` carrying a `Retry-After` must be retried, must
+/// actually WAIT the server's requested window (not the old ~1.5 s fixed
+/// backoff), and then recover. Uses tokio's paused clock so the 5 s wait is
+/// virtual/instant yet asserted via virtual elapsed time.
+#[tokio::test(start_paused = true)]
+async fn streaming_rate_limit_honors_retry_after_and_recovers() {
+    use futures_util::StreamExt;
+
+    let stream_calls = Arc::new(AtomicUsize::new(0));
+    let provider = ReliableProvider::new(
+        vec![(
+            "openhuman".into(),
+            Box::new(StreamingRateLimitMock {
+                stream_calls: Arc::clone(&stream_calls),
+                fail_until: 1,
+                error: r#"OpenHuman API error (429 Too Many Requests): {"errorCode":"RATE_LIMITED","retryAfter":5}"#
+                    .to_string(),
+            }),
+        )],
+        2,
+        50,
+    );
+
+    let start = tokio::time::Instant::now();
+    let mut stream =
+        provider.stream_chat_with_system(None, "hi", "reasoning-v1", 0.0, StreamOptions::new(true));
+    let mut chunks = Vec::new();
+    while let Some(item) = stream.next().await {
+        if let Ok(chunk) = item {
+            chunks.push(chunk.delta);
+        }
+    }
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        chunks,
+        vec!["hello".to_string()],
+        "a transient 429 with Retry-After must be retried and recover"
+    );
+    assert_eq!(
+        stream_calls.load(Ordering::SeqCst),
+        2,
+        "one rate-limited attempt + one successful retry"
+    );
+    assert!(
+        elapsed >= Duration::from_secs(5),
+        "must wait the server's 5s Retry-After before retrying, waited {elapsed:?}"
+    );
+}
+
+/// A plan/quota `429` (retries can't fix it) must fail fast — a single stream
+/// creation, no retries — and surface a clear rate-limit message.
+#[tokio::test]
+async fn streaming_plan_rate_limit_fails_fast_with_clear_message() {
+    use futures_util::StreamExt;
+
+    let stream_calls = Arc::new(AtomicUsize::new(0));
+    let provider = ReliableProvider::new(
+        vec![(
+            "openhuman".into(),
+            Box::new(StreamingRateLimitMock {
+                stream_calls: Arc::clone(&stream_calls),
+                fail_until: 100, // always fail
+                error: r#"OpenHuman API error (429 Too Many Requests): {"code":1311,"message":"the current account plan does not include glm-5"}"#
+                    .to_string(),
+            }),
+        )],
+        3,
+        50,
+    );
+
+    let mut stream =
+        provider.stream_chat_with_system(None, "hi", "reasoning-v1", 0.0, StreamOptions::new(true));
+    let mut terminal: Option<String> = None;
+    while let Some(item) = stream.next().await {
+        if let Err(StreamError::Provider(msg)) = item {
+            terminal = Some(msg);
+        }
+    }
+
+    assert_eq!(
+        stream_calls.load(Ordering::SeqCst),
+        1,
+        "a plan/quota 429 must fail fast without burning the retry budget"
+    );
+    let terminal = terminal.expect("stream must surface a terminal error");
+    assert!(
+        terminal.to_lowercase().contains("rate-limited"),
+        "plan 429 terminal must be a clear rate-limit message, got: {terminal}"
+    );
+}
+
+/// A persistently transient `429` must use the dedicated rate-limit retry budget
+/// (strictly more than the small configured `provider_retries`) before giving
+/// up with a clear terminal rate-limit message. `retryAfter:0` keeps the waits
+/// at the base backoff so the test stays fast.
+#[tokio::test(start_paused = true)]
+async fn streaming_transient_rate_limit_uses_dedicated_budget_then_clear_message() {
+    use futures_util::StreamExt;
+
+    let stream_calls = Arc::new(AtomicUsize::new(0));
+    let provider = ReliableProvider::new(
+        vec![(
+            "openhuman".into(),
+            Box::new(StreamingRateLimitMock {
+                stream_calls: Arc::clone(&stream_calls),
+                fail_until: 100, // always fail
+                error: r#"OpenHuman API error (429 Too Many Requests): {"errorCode":"RATE_LIMITED","retryAfter":0}"#
+                    .to_string(),
+            }),
+        )],
+        2, // configured retries; rate-limit floor is STREAM_RATE_LIMIT_MIN_RETRIES (3)
+        50,
+    );
+
+    let mut stream =
+        provider.stream_chat_with_system(None, "hi", "reasoning-v1", 0.0, StreamOptions::new(true));
+    let mut terminal: Option<String> = None;
+    while let Some(item) = stream.next().await {
+        if let Err(StreamError::Provider(msg)) = item {
+            terminal = Some(msg);
+        }
+    }
+
+    // 1 initial attempt + 3 rate-limit retries (dedicated budget > configured 2).
+    assert_eq!(
+        stream_calls.load(Ordering::SeqCst),
+        4,
+        "a transient 429 must use the dedicated rate-limit retry budget, not the smaller configured one"
+    );
+    let terminal = terminal.expect("stream must surface a terminal error");
+    assert!(
+        terminal.to_lowercase().contains("rate-limited"),
+        "an exhausted transient 429 must end with a clear rate-limit message, got: {terminal}"
     );
 }

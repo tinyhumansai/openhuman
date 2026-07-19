@@ -1,9 +1,10 @@
 //! Tool: read_diff — structured git diff output for the Critic archetype.
 
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Returns `git diff` output in a structured format.
 pub struct ReadDiffTool {
@@ -13,6 +14,18 @@ pub struct ReadDiffTool {
 impl ReadDiffTool {
     pub fn new(workspace_dir: PathBuf) -> Self {
         Self { workspace_dir }
+    }
+
+    fn workspace_dir_for_context(&self, context: Option<&ToolExecutionContext>) -> PathBuf {
+        if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+            tracing::debug!(
+                workspace_root = %workspace.root.display(),
+                policy_id = %workspace.policy_id,
+                "[read_diff] using TinyAgents workspace descriptor as workspace dir"
+            );
+            return workspace.root.clone();
+        }
+        self.workspace_dir.clone()
     }
 }
 
@@ -52,6 +65,17 @@ impl Tool for ReadDiffTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let workspace_dir = self.workspace_dir_for_context(context);
         let base = args.get("base").and_then(|v| v.as_str());
         let staged = args
             .get("staged")
@@ -76,14 +100,14 @@ impl Tool for ReadDiffTool {
         }
 
         tracing::debug!(
-            workspace = %self.workspace_dir.display(),
+            workspace = %workspace_dir.display(),
             ?git_args,
             "[read_diff] running git diff"
         );
 
         let output = tokio::process::Command::new("git")
             .args(&git_args)
-            .current_dir(&self.workspace_dir)
+            .current_dir(&workspace_dir)
             .output()
             .await?;
 

@@ -35,8 +35,12 @@ use crate::reset_reboot_schedule;
 #[tauri::command]
 pub async fn reset_local_data(
     state: tauri::State<'_, core_process::CoreProcessHandle>,
+    user_id: Option<String>,
 ) -> Result<(), String> {
-    log::info!("[core] reset_local_data: command invoked from frontend");
+    log::info!(
+        "[core] reset_local_data: command invoked from frontend (explicit_user_id={})",
+        user_id.is_some()
+    );
 
     // ── 1. Ask the core for the paths it would remove ────────────────────
     //
@@ -44,7 +48,15 @@ pub async fn reset_local_data(
     // loading, the workspace marker, and the staging-vs-prod default-dir
     // suffix). Resolve while the core is still up so we don't duplicate
     // that logic here.
-    let paths = fetch_data_paths().await?;
+    //
+    // `user_id` is forwarded so the core resolves the signed-in user's
+    // `users/<id>` slice directly. The GUI clear flow signs the user out
+    // (clearing `active_user.toml`) *before* invoking us, so a marker-based
+    // resolution would fall back to the pre-login `users/local` dir and delete
+    // an empty directory — leaving the real user's memory/history intact
+    // (issue #4950). When absent (pre-login recovery), the core falls back to
+    // the marker as before.
+    let paths = fetch_data_paths(user_id).await?;
     log::info!(
         "[core] reset_local_data: paths resolved current={} default={} workspace_marker={} user_marker={}",
         paths.current_openhuman_dir.display(),
@@ -279,13 +291,24 @@ fn schedule_reboot_delete_or_describe(
 }
 
 /// Call the core's `config_get_data_paths` RPC and parse the response.
-async fn fetch_data_paths() -> Result<ResolvedDataPaths, String> {
+///
+/// When `user_id` is `Some`, the core resolves the target dir from that id
+/// (`users/<id>`) rather than the active-user marker — see the note on
+/// `reset_local_data` and issue #4950. Passing `null` preserves the legacy
+/// marker-based resolution for pre-login recovery.
+async fn fetch_data_paths(user_id: Option<String>) -> Result<ResolvedDataPaths, String> {
     let url = crate::core_rpc::core_rpc_url_value();
+    // Only include `user_id` when present so the pre-login recovery path sends
+    // the exact same empty `params: {}` it always has (marker-based resolution).
+    let mut params = serde_json::Map::new();
+    if let Some(id) = user_id {
+        params.insert("user_id".to_string(), serde_json::Value::String(id));
+    }
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": "openhuman.config_get_data_paths",
-        "params": {}
+        "params": serde_json::Value::Object(params),
     });
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))

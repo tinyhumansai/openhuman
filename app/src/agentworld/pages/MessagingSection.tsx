@@ -10,7 +10,7 @@
  * E2E_MESSAGING_ENABLED gate so users can set up keys before 0C ships.
  */
 import debug from 'debug';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import ChipTabs from '../../components/layout/ChipTabs';
 import Button from '../../components/ui/Button';
@@ -878,13 +878,32 @@ function InboxPanel() {
     void apiClient.streams
       .start('inbox')
       .then(res => {
-        if (!cancelled) streamRef.current = res.streamId;
+        // Same resolved-after-cancel guard as the DM thread stream: if the
+        // panel unmounted before `start` resolved, stop the stream we just
+        // opened instead of leaking it.
+        if (cancelled) {
+          void apiClient.streams.stop(res.streamId).catch(err => {
+            log(
+              '[messaging] inbox stream stop-after-cancel failed (%s): %s',
+              res.streamId,
+              String(err)
+            );
+          });
+          return;
+        }
+        streamRef.current = res.streamId;
       })
-      .catch(() => {});
+      .catch(err => {
+        log('[messaging] inbox stream start failed: %s', String(err));
+      });
     return () => {
       cancelled = true;
       if (streamRef.current !== null) {
-        void apiClient.streams.stop(streamRef.current).catch(() => {});
+        const stopId = streamRef.current;
+        void apiClient.streams.stop(stopId).catch(err => {
+          log('[messaging] inbox stream stop failed (%s): %s', stopId, String(err));
+        });
+        streamRef.current = null;
       }
     };
   }, []);
@@ -1018,29 +1037,67 @@ interface DecryptedMessage {
   outgoing?: boolean;
 }
 
-function formatDirectMessageError(err: unknown, missingBundleMessage: string): string {
-  const message = String(err);
-  const rawBundle404 = /http\s*404/i.test(message) && /\/keys\/[^/\s]+\/bundle\b/i.test(message);
-  const mappedMissingBundle =
-    /recipient/i.test(message) &&
-    /not\s+set\s+up/i.test(message) &&
-    /encrypted\s+messaging/i.test(message);
-  if (rawBundle404 || mappedMissingBundle) {
-    log('[agentworld:dm] recipient key bundle missing');
-    return missingBundleMessage;
-  }
-  return message;
+/**
+ * Kind of DM send/refresh failure, so the UI can render an actionable
+ * affordance (e.g. a "Send contact request" button) instead of only a message.
+ * `generic` means we surfaced the raw backend string with no friendly mapping.
+ */
+type DmErrorKind = 'missing_bundle' | 'not_a_contact' | 'generic';
+
+interface DmErrorMessages {
+  missingBundle: string;
+  notAContact: string;
 }
 
-function useDirectMessages(peerId: string, missingBundleMessage: string) {
+/**
+ * Classify a DM error into a friendly, translated message plus a `kind` the UI
+ * can branch on. Both the raw-`404 /keys/…/bundle` case and the core-mapped
+ * "recipient has not set up encrypted messaging" case fold into `missing_bundle`.
+ * A relay `403 … not_a_contact` (see `map_err` in
+ * `src/openhuman/tinyplace/ops.rs`) is an *expected* rejection — the peer edge
+ * has to be accepted first — so we treat it like `wallet-not-configured`: a
+ * known, actionable state, never a raw error dump.
+ */
+function classifyDirectMessageError(
+  err: unknown,
+  messages: DmErrorMessages
+): { message: string; kind: DmErrorKind } {
+  const raw = String(err);
+  const rawBundle404 = /http\s*404/i.test(raw) && /\/keys\/[^/\s]+\/bundle\b/i.test(raw);
+  const mappedMissingBundle =
+    /recipient/i.test(raw) && /not\s+set\s+up/i.test(raw) && /encrypted\s+messaging/i.test(raw);
+  if (rawBundle404 || mappedMissingBundle) {
+    log('[agentworld:dm] recipient key bundle missing');
+    return { message: messages.missingBundle, kind: 'missing_bundle' };
+  }
+  // Relay surfaces the reason token as `…: not_a_contact`; also tolerate a
+  // spaced "not a contact" phrasing in case the body is ever humanized.
+  if (/not[_\s]?a[_\s]?contact/i.test(raw)) {
+    log('[agentworld:dm] send blocked: recipient is not a contact');
+    return { message: messages.notAContact, kind: 'not_a_contact' };
+  }
+  return { message: raw, kind: 'generic' };
+}
+
+function useDirectMessages(peerId: string, errorMessages: DmErrorMessages) {
   const [messages, setMessages] = useState<DecryptedMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<DmErrorKind | null>(null);
   const [sending, setSending] = useState(false);
+
+  // Real-time updates for the open thread. Incoming DMs land in the relay
+  // inbox, so the `inbox` stream fires on every new message (the same signal
+  // InboxPanel uses to live-update unread counts). We mirror that here: start
+  // the stream while the thread is open and re-fetch when an event arrives, so
+  // a peer's message shows up without a manual refresh (see #4928).
+  const streamRef = useRef<string | null>(null);
+  const { messages: streamMessages, status: streamStatus } = useTinyplaceStream('inbox');
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setErrorKind(null);
     try {
       const response = await apiClient.messages.list({ limit: 50 });
       const fromPeer = response.messages.filter(m => m.from === peerId);
@@ -1069,16 +1126,19 @@ function useDirectMessages(peerId: string, missingBundleMessage: string) {
         return merged.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
       });
     } catch (err) {
-      setError(formatDirectMessageError(err, missingBundleMessage));
+      const classified = classifyDirectMessageError(err, errorMessages);
+      setError(classified.message);
+      setErrorKind(classified.kind);
     } finally {
       setLoading(false);
     }
-  }, [missingBundleMessage, peerId]);
+  }, [errorMessages, peerId]);
 
   const send = useCallback(
     async (plaintext: string) => {
       setSending(true);
       setError(null);
+      setErrorKind(null);
       try {
         const result = await apiClient.signal.sendMessage({ recipient: peerId, plaintext });
         // Optimistically show our own message: the relay won't return it and we
@@ -1096,19 +1156,74 @@ function useDirectMessages(peerId: string, missingBundleMessage: string) {
         );
         await refresh();
       } catch (err) {
-        setError(formatDirectMessageError(err, missingBundleMessage));
+        const classified = classifyDirectMessageError(err, errorMessages);
+        setError(classified.message);
+        setErrorKind(classified.kind);
       } finally {
         setSending(false);
       }
     },
-    [missingBundleMessage, peerId, refresh]
+    [errorMessages, peerId, refresh]
   );
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  return { messages, loading, error, sending, send, refresh };
+  // Start the inbox stream while a DM thread is open; stop it on unmount /
+  // peer change. Failures are non-fatal — the thread still works via the
+  // mount fetch + post-send refresh, just without live push.
+  useEffect(() => {
+    let cancelled = false;
+    void apiClient.streams
+      .start('inbox')
+      .then(res => {
+        // If the effect was already torn down (peer change / unmount) before
+        // `start` resolved, our cleanup ran with `streamRef.current` still
+        // null and never stopped this stream. Stop it now so a rapid peer
+        // switch can't orphan a live backend subscription.
+        if (cancelled) {
+          void apiClient.streams.stop(res.streamId).catch(err => {
+            log(
+              '[messaging] dm inbox stream stop-after-cancel failed (%s): %s',
+              res.streamId,
+              String(err)
+            );
+          });
+          return;
+        }
+        streamRef.current = res.streamId;
+        log('[messaging] dm inbox stream started: %s', res.streamId);
+      })
+      .catch(err => {
+        log('[messaging] dm inbox stream start failed: %s', String(err));
+      });
+    return () => {
+      cancelled = true;
+      if (streamRef.current !== null) {
+        const stopId = streamRef.current;
+        void apiClient.streams.stop(stopId).catch(err => {
+          log('[messaging] dm inbox stream stop failed (%s): %s', stopId, String(err));
+        });
+        streamRef.current = null;
+      }
+    };
+  }, [peerId]);
+
+  // Re-fetch the open thread whenever a new inbox stream event arrives. The
+  // event isn't peer-scoped, so refresh() re-filters by peerId — an event for
+  // another peer simply yields no new rows for this thread (harmless).
+  useEffect(() => {
+    if (streamMessages.length > 0) {
+      log('[messaging] dm inbox stream event -> refreshing open thread');
+      void refresh();
+    }
+    // Mirror InboxPanel: fire on new stream messages only, not on refresh
+    // identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streamMessages.length]);
+
+  return { messages, loading, error, errorKind, sending, send, refresh, streamStatus };
 }
 
 function ActiveDmView({
@@ -1123,14 +1238,49 @@ function ActiveDmView({
   setComposeText: (v: string) => void;
 }) {
   const { t } = useT();
-  const missingBundleMessage = t(
-    'agentworld.messaging.missingSignalBundle',
-    "This user hasn't enabled encrypted messaging yet. Ask them to open Agent World and enable secure DMs before sending a message."
+  // Memoized so its identity is stable across renders — `useDirectMessages`
+  // threads it into `refresh`/`send` (and the mount effect), so a fresh object
+  // every render would retrigger the refresh loop.
+  const errorMessages = useMemo(
+    () => ({
+      missingBundle: t(
+        'agentworld.messaging.missingSignalBundle',
+        "This user hasn't enabled encrypted messaging yet. Ask them to open Agent World and enable secure DMs before sending a message."
+      ),
+      notAContact: t(
+        'agentworld.messaging.notAContact',
+        "You can't message this person until they're a contact. Send a contact request and try again once they accept."
+      ),
+    }),
+    [t]
   );
-  const { messages, loading, error, sending, send } = useDirectMessages(
+  const { messages, loading, error, errorKind, sending, send, streamStatus } = useDirectMessages(
     peerId,
-    missingBundleMessage
+    errorMessages
   );
+
+  // Inline "Send contact request" affordance shown when a send is rejected
+  // because the recipient isn't an accepted contact yet.
+  const [contactRequest, setContactRequest] = useState<'idle' | 'sending' | 'sent' | 'failed'>(
+    'idle'
+  );
+  // Reset the affordance when the error clears or we switch peers, so a stale
+  // "sent" state never lingers over a fresh conversation.
+  useEffect(() => {
+    if (errorKind !== 'not_a_contact') setContactRequest('idle');
+  }, [errorKind, peerId]);
+  const sendContactRequest = useCallback(async () => {
+    setContactRequest('sending');
+    try {
+      log('[agentworld:dm] sending contact request to recipient');
+      await apiClient.contacts.request(peerId);
+      log('[agentworld:dm] contact request sent');
+      setContactRequest('sent');
+    } catch (err) {
+      log('[agentworld:dm] contact request failed: %s', String(err));
+      setContactRequest('failed');
+    }
+  }, [peerId]);
 
   const handleSend = useCallback(async () => {
     if (!composeText.trim()) return;
@@ -1146,6 +1296,14 @@ function ActiveDmView({
           Back
         </Button>
         <span className="text-sm font-medium text-content truncate">{peerId}</span>
+        {streamStatus === 'connected' ? (
+          <span
+            data-testid="dm-live-indicator"
+            className="inline-flex items-center gap-1 text-[10px] text-green-600 dark:text-green-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+            {t('agentworld.messaging.live', 'Live')}
+          </span>
+        ) : null}
         <span className="ml-auto flex items-center gap-1 text-[10px] text-green-600 dark:text-green-400">
           <svg
             className="h-3 w-3"
@@ -1168,7 +1326,41 @@ function ActiveDmView({
         {loading && messages.length === 0 ? (
           <p className="text-xs text-content-faint animate-pulse">Loading encrypted messages...</p>
         ) : null}
-        {error ? <p className="text-xs text-red-500">{error}</p> : null}
+        {error ? (
+          <div className="space-y-2" data-testid="dm-error">
+            <p className="text-xs text-red-500">{error}</p>
+            {errorKind === 'not_a_contact' ? (
+              <div data-testid="dm-contact-request">
+                {contactRequest === 'sent' ? (
+                  <p className="text-xs text-content-muted">
+                    {t(
+                      'agentworld.messaging.contactRequestSent',
+                      'Contact request sent. You can message them once they accept.'
+                    )}
+                  </p>
+                ) : (
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    disabled={contactRequest === 'sending'}
+                    onClick={() => void sendContactRequest()}>
+                    {contactRequest === 'sending'
+                      ? t('agentworld.messaging.contactRequestSending', 'Sending request…')
+                      : t('agentworld.messaging.sendContactRequest', 'Send contact request')}
+                  </Button>
+                )}
+                {contactRequest === 'failed' ? (
+                  <p className="mt-1 text-xs text-red-500">
+                    {t(
+                      'agentworld.messaging.contactRequestFailed',
+                      "Couldn't send the contact request. Please try again."
+                    )}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {!loading && !error && messages.length === 0 ? (
           <div
             data-testid="dm-empty-state"

@@ -14,20 +14,41 @@ import {
   subconsciousTrigger,
 } from '../utils/tauriCommands';
 import type { SubconsciousMode } from '../utils/tauriCommands/heartbeat';
-import type { SubconsciousStatus } from '../utils/tauriCommands/subconscious';
+import type {
+  SubconsciousInstanceStatus,
+  SubconsciousKind,
+  SubconsciousStatus,
+} from '../utils/tauriCommands/subconscious';
+
+export type TriggerKind = SubconsciousKind | 'all';
 
 export interface UseSubconsciousResult {
   status: SubconsciousStatus | null;
+  /** One row per registered world, tolerant of an older core (falls back to
+   * the top-level memory fields when `instances` is absent). */
+  instances: SubconsciousInstanceStatus[];
   mode: SubconsciousMode;
   intervalMinutes: number;
   loading: boolean;
+  /** True when the memory (default) tick is in flight — back-compat. */
   triggering: boolean;
+  /** True when a tick for `kind` is in flight (two buttons ≠ one spinner). */
+  isTriggering: (kind: TriggerKind) => boolean;
   settingMode: boolean;
   refresh: () => Promise<void>;
-  triggerTick: () => Promise<void>;
+  triggerTick: (kind?: TriggerKind) => Promise<void>;
   setMode: (mode: SubconsciousMode) => Promise<void>;
   setIntervalMinutes: (minutes: number) => Promise<void>;
   error: string | null;
+}
+
+/** Derive per-world rows, tolerating an older core that omits `instances`. */
+function deriveInstances(status: SubconsciousStatus | null): SubconsciousInstanceStatus[] {
+  if (!status) return [];
+  if (status.instances && status.instances.length > 0) return status.instances;
+  // Older core: the top-level fields are the memory instance.
+  const { instances: _omit, ...row } = status;
+  return [{ ...row, instance: row.instance ?? 'memory' }];
 }
 
 export function useSubconscious(): UseSubconsciousResult {
@@ -35,7 +56,7 @@ export function useSubconscious(): UseSubconsciousResult {
   const [mode, setModeState] = useState<SubconsciousMode>('off');
   const [intervalMinutes, setIntervalState] = useState(30);
   const [loading, setLoading] = useState(false);
-  const [triggering, setTriggering] = useState(false);
+  const [triggeringKinds, setTriggeringKinds] = useState<Set<TriggerKind>>(new Set());
   const [settingMode, setSettingMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fetchingRef = useRef(false);
@@ -72,17 +93,32 @@ export function useSubconscious(): UseSubconsciousResult {
     }
   }, []);
 
-  const triggerTick = useCallback(async () => {
-    if (!isTauri() || triggering) return;
-    setTriggering(true);
+  const triggerTick = useCallback(async (kind: TriggerKind = 'memory') => {
+    if (!isTauri()) return;
+    let alreadyInFlight = false;
+    setTriggeringKinds(prev => {
+      if (prev.has(kind)) {
+        alreadyInFlight = true;
+        return prev;
+      }
+      const next = new Set(prev);
+      next.add(kind);
+      return next;
+    });
+    if (alreadyInFlight) return;
     try {
-      await subconsciousTrigger();
+      // A no-arg legacy call maps to memory; pass the kind through otherwise.
+      await subconsciousTrigger(kind === 'memory' ? undefined : kind);
     } catch (err) {
       console.warn('[subconscious] trigger failed:', err);
     } finally {
-      setTriggering(false);
+      setTriggeringKinds(prev => {
+        const next = new Set(prev);
+        next.delete(kind);
+        return next;
+      });
     }
-  }, [triggering]);
+  }, []);
 
   const setMode = useCallback(
     async (newMode: SubconsciousMode) => {
@@ -121,12 +157,19 @@ export function useSubconscious(): UseSubconsciousResult {
     };
   }, [refresh]);
 
+  const isTriggering = useCallback(
+    (kind: TriggerKind) => triggeringKinds.has(kind),
+    [triggeringKinds]
+  );
+
   return {
     status,
+    instances: deriveInstances(status),
     mode,
     intervalMinutes,
     loading,
-    triggering,
+    triggering: triggeringKinds.has('memory'),
+    isTriggering,
     settingMode,
     refresh,
     triggerTick,

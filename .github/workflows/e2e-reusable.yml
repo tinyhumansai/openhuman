@@ -64,8 +64,16 @@ on:
         default: mega-flow
 
 permissions:
+  # `actions: read` lets scripts/ci-cancel-aware.sh poll the run status so
+  # cancelled builds inside container jobs stop themselves (docker exec
+  # swallows the runner's signals).
+  actions: read
   contents: read
   packages: read
+
+env:
+  # Consumed by scripts/ci-cancel-aware.sh's cancellation watchdog.
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
   # Selected-spec gate for PR/push (full=false). The full-suite path lives in
@@ -81,7 +89,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
@@ -89,7 +97,7 @@ jobs:
           submodules: recursive
 
       - name: Cache pnpm store
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.local/share/pnpm/store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -109,7 +117,7 @@ jobs:
       # build-desktop.yml so a release build and an E2E run on the same
       # commit can share a single download.
       - name: Cache CEF binary distribution
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/tauri-cef
@@ -118,7 +126,7 @@ jobs:
             cef-x86_64-unknown-linux-gnu-
 
       - name: Cache Appium global install
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.appium
@@ -157,7 +165,7 @@ jobs:
 
       - name: Upload E2E failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-failure-logs-${{ runner.os }}-${{ github.run_id }}
           path: |
@@ -191,17 +199,19 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
-    timeout-minutes: 30
+    # Cold platform caches can take longer than 30 minutes to compile and
+    # package the unified app before the fanout shards start.
+    timeout-minutes: 60
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
           submodules: recursive
 
       - name: Cache pnpm store
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.local/share/pnpm/store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -218,7 +228,7 @@ jobs:
           key: e2e-linux-unified
 
       - name: Cache CEF binary distribution
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           # cef-dll-sys downloads into $CEF_PATH; ensure-tauri-cli.sh +
           # e2e-build.sh pin that to $HOME/Library/Caches/tauri-cef on
@@ -256,7 +266,7 @@ jobs:
           ls -lh e2e-build-linux.tar.gz
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-build-linux-${{ github.run_id }}
           path: e2e-build-linux.tar.gz
@@ -278,19 +288,20 @@ jobs:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
           - { name: providers, suites: "providers,notifications" }
+          - { name: provider-web, suites: "provider-web" }
           - { name: webhooks, suites: "webhooks" }
           - { name: connectors, suites: "connectors" }
           - { name: commerce, suites: "payments,settings" }
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
           submodules: recursive
 
       - name: Cache pnpm store
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.local/share/pnpm/store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -298,7 +309,7 @@ jobs:
             pnpm-store-${{ runner.os }}-
 
       - name: Cache Appium global install
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.appium
@@ -317,7 +328,7 @@ jobs:
           bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
       - name: Download build artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: e2e-build-linux-${{ github.run_id }}
           path: .
@@ -352,7 +363,7 @@ jobs:
 
       - name: Upload E2E failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-failure-logs-${{ runner.os }}-${{ matrix.shard.name }}-${{ github.run_id }}
           path: |
@@ -390,7 +401,7 @@ jobs:
       RUST_BACKTRACE: "1"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
@@ -398,7 +409,7 @@ jobs:
           submodules: recursive
 
       - name: Cache pnpm store
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.local/share/pnpm/store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -434,7 +445,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
@@ -442,10 +453,12 @@ jobs:
           submodules: recursive
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.10.0
 
       - name: Setup Node.js 24.x
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 24.x
           cache: pnpm
@@ -462,7 +475,15 @@ jobs:
         run: |
           rustup default 1.93.0 || true
           which cargo
+          # `cargo --version` in the repo root materializes the
+          # rust-toolchain.toml override toolchain (1.96.1), which supersedes the
+          # dtolnay-installed 1.93.0. The action's `targets:` input added
+          # x86_64-apple-darwin to 1.93.0, NOT the override toolchain the CEF
+          # universal-helper build actually uses — so add it to the active
+          # (override) toolchain here or the cross-compile fails with E0463
+          # "can't find crate for `core`".
           cargo --version
+          rustup target add x86_64-apple-darwin
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -474,7 +495,7 @@ jobs:
           key: e2e-macos-unified-v2
 
       - name: Cache CEF binary distribution
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/Library/Caches/tauri-cef
@@ -483,7 +504,7 @@ jobs:
             cef-aarch64-apple-darwin-
 
       - name: Cache Appium global install
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.appium
@@ -539,7 +560,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
@@ -547,10 +568,12 @@ jobs:
           submodules: recursive
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.10.0
 
       - name: Setup Node.js 24.x
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 24.x
           cache: pnpm
@@ -568,7 +591,7 @@ jobs:
           key: e2e-windows-unified
 
       - name: Cache CEF binary distribution
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/AppData/Local/tauri-cef
@@ -577,7 +600,7 @@ jobs:
             cef-x86_64-pc-windows-msvc-
 
       - name: Cache Appium global install
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.appium
@@ -630,20 +653,24 @@ jobs:
     if: inputs.run_macos && inputs.full
     name: Build (macOS full)
     runs-on: macos-latest
-    timeout-minutes: 30
+    # A cold macOS build regularly reaches the final app link after the old
+    # 30-minute ceiling; allow the build-once job to finish for its shards.
+    timeout-minutes: 60
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
           submodules: recursive
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.10.0
 
       - name: Setup Node.js 24.x
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 24.x
           cache: pnpm
@@ -661,7 +688,15 @@ jobs:
         run: |
           rustup default 1.93.0 || true
           which cargo
+          # `cargo --version` in the repo root materializes the
+          # rust-toolchain.toml override toolchain (1.96.1), which supersedes the
+          # dtolnay-installed 1.93.0. The action's `targets:` input added
+          # x86_64-apple-darwin to 1.93.0, NOT the override toolchain the CEF
+          # universal-helper build actually uses — so add it to the active
+          # (override) toolchain here or the cross-compile fails with E0463
+          # "can't find crate for `core`".
           cargo --version
+          rustup target add x86_64-apple-darwin
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -673,7 +708,7 @@ jobs:
           key: e2e-macos-unified-v2
 
       - name: Cache CEF binary distribution
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/Library/Caches/tauri-cef
@@ -694,17 +729,20 @@ jobs:
 
       - name: Package build artifact
         run: |
-          # The macOS .app is self-contained (frontend assets + CEF Frameworks +
-          # the OpenHuman Helper.app are embedded by tauri-bundler), so the .app
-          # bundle alone is everything a shard needs. tar preserves the bundle's
-          # internal symlinks + executable bits; each shard re-signs after
-          # extraction (adhoc codesign is required on every runner regardless).
-          tar -czf e2e-build-macos.tar.gz \
-            -C app/src-tauri/target/debug/bundle/macos OpenHuman.app
+          # Stage the same runner-visible layout Linux/Windows use. The .app is
+          # self-contained for runtime, but e2e-run-session.sh also validates the
+          # built frontend bundle before launching so shards need app/dist too.
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/repo/app/src-tauri/target/debug/bundle/macos"
+          mkdir -p "$STAGE/repo/app/dist"
+          cp -a app/src-tauri/target/debug/bundle/macos/OpenHuman.app \
+            "$STAGE/repo/app/src-tauri/target/debug/bundle/macos/"
+          cp -a app/dist/. "$STAGE/repo/app/dist/"
+          tar -czf e2e-build-macos.tar.gz -C "$STAGE" repo
           ls -lh e2e-build-macos.tar.gz
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-build-macos-${{ github.run_id }}
           path: e2e-build-macos.tar.gz
@@ -724,28 +762,31 @@ jobs:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
           - { name: providers, suites: "providers,notifications" }
+          - { name: provider-web, suites: "provider-web" }
           - { name: webhooks, suites: "webhooks" }
           - { name: connectors, suites: "connectors" }
           - { name: commerce, suites: "payments,settings" }
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
           submodules: recursive
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.10.0
 
       - name: Setup Node.js 24.x
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 24.x
           cache: pnpm
 
       - name: Cache Appium global install
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.appium
@@ -763,18 +804,22 @@ jobs:
           bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
       - name: Download build artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: e2e-build-macos-${{ github.run_id }}
           path: .
 
       - name: Restore .app bundle into workspace
         run: |
+          tar -xzf e2e-build-macos.tar.gz
           mkdir -p app/src-tauri/target/debug/bundle/macos
-          tar -xzf e2e-build-macos.tar.gz \
-            -C app/src-tauri/target/debug/bundle/macos
-          rm -f e2e-build-macos.tar.gz
+          mkdir -p app/dist
+          cp -a repo/app/src-tauri/target/debug/bundle/macos/OpenHuman.app \
+            app/src-tauri/target/debug/bundle/macos/
+          cp -a repo/app/dist/. app/dist/
+          rm -rf repo e2e-build-macos.tar.gz
           ls -la app/src-tauri/target/debug/bundle/macos/OpenHuman.app | head
+          ls -la app/dist | head
 
       # macOS rejects dynamic-framework loads from unsigned bundles — adhoc
       # signing satisfies the loader without a real developer-ID cert. A
@@ -800,7 +845,7 @@ jobs:
 
       - name: Upload E2E failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-failure-logs-${{ runner.os }}-${{ matrix.shard.name }}-${{ github.run_id }}
           path: |
@@ -832,20 +877,24 @@ jobs:
     name: Build (Windows full)
     # Keep the full-suite build on the same stable image as the smoke lane.
     runs-on: windows-2022
-    timeout-minutes: 30
+    # Match the macOS cold-cache allowance. The build is shared by every
+    # Windows shard, so timing it out discards all downstream E2E coverage.
+    timeout-minutes: 60
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
           submodules: recursive
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.10.0
 
       - name: Setup Node.js 24.x
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 24.x
           cache: pnpm
@@ -863,7 +912,7 @@ jobs:
           key: e2e-windows-unified
 
       - name: Cache CEF binary distribution
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           # ensure-tauri-cli.sh + e2e-build.sh export
           # CEF_PATH=$HOME/Library/Caches/tauri-cef regardless of OS; under Git
@@ -903,7 +952,7 @@ jobs:
           ls -lh e2e-build-windows.tar.gz
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-build-windows-${{ github.run_id }}
           path: e2e-build-windows.tar.gz
@@ -924,28 +973,31 @@ jobs:
           - { name: foundation, suites: "auth,navigation,system" }
           - { name: chat, suites: "chat,skills,journeys" }
           - { name: providers, suites: "providers,notifications" }
+          - { name: provider-web, suites: "provider-web" }
           - { name: webhooks, suites: "webhooks" }
           - { name: connectors, suites: "connectors" }
           - { name: commerce, suites: "payments,settings" }
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
           submodules: recursive
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.10.0
 
       - name: Setup Node.js 24.x
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 24.x
           cache: pnpm
 
       - name: Cache Appium global install
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.appium
@@ -964,7 +1016,7 @@ jobs:
           bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
       - name: Download build artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: e2e-build-windows-${{ github.run_id }}
           path: .
@@ -997,7 +1049,7 @@ jobs:
 
       - name: Upload E2E failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-failure-logs-${{ runner.os }}-${{ matrix.shard.name }}-${{ github.run_id }}
           # e2e-run-session.sh writes its app log to `${RUNNER_TEMP:-${TMPDIR:-/tmp}}`.

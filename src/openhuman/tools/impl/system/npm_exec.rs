@@ -20,11 +20,14 @@
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
 use crate::openhuman::javascript::NodeBootstrap;
 use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult, ToolTimeout};
+use crate::openhuman::tools::traits::{
+    PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolTimeout,
+};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Absolute ceiling callers can request via `timeout_secs`. There is **no**
 /// default timeout — `npm install`/build steps on a cold cache or slow network
@@ -156,6 +159,25 @@ impl Tool for NpmExecTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        self.execute_in_context(args, context).await
+    }
+}
+
+impl NpmExecTool {
+    async fn execute_in_context(
+        &self,
+        args: serde_json::Value,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
         let subcommand = match args.get("subcommand").and_then(|v| v.as_str()) {
             Some(s) => s.trim().to_string(),
             None => {
@@ -218,7 +240,9 @@ impl Tool for NpmExecTool {
             ));
         }
 
-        let cwd = match resolve_cwd(&self.security.action_dir, cwd_override.as_deref()) {
+        let path_policy = super::security_for_tool_context(&self.security, context, "npm_exec");
+
+        let cwd = match resolve_cwd(&path_policy.action_dir, cwd_override.as_deref()) {
             Ok(p) => p,
             Err(msg) => return Ok(ToolResult::error(msg)),
         };
@@ -260,7 +284,13 @@ impl Tool for NpmExecTool {
             Some(crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed)
         ) {
             return Ok(self
-                .run_sandboxed(&command, &cwd, &resolved.bin_dir, explicit_timeout)
+                .run_sandboxed(
+                    &path_policy,
+                    &command,
+                    &cwd,
+                    &resolved.bin_dir,
+                    explicit_timeout,
+                )
                 .await);
         }
 
@@ -348,11 +378,13 @@ impl NpmExecTool {
     ///
     /// Mirrors `ShellTool::run_sandboxed` and `NodeExecTool::run_sandboxed`.
     /// The sandbox policy is resolved from the current `RuntimeConfig` and
-    /// rooted at `security.action_dir` — note that the actual child-process
-    /// `working_dir` may be a sub-path of `action_dir` (the resolved `cwd`
-    /// from `cwd_override`), kept consistent with the unsandboxed path.
+    /// rooted at the effective `security.action_dir` — note that the actual
+    /// child-process `working_dir` may be a sub-path of `action_dir` (the
+    /// resolved `cwd` from `cwd_override`), kept consistent with the
+    /// unsandboxed path.
     async fn run_sandboxed(
         &self,
+        security: &SecurityPolicy,
         command: &str,
         cwd: &std::path::Path,
         bin_dir: &std::path::Path,
@@ -392,7 +424,7 @@ impl NpmExecTool {
         // shell-family tools; tracked separately so it can be fixed uniformly.
         let policy = sandbox::resolve_sandbox_policy(
             crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed,
-            &self.security.action_dir,
+            &security.action_dir,
             &runtime_cfg,
             false,
         );

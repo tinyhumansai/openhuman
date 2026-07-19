@@ -196,14 +196,23 @@ export default function SidebarAppRail() {
         account_status: account.status ?? 'unknown',
       });
     }
+    // Drop the account from state FIRST, synchronously, before the async purge
+    // (#4695). `purgeWebviewAccount` tears down the provider's backend scanners,
+    // which triggers a full app-state re-fetch and UI re-mount. If the account
+    // were still in the store at that moment, the re-mount would remount
+    // `WebviewHost` for it and re-open (reveal) the just-purged provider webview
+    // — a fresh, logged-out CEF child-view pinned over the content area,
+    // swallowing all input. Removing it first unmounts the host (whose cleanup
+    // hides the child-view) and guarantees no re-open ever targets a
+    // disconnected account.
+    dispatch(removeAccount({ accountId }));
     try {
       await purgeWebviewAccount(accountId);
     } catch {
-      // Purge failures are already logged by the service; still drop the
-      // account from the UI so the user isn't stuck with a zombie icon.
-      debug('purge failed for %s — dropping from UI anyway', accountId);
+      // Purge failures are already logged by the service; the account is
+      // already gone from the UI so the user isn't stuck with a zombie icon.
+      debug('purge failed for %s — already dropped from UI', accountId);
     }
-    dispatch(removeAccount({ accountId }));
   };
 
   // Close the context menu on Escape or any outside click.

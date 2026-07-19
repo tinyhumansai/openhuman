@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenHuman",
-  "version": "0.58.7",
+  "version": "0.61.5",
   "identifier": "com.openhuman.app",
   "build": {
     "beforeDevCommand": "pnpm run dev",
@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "OpenHuman",
-        "width": 1000,
-        "height": 800,
+        "width": 1280,
+        "height": 900,
         "visible": false,
         "decorations": true,
         "titleBarStyle": "Overlay",
@@ -67,6 +67,11 @@
           "libxshmfence1"
         ],
         "desktopTemplate": "main.desktop"
+      }
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "nsis-hooks.nsh"
       }
     },
     "createUpdaterArtifacts": false,

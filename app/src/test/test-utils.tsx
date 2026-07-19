@@ -15,6 +15,7 @@ import { CoreStateContext } from '../providers/coreStateContext';
 import accountsReducer from '../store/accountsSlice';
 import backendMeetReducer from '../store/backendMeetSlice';
 import channelConnectionsReducer from '../store/channelConnectionsSlice';
+import chatRuntimeReducer from '../store/chatRuntimeSlice';
 import companionReducer from '../store/companionSlice';
 import connectivityReducer from '../store/connectivitySlice';
 import coreModeReducer from '../store/coreModeSlice';
@@ -24,6 +25,7 @@ import mascotReducer from '../store/mascotSlice';
 import notificationReducer from '../store/notificationSlice';
 import personaReducer from '../store/personaSlice';
 import { pttReducer } from '../store/pttSlice';
+import safetyReducer from '../store/safetySlice';
 import socketReducer from '../store/socketSlice';
 import themeReducer from '../store/themeSlice';
 import threadReducer from '../store/threadSlice';
@@ -43,6 +45,7 @@ const testRootReducer = combineReducers({
   accounts: accountsReducer,
   backendMeet: backendMeetReducer,
   channelConnections: channelConnectionsReducer,
+  chatRuntime: chatRuntimeReducer,
   companion: companionReducer,
   connectivity: connectivityReducer,
   coreMode: coreModeReducer,
@@ -52,6 +55,7 @@ const testRootReducer = combineReducers({
   notifications: notificationReducer,
   persona: personaReducer,
   ptt: pttReducer,
+  safety: safetyReducer,
   socket: socketReducer,
   theme: themeReducer,
   thread: threadReducer,

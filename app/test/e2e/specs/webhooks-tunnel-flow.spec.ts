@@ -64,7 +64,10 @@ function unwrapRpcValue<T = unknown>(raw: unknown): T | undefined {
 }
 
 describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
-  before(async () => {
+  before(async function () {
+    // resetApp bring-up can run ~25-30s and race the default 30s Mocha hook
+    // budget; raise it.
+    this.timeout(90_000);
     await startMockServer();
     await resetMockBehavior();
     await waitForApp();

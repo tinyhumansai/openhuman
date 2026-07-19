@@ -311,7 +311,7 @@ pub fn parse_models_response(body: &serde_json::Value) -> Result<Vec<ModelInfo>,
     let is_success_envelope = obj
         .get("object")
         .and_then(|value| value.as_str())
-        .map_or(true, |object| object.eq_ignore_ascii_case("list"));
+        .is_none_or(|object| object.eq_ignore_ascii_case("list"));
 
     if data_value.is_null() && is_success_envelope {
         log::info!(

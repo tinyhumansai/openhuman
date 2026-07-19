@@ -3,6 +3,7 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::ControllerSchema;
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::config::schema::CalendarProvider;
 use crate::openhuman::config::{AutoJoinPolicy, AutoSummarizePolicy};
 
 use super::helpers::{
@@ -10,7 +11,7 @@ use super::helpers::{
     AgentSettingsUpdate, AnalyticsSettingsUpdate, AutonomySettingsUpdate, BrowserSettingsUpdate,
     ComposioTriggerSettingsUpdate, DictationSettingsUpdate, LocalAiSettingsUpdate,
     MeetSettingsUpdate, MemorySettingsUpdate, MemorySyncSettingsUpdate, ModelSettingsUpdate,
-    OnboardingCompletedSetParams, RuntimeSettingsUpdate, SandboxSettingsUpdate,
+    OnboardingCompletedSetParams, PrivacyModeUpdate, RuntimeSettingsUpdate, SandboxSettingsUpdate,
     ScreenIntelligenceSettingsUpdate, SearchSettingsUpdate, SetBrowserAllowAllParams,
     SuperContextSetParams, VoiceServerSettingsUpdate, WorkspaceOnboardingFlagParams,
     WorkspaceOnboardingFlagSetParams, DEFAULT_ONBOARDING_FLAG_NAME,
@@ -54,6 +55,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_composio_trigger_settings"),
         schemas("get_autonomy_settings"),
         schemas("update_autonomy_settings"),
+        schemas("get_privacy_mode"),
+        schemas("set_privacy_mode"),
         schemas("get_agent_settings"),
         schemas("update_agent_settings"),
         schemas("update_search_settings"),
@@ -208,6 +211,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_autonomy_settings"),
             handler: handle_update_autonomy_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_privacy_mode"),
+            handler: handle_get_privacy_mode,
+        },
+        RegisteredController {
+            schema: schemas("set_privacy_mode"),
+            handler: handle_set_privacy_mode,
         },
         RegisteredController {
             schema: schemas("get_agent_settings"),
@@ -460,6 +471,18 @@ pub(super) fn handle_update_autonomy_settings(params: Map<String, Value>) -> Con
     })
 }
 
+pub(super) fn handle_get_privacy_mode(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_privacy_mode().await?) })
+}
+
+pub(super) fn handle_set_privacy_mode(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<PrivacyModeUpdate>(params)?;
+        let patch = config_rpc::PrivacySettingsPatch { mode: update.mode };
+        to_json(config_rpc::load_and_apply_privacy_settings(patch).await?)
+    })
+}
+
 fn handle_get_agent_settings(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async {
         log::debug!("[config][rpc] get_agent_settings enter");
@@ -701,6 +724,17 @@ fn handle_update_meet_settings(params: Map<String, Value>) -> ControllerFuture {
             platform_auto_join_policies.as_ref().map(|m| m.len()),
             update.watch_calendar,
         );
+        let calendar_provider = match update.calendar_provider.as_deref() {
+            Some("composio") => Some(CalendarProvider::Composio),
+            Some("recall") => Some(CalendarProvider::Recall),
+            None => None,
+            Some(other) => {
+                log::warn!("[config][rpc] update_meet_settings invalid calendar_provider: {other}");
+                return Err(format!(
+                    "invalid calendar_provider: {other} (valid: composio, recall)"
+                ));
+            }
+        };
         let patch = config_rpc::MeetSettingsPatch {
             auto_orchestrator_handoff: update.auto_orchestrator_handoff,
             auto_join_policy,
@@ -709,6 +743,8 @@ fn handle_update_meet_settings(params: Map<String, Value>) -> ControllerFuture {
             ingest_backend_transcripts: update.ingest_backend_transcripts,
             platform_auto_join_policies,
             watch_calendar: update.watch_calendar,
+            calendar_provider,
+            reply_display_name: update.reply_display_name,
         };
         match config_rpc::load_and_apply_meet_settings(patch).await {
             Ok(outcome) => {
@@ -736,12 +772,13 @@ fn handle_get_meet_settings(_params: Map<String, Value>) -> ControllerFuture {
         };
         let auto_orchestrator_handoff = config.meet.auto_orchestrator_handoff;
         log::debug!(
-            "[config][rpc] get_meet_settings ok auto_orchestrator_handoff={auto_orchestrator_handoff} auto_join_policy={:?} auto_summarize_policy={:?} listen_only_default={} ingest_backend_transcripts={} watch_calendar={}",
+            "[config][rpc] get_meet_settings ok auto_orchestrator_handoff={auto_orchestrator_handoff} auto_join_policy={:?} auto_summarize_policy={:?} listen_only_default={} ingest_backend_transcripts={} watch_calendar={} calendar_provider={:?}",
             config.meet.auto_join_policy,
             config.meet.auto_summarize_policy,
             config.meet.listen_only_default,
             config.meet.ingest_backend_transcripts,
             config.meet.watch_calendar,
+            config.meet.calendar_provider,
         );
         // Enums serialize via `#[serde(rename_all = "snake_case")]` →
         // "ask_each_time"/"always"/"never" and "ask"/"always"/"never".
@@ -753,6 +790,8 @@ fn handle_get_meet_settings(_params: Map<String, Value>) -> ControllerFuture {
             "ingest_backend_transcripts": config.meet.ingest_backend_transcripts,
             "platform_auto_join_policies": config.meet.platform_auto_join_policies,
             "watch_calendar": config.meet.watch_calendar,
+            "calendar_provider": config.meet.calendar_provider,
+            "reply_display_name": config.meet.reply_display_name,
         });
         to_json(RpcOutcome::new(
             result,
@@ -769,10 +808,10 @@ fn handle_reset_local_data(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::reset_local_data().await?) })
 }
 
-fn handle_get_data_paths(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async {
+fn handle_get_data_paths(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
         log::debug!("[config][rpc] get_data_paths enter");
-        match config_rpc::get_data_paths().await {
+        match resolve_data_paths(params).await {
             Ok(outcome) => {
                 log::debug!("[config][rpc] get_data_paths ok");
                 to_json(outcome)
@@ -783,6 +822,31 @@ fn handle_get_data_paths(_params: Map<String, Value>) -> ControllerFuture {
             }
         }
     })
+}
+
+/// Resolve the data paths for `get_data_paths`, honoring an optional `user_id`
+/// param. The Clear App Data flow passes the signed-in id (#4950) because it
+/// removes the active-user marker *before* the reset resolves paths — without
+/// the explicit id the core would fall back to the pre-login `users/local` dir
+/// and leave the real user's data behind. Absent/blank → marker-based
+/// resolution (the default used by the agent tool and diagnostics).
+async fn resolve_data_paths(
+    params: Map<String, Value>,
+) -> Result<crate::rpc::RpcOutcome<Value>, String> {
+    let user_id = params
+        .get("user_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(|id| id.to_string());
+    log::debug!(
+        "[config][rpc] get_data_paths: explicit_user_id={}",
+        user_id.is_some()
+    );
+    match user_id.as_deref() {
+        Some(id) => config_rpc::get_data_paths_for_user(id).await,
+        None => config_rpc::get_data_paths().await,
+    }
 }
 
 pub(super) fn handle_get_agent_paths(_params: Map<String, Value>) -> ControllerFuture {
@@ -1049,6 +1113,33 @@ fn handle_update_sandbox_settings(params: Map<String, Value>) -> ControllerFutur
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── get_data_paths user scoping (#4950) ─────────────────────
+
+    // The Clear App Data flow passes `user_id` so the reset targets the
+    // signed-in user's `users/<id>` slice even though the active-user marker
+    // was already removed by the preceding sign-out. Verify the handler parses
+    // the param and scopes the resolved current dir accordingly.
+    #[tokio::test]
+    async fn handle_get_data_paths_scopes_to_explicit_user_id() {
+        let mut params = Map::new();
+        params.insert(
+            "user_id".to_string(),
+            Value::String("clear-me-4950".to_string()),
+        );
+
+        let value = handle_get_data_paths(params).await.unwrap();
+        // `get_data_paths_for_user` attaches a log, so the outcome is wrapped as
+        // `{ "result": <paths>, "logs": [...] }`.
+        let current = value
+            .pointer("/result/current_openhuman_dir")
+            .and_then(Value::as_str)
+            .expect("current_openhuman_dir present");
+        assert!(
+            current.replace('\\', "/").ends_with("users/clear-me-4950"),
+            "current dir must be scoped to the explicit user id, got {current}"
+        );
+    }
 
     // ── platform slug validation (finding #6) ───────────────────
 

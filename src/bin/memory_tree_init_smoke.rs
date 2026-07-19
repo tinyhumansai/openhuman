@@ -57,8 +57,10 @@ fn main() -> ExitCode {
         }
     };
 
-    let mut cfg = Config::default();
-    cfg.workspace_dir = workspace.clone();
+    let cfg = Config {
+        workspace_dir: workspace.clone(),
+        ..Config::default()
+    };
 
     let db_path = workspace.join("memory_tree").join("chunks.db");
     let cold = !db_path.exists();

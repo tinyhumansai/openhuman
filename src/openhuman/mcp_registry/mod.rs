@@ -50,22 +50,55 @@
 //! backwards compatibility with existing frontend code and on-disk state.
 //! The Rust module path is `mcp_registry`.
 
+//! ## Compile-time gate (`mcp` feature)
+//!
+//! `pub mod mcp_registry;` is ALWAYS compiled — it is a facade. Everything
+//! that carries behaviour (Smithery HTTP client, SQLite store, live
+//! connection map, boot spawn, supervisor, OAuth, RPC surface) is gated
+//! behind the default-ON `mcp` Cargo feature; when the feature is off,
+//! [`stub`] mirrors the subset of the surface that always-compiled callers
+//! depend on with no-op / `Err` / empty-`Vec` bodies, so those callers need no
+//! `#[cfg]` of their own.
+//!
+//! [`types`] stays UNGATED on purpose: it is inert serde data (`serde` +
+//! `serde_json` only) consumed by the always-compiled orchestrator prompt
+//! builder. Sharing the one real definition across both builds means the
+//! disabled build cannot drift from the enabled one — the stub carries
+//! behaviour, never duplicated types.
+
+#[cfg(feature = "mcp")]
 pub mod boot;
+#[cfg(feature = "mcp")]
 pub mod bus;
+#[cfg(feature = "mcp")]
 pub mod connections;
+#[cfg(feature = "mcp")]
 mod curation;
+#[cfg(feature = "mcp")]
 pub mod oauth;
+#[cfg(feature = "mcp")]
 pub mod ops;
+#[cfg(feature = "mcp")]
 mod registries;
+#[cfg(feature = "mcp")]
 mod registry;
+#[cfg(feature = "mcp")]
 mod schemas;
+#[cfg(feature = "mcp")]
 pub mod setup;
+#[cfg(feature = "mcp")]
 pub mod setup_ops;
+#[cfg(feature = "mcp")]
 pub mod store;
+#[cfg(feature = "mcp")]
 pub mod supervisor;
+#[cfg(feature = "mcp")]
 pub mod tools;
+
+// Inert serde types — always compiled (see the module note above).
 pub mod types;
 
+#[cfg(feature = "mcp")]
 pub use schemas::{
     all_controller_schemas as all_mcp_registry_controller_schemas,
     all_registered_controllers as all_mcp_registry_registered_controllers,
@@ -73,3 +106,12 @@ pub use schemas::{
 };
 
 pub use types::{ConnStatus, InstalledServer, McpTool};
+
+// ---------------------------------------------------------------------------
+// Disabled facade — compiled only when the `mcp` feature is OFF.
+// ---------------------------------------------------------------------------
+
+#[cfg(not(feature = "mcp"))]
+mod stub;
+#[cfg(not(feature = "mcp"))]
+pub use stub::*;

@@ -19,11 +19,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use super::SecurityPolicy;
+use crate::openhuman::config::PrivacyMode;
 
 struct LiveState {
     policy: RwLock<Arc<SecurityPolicy>>,
     workspace_dir: RwLock<PathBuf>,
     action_dir: RwLock<PathBuf>,
+    /// Stored Privacy Mode so an autonomy-only [`reload_from`] preserves the
+    /// active mode (autonomy config carries no privacy field) and a later
+    /// [`reload_privacy`] can swap it without rebuilding from a full `Config`.
+    privacy_mode: RwLock<PrivacyMode>,
     generation: AtomicU64,
 }
 
@@ -42,6 +47,7 @@ pub fn install(
         policy: RwLock::new(Arc::clone(&policy)),
         workspace_dir: RwLock::new(workspace_dir.clone()),
         action_dir: RwLock::new(action_dir.clone()),
+        privacy_mode: RwLock::new(policy.privacy_mode),
         generation: AtomicU64::new(0),
     });
     if let Ok(mut guard) = state.policy.write() {
@@ -53,7 +59,69 @@ pub fn install(
     if let Ok(mut guard) = state.action_dir.write() {
         *guard = action_dir;
     }
+    // Seed the stored privacy mode from the installed policy so later
+    // autonomy-only reloads preserve it. `get_or_init` only runs the closure on
+    // first install, so re-seed here on every install too.
+    if let Ok(mut guard) = state.privacy_mode.write() {
+        *guard = policy.privacy_mode;
+    }
+    log::debug!(
+        "[privacy][live_policy] installed policy with privacy_mode={:?}",
+        policy.privacy_mode
+    );
     policy
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only, **thread-scoped** [`PrivacyMode`] override. When set it wins
+    /// over the process-global policy in [`current_privacy_mode`].
+    ///
+    /// The egress-enforcement gate (privacy epic S7, #4441) reads
+    /// [`current_privacy_mode`] on every integration / network / composio /
+    /// embedding call. The process-global live policy is shared across the whole
+    /// test binary, so a test that installed `LocalOnly` into it would flake any
+    /// *other* parallel test whose tool happens to read the mode during that
+    /// window. This thread-local lets a single test exercise the gate under a
+    /// specific mode WITHOUT mutating the shared global — `#[tokio::test]` runs on
+    /// a current-thread runtime, so the tool's inline read observes the override
+    /// on the same thread while sibling tests on their own threads are unaffected.
+    static TEST_PRIVACY_MODE: std::cell::Cell<Option<PrivacyMode>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// RAII guard that restores the previous thread-local privacy override on drop.
+#[cfg(test)]
+pub(crate) struct TestPrivacyGuard(Option<PrivacyMode>);
+
+#[cfg(test)]
+impl Drop for TestPrivacyGuard {
+    fn drop(&mut self) {
+        TEST_PRIVACY_MODE.with(|c| c.set(self.0));
+    }
+}
+
+/// Override [`current_privacy_mode`] for the current thread until the returned
+/// guard drops. Test-only; needs no `TEST_ENV_LOCK` because it never touches the
+/// process-global policy.
+#[cfg(test)]
+pub(crate) fn test_privacy_scope(mode: PrivacyMode) -> TestPrivacyGuard {
+    let prev = TEST_PRIVACY_MODE.with(|c| c.replace(Some(mode)));
+    TestPrivacyGuard(prev)
+}
+
+/// The current live Privacy Mode, if a policy has been [`install`]ed. Falls back
+/// to [`PrivacyMode::Standard`] when no policy is installed (e.g. a CLI
+/// invocation that never started a session runtime) — i.e. no egress
+/// restriction by default.
+pub fn current_privacy_mode() -> PrivacyMode {
+    // Test-only per-thread override (see `TEST_PRIVACY_MODE`) wins so a test can
+    // drive the egress gate without mutating the shared process-global policy.
+    #[cfg(test)]
+    if let Some(mode) = TEST_PRIVACY_MODE.with(|c| c.get()) {
+        return mode;
+    }
+    current().map(|p| p.privacy_mode).unwrap_or_default()
 }
 
 /// The current live policy, if one has been [`install`]ed this process.
@@ -134,19 +202,67 @@ pub fn reload_from(autonomy_config: &crate::openhuman::config::AutonomyConfig) {
         .read()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let rebuilt = Arc::new(SecurityPolicy::from_config(
-        autonomy_config,
-        &workspace,
-        &action,
-    ));
+    // `from_config` builds with the `Standard` default; re-apply the stored
+    // privacy mode so an autonomy-only change does not silently reset egress
+    // posture (autonomy config carries no privacy field).
+    let stored_privacy = state.privacy_mode.read().map(|g| *g).unwrap_or_default();
+    let rebuilt = Arc::new(
+        SecurityPolicy::from_config(autonomy_config, &workspace, &action)
+            .with_privacy_mode(stored_privacy),
+    );
     if let Ok(mut guard) = state.policy.write() {
         *guard = rebuilt;
     }
     let gen = state.generation.fetch_add(1, Ordering::Relaxed) + 1;
     tracing::info!(
         generation = gen,
+        privacy_mode = ?stored_privacy,
         "[security:live_policy] SecurityPolicy reloaded after autonomy config change"
     );
+}
+
+/// Swap the active Privacy Mode on the process-global live policy and rebuild
+/// the current policy around it, bumping the generation counter. Called by
+/// `config.set_privacy_mode` (#4435) so a Settings-driven mode change takes
+/// effect for the inference chokepoint immediately, without a core restart.
+///
+/// Clones the in-flight policy and swaps only `privacy_mode`, preserving every
+/// other access setting (mirrors [`set_action_dir`]). Also updates the stored
+/// mode so a subsequent [`reload_from`] keeps it. Returns the new generation, or
+/// `Err` if no policy is installed yet (typically a CLI-only invocation).
+pub fn reload_privacy(new_mode: PrivacyMode) -> Result<u64, String> {
+    let Some(state) = STATE.get() else {
+        return Err(
+            "[security:live_policy] no policy installed yet — cannot update privacy_mode".into(),
+        );
+    };
+    {
+        let mut guard = state
+            .privacy_mode
+            .write()
+            .map_err(|e| format!("[security:live_policy] privacy_mode lock poisoned: {e}"))?;
+        *guard = new_mode;
+    }
+    let current_policy = state
+        .policy
+        .read()
+        .map(|g| Arc::clone(&g))
+        .map_err(|e| format!("[security:live_policy] policy lock poisoned: {e}"))?;
+    let rebuilt = (*current_policy).clone().with_privacy_mode(new_mode);
+    {
+        let mut guard = state
+            .policy
+            .write()
+            .map_err(|e| format!("[security:live_policy] policy write lock poisoned: {e}"))?;
+        *guard = Arc::new(rebuilt);
+    }
+    let gen = state.generation.fetch_add(1, Ordering::Relaxed) + 1;
+    tracing::info!(
+        generation = gen,
+        privacy_mode = ?new_mode,
+        "[security:live_policy] SecurityPolicy reloaded after privacy mode change"
+    );
+    Ok(gen)
 }
 
 /// Swap the agent action sandbox root on the process-global live policy.
@@ -248,6 +364,59 @@ mod tests {
             current().expect("policy still installed").autonomy,
             AutonomyLevel::Full
         );
+    }
+
+    #[test]
+    fn reload_privacy_swaps_mode_and_survives_autonomy_reload() {
+        // Same process-global lock as the other live-policy tests.
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let workspace = std::env::temp_dir().join("openhuman_privacy_live_test");
+        let initial = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Supervised,
+            privacy_mode: PrivacyMode::Standard,
+            workspace_dir: workspace.clone(),
+            ..SecurityPolicy::default()
+        });
+        install(initial, workspace.clone(), workspace.clone());
+
+        assert_eq!(current_privacy_mode(), PrivacyMode::Standard);
+
+        // Swap to LocalOnly — the live policy reflects it immediately.
+        let before = generation();
+        reload_privacy(PrivacyMode::LocalOnly).expect("policy installed");
+        assert!(generation() > before, "generation must increase");
+        assert_eq!(current_privacy_mode(), PrivacyMode::LocalOnly);
+        assert_eq!(
+            current().expect("installed").privacy_mode,
+            PrivacyMode::LocalOnly
+        );
+
+        // An autonomy-only reload must PRESERVE the privacy mode (autonomy
+        // config carries no privacy field).
+        let cfg = AutonomyConfig {
+            level: AutonomyLevel::Full,
+            ..AutonomyConfig::default()
+        };
+        reload_from(&cfg);
+        assert_eq!(
+            current().expect("installed").autonomy,
+            AutonomyLevel::Full,
+            "autonomy must update"
+        );
+        assert_eq!(
+            current_privacy_mode(),
+            PrivacyMode::LocalOnly,
+            "privacy mode must survive an autonomy-only reload"
+        );
+
+        // Restore Standard before releasing the lock. The live policy is
+        // process-global; since S7 (#4441) the egress-enforcement gate reads
+        // `current_privacy_mode()` on every integration/network/composio/
+        // embedding call, so leaving LocalOnly installed here would block sibling
+        // mock-backend tests (which do not take TEST_ENV_LOCK) with a policy error.
+        reload_privacy(PrivacyMode::Standard).expect("restore Standard");
     }
 
     #[test]

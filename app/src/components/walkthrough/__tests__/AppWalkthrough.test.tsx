@@ -504,26 +504,23 @@ describe('WalkthroughTooltip', () => {
   });
 
   it('renders progress bar', () => {
-    const { container } = render(
-      <WalkthroughTooltip {...makeTooltipProps({ index: 2, size: 9 })} />
-    );
+    render(<WalkthroughTooltip {...makeTooltipProps({ index: 2, size: 9 })} />);
 
-    // Gradient progress bar fills based on step progress (3/9 ≈ 33.33%)
-    const bar = container.querySelector('div.bg-gradient-to-r');
-    expect(bar).not.toBeNull();
-    // width rounds to ~33.33% for step 3 of 9
-    expect(bar?.getAttribute('style')).toMatch(/width:\s*33\.3/);
+    // Query the progress bar by its stable test id rather than a presentational
+    // Tailwind class (plan.md §3). The real signal is the computed fill width:
+    // step 3 of 9 ≈ 33.33%.
+    const bar = screen.getByTestId('walkthrough-progress-bar');
+    expect(bar.getAttribute('style')).toMatch(/width:\s*33\.3/);
   });
 });
 
 // ── createWalkthroughSteps tests ──────────────────────────────────────────
 
 describe('createWalkthroughSteps', () => {
-  it('returns 13 steps', () => {
-    const navigate = vi.fn();
-    const steps = createWalkthroughSteps(navigate);
-    expect(steps).toHaveLength(13);
-  });
+  // NOTE: the brittle `returns 13 steps` magic-count test was removed
+  // (plan.md §3) — it broke on any intentional add/remove of a walkthrough
+  // step. The first-/last-step target tests below carry the real ordering
+  // signal, and `all steps have a title and content` guards each entry.
 
   it('first step targets home-card', () => {
     const navigate = vi.fn();

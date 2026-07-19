@@ -12,7 +12,7 @@ Unified inference domain: the canonical home for everything LLM/STT/TTS/embeddin
 - Run ChatGPT/Codex OAuth (PKCE) for the `openai` cloud slug and persist tokens in the encrypted auth-profile store.
 - Expose an OpenAI-compatible `/v1/*` HTTP endpoint guarded by a stable user-managed external bearer.
 - Detect device hardware profile and recommend/apply local model presets/tiers.
-- Maintain the built-in BYOK provider preset catalog used by Settings > AI.
+- Maintain the built-in BYOK provider preset catalog used by Connections → API keys → LLM.
   The current matrix lives in `docs/inference-provider-catalog.md`; credentials
   are stored under `provider:<slug>` in the auth-profile store.
 

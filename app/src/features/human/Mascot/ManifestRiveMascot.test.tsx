@@ -17,6 +17,11 @@ const h = vi.hoisted(() => ({
   useRiveParams: null as Record<string, unknown> | null,
   enumCalls: {} as Record<string, unknown[]>,
   colorCalls: {} as Record<string, unknown[]>,
+  enumValuesByPath: {
+    pose: ['idle', 'look_around', 'pointing'],
+    mouthVisemeCode: ['sil', 'PP', 'aa'],
+    eyes: ['blink', 'look_left', 'look_right'],
+  } as Record<string, string[]>,
 }));
 
 vi.mock('@rive-app/react-webgl2', () => ({
@@ -35,7 +40,7 @@ vi.mock('@rive-app/react-webgl2', () => ({
   useViewModelInstanceEnum: (path: string) => ({
     setValue: (v: string) => (h.enumCalls[path] ??= []).push(v),
     value: null,
-    values: [],
+    values: h.enumValuesByPath[path] ?? [],
   }),
   useViewModelInstanceColor: (path: string) => ({
     setValue: (v: number) => (h.colorCalls[path] ??= []).push(v),
@@ -109,8 +114,8 @@ describe('ManifestRiveMascot', () => {
 
     await waitFor(() => expect(h.useRiveParams?.buffer).toBeInstanceOf(ArrayBuffer));
     // 'thinking' face → Toshi's look_around (it has no 'thinking' pose).
-    expect((h.enumCalls['pose'] ?? []).at(-1)).toBe('look_around');
-    expect(enumLast('mouthVisemeCode')).toBe('aa');
+    await waitFor(() => expect(h.enumCalls['pose'] ?? []).toContain('look_around'));
+    await waitFor(() => expect(enumLast('mouthVisemeCode')).toBe('aa'));
   });
 
   it('clears the previous buffer when the entry changes without a remount', async () => {

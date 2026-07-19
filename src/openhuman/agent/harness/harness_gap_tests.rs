@@ -3,7 +3,9 @@
 //! These tests cover paths that were missing from the existing `*_tests.rs`
 //! co-located files as identified by a coverage gap analysis:
 //!
-//! 1. Full user→LLM→tool→result→final turn cycle with `run_tool_call_loop`.
+//! 1. Full user→LLM→tool→result→final turn cycle — now covered by the
+//!    tinyagents route's tests (`src/openhuman/tinyagents/tests.rs`), which
+//!    exercise `run_turn_via_tinyagents_shared` end to end.
 //! 2. `MaxIterationsExceeded` downcasts to the typed `AgentError` variant.
 //! 3. `visible_tool_names` whitelist: tools outside the set are treated as unknown.
 //! 4. `ContextGuard` surfaces `ContextExhausted` and aborts the loop.
@@ -21,16 +23,13 @@
 //! - `<invoke tool=…>` XML attribute form — the parser does not parse attributes;
 //!   only the tag body (JSON) is used.
 
-use crate::openhuman::agent::error::AgentError;
-use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
 use crate::openhuman::inference::provider::traits::ProviderCapabilities;
 use crate::openhuman::inference::provider::Provider;
-use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, UsageInfo};
+use crate::openhuman::inference::provider::{ChatRequest, ChatResponse};
 use crate::openhuman::tool_timeout::parse_tool_timeout_secs;
 use crate::openhuman::tools::{Tool, ToolResult};
 use async_trait::async_trait;
 use parking_lot::Mutex;
-use std::collections::HashSet;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared test doubles
@@ -116,66 +115,11 @@ fn multimodal_file_cfg() -> crate::openhuman::config::MultimodalFileConfig {
 //           result injected → LLM produces final text.
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[test]
-fn context_guard_exhausted_after_circuit_breaker_and_95pct_utilization() {
-    // Simulate the scenario where compaction has failed 3 times (circuit
-    // breaker tripped) and context is at 96 % — the guard must surface
-    // ContextExhausted, not CompactionNeeded, so the loop can bail cleanly.
-    let mut guard = ContextGuard::with_context_window(100_000);
-    guard.update_usage(&UsageInfo {
-        input_tokens: 91_000,
-        output_tokens: 5_100, // 96.1 % total
-        context_window: 100_000,
-        ..Default::default()
-    });
-
-    // Trip the circuit breaker.
-    guard.record_compaction_failure();
-    guard.record_compaction_failure();
-    guard.record_compaction_failure();
-    assert!(guard.is_compaction_disabled(), "breaker should be tripped");
-
-    let result = guard.check();
-    assert!(
-        matches!(result, ContextCheckResult::ContextExhausted { .. }),
-        "guard must return ContextExhausted when breaker is tripped and >95%, got: {result:?}"
-    );
-
-    // The utilization percentage embedded in the result must be ≥ 95.
-    if let ContextCheckResult::ContextExhausted {
-        utilization_pct, ..
-    } = result
-    {
-        assert!(
-            utilization_pct >= 95,
-            "utilization_pct in exhausted result should be ≥ 95, got {utilization_pct}"
-        );
-    }
-}
-
-#[test]
-fn context_guard_update_usage_raises_window_from_response() {
-    // UsageInfo that carries a non-zero `context_window` must update the
-    // guard's known window — a guard with window=0 is a no-op, so this
-    // path matters for the first provider response that reports its window.
-    let mut guard = ContextGuard::new(); // window = 0 initially
-    assert_eq!(guard.check(), ContextCheckResult::Ok, "unknown window → Ok");
-
-    guard.update_usage(&UsageInfo {
-        input_tokens: 95_000,
-        output_tokens: 2_000,
-        context_window: 100_000,
-        ..Default::default()
-    });
-    // Now at 97 % with no compaction failures — CompactionNeeded (below hard limit if
-    // circuit breaker is not tripped, but above COMPACTION_TRIGGER_THRESHOLD=90%).
-    // With compaction NOT disabled, the guard returns CompactionNeeded, not Exhausted.
-    assert_eq!(
-        guard.check(),
-        ContextCheckResult::CompactionNeeded,
-        "97% with no circuit breaker should return CompactionNeeded"
-    );
-}
+// NOTE: The `ContextGuard`/`ContextCheckResult` tests that used to live here
+// (context_guard_exhausted_after_circuit_breaker_and_95pct_utilization,
+// context_guard_update_usage_raises_window_from_response) were removed during the
+// tinyagents migration: the context reducer shell (`context/guard.rs`) was
+// deleted (commit d55ea9a5d) and the tested API no longer exists.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Item 3 — parse_tool_calls: <invoke> tag variant (JSON body, not attributes).
@@ -379,61 +323,5 @@ fn current_datetime_line_matches_iso8601_date_and_utc_offset_pattern() {
     assert!(
         has_iana,
         "stamp must contain an IANA zone (slashed) or UTC fallback: {payload}"
-    );
-}
-
-#[test]
-fn datetime_section_is_static_grounding_rule_not_a_volatile_timestamp() {
-    use crate::openhuman::agent::prompts::{DateTimeSection, PromptContext, PromptSection};
-    use std::collections::HashSet;
-    use std::path::Path;
-    use std::sync::LazyLock;
-
-    static EMPTY_FILTER: LazyLock<HashSet<String>> = LazyLock::new(HashSet::new);
-    static EMPTY_TOOLS: &[crate::openhuman::agent::prompts::PromptTool<'static>] = &[];
-    static EMPTY_INTEGRATIONS: &[crate::openhuman::context::prompt::ConnectedIntegration] = &[];
-
-    let ctx = PromptContext {
-        workspace_dir: Path::new("/tmp"),
-        model_name: "test-model",
-        agent_id: "",
-        tools: EMPTY_TOOLS,
-        workflows: &[],
-        dispatcher_instructions: "",
-        learned: crate::openhuman::agent::prompts::LearnedContextData::default(),
-        visible_tool_names: &EMPTY_FILTER,
-        tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
-        connected_integrations: EMPTY_INTEGRATIONS,
-        connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
-        user_identity: None,
-        personality_soul_md: None,
-        personality_memory_md: None,
-        personality_roster: vec![],
-    };
-
-    let rendered = DateTimeSection.build(&ctx).unwrap();
-    let payload = rendered
-        .strip_prefix("## Current Date & Time\n\n")
-        .expect("DateTimeSection must start with the heading");
-
-    // The section is a static rule: it must carry the greeting-grounding
-    // guidance and point at the per-turn line, but NOT bake in a date — a
-    // concrete YYYY-MM-DD here would re-freeze the volatile clock into the
-    // cached prefix (the #3602 regression this guards against).
-    assert!(
-        payload.contains("match the actual local hour") && payload.contains("Current Date & Time:"),
-        "section must carry the grounding rule pointing at the per-turn stamp: {payload}"
-    );
-    // Byte-stability is the real no-volatile-timestamp invariant (a static
-    // literal like "11 PM" in the rule is fine; a baked `Local::now()` is
-    // not): two renders a moment apart must be identical, or the cached
-    // prefix would churn every second.
-    let again = DateTimeSection.build(&ctx).unwrap();
-    assert_eq!(
-        rendered, again,
-        "datetime section must be byte-stable (no volatile timestamp baked in)"
     );
 }

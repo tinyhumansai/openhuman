@@ -174,7 +174,7 @@ pub(crate) fn handle_tinyplace_directory_resolve(params: Map<String, Value>) -> 
         }
 
         // Directory-card fallback: query by username.
-        match directory_card_fallback(&client, &name).await {
+        match directory_card_fallback(client, &name).await {
             Some(card) => {
                 log::debug!(
                     "{LOG_PREFIX} directory_resolve: found '{name}' via directory card \
@@ -586,7 +586,7 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
             Ok(identity) => {
                 log::debug!("{LOG_PREFIX} registry_register free-tier ok username={username}");
                 let _ =
-                    publish_directory_card_for_identity(&client, signer.as_ref(), &identity).await;
+                    publish_directory_card_for_identity(client, signer.as_ref(), &identity).await;
                 return to_value(serde_json::json!({ "identity": identity }));
             }
             Err(e) => match e.payment_required() {
@@ -615,7 +615,7 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
         if let Some(network) = challenge.network.as_deref() {
             ensure_cluster_matches(network)?;
         }
-        ensure_backend_mint_matches(&client).await?;
+        ensure_backend_mint_matches(client).await?;
 
         let mut extra_metadata = HashMap::new();
         extra_metadata.insert("identity".to_string(), format!("@{username}"));
@@ -642,9 +642,8 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
                     log::debug!(
                         "{LOG_PREFIX} registry_register settled username={username} attempt={attempt}"
                     );
-                    let _ =
-                        publish_directory_card_for_identity(&client, signer.as_ref(), &identity)
-                            .await;
+                    let _ = publish_directory_card_for_identity(client, signer.as_ref(), &identity)
+                        .await;
                     return to_value(serde_json::json!({
                         "identity": identity,
                         "payment": { "onChainTx": on_chain_tx },
@@ -680,9 +679,8 @@ pub(crate) fn handle_tinyplace_registry_register(params: Map<String, Value>) -> 
                     log::debug!(
                         "{LOG_PREFIX} registry_register recovered owned identity username={username}"
                     );
-                    let _ =
-                        publish_directory_card_for_identity(&client, signer.as_ref(), &identity)
-                            .await;
+                    let _ = publish_directory_card_for_identity(client, signer.as_ref(), &identity)
+                        .await;
                     return to_value(serde_json::json!({
                         "identity": identity,
                         "payment": { "onChainTx": on_chain_tx },
@@ -916,7 +914,7 @@ pub(crate) fn handle_tinyplace_marketplace_buy_product(
         if let Some(network) = challenge.network.as_deref() {
             ensure_cluster_matches(network)?;
         }
-        ensure_backend_mint_matches(&client).await?;
+        ensure_backend_mint_matches(client).await?;
         let mut extra_metadata = HashMap::new();
         extra_metadata.insert("productId".to_string(), product_id.clone());
         let fulfilled = fulfill_payment(
@@ -1011,7 +1009,7 @@ pub(crate) fn handle_tinyplace_marketplace_buy_identity(
         if let Some(network) = challenge.network.as_deref() {
             ensure_cluster_matches(network)?;
         }
-        ensure_backend_mint_matches(&client).await?;
+        ensure_backend_mint_matches(client).await?;
         let mut extra_metadata = HashMap::new();
         extra_metadata.insert("listingId".to_string(), listing_id.clone());
         let fulfilled = fulfill_payment(
@@ -1118,7 +1116,7 @@ pub(crate) fn handle_tinyplace_marketplace_bid(params: Map<String, Value>) -> Co
             .place_bid_with_payment(
                 &listing_id,
                 bid,
-                tinyplace::api::marketplace::IdentityBidPaymentOptions::default(),
+                tinyplace::api::marketplace::IdentityBidPaymentOptions,
             )
             .await
             .map_err(map_err)?;
@@ -1168,7 +1166,7 @@ pub(crate) fn handle_tinyplace_marketplace_offer(params: Map<String, Value>) -> 
             .marketplace
             .create_offer_with_payment(
                 offer,
-                tinyplace::api::marketplace::IdentityOfferPaymentOptions::default(),
+                tinyplace::api::marketplace::IdentityOfferPaymentOptions,
             )
             .await
             .map_err(map_err)?;
@@ -2606,10 +2604,12 @@ pub(crate) fn handle_tinyplace_streams_start(params: Map<String, Value>) -> Cont
         let kind = match kind_str_trimmed {
             "inbox" => super::streams::StreamKind::Inbox,
             "conversation" => super::streams::StreamKind::Conversation,
+            "feed" => super::streams::StreamKind::Feed,
             _ => return Err(format!("unsupported streamType: {kind_str_trimmed}")),
         };
 
-        // conversation streams require a target id.
+        // conversation and feed streams require a target id (conversation_id /
+        // feed handle respectively); inbox is a singleton with no target.
         let target_id = params
             .get("streamId")
             .and_then(|v| v.as_str())
@@ -2618,6 +2618,9 @@ pub(crate) fn handle_tinyplace_streams_start(params: Map<String, Value>) -> Cont
 
         if kind == super::streams::StreamKind::Conversation && target_id.is_none() {
             return Err("streamId is required for conversation streams".to_string());
+        }
+        if kind == super::streams::StreamKind::Feed && target_id.is_none() {
+            return Err("streamId is required for feed streams".to_string());
         }
 
         log::debug!(
@@ -2670,7 +2673,6 @@ use std::sync::Arc;
 
 use tinyplace::signal::session::SignalSession;
 use tinyplace::signal::store::SessionStore;
-use tinyplace::signal::store::SessionStore as _;
 
 /// Get the `Arc<dyn Signer>` from the client or fail with a clear message.
 ///
@@ -2927,7 +2929,7 @@ pub(crate) fn handle_tinyplace_signal_get_bundle(params: Map<String, Value>) -> 
         let client = global_state().client().await?;
 
         // Resolve the identifier (handle or crypto_id) before the bundle lookup.
-        let agent_id = resolve_recipient_to_agent_id(&client, &raw_agent_id).await?;
+        let agent_id = resolve_recipient_to_agent_id(client, &raw_agent_id).await?;
         log::debug!("{LOG_PREFIX} signal_get_bundle resolved agent_id={agent_id}");
 
         let result = match client.keys.get_bundle(&agent_id).await {
@@ -2985,19 +2987,25 @@ pub(crate) fn handle_tinyplace_signal_key_status(_params: Map<String, Value>) ->
         // AND does it match the current identity key? A stale key (from a
         // previous wallet) should show as NOT published so the user
         // re-registers.
-        let encryption_key_published = match client.directory.get_agent(&agent_id).await {
-            Ok(card) => {
+        // Bounded: once a card exists, fetching it hits the relay; a degraded
+        // relay must degrade this to "not published" (like the Err arm), never
+        // hang the caller (self_identity → the orchestration identity card).
+        let card_fetch = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client.directory.get_agent(&agent_id),
+        )
+        .await;
+        let encryption_key_published = match card_fetch {
+            Ok(Ok(card)) => {
                 let published_key = card
                     .metadata
                     .as_ref()
                     .and_then(|m| m.get("encryptionPublicKey"));
-                let current_key_b64 = base64::engine::general_purpose::STANDARD.encode(
-                    store
-                        .identity_x25519_key_pair()
-                        .await
-                        .map(|kp| kp.public_key)
-                        .unwrap_or([0u8; 32]),
-                );
+                // The card advertises the Ed25519 identity key (the addressable
+                // messaging key where the bundle + mailbox live), not the X25519
+                // DH key — see `signal_register_encryption_key`. Compare against
+                // that so readiness reflects what peers actually resolve.
+                let current_key_b64 = signer.public_key_base64();
                 let matches = published_key
                     .map(|pk| pk == &current_key_b64)
                     .unwrap_or(false);
@@ -3010,8 +3018,14 @@ pub(crate) fn handle_tinyplace_signal_key_status(_params: Map<String, Value>) ->
                 log::debug!("{LOG_PREFIX} signal_key_status encryption_key_published={matches}");
                 matches
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 log::warn!("{LOG_PREFIX} signal_key_status directory card fetch failed: {e}");
+                false
+            }
+            Err(_) => {
+                log::warn!(
+                    "{LOG_PREFIX} signal_key_status directory card fetch timed out (relay slow)"
+                );
                 false
             }
         };
@@ -3024,6 +3038,67 @@ pub(crate) fn handle_tinyplace_signal_key_status(_params: Map<String, Value>) ->
             "encryptionKeyPublished": encryption_key_published,
         }))
     })
+}
+
+/// Idempotently make this agent **discoverable** so peers can encrypt replies to
+/// it — the precondition for the orchestration receive loop. Mirrors the two
+/// manual UI actions (Messaging → "Set up encryption keys" + "Make
+/// discoverable") but runs automatically: provision pre-keys if missing, then
+/// publish the encryption (identity) key to the directory card if not already
+/// advertised.
+///
+/// Returns `Ok(true)` once the agent is confirmed discoverable
+/// (`encryptionKeyPublished`), `Ok(false)` if a publish step was attempted but
+/// the status could not yet be confirmed, and `Err` when prerequisites are
+/// missing (e.g. wallet locked → no signer). Callers retry on `Ok(false)`/`Err`.
+///
+/// Cheap on the steady state: when keys are already provisioned and published it
+/// performs only the status probe and returns without mutating anything.
+pub async fn ensure_signal_keys_published() -> Result<bool, String> {
+    // 1. Probe current readiness. This requires a signer (unlocked wallet); it
+    //    surfaces as an Err the caller retries on.
+    let status = handle_tinyplace_signal_key_status(Map::new()).await?;
+    let keys_ready = status
+        .get("hasActiveSignedPreKey")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && status
+            .get("localPreKeyCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0;
+    let published = status
+        .get("encryptionKeyPublished")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    if keys_ready && published {
+        log::debug!("{LOG_PREFIX} ensure_signal_keys_published: already discoverable");
+        return Ok(true);
+    }
+
+    // 2. Provision pre-keys if missing (signed pre-key + one-time pre-keys).
+    if !keys_ready {
+        log::info!("{LOG_PREFIX} ensure_signal_keys_published: provisioning pre-keys");
+        handle_tinyplace_signal_provision(Map::new()).await?;
+    }
+
+    // 3. Advertise the encryption (identity) key on the directory card so peers
+    //    can resolve the prekey bundle and encrypt to this agent.
+    if !published {
+        log::info!("{LOG_PREFIX} ensure_signal_keys_published: publishing encryption key");
+        handle_tinyplace_signal_register_encryption_key(Map::new()).await?;
+    }
+
+    // 4. Re-probe so the caller can confirm the agent is now discoverable and
+    //    stop retrying.
+    let after = handle_tinyplace_signal_key_status(Map::new()).await?;
+    let now_published = after
+        .get("encryptionKeyPublished")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    log::info!("{LOG_PREFIX} ensure_signal_keys_published: done published={now_published}");
+    Ok(now_published)
 }
 
 // ── Signal messaging helpers ──────────────────────────────────────────────────
@@ -3246,7 +3321,7 @@ pub(crate) fn handle_tinyplace_signal_send_message(params: Map<String, Value>) -
 
         // Resolve the recipient identifier (@handle, bare handle, or crypto_id) to
         // the canonical crypto_id before any key-bundle or directory lookup.
-        let agent_id = resolve_recipient_to_agent_id(&client, &recipient).await?;
+        let agent_id = resolve_recipient_to_agent_id(client, &recipient).await?;
         log::debug!("{LOG_PREFIX} signal_send_message resolved to agent_id={agent_id}");
 
         // Fetch recipient's published key bundle (always needed for the X25519
@@ -3351,6 +3426,75 @@ pub(crate) fn handle_tinyplace_signal_send_message(params: Map<String, Value>) -
     })
 }
 
+/// Decrypt a single inbound Signal DM envelope to its plaintext body.
+///
+/// Shared by the `signal_decrypt_message` controller and the orchestration
+/// ingest path. NOTE: `SignalSession::decrypt` advances the double ratchet and
+/// consumes one-time pre-keys — it is NOT idempotent. Callers that may re-see
+/// the same envelope must dedupe by message id BEFORE calling this.
+pub(crate) async fn decrypt_envelope(
+    envelope: &tinyplace::types::MessageEnvelope,
+) -> Result<String, String> {
+    log::debug!(
+        "{LOG_PREFIX} decrypt_envelope from={} type={} id={}",
+        envelope.from,
+        envelope.envelope_type,
+        envelope.id
+    );
+
+    // Obtain our identity public key and an Arc-wrapped store for SignalSession.
+    let store = crate::openhuman::tinyplace::signal_store::global_signal_store_arc().await?;
+    let client = global_state().client().await?;
+    let our_identity_pub = store
+        .identity_x25519_key_pair()
+        .await
+        .map_err(|e| format!("identity key: {e}"))?
+        .public_key;
+
+    let sender = envelope.from.clone();
+
+    // Fetch sender's published key bundle to obtain their X25519 identity key.
+    // Ed25519 -> X25519 conversion via decode_identity_key — must be preserved.
+    let sender_bundle = client.keys.get_bundle(&sender).await.map_err(map_err)?;
+    let sender_x25519_identity = decode_identity_key(&sender_bundle.identity_key)?;
+
+    // Decrypt via SDK SignalSession.
+    //
+    // SignalSession::decrypt handles both PREKEY_BUNDLE and CIPHERTEXT paths
+    // internally (via process_pre_key_message), including one-time pre-key
+    // consumption, x3dh_respond, ratchet_decrypt, and store_session.
+    let signal_session = SignalSession::new(
+        Arc::clone(&store) as Arc<dyn SessionStore>,
+        our_identity_pub,
+    );
+    let plaintext_bytes = signal_session
+        .decrypt(&sender, &sender_x25519_identity, envelope)
+        .await
+        .map_err(|e| format!("decryption failed: {e}"))?;
+
+    let plaintext = String::from_utf8(plaintext_bytes)
+        .map_err(|e| format!("plaintext is not valid UTF-8: {e}"))?;
+    log::info!(
+        "{LOG_PREFIX} decrypt_envelope decrypted from={sender} id={} len={}",
+        envelope.id,
+        plaintext.len()
+    );
+    Ok(plaintext)
+}
+
+/// Acknowledge (delete) a delivered message from the relay mailbox. Shared by
+/// the `messages_acknowledge` controller and orchestration ingest.
+pub(crate) async fn acknowledge_message(message_id: &str) -> Result<(), String> {
+    let client = global_state().client().await?;
+    let signer = require_signer(client)?;
+    client
+        .messages
+        .acknowledge(message_id, &signer.agent_id())
+        .await
+        .map_err(map_err)?;
+    Ok(())
+}
+
 pub(crate) fn handle_tinyplace_signal_decrypt_message(
     params: Map<String, Value>,
 ) -> ControllerFuture {
@@ -3361,50 +3505,7 @@ pub(crate) fn handle_tinyplace_signal_decrypt_message(
         let envelope: tinyplace::types::MessageEnvelope =
             serde_json::from_value(envelope_val.clone())
                 .map_err(|e| format!("invalid envelope: {e}"))?;
-        log::debug!(
-            "{LOG_PREFIX} signal_decrypt_message from={} type={} id={}",
-            envelope.from,
-            envelope.envelope_type,
-            envelope.id
-        );
-
-        // Obtain our identity public key and an Arc-wrapped store for SignalSession.
-        let store = crate::openhuman::tinyplace::signal_store::global_signal_store_arc().await?;
-        let client = global_state().client().await?;
-        let our_identity_pub = store
-            .identity_x25519_key_pair()
-            .await
-            .map_err(|e| format!("identity key: {e}"))?
-            .public_key;
-
-        let sender = envelope.from.clone();
-
-        // Fetch sender's published key bundle to obtain their X25519 identity key.
-        // Ed25519 -> X25519 conversion via decode_identity_key — must be preserved.
-        let sender_bundle = client.keys.get_bundle(&sender).await.map_err(map_err)?;
-        let sender_x25519_identity = decode_identity_key(&sender_bundle.identity_key)?;
-
-        // Decrypt via SDK SignalSession.
-        //
-        // SignalSession::decrypt handles both PREKEY_BUNDLE and CIPHERTEXT paths
-        // internally (via process_pre_key_message), including one-time pre-key
-        // consumption, x3dh_respond, ratchet_decrypt, and store_session.
-        let signal_session = SignalSession::new(
-            Arc::clone(&store) as Arc<dyn SessionStore>,
-            our_identity_pub,
-        );
-        let plaintext_bytes = signal_session
-            .decrypt(&sender, &sender_x25519_identity, &envelope)
-            .await
-            .map_err(|e| format!("decryption failed: {e}"))?;
-
-        let plaintext = String::from_utf8(plaintext_bytes)
-            .map_err(|e| format!("plaintext is not valid UTF-8: {e}"))?;
-        log::info!(
-            "{LOG_PREFIX} signal_decrypt_message decrypted from={sender} id={} len={}",
-            envelope.id,
-            plaintext.len()
-        );
+        let plaintext = decrypt_envelope(&envelope).await?;
         to_value(serde_json::json!({
             "plaintext": plaintext,
             "from": envelope.from,
@@ -3451,13 +3552,7 @@ pub(crate) fn handle_tinyplace_messages_acknowledge(
     Box::pin(async move {
         let message_id = req_str(&params, "messageId")?.to_string();
         log::debug!("{LOG_PREFIX} messages_acknowledge id={message_id}");
-        let client = global_state().client().await?;
-        let signer = require_signer(client)?;
-        client
-            .messages
-            .acknowledge(&message_id, &signer.agent_id())
-            .await
-            .map_err(map_err)?;
+        acknowledge_message(&message_id).await?;
         to_value(serde_json::json!({ "ok": true }))
     })
 }
@@ -3591,32 +3686,35 @@ pub(crate) fn handle_tinyplace_contacts_stats(_params: Map<String, Value>) -> Co
 
 // ── Signal: encryption key registration (0D) ────────────────────────────────
 
-/// Publish the user's X25519 identity public key on their directory card as
+/// Publish the user's Ed25519 identity key (the addressable cryptoId, where the
+/// Signal prekey bundle + mailbox live) on their directory card as
 /// `metadata.encryptionPublicKey`. This makes the user discoverable for
-/// encrypted DMs via `find_agent_by_encryption_key`.
+/// encrypted DMs via `find_agent_by_encryption_key`; peers derive the X25519 DH
+/// key from the fetched bundle themselves.
 ///
-/// SECURITY: only the PUBLIC key is published. The private key never leaves
-/// the `FileSessionStore`.
+/// SECURITY: only the PUBLIC key is published.
 pub(crate) fn handle_tinyplace_signal_register_encryption_key(
     _params: Map<String, Value>,
 ) -> ControllerFuture {
     Box::pin(async move {
         log::debug!("{LOG_PREFIX} signal_register_encryption_key");
 
-        // 1. Read identity public key from the signal store.
-        let store = crate::openhuman::tinyplace::signal_store::global_signal_store().await?;
-        let identity_kp = store
-            .identity_x25519_key_pair()
-            .await
-            .map_err(|e| format!("identity key: {e}"))?;
-        let encryption_key_b64 =
-            base64::engine::general_purpose::STANDARD.encode(identity_kp.public_key);
-        log::debug!("{LOG_PREFIX} signal_register_encryption_key derived key (not logging value)");
-
-        // 2. Acquire client and signer.
+        // 1. Acquire client and signer.
         let client = global_state().client().await?;
         let signer = require_signer(client)?;
         let agent_id = signer.agent_id();
+
+        // 2. The messaging key peers resolve from this directory card must be the
+        //    wallet's **Ed25519 identity key** — that is the addressable identity
+        //    where the Signal prekey bundle is published (`/keys/<cryptoId>/bundle`)
+        //    and where the mailbox is keyed. Peers derive the X25519 DH key from
+        //    the bundle's identity key themselves (see `decode_identity_key`), so
+        //    they never need a separate X25519 key advertised here. Publishing the
+        //    X25519 key instead made every peer resolve to a *bundle-less* key and
+        //    404 on the bundle fetch — the exact reason inbound DMs never reached
+        //    this agent. Advertise the identity key so resolution + delivery align.
+        let encryption_key_b64 = signer.public_key_base64();
+        log::debug!("{LOG_PREFIX} signal_register_encryption_key advertising identity key (value not logged)");
 
         // 3. Fetch current AgentCard to preserve existing fields. A wallet that
         //    has Signal keys but no directory presence yet (e.g. it registered a
@@ -4933,7 +5031,7 @@ pub(crate) fn handle_tinyplace_bounties_create(params: Map<String, Value>) -> Co
         if let Some(network) = challenge.network.as_deref() {
             ensure_cluster_matches(network)?;
         }
-        ensure_backend_mint_matches(&client).await?;
+        ensure_backend_mint_matches(client).await?;
 
         let mut extra_metadata = HashMap::new();
         extra_metadata.insert("title".to_string(), request.title.clone());
@@ -5722,6 +5820,19 @@ mod tests {
         );
         let err = block_on(handle_tinyplace_streams_start(params)).unwrap_err();
         assert!(err.contains("streamId"), "got: {err}");
+    }
+
+    /// streams_start rejects a feed stream without a streamId (the feed handle).
+    /// Regression for #4926: "feed" is a valid streamType but, like
+    /// "conversation", it is target-scoped and must carry a streamId.
+    #[test]
+    fn streams_start_feed_requires_stream_id() {
+        let mut params = Map::new();
+        params.insert("streamType".to_string(), Value::String("feed".to_string()));
+        let err = block_on(handle_tinyplace_streams_start(params)).unwrap_err();
+        assert!(err.contains("streamId"), "got: {err}");
+        // And it must NOT be rejected as an unsupported streamType.
+        assert!(!err.contains("unsupported"), "got: {err}");
     }
 
     /// streams_stop rejects a missing/blank streamId.

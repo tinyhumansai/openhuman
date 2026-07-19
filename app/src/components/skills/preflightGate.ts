@@ -37,7 +37,7 @@ export interface WorkflowRunError {
 
 /**
  * Parse the message string returned by the `openhuman.skill_runtime_run` RPC
- * error path (or thrown by `workflowsApi.runWorkflow`). Anything that matches
+ * error path (or thrown by `skillsApi.runWorkflow`). Anything that matches
  * the `[preflight:<gate>:<tag>]` prefix becomes a structured gate
  * failure; anything else falls through with `gate: null` so the caller
  * can render the raw text.

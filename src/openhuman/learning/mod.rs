@@ -31,6 +31,7 @@ pub mod reflection;
 pub mod scheduler;
 pub mod schemas;
 pub mod stability_detector;
+pub mod startup;
 pub mod tool_tracker;
 pub mod tools;
 pub mod transcript_ingest;

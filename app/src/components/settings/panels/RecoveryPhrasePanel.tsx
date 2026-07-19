@@ -892,7 +892,9 @@ const RecoveryPhrasePanel = () => {
   );
 
   return (
-    <SettingsPanel description={t('pages.settings.account.recoveryPhraseDesc')}>
+    <SettingsPanel
+      description={t('pages.settings.account.recoveryPhraseDesc')}
+      testId="recovery-phrase-panel">
       {success ? (
         <div className="flex flex-col items-center justify-center gap-3 py-12">
           <div className="w-12 h-12 rounded-full bg-sage-500/20 flex items-center justify-center">

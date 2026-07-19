@@ -118,7 +118,7 @@ fn make_discord_ctx(
 
     Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels),
-        provider,
+        provider: Some(provider),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
@@ -140,6 +140,7 @@ fn make_discord_ctx(
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
         multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        config: None,
     })
 }
 

@@ -4,8 +4,8 @@
 #   1. sanitize_elf_rpaths        — strips /home/runner|/__w build-machine
 #                                    RPATHs from bundled ELFs, rewriting to
 #                                    $ORIGIN-relative.
-#   2. validate_appimage_required_libs — hard-fails when libxdo.so.* is missing
-#                                    from a sharun AppDir.
+#   2. validate_appimage_required_libs — hard-fails when libxdo.so.* or
+#                                    libcef.so is missing from a sharun AppDir.
 #
 # Linux-only: needs `patchelf` and a host ELF to mutate. Skips cleanly (exit 0)
 # on macOS / any host without patchelf so it is a no-op on dev boxes and a real
@@ -115,7 +115,7 @@ lib_after="$(patchelf --print-rpath "$ABS_LIB")"
   || fail "lib/ fallback wrong: expected '\$ORIGIN:\$ORIGIN/../shared/lib', got '$lib_after'"
 echo "[test-rpaths] ok: lib/ pure-absolute RPATH → depth-aware fallback '$lib_after'"
 
-# --- Case 2: validate_appimage_required_libs guards libxdo -------------------
+# --- Case 2: validate_appimage_required_libs guards runtime libraries --------
 # Build a minimal sharun AppDir. uses_sharun_launcher only inspects *ELF* entry
 # binaries (is_executable_elf) and greps them for the literal
 # "Interpreter not found!" string, mirroring the real sharun launcher binary.
@@ -136,11 +136,20 @@ if ( validate_appimage_required_libs "$GUARD_DIR" ) 2>/dev/null; then
 fi
 echo "[test-rpaths] ok: guard fails when libxdo.so.* is absent"
 
-# 2b — libxdo present → must pass.
+# 2b — libxdo present but libcef absent → must still fail.
 : > "$GUARD_DIR/shared/lib/libxdo.so.3"
-if ! ( validate_appimage_required_libs "$GUARD_DIR" ) 2>/dev/null; then
-  fail "validate_appimage_required_libs failed despite libxdo.so.3 present"
+if ( validate_appimage_required_libs "$GUARD_DIR" ) 2>/dev/null; then
+  fail "validate_appimage_required_libs passed despite missing libcef.so"
 fi
-echo "[test-rpaths] ok: guard passes when libxdo.so.3 is present"
+echo "[test-rpaths] ok: guard fails when libcef.so is absent"
+
+# 2c — both required runtime libraries present → must pass.
+mkdir -p "$GUARD_DIR/usr/lib"
+: > "$GUARD_DIR/shared/lib/libxdo.so.3"
+: > "$GUARD_DIR/usr/lib/libcef.so"
+if ! ( validate_appimage_required_libs "$GUARD_DIR" ) 2>/dev/null; then
+  fail "validate_appimage_required_libs failed despite libxdo.so.3 and libcef.so being present"
+fi
+echo "[test-rpaths] ok: guard passes when libxdo.so.3 and libcef.so are present"
 
 echo "[test-rpaths] PASS"

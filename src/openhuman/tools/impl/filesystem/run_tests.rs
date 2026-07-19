@@ -1,9 +1,10 @@
 //! Tool: run_tests — run test suites for the Critic archetype.
 
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
+use tinyagents::harness::tool::ToolExecutionContext;
 
 /// Runs test suites (cargo test, vitest) and returns pass/fail with output.
 pub struct RunTestsTool {
@@ -13,6 +14,18 @@ pub struct RunTestsTool {
 impl RunTestsTool {
     pub fn new(workspace_dir: PathBuf) -> Self {
         Self { workspace_dir }
+    }
+
+    fn workspace_dir_for_context(&self, context: Option<&ToolExecutionContext>) -> PathBuf {
+        if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+            tracing::debug!(
+                workspace_root = %workspace.root.display(),
+                policy_id = %workspace.policy_id,
+                "[run_tests] using TinyAgents workspace descriptor as workspace dir"
+            );
+            return workspace.root.clone();
+        }
+        self.workspace_dir.clone()
     }
 }
 
@@ -55,6 +68,17 @@ impl Tool for RunTestsTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: ToolCallOptions,
+        context: Option<&ToolExecutionContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let workspace_dir = self.workspace_dir_for_context(context);
         let runner = args
             .get("runner")
             .and_then(|v| v.as_str())
@@ -66,9 +90,9 @@ impl Tool for RunTestsTool {
             .unwrap_or(120);
 
         let runner = if runner == "auto" {
-            if self.workspace_dir.join("Cargo.toml").exists() {
+            if workspace_dir.join("Cargo.toml").exists() {
                 "cargo_test"
-            } else if self.workspace_dir.join("package.json").exists() {
+            } else if workspace_dir.join("package.json").exists() {
                 "vitest"
             } else {
                 return Ok(ToolResult::error(
@@ -101,9 +125,12 @@ impl Tool for RunTestsTool {
             }
         };
 
-        tracing::debug!("[run_tests] runner={runner}, filter={filter:?}, timeout={timeout_secs}s");
+        tracing::debug!(
+            workspace = %workspace_dir.display(),
+            "[run_tests] runner={runner}, filter={filter:?}, timeout={timeout_secs}s"
+        );
 
-        cmd.current_dir(&self.workspace_dir);
+        cmd.current_dir(&workspace_dir);
         cmd.kill_on_drop(true);
 
         let output =

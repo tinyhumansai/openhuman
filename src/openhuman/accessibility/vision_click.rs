@@ -172,16 +172,28 @@ pub(crate) fn capture_window_geometry(
 /// Ask the vision model for the target's pixel coordinates within `screenshot`.
 /// Returns `Ok(None)` when the model reports the element isn't visible.
 pub(crate) async fn locate_via_vision(
-    provider: &dyn crate::openhuman::inference::provider::Provider,
-    model: &str,
+    model: &std::sync::Arc<dyn tinyagents::harness::model::ChatModel<()>>,
     screenshot_data_uri: &str,
     description: &str,
 ) -> Result<Option<(i32, i32)>, String> {
+    use tinyagents::harness::message::Message;
+    use tinyagents::harness::model::ModelRequest;
+    // The image rides as an `[IMAGE:<uri>]` marker in the user text (promoted to a
+    // real image part in the provider request builder); the marker survives the
+    // crate `Message` → host `ChatMessage` round-trip verbatim. The vision call is
+    // deterministic, so pin temperature 0.0 on the request (overrides the model's
+    // construction temperature).
     let user = build_locate_user(description, screenshot_data_uri);
-    let raw = provider
-        .chat_with_system(Some(locate_system_prompt()), &user, model, 0.0)
+    let request = ModelRequest::new(vec![
+        Message::system(locate_system_prompt().to_string()),
+        Message::user(user),
+    ])
+    .with_temperature(0.0);
+    let response = model
+        .invoke(&(), request)
         .await
         .map_err(|e| format!("vision model call failed: {e}"))?;
+    let raw = response.text();
     log::debug!("{LOG_PREFIX} locate raw response: {raw:?}");
     parse_locate_response(&raw)
 }

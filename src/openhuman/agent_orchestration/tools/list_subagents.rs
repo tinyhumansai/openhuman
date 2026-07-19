@@ -1,8 +1,14 @@
 //! Tool: `list_subagents` - inspect reusable sub-agent sessions for this parent.
 
 use crate::openhuman::agent::harness::fork_context::current_parent;
-use crate::openhuman::agent_orchestration::subagent_sessions::{
-    self, DurableSubagentSessionSummary, SubagentSessionStore,
+use crate::openhuman::agent_orchestration::{
+    running_subagents,
+    subagent_sessions::{
+        self, DurableSubagentSessionSummary, DurableSubagentStatus, SubagentSessionStore,
+    },
+};
+use crate::openhuman::tinyagents::orchestration::{
+    OrchestrationTaskRecord, OrchestrationTaskStatus,
 };
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
@@ -64,7 +70,15 @@ impl Tool for ListSubagentsTool {
             Ok(sessions) => {
                 let summaries: Vec<DurableSubagentSessionSummary> = sessions
                     .iter()
-                    .map(DurableSubagentSessionSummary::from)
+                    .map(|session| {
+                        let mut summary = DurableSubagentSessionSummary::from(session);
+                        overlay_task_store_status(
+                            &mut summary,
+                            &parent.workspace_dir,
+                            &parent.session_id,
+                        );
+                        summary
+                    })
                     .collect();
                 log::debug!(
                     "[subagent_reuse] list parent_thread_id={} parent_session={} count={}",
@@ -81,6 +95,97 @@ impl Tool for ListSubagentsTool {
                 "list_subagents: failed to read sub-agent sessions: {err}"
             ))),
         }
+    }
+}
+
+fn overlay_task_store_status(
+    summary: &mut DurableSubagentSessionSummary,
+    workspace_dir: &std::path::Path,
+    parent_session: &str,
+) {
+    if summary.status == DurableSubagentStatus::Closed {
+        return;
+    }
+    let Some(task_id) = summary.current_task_id.clone() else {
+        return;
+    };
+    let record = match running_subagents::task_record_for_task_in_workspace(
+        workspace_dir,
+        &task_id,
+        parent_session,
+    ) {
+        Ok(record) => record,
+        Err(running_subagents::WaitError::Unknown) => return,
+        Err(running_subagents::WaitError::NotOwned) => {
+            log::warn!(
+                "[subagent_reuse] task store overlay rejected task_id={} subagent_session_id={} reason=not_owned",
+                task_id,
+                summary.subagent_session_id
+            );
+            return;
+        }
+    };
+
+    let previous = summary.status;
+    apply_task_record_overlay(summary, record);
+    if summary.status != previous {
+        log::debug!(
+            "[subagent_reuse] overlaid task store status subagent_session_id={} task_id={} previous={:?} status={:?}",
+            summary.subagent_session_id,
+            task_id,
+            previous,
+            summary.status
+        );
+    }
+}
+
+fn apply_task_record_overlay(
+    summary: &mut DurableSubagentSessionSummary,
+    record: OrchestrationTaskRecord,
+) {
+    match record.status {
+        OrchestrationTaskStatus::Pending
+        | OrchestrationTaskStatus::Running
+        | OrchestrationTaskStatus::CancelRequested => {
+            summary.status = DurableSubagentStatus::Running;
+            summary.reusable = true;
+        }
+        OrchestrationTaskStatus::Awaiting => {
+            summary.status = DurableSubagentStatus::AwaitingUser;
+            summary.reusable = false;
+        }
+        OrchestrationTaskStatus::Completed => {
+            summary.status = DurableSubagentStatus::Idle;
+            summary.reusable = true;
+            summary.latest_error = None;
+        }
+        OrchestrationTaskStatus::Failed
+        | OrchestrationTaskStatus::TimedOut
+        | OrchestrationTaskStatus::Abandoned
+        | OrchestrationTaskStatus::Cancelled => {
+            summary.status = DurableSubagentStatus::Failed;
+            summary.reusable = false;
+            summary.latest_error = Some(record.error.unwrap_or_else(|| {
+                format!(
+                    "sub-agent reached durable task status `{}`",
+                    durable_status_label(record.status)
+                )
+            }));
+        }
+    }
+}
+
+fn durable_status_label(status: OrchestrationTaskStatus) -> &'static str {
+    match status {
+        OrchestrationTaskStatus::Pending => "pending",
+        OrchestrationTaskStatus::Running => "running",
+        OrchestrationTaskStatus::Awaiting => "awaiting",
+        OrchestrationTaskStatus::Completed => "completed",
+        OrchestrationTaskStatus::Failed => "failed",
+        OrchestrationTaskStatus::CancelRequested => "cancel_requested",
+        OrchestrationTaskStatus::Cancelled => "cancelled",
+        OrchestrationTaskStatus::TimedOut => "timed_out",
+        OrchestrationTaskStatus::Abandoned => "abandoned",
     }
 }
 

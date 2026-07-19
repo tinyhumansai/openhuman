@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { channelLuminance, channelsToHex, hexToChannels, isChannelTriple } from './color';
+import {
+  channelContrast,
+  channelLuminance,
+  channelsToHex,
+  hexToChannels,
+  isChannelTriple,
+} from './color';
 
 describe('theme colour helpers', () => {
   it('converts channel triples to hex', () => {
@@ -37,5 +43,13 @@ describe('theme colour helpers', () => {
     expect(channelLuminance('255 255 255')).toBeGreaterThan(channelLuminance('0 0 0'));
     expect(channelLuminance('0 0 0')).toBeCloseTo(0, 5);
     expect(channelLuminance('255 255 255')).toBeCloseTo(1, 5);
+  });
+
+  it('computes WCAG contrast ratios (symmetric, 1…21)', () => {
+    expect(channelContrast('255 255 255', '0 0 0')).toBeCloseTo(21, 1);
+    expect(channelContrast('0 0 0', '255 255 255')).toBeCloseTo(21, 1); // symmetric
+    expect(channelContrast('128 128 128', '128 128 128')).toBeCloseTo(1, 5); // self
+    // sanity: a known AA-passing pair (stone-900 on white) is ≥ 4.5
+    expect(channelContrast('23 23 23', '255 255 255')).toBeGreaterThan(4.5);
   });
 });

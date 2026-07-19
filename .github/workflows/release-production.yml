@@ -11,8 +11,8 @@ on:
         options: [patch, minor, major]
       commit_sha:
         description:
-          Build from a specific commit SHA instead of main HEAD. The commit
-          must be reachable from main. Leave empty to use main HEAD.
+          Build from a specific commit SHA instead of release HEAD. The commit
+          must be reachable from release. Leave empty to use release HEAD.
         required: false
         type: string
         default: ""
@@ -25,6 +25,10 @@ on:
         type: boolean
         default: true
 permissions:
+  # `actions: read` lets scripts/ci-cancel-aware.sh poll the run status so
+  # cancelled builds inside container jobs stop themselves (docker exec
+  # swallows the runner's signals).
+  actions: read
   contents: write
   packages: write
 concurrency:
@@ -33,6 +37,12 @@ concurrency:
   group: release-production
   cancel-in-progress: false
 # ---------------------------------------------------------------------------
+# Branch model: releases are cut from the long-lived `release` branch, not
+# `main`. `release` only advances via green main→release PRs that run the
+# full test suite; this workflow bumps/commits/tags on `release` and the
+# release is built from the tag this workflow creates on `release`. The
+# workflow-dispatch ref does not select the production source branch.
+#
 # Job dependency graph
 #
 #   prepare-build
@@ -61,10 +71,10 @@ jobs:
   # =========================================================================
   # Phase 0: Manual approval gate.
   #
-  # This workflow bumps the version, COMMITS to `main`, and pushes that
+  # This workflow bumps the version, COMMITS to `release`, and pushes that
   # commit + tag using a GitHub App token that bypasses branch protection.
   # If that App private key (secrets.XGITHUB_APP_PRIVATE_KEY) ever leaked,
-  # an attacker could push arbitrary commits to the default branch — CWE-250.
+  # an attacker could push arbitrary commits to a protected branch — CWE-250.
   # This job parks the run on the `Release-Approval` environment (configured
   # with required reviewers in repo settings) so a human must explicitly
   # approve before prepare-build is allowed to run its push step.
@@ -77,11 +87,11 @@ jobs:
     steps:
       - name: Record approval
         run: |
-          echo "[release-production] Push to main approved by a required reviewer."
+          echo "[release-production] Push to release approved by a required reviewer."
           echo "Proceeding to version bump + commit/tag push on prepare-build."
 
   # =========================================================================
-  # Phase 1: Bump version on main, commit, push, and optionally tag
+  # Phase 1: Bump version on release, commit, push, and optionally tag
   # =========================================================================
   prepare-build:
     name: Prepare build context
@@ -103,28 +113,30 @@ jobs:
       build_ref: ${{ steps.resolve.outputs.build_ref }}
       base_url: ${{ steps.resolve.outputs.base_url }}
     steps:
-      - name: Enforce main branch
-        if: github.ref != 'refs/heads/main'
-        run: |
-          echo "This workflow can only run from main. Current ref: $GITHUB_REF"
-          exit 1
       - name: Generate GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.XGITHUB_APP_ID }}
           private-key: ${{ secrets.XGITHUB_APP_PRIVATE_KEY }}
-      - name: Checkout main
-        uses: actions/checkout@v5
+          # Least privilege: this job only pushes the version-bump commit and
+          # tag (and, on production, the back-merge to main) — contents: write
+          # is all it needs. Branch-protection bypass comes from the App's
+          # identity in the ruleset bypass list, not from token scopes.
+          permission-contents: write
+      - name: Checkout release
+        uses: actions/checkout@v7
         with:
-          ref: main
+          ref: release
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
           submodules: recursive
       - name: Setup pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.10.0
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 24.x
           package-manager-cache: false
@@ -143,14 +155,14 @@ jobs:
               exit 1
             }
             git rev-parse --verify "${COMMIT_SHA}^{commit}" >/dev/null
-            git merge-base --is-ancestor "$COMMIT_SHA" origin/main || {
-              echo "commit_sha $COMMIT_SHA is not reachable from main"
+            git merge-base --is-ancestor "$COMMIT_SHA" origin/release || {
+              echo "commit_sha $COMMIT_SHA is not reachable from release"
               exit 1
             }
             git checkout --detach "$COMMIT_SHA"
           else
-            git checkout main
-            git pull origin main --ff-only
+            git checkout release
+            git pull origin release --ff-only
           fi
       - name: Compute next version and sync release files
         id: bump
@@ -182,8 +194,10 @@ jobs:
           CREATE_RELEASE: ${{ inputs.create_release }}
         run: |
           git add app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml Cargo.toml app/src-tauri/Cargo.lock Cargo.lock
-          git commit -m "chore(release): v${VERSION}"
-          git push origin HEAD:main
+          # [skip ci]: the bump commit lands on an already-validated release
+          # tree — don't re-trigger the full suite (ci-full.yml, push:release).
+          git commit -m "chore(release): v${VERSION} [skip ci]"
+          git push origin HEAD:release
           if [ "$CREATE_RELEASE" = "true" ]; then
             git tag -a "$TAG" -m "Release $TAG"
             git push origin "$TAG"
@@ -214,6 +228,17 @@ jobs:
           echo "build_ref=$BUILD_REF" >> "$GITHUB_OUTPUT"
           echo "base_url=https://api.tinyhumans.ai/" >> "$GITHUB_OUTPUT"
 
+      # Keep main in sync: the version-bump commit (and anything else on
+      # release) flows back into main right after the cut. continue-on-error
+      # so a merge conflict never strands a release that is already tagged —
+      # resolve the merge manually in that case.
+      - name: Merge release back into main
+        continue-on-error: true
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          bash scripts/release/merge-release-into-main.sh "chore(release): merge release v${VERSION} back into main"
+
   # =========================================================================
   # Phase 2: Create draft GitHub release
   # =========================================================================
@@ -235,7 +260,7 @@ jobs:
           echo "upload_url=" >> "$GITHUB_OUTPUT"
       - name: Checkout release ref
         if: ${{ inputs.create_release }}
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 0
@@ -277,7 +302,7 @@ jobs:
       - name: Create draft release with generated notes
         if: ${{ inputs.create_release }}
         id: create
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
@@ -368,14 +393,19 @@ jobs:
       IMAGE_NAME: tinyhumansai/openhuman-core
     steps:
       - name: Checkout build ref
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
+      # Targeted init (not `submodules: true`) so we skip the large tauri-cef
+      # fork the core image doesn't need. The Dockerfile COPYs vendor/ because
+      # [patch.crates-io] resolves Rust SDK crates from vendor/.
+      - name: Init vendored Rust submodules
+        run: git submodule update --init --recursive vendor/tinyagents vendor/tinyflows vendor/tinycortex vendor/tinyjuice vendor/tinychannels vendor/tinyplace
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -397,7 +427,7 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
       - name: Build and push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -443,9 +473,12 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+    env:
+      # Consumed by scripts/ci-cancel-aware.sh's cancellation watchdog.
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout build ref
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
@@ -507,7 +540,7 @@ jobs:
     environment: Production
     steps:
       - name: Checkout build ref
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
@@ -545,7 +578,7 @@ jobs:
       && needs.publish-updater-manifest.result == 'success'
     steps:
       - name: Checkout validation scripts
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
@@ -571,7 +604,7 @@ jobs:
           scripts/validate-release-assets.sh /tmp/openhuman-release.json /tmp/latest.json
 
       - name: Validate required installer assets exist
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const releaseId = Number('${{ needs.create-release.outputs.release_id }}');
@@ -616,7 +649,7 @@ jobs:
             core.info('All required installer assets are present.');
 
       - name: Publish release
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const releaseId = Number('${{ needs.create-release.outputs.release_id }}');
@@ -652,9 +685,9 @@ jobs:
       IMAGE_NAME: tinyhumansai/openhuman-core
     steps:
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -740,7 +773,7 @@ jobs:
     steps:
       - name: Delete GitHub release
         if: ${{ inputs.create_release && needs.create-release.result == 'success' }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const owner = context.repo.owner;
@@ -757,7 +790,7 @@ jobs:
               core.warning(`deleteRelease failed: ${e.message}`);
             }
       - name: Delete remote tag
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const owner = context.repo.owner;

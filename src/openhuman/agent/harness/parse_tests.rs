@@ -355,3 +355,80 @@ fn tools_to_openai_format_uses_tool_metadata() {
     assert_eq!(payload[0]["function"]["name"], "echo");
     assert_eq!(payload[1]["function"]["description"], "stub tool");
 }
+
+// ── lenient recovery of pipe-garbled <tool_call> tags ────────────────────────
+
+#[test]
+fn garbled_pipe_tags_with_json_body_and_call_prefix_parse() {
+    // Exact shape seen from a small Composio sub-agent: native `<|…|>` sentinel
+    // pipes leaked into the tags (`<|tool_call>` / `<tool_call|>`) and the body
+    // is prefixed with `call:`. Without the normalizer this drops silently and
+    // the tool never runs; with it, the real call is recovered.
+    let garbled = r#"<|tool_call>call:{"name": "GMAIL_LIST_THREADS", "arguments": {"query": "\"University of Colorado\"", "verbose": true}}<tool_call|>"#;
+    let (_text, calls) = parse_tool_calls(garbled);
+    assert_eq!(calls.len(), 1, "expected the garbled call to be recovered");
+    assert_eq!(calls[0].name, "GMAIL_LIST_THREADS");
+    assert_eq!(calls[0].arguments["query"], "\"University of Colorado\"");
+    assert_eq!(calls[0].arguments["verbose"], true);
+}
+
+#[test]
+fn garbled_pipe_tags_recover_multiple_parallel_calls() {
+    let garbled = concat!(
+        r#"<|tool_call>call:{"name": "GMAIL_LIST_THREADS", "arguments": {"query": "a"}}<tool_call|>"#,
+        r#"<|tool_call>call:{"name": "GMAIL_LIST_THREADS", "arguments": {"query": "b"}}<tool_call|>"#,
+    );
+    let (_t, calls) = parse_tool_calls(garbled);
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].arguments["query"], "a");
+    assert_eq!(calls[1].arguments["query"], "b");
+}
+
+#[test]
+fn normalize_leaves_clean_output_untouched() {
+    // No piped marker → cheap Borrowed no-op, and a canonical call still parses.
+    let clean = r#"<tool_call>{"name":"echo","arguments":{}}</tool_call>"#;
+    assert!(matches!(
+        normalize_garbled_tool_call_tags(clean),
+        std::borrow::Cow::Borrowed(_)
+    ));
+    let (_t, calls) = parse_tool_calls(clean);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "echo");
+}
+
+#[test]
+fn normalize_repairs_open_and_close_pipe_variants() {
+    // Leading pipe → open; trailing pipe (no slash) → close.
+    assert_eq!(
+        normalize_garbled_tool_call_tags("<|tool_call>BODY<tool_call|>").as_ref(),
+        "<tool_call>BODY</tool_call>"
+    );
+    // Slash-bearing close variants normalize too.
+    assert_eq!(
+        normalize_garbled_tool_call_tags("<tool_call>b</tool_call|>").as_ref(),
+        "<tool_call>b</tool_call>"
+    );
+}
+
+#[test]
+fn normalize_pairs_symmetric_both_pipe_tags() {
+    // `<|tool_call|>` on BOTH sides — a hardcoded open/close map can't tell them
+    // apart; positional pairing does (1st = open, 2nd = close).
+    let garbled = r#"<|tool_call|>{"name":"echo","arguments":{"msg":"hi"}}<|tool_call|>"#;
+    let (_t, calls) = parse_tool_calls(garbled);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "echo");
+    assert_eq!(calls[0].arguments["msg"], "hi");
+}
+
+#[test]
+fn normalize_leaves_pformat_pipe_args_untouched() {
+    // Pipes appear in P-Format BODIES (`name[a|b]`), not the tags — the
+    // garbled-tag guard must not touch a well-formed positional call.
+    let clean = "<tool_call>get_weather[London|metric]</tool_call>";
+    assert!(matches!(
+        normalize_garbled_tool_call_tags(clean),
+        std::borrow::Cow::Borrowed(_)
+    ));
+}

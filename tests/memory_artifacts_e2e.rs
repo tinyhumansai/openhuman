@@ -9,16 +9,17 @@ use tempfile::tempdir;
 use chrono::{TimeZone, Utc};
 
 use openhuman_core::openhuman::config::Config;
+use openhuman_core::openhuman::memory::ingest_pipeline::ingest_chat;
 use openhuman_core::openhuman::memory::tree_source::registry::get_or_create_source_tree;
 use openhuman_core::openhuman::memory_queue::drain_until_idle;
 use openhuman_core::openhuman::memory_store::content::atomic::stage_summary;
 use openhuman_core::openhuman::memory_store::content::obsidian::ensure_obsidian_defaults;
+use openhuman_core::openhuman::memory_store::content::raw::{write_raw_items, RawItem, RawKind};
 use openhuman_core::openhuman::memory_store::content::wiki_git::{
     get_read_pointer_tag, set_read_pointer_tag,
 };
 use openhuman_core::openhuman::memory_store::content::{SummaryComposeInput, SummaryTreeKind};
-use openhuman_core::openhuman::memory_sync::composio::providers::slack::ingest::ingest_page_into_memory_tree;
-use openhuman_core::openhuman::memory_sync::composio::providers::slack::SlackMessage;
+use openhuman_core::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
 use openhuman_core::openhuman::memory_tree::ingest::{ingest_summary, SummaryIngestInput};
 
 fn make_config(workspace_dir: &std::path::Path) -> Config {
@@ -35,21 +36,36 @@ async fn sync_raw_artifacts_and_mocked_summary_match_obsidian_contract() {
     let config = make_config(&workspace_dir);
 
     let ts = Utc.timestamp_opt(1_700_000_000, 0).single().unwrap();
-    let msg = SlackMessage {
-        channel_id: "C123".into(),
-        channel_name: "engineering".into(),
-        is_private: false,
-        author: "alice".into(),
-        author_id: "U123".into(),
-        text: "Phoenix migration launch window is Friday at 22:00 UTC.".into(),
-        timestamp: ts,
-        ts_raw: "1700000000.000100".into(),
-        thread_ts: None,
-        permalink: Some("https://slack.example.test/archives/C123/p1700000000000100".into()),
+    write_raw_items(
+        &config.memory_tree_content_root(),
+        "slack:conn-slack-1",
+        &[RawItem {
+            uid: "1700000000.000100",
+            created_at_ms: ts.timestamp_millis(),
+            markdown: "**Channel:** #engineering\n**Author:** alice\n\nPhoenix migration launch window is Friday at 22:00 UTC.",
+            kind: RawKind::Chat,
+        }],
+    )
+    .expect("seed raw Slack artifact");
+    let batch = ChatBatch {
+        platform: "slack".into(),
+        channel_label: "#engineering".into(),
+        messages: vec![ChatMessage {
+            author: "alice".into(),
+            timestamp: ts,
+            text: "Phoenix migration launch window is Friday at 22:00 UTC.".into(),
+            source_ref: Some("https://slack.example.test/archives/C123/p1700000000000100".into()),
+        }],
     };
-    ingest_page_into_memory_tree(&config, "alice", "conn-slack-1", &[msg])
-        .await
-        .expect("seed slack sync");
+    ingest_chat(
+        &config,
+        "slack:conn-slack-1",
+        "alice",
+        vec!["slack".into(), "ingested".into()],
+        batch,
+    )
+    .await
+    .expect("seed slack sync");
     drain_until_idle(&config).await.expect("drain sync jobs");
 
     let content_root = config.memory_tree_content_root();

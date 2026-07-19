@@ -258,6 +258,9 @@ async fn run_step(
     cmd.env("HF_HOME", hf_home);
     cmd.env("HF_HUB_DISABLE_TELEMETRY", "1");
     cmd.kill_on_drop(true);
+    // Re-provisioning can run mid-session if the venv is missing/corrupted, so
+    // suppress the Windows conhost flash here too (GH-4814).
+    crate::openhuman::inference::local::process_util::apply_no_window(&mut cmd);
 
     let output = match tokio::time::timeout(timeout, cmd.output()).await {
         Ok(Ok(o)) => o,
@@ -313,5 +316,23 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .contains("answerdotai_ModernBERT-base"));
+    }
+
+    // Exercises the provisioning step path (including the GH-4814
+    // CREATE_NO_WINDOW hook, a no-op off Windows) with a trivial binary so it
+    // stays covered without a real python toolchain.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_step_runs_a_trivial_binary() {
+        let hf = tempfile::tempdir().expect("tempdir");
+        run_step(
+            Path::new("/bin/echo"),
+            &["ok"],
+            Duration::from_secs(30),
+            hf.path(),
+            "echo smoke",
+        )
+        .await
+        .expect("echo step succeeds");
     }
 }

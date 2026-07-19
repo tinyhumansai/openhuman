@@ -218,10 +218,6 @@ pub(crate) fn redact_ollama_base_url(raw: &str) -> String {
         .unwrap_or_else(|_| "<invalid-endpoint>".to_string())
 }
 
-/// Back-compat constant kept at its original value for callers that
-/// reference it directly. New callers should use [`ollama_base_url`].
-pub(crate) const OLLAMA_BASE_URL: &str = DEFAULT_OLLAMA_BASE_URL;
-
 #[derive(Debug, Serialize)]
 pub(crate) struct OllamaPullRequest {
     pub name: String,
@@ -390,6 +386,7 @@ impl OllamaShowResponse {
 /// (unknown):
 ///   * empty / absent capabilities (older Ollama, or an `/api/show` miss);
 ///   * a tag set we don't recognise (e.g. `["insert"]` only).
+///
 /// Callers treat `None` as "keep visible" — fail-open, never hide a model
 /// that might be usable for chat. Mirrors the non-rejecting `Unknown` arm of
 /// [`super::model_requirements::ContextEligibility`]. See Sentry TAURI-RUST-4P6.

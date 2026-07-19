@@ -63,7 +63,7 @@ fn validate_delivery(config: &Config, delivery: &DeliveryConfig) -> Result<(), S
     }
 
     match allowed_users_for_channel(config, channel) {
-        Some(list) if list.is_empty() => Ok(()),
+        Some([]) => Ok(()),
         Some(list) => {
             if list.iter().any(|u| u == to) {
                 Ok(())
@@ -353,6 +353,17 @@ impl Tool for CronAddTool {
                     delete_after_run,
                 )
             }
+            // `job_type` above is derived only from `Some("agent")`/`Some("shell")`/
+            // the `prompt`-presence heuristic, so this arm is unreachable in
+            // practice — `JobType::Flow` rows are created internally by
+            // `flows::ops::flows_set_enabled` (via `cron::add_flow_schedule_job`),
+            // never through this agent-facing tool. Kept as an explicit error
+            // (not `unreachable!()`) so a future change to the heuristic above
+            // fails loudly with a clear message instead of panicking.
+            JobType::Flow => Err(anyhow::anyhow!(
+                "flow-type cron jobs are managed by the Workflows feature and cannot be \
+                 created via cron_add"
+            )),
         };
 
         match result {

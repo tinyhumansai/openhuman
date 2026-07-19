@@ -187,6 +187,33 @@ pub(crate) fn kill_pid_force(pid: u32) -> Result<(), String> {
     classify_taskkill_force_status(output.status.code(), &output.stderr, pid)
 }
 
+/// Force-kill `pid` WITHOUT the `/T` tree flag, so only the target process is
+/// terminated and its child tree is left untouched.
+///
+/// The pre-CEF stale reap (issue #3900) targets a wedged GUI browser process
+/// specifically. `/T` is both unnecessary and dangerous there: the OS job
+/// object already reaps that process's CEF helper children when it exits, and a
+/// tree walk could reach the freshly launched app if the stale process is an
+/// ancestor of ours during an auto-update relaunch. Callers must revalidate the
+/// pid still owns the resource before calling. Shares the "already gone"
+/// success classification with [`kill_pid_force`].
+#[cfg(windows)]
+pub(crate) fn kill_pid_force_no_tree(pid: u32) -> Result<(), String> {
+    if is_protected_windows_pid(pid) {
+        return Err(format!(
+            "refusing to force-kill protected windows pid {pid}"
+        ));
+    }
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let output = std::process::Command::new("taskkill")
+        .args(["/F", "/PID", &pid.to_string()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("taskkill spawn: {e}"))?;
+    classify_taskkill_force_status(output.status.code(), &output.stderr, pid)
+}
+
 /// Classify a `taskkill /F /T /PID <pid>` exit. Exit code 128 ("process not
 /// found") means the process already exited between the pid lookup and the
 /// force-kill — the resource is freeing on its own, treat as success. Same
@@ -321,6 +348,30 @@ mod windows_tests {
     fn kill_pid_force_refuses_protected_pids() {
         assert!(kill_pid_force(0).is_err());
         assert!(kill_pid_force(4).is_err());
+    }
+
+    #[test]
+    fn kill_pid_force_no_tree_refuses_protected_pids() {
+        assert!(kill_pid_force_no_tree(0).is_err());
+        assert!(kill_pid_force_no_tree(4).is_err());
+    }
+
+    /// The non-tree force-kill (issue #3900) terminates the target and is
+    /// idempotent on an already-gone pid, exactly like `kill_pid_force`.
+    #[test]
+    fn kill_pid_force_no_tree_terminates_real_process_and_is_idempotent() {
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "timeout", "/T", "30", "/NOBREAK"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn child process");
+        let pid = child.id();
+
+        kill_pid_force_no_tree(pid).expect("force-kill running process (no tree)");
+        let _ = child.wait();
+        kill_pid_force_no_tree(pid).expect("force-kill of already-gone pid is success");
     }
 
     /// End-to-end-on-Windows: spawn a real child process, force-kill it, and
