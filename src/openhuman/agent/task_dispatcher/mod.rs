@@ -33,7 +33,7 @@ mod tests;
 pub use dispatch::dispatch_card;
 pub use poller::start_board_poller;
 pub use prompt::build_task_prompt;
-pub use registry::cancel_session;
+pub use registry::{cancel_session, cancel_session_scoped};
 pub use types::DispatchOutcome;
 
 /// Run a one-off **system** agent turn on an existing chat thread, streaming the

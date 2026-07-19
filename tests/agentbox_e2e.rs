@@ -14,7 +14,7 @@
 //!
 //! The AgentBox `/run` invoker (`agentbox::invoker::CoreAgentInvoker`) drives
 //! the **live agent runtime** through the web-channel pipeline
-//! (`channels::providers::web::start_chat`). End-to-end completion against a
+//! (`web_chat::start_chat`). End-to-end completion against a
 //! freshly-bootstrapped tempdir workspace requires:
 //!
 //!   1. A logged-in user session on disk — `start_chat` and several upstream

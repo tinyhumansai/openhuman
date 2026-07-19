@@ -12,9 +12,16 @@
  * The `editable` prop defaults to `false` so every existing read-only consumer
  * (the `/flows/:id` viewer) keeps its exact behavior — only the builder opts in.
  */
-import { Background, BackgroundVariant, Controls, MiniMap, ReactFlow } from '@xyflow/react';
+import {
+  Background,
+  BackgroundVariant,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  type Viewport,
+} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { memo, useMemo } from 'react';
+import { forwardRef, memo, useMemo } from 'react';
 
 import {
   FLOW_NODE_TYPE,
@@ -23,7 +30,10 @@ import {
   type WorkflowGraphMeta,
 } from '../../../lib/flows/graphAdapter';
 import type { WorkflowGraph } from '../../../lib/flows/types';
-import EditableFlowCanvas from './EditableFlowCanvas';
+import EditableFlowCanvas, {
+  type EditableFlowCanvasHandle,
+  type EditorSaveMeta,
+} from './EditableFlowCanvas';
 import './flowCanvasStyles.css';
 import FlowNodeComponent from './FlowNodeComponent';
 
@@ -59,6 +69,22 @@ export interface FlowCanvasProps {
    * proposal) doesn't silently clear unsaved state.
    */
   initialDirty?: boolean;
+  /**
+   * Show the drag-and-drop node palette ("Legend") overlay (editable only).
+   * Driven by the canvas header's Copilot | Legend toggle. Defaults to `true`
+   * so non-toggling consumers keep the palette visible.
+   */
+  showPalette?: boolean;
+  /** Reports Save-button state up so the host header can render Save/Discard. */
+  onSaveMetaChange?: (meta: EditorSaveMeta) => void;
+  /**
+   * The viewport (pan/zoom) to restore on mount (editable only, F4/F5 fix) —
+   * see `EditableFlowCanvas`'s `savedViewport` doc comment. Not threaded to
+   * the read-only viewer, which keeps its unconditional `fitView`.
+   */
+  savedViewport?: Viewport | null;
+  /** Fired on every viewport change (editable only, F4/F5 fix). */
+  onViewportChange?: (viewport: Viewport) => void;
 }
 
 const NODE_TYPES = { [FLOW_NODE_TYPE]: FlowNodeComponent };
@@ -102,38 +128,52 @@ function ReadonlyFlowCanvas({ nodes, edges }: { nodes: FlowNode[]; edges: FlowEd
  * Fills its parent's box (`h-full w-full` — the page decides how tall/wide
  * that is; `FlowCanvasPage` gives it the full panel body).
  */
-function FlowCanvas({
-  nodes,
-  edges,
-  editable = false,
-  meta,
-  onSave,
-  onDirtyChange,
-  activeRunId,
-  onGraphChange,
-  addedNodeIds,
-  removedNodeIds,
-  saveDisabled,
-  initialDirty,
-}: FlowCanvasProps) {
-  if (editable) {
-    return (
-      <EditableFlowCanvas
-        nodes={nodes}
-        edges={edges}
-        meta={meta ?? DEFAULT_META}
-        onSave={onSave}
-        onDirtyChange={onDirtyChange}
-        activeRunId={activeRunId}
-        onGraphChange={onGraphChange}
-        addedNodeIds={addedNodeIds}
-        removedNodeIds={removedNodeIds}
-        saveDisabled={saveDisabled}
-        initialDirty={initialDirty}
-      />
-    );
+const FlowCanvas = forwardRef<EditableFlowCanvasHandle, FlowCanvasProps>(
+  (
+    {
+      nodes,
+      edges,
+      editable = false,
+      meta,
+      onSave,
+      onDirtyChange,
+      activeRunId,
+      onGraphChange,
+      addedNodeIds,
+      removedNodeIds,
+      saveDisabled,
+      initialDirty,
+      showPalette = true,
+      onSaveMetaChange,
+      savedViewport,
+      onViewportChange,
+    }: FlowCanvasProps,
+    ref
+  ) => {
+    if (editable) {
+      return (
+        <EditableFlowCanvas
+          ref={ref}
+          nodes={nodes}
+          edges={edges}
+          meta={meta ?? DEFAULT_META}
+          onSave={onSave}
+          onDirtyChange={onDirtyChange}
+          activeRunId={activeRunId}
+          onGraphChange={onGraphChange}
+          addedNodeIds={addedNodeIds}
+          removedNodeIds={removedNodeIds}
+          saveDisabled={saveDisabled}
+          initialDirty={initialDirty}
+          showPalette={showPalette}
+          onSaveMetaChange={onSaveMetaChange}
+          savedViewport={savedViewport}
+          onViewportChange={onViewportChange}
+        />
+      );
+    }
+    return <ReadonlyFlowCanvas nodes={nodes} edges={edges} />;
   }
-  return <ReadonlyFlowCanvas nodes={nodes} edges={edges} />;
-}
+);
 
 export default memo(FlowCanvas);

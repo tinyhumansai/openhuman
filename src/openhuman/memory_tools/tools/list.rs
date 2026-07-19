@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::openhuman::memory::ops::helpers::active_memory_client;
-use crate::openhuman::memory_tools::ToolMemoryStore;
+use crate::openhuman::memory_tools::tool_memory_store;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 
 pub struct MemoryToolsListTool;
@@ -48,7 +48,7 @@ impl Tool for MemoryToolsListTool {
         let client = active_memory_client()
             .await
             .map_err(|e| anyhow::anyhow!("memory_tools_list: {e}"))?;
-        let store = ToolMemoryStore::new(client.memory_handle());
+        let store = tool_memory_store(client.memory_handle());
         let rules = store
             .list_rules(&parsed.tool_name)
             .await

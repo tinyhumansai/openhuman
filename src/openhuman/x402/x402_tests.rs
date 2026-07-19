@@ -1,8 +1,6 @@
-use base64::engine::{general_purpose::STANDARD as B64, Engine as _};
-use serde_json::json;
-
 use super::ops::{build_evm_payment_with_signer, eip3009_struct_hash, eip712_domain_separator};
 use super::types::*;
+use base64::engine::{general_purpose::STANDARD as B64, Engine as _};
 
 #[test]
 fn parse_payment_required_round_trips() {

@@ -352,7 +352,7 @@ impl EventSink for OpenHumanEventSink {
                             "{LOG_PREFIX} web event payload not a WebChannelEvent ({kind}): {e}"
                         )
                     })?;
-                crate::openhuman::channels::providers::web::publish_web_channel_event(event);
+                crate::openhuman::web_chat::publish_web_channel_event(event);
             }
             "channel" => {
                 use crate::core::event_bus::{publish_global, DomainEvent};

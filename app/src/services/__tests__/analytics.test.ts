@@ -580,12 +580,41 @@ describe('trackPageView (OpenPanel)', () => {
     expect(openPanelPayload().payload.properties.__timestamp).toEqual(expect.any(String));
   });
 
+  test('records route templates without entity ids or query values', async () => {
+    window.location.hash = '#/chat/thread-private-123?tab=files';
+    const { initGA, trackPageView } = await freshAnalytics();
+    initGA();
+    trackPageView('/chat/thread-private-123');
+
+    expect(openPanelPayload().payload.properties).toMatchObject({
+      page: '/chat/:threadId',
+      page_hash: '#/chat/:threadId',
+      __path: '/chat/:threadId',
+    });
+  });
+
   test('is a no-op when consent is off', async () => {
     const { initGA, syncAnalyticsConsent, trackPageView } = await freshAnalytics();
     initGA();
     syncAnalyticsConsent(false);
     trackPageView('/home');
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test('suppresses synchronous analytics provider failures', async () => {
+    hoisted.analyticsEnabled = true;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { initGA, trackAnalyticsEvent } = await freshAnalytics();
+    initGA();
+    window.gtag = vi.fn(() => {
+      throw new Error('provider unavailable');
+    });
+
+    expect(() => trackAnalyticsEvent('app_open')).not.toThrow();
+    expect(warn).toHaveBeenCalledWith('[analytics] trackEvent failed', {
+      eventName: 'app_open',
+      error: 'Error',
+    });
   });
 
   test('is a no-op when OpenPanel was never initialized', async () => {
@@ -601,6 +630,7 @@ describe('trackEvent (OpenPanel)', () => {
     hoisted.appEnvironment = 'staging';
     hoisted.currentUserId = null;
     hoisted.isDev = false;
+    window.location.hash = '';
   });
 
   afterEach(() => {
@@ -723,6 +753,28 @@ describe('startUiInteractionTracking', () => {
     expect(openPanelPayload().payload.profileId).toBe('user-456');
     expect(openPanelPayload().payload.properties.__path).toBe('/home');
     expectAnalyticsContext(openPanelPayload().payload.properties);
+    stop();
+  });
+
+  test('distinguishes unlabelled controls without reading their text', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    const { initGA, startUiInteractionTracking } = await freshAnalytics();
+    initGA();
+    const stop = startUiInteractionTracking();
+    const first = document.createElement('button');
+    first.textContent = 'Private workspace name';
+    const second = document.createElement('button');
+    second.textContent = 'Another private value';
+    document.body.append(first, second);
+
+    second.click();
+
+    expect(openPanelPayload().payload.properties.control_id).toBe('button_2');
+    expect(JSON.stringify(openPanelPayload())).not.toContain('private');
+    expect(debug).toHaveBeenCalledWith('[analytics] controlIdentifier fallback', {
+      tag: 'button',
+      position: 1,
+    });
     stop();
   });
 

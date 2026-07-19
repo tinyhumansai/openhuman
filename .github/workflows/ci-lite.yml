@@ -61,6 +61,9 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       rust-core: ${{ steps.filter.outputs['rust-core'] }}
       rust-core-full: ${{ steps.filter.outputs['rust-core-full'] }}
+      # The vendored engine owns migrated memory tests; Cargo does not run
+      # dependency tests as part of the OpenHuman crate suite.
+      tinycortex: ${{ steps.filter.outputs.tinycortex }}
       # Shell-quoted list of changed src/ + tests/ files, consumed by
       # scripts/ci/rust-coverage-changed.sh (domain-scoped llvm-cov).
       rust-core-src-files: ${{ steps.filter.outputs['rust-core-src_files'] }}
@@ -76,6 +79,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Detect changed paths
         id: filter
@@ -95,6 +100,7 @@ jobs:
               - 'app/index.html'
               - 'app/public/**'
               - 'app/src/**'
+              - 'app/scripts/**'
               - 'app/test/vitest.config.ts'
               - 'app/tsconfig*.json'
               - 'app/vite.config.*'
@@ -114,6 +120,7 @@ jobs:
               - 'app/vite.config.*'
               - 'app/tailwind.config.*'
               - 'app/postcss.config.*'
+              - 'app/scripts/**'
               - 'app/src/test/**'
             frontend-src:
               - 'app/src/**/*.ts'
@@ -135,6 +142,8 @@ jobs:
               - 'scripts/ci/rust-coverage-changed.sh'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'build.rs'
+              - '.cargo/config.toml'
               - 'rust-toolchain.toml'
               - 'src/**'
               - 'tests/**'
@@ -147,14 +156,23 @@ jobs:
               - 'scripts/ci/rust-coverage-changed.sh'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'build.rs'
+              - '.cargo/config.toml'
               - 'rust-toolchain.toml'
               - 'scripts/ci-cancel-aware.sh'
             rust-core-src:
               - 'src/**'
               - 'tests/**'
+            tinycortex:
+              - '.github/workflows/ci-lite.yml'
+              - '.github/workflows/test-reusable.yml'
+              - '.gitmodules'
+              - 'scripts/ci-cancel-aware.sh'
+              - 'vendor/tinycortex'
             rust-tauri:
               - '.github/workflows/ci-lite.yml'
               - 'Cargo.lock'
+              - '.cargo/config.toml'
               - 'rust-toolchain.toml'
               - 'app/src-tauri/**'
               - 'scripts/ci-cancel-aware.sh'
@@ -320,6 +338,7 @@ jobs:
         with:
           workspaces: |
             . -> target
+            app/src-tauri -> target
           cache-on-failure: true
           # shared-key (not key) so the cache name is stable and not suffixed
           # with the job id. Swatinem caches the full target/, which is why we
@@ -331,7 +350,124 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy (core crate)
-        run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman
+        if: needs.changes.outputs['rust-core'] == 'true'
+        run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman -- -D warnings
+
+      - name: Cache CEF binary distribution
+        if: needs.changes.outputs['rust-tauri'] == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/Library/Caches/tauri-cef
+            ~/.cache/tauri-cef
+          key: cef-x86_64-unknown-linux-gnu-v2-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-x86_64-unknown-linux-gnu-v2-
+
+      - name: Run clippy (Tauri shell)
+        if: needs.changes.outputs['rust-tauri'] == 'true'
+        run: bash scripts/ci-cancel-aware.sh cargo clippy --manifest-path app/src-tauri/Cargo.toml -- -D warnings
+
+  # Feature-gate smoke: proves the core still compiles with a domain gate turned
+  # OFF. The disabled build is the ONLY thing that catches stub-facade signature
+  # drift (see AGENTS.md "Compile-time domain gates"), so it must run in CI, not
+  # just locally. Pathfinder lane for #4803 (voice); the explicit --features
+  # list (only tokenjuice-treesitter) turns every default gate OFF, so it also
+  # covers #4804 (media) and each sibling gate as it lands — no edit needed
+  # unless a new gate must stay ON here.
+  rust-feature-gate-smoke:
+    name: Rust Feature-Gate Smoke (gates off)
+    needs: [changes]
+    if: needs.changes.outputs['rust-core'] == 'true' || needs.changes.outputs['rust-tauri'] == 'true'
+    runs-on: ubuntu-22.04
+    # Was 25; raised because the lane now links (--all-targets) and runs a test
+    # binary, not just `cargo check`.
+    timeout-minutes: 40
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+      # Deep-async-stack belt (same as the coverage lanes) — virtual reservation,
+      # zero cost. Keeps a gate-contract test with a deep stack from tripping.
+      RUST_MIN_STACK: "67108864"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+          cache-on-failure: true
+          shared-key: pr-rust-feature-gate-smoke
+
+      - name: Check core builds with the default domain gates disabled
+        # Lib-scoped on purpose. `--all-targets` would additionally compile the
+        # `tests/` integration crates, which today name gated symbols
+        # (voice::reply_speech::test_seam, mcp_registry::store, x402::tools) without
+        # a #[cfg] and so do not compile with the gates off. That cleanup is tracked
+        # in #5021 alongside running the full gates-off suite; until it lands, this
+        # lane checks the lib and RUNS the gate-contract lib tests below.
+        run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tokenjuice-treesitter
+
+      - name: Run the gate-contract tests with the default domain gates disabled
+        # `cargo check` (even --all-targets) never RUNS tests, so a gated family that
+        # is asserted WITHOUT a matching #[cfg] compiles fine and only fails at
+        # runtime — exactly how the two ungated `voice` asserts sat red on main
+        # (#5022). This step executes the gate-contract test modules so that class of
+        # regression fails CI, not just a local pre-push.
+        #
+        # Scope is deliberate: the full gates-off `--lib` run aborts on a pre-existing
+        # task_local stack overflow (`agent::harness::session::tests::
+        # turn_dispatches_spawn_subagent_through_full_path`) that reproduces in the
+        # gates-ON build too, and also OOMs unscoped. These filters route AROUND that
+        # test by scope, not by skip. Running the full suite is tracked in #5021.
+        run: |
+          bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
+            --no-default-features --features tokenjuice-treesitter --lib -- \
+            core::all:: core::cli:: core::jsonrpc:: core::legacy_aliases:: agent_registry::agents::loader::
+
+      - name: Guard — new feature-gated test modules must be acknowledged
+        # Self-maintaining coverage: the set of source files that #[cfg]-gate a test on
+        # a domain feature must equal the allowlist below. When a new gate (or a new
+        # test in an existing gate's domain) adds a gated test file, this fails — the
+        # author then adds it here AND, if it can hold an ungated-assert regression of
+        # the #5022 class, extends the scoped `cargo test` filter above. Prevents the
+        # smoke lane from silently under-covering as the gate surface grows.
+        run: |
+          set -euo pipefail
+          EXPECTED=$(cat <<'EOF'
+          core/all_tests.rs
+          core/cli_tests.rs
+          core/jsonrpc_tests.rs
+          core/legacy_aliases.rs
+          openhuman/agent/harness/builtin_definitions.rs
+          openhuman/agent/harness/definition_tests.rs
+          openhuman/agent/harness/session/tests.rs
+          openhuman/agent/harness/subagent_runner/tool_prep.rs
+          openhuman/agent_registry/agents/loader.rs
+          openhuman/inference/local/mod.rs
+          openhuman/tool_registry/ops_tests.rs
+          openhuman/tool_registry/schemas.rs
+          openhuman/tools/ops_tests.rs
+          openhuman/voice/compile_status.rs
+          openhuman/wallet/stub.rs
+          openhuman/web3/stub.rs
+          openhuman/x402/stub.rs
+          EOF
+          )
+          ACTUAL=$(grep -rlE '#\[cfg\((not\()?feature = "(voice|media|web3|meet|mcp|skills|flows)"' src --include='*.rs' \
+            | xargs grep -lE '#\[test\]|#\[tokio::test\]|fn .*_test' 2>/dev/null | sed 's|^src/||' | sort -u)
+          if ! diff <(echo "$EXPECTED" | sed 's/^ *//' | sort -u) <(echo "$ACTUAL"); then
+            echo "::error::Gated-test file set changed. Update the EXPECTED allowlist in the rust-feature-gate-smoke lane, and extend the scoped 'cargo test' filter if the new module can carry an ungated-assert regression (see #5022)."
+            exit 1
+          fi
+          echo "gate-contract test coverage allowlist is current"
 
   rust-core-coverage:
     name: Rust Core Coverage (cargo-llvm-cov)
@@ -578,6 +714,46 @@ jobs:
       - name: Run test-inventory guard
         run: pnpm test:inventory
 
+  orch-ip-gate:
+    name: Orchestration IP Gate (no local brain re-entry)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Fail if the retired local orchestration brain (reasoning/wake graph,
+      # prompt assets, or per-agent model routing) re-enters the open repo.
+      - name: Run orchestration IP gate
+        run: bash scripts/ci/orch-ip-gate.sh
+
+  feature-forwarding-gate:
+    name: Feature Forwarding Gate (shell forwards core defaults)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The shell sets `default-features = false` on `openhuman_core`, so it does
+      # NOT inherit the core's default gates — each must be forwarded by hand.
+      # When that list drifts, the domain is compiled out of the shipped app with
+      # no build error and no failing test: that is how #4901 (voice — 56 users,
+      # ~93k Sentry events) and #4918 (tokenjuice-treesitter — silent) shipped.
+      #
+      # Deliberately NOT filtered on `changes`: drift can be introduced by
+      # editing either manifest, so a path filter watching one would miss it, and
+      # a skipped job counts as a pass in the gate below. The check is a few
+      # seconds of pure Node with no dependencies.
+      - name: Verify the desktop shell forwards every default-ON core gate
+        run: node scripts/ci/check-feature-forwarding.mjs
+
   pester-install:
     name: PowerShell Install Test (Pester)
     needs: [changes]
@@ -599,6 +775,38 @@ jobs:
       - name: Run install.ps1 unit tests
         run: pwsh -NoProfile -File scripts/tests/OpenHumanWindowsInstall.Tests.ps1
 
+  tinycortex-tests:
+    name: TinyCortex Memory Tests
+    needs: [changes]
+    if: needs.changes.outputs.tinycortex == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Init tinycortex submodule
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --recursive vendor/tinycortex
+
+      - name: Cache TinyCortex build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vendor/tinycortex -> vendor/tinycortex/target
+          cache-on-failure: true
+          key: tinycortex
+
+      - name: Run TinyCortex engine and Composio sync tests
+        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinycortex/Cargo.toml --features git-diff,sync
+
   pr-ci-gate:
     name: PR CI Gate
     needs:
@@ -610,6 +818,9 @@ jobs:
       - scripts-tests
       - test-inventory
       - pester-install
+      - tinycortex-tests
+      - orch-ip-gate
+      - feature-forwarding-gate
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -626,6 +837,9 @@ jobs:
             ["Scripts Self-Tests"]="${{ needs['scripts-tests'].result }}"
             ["Test Inventory"]="${{ needs['test-inventory'].result }}"
             ["PowerShell Install Test"]="${{ needs['pester-install'].result }}"
+            ["TinyCortex Memory Tests"]="${{ needs['tinycortex-tests'].result }}"
+            ["Orchestration IP Gate"]="${{ needs['orch-ip-gate'].result }}"
+            ["Feature Forwarding Gate"]="${{ needs['feature-forwarding-gate'].result }}"
           )
 
           failed=0
@@ -681,6 +895,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Resolve coverage compare ref
         if: needs.changes.outputs.coverage == 'true'

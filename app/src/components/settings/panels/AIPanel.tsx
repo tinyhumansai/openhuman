@@ -3319,7 +3319,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                   disabled={busyAction === 'codex-auth' || busyAction === 'toggle-openai'}>
                   {busyAction === 'codex-auth' || busyAction === 'toggle-openai'
                     ? t('settings.ai.connecting')
-                    : t('settings.ai.codexAuthButton', 'Codex 인증')}
+                    : t('settings.ai.codexAuthButton', 'Connect Codex')}
                 </Button>
                 <span className="text-xs text-content-muted">
                   {t(

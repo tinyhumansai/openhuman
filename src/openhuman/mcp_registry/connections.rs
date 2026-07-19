@@ -179,21 +179,12 @@ impl Connection {
     }
 }
 
-/// One connected server's identity + advertised tools, for prompt-surface
-/// discovery (the orchestrator's "## Connected MCP Servers" block). Sourced
-/// entirely from the live connection map — no `Config`, no store read.
-#[derive(Debug, Clone)]
-pub struct ConnectedServerOverview {
-    pub server_id: String,
-    pub qualified_name: String,
-    pub display_name: String,
-    /// Short registry description — the primary capability hint surfaced in
-    /// the orchestrator prompt (mirrors Composio's per-toolkit description).
-    pub description: Option<String>,
-    /// Advertised tools — retained for a tool-count fallback when a server
-    /// has no description, and for any caller that wants the full list.
-    pub tools: Vec<McpTool>,
-}
+/// Re-exported from [`super::types`] so the long-standing
+/// `mcp_registry::connections::ConnectedServerOverview` path keeps resolving.
+/// The definition moved to `types.rs` (an inert, dep-free module that survives
+/// the `mcp` feature gate) because the always-compiled orchestrator prompt
+/// builder consumes this type while `connections` itself is gated.
+pub use super::types::ConnectedServerOverview;
 
 // ── Global registry ──────────────────────────────────────────────────────────
 
@@ -595,6 +586,7 @@ pub async fn call_tool(
 ///   and the re-auth affordance keyed off the status alone.
 /// - other recorded connect failure in `LAST_ERRORS` → `Error` + message.
 /// - otherwise → `Disconnected`.
+///
 /// Pure status decision for one installed server, factored out of
 /// [`all_status`] so the priority order is unit-testable without a live
 /// connection registry or store. Inputs:

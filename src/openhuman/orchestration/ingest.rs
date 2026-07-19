@@ -9,7 +9,6 @@ use std::path::Path;
 
 use base64::Engine as _;
 
-use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
 use crate::openhuman::tinyplace::{acknowledge_message, decrypt_envelope};
 
@@ -179,10 +178,18 @@ fn classify_message(plaintext: String, fallback_timestamp: &str) -> ClassifiedMe
         return classify_v1(env, fallback_timestamp);
     }
     // Not a harness envelope → a plain DM in the peer's Master window.
+    //
+    // This path only ever runs on an INBOUND, decrypted DM (the counterpart is
+    // the sender — see `ingest_one`), so the author is the PEER, never us. Stamp
+    // `"peer"` rather than `"user"`: the transcript treats `you`/`owner`/`user`
+    // as owner-authored and right-aligns them, so a peer's incoming Master DM was
+    // rendering on the owner's side (both halves of a two-way DM stacked right).
+    // `"peer"` is not owner-authored → it left-aligns as the counterpart. Our own
+    // outgoing Master message is persisted separately as `"owner"` and stays right.
     ClassifiedMessage {
         chat_kind: ChatKind::Master,
         session_id: "master".to_string(),
-        role: "user".to_string(),
+        role: "peer".to_string(),
         source: String::new(),
         label: None,
         workspace: None,
@@ -456,13 +463,17 @@ fn non_empty(s: String) -> Option<String> {
 
 /// Persist a classified message + its session row. Idempotent by `msg_id`;
 /// returns true if a new message row landed. Testable with a tempdir DB.
+/// Persist a classified message. Returns `Some(ingest_seq)` when a new row
+/// landed (the store-assigned per-session ordinal), or `None` when the message
+/// was a duplicate and nothing was written. The seq is the idempotency key the
+/// shadow cloud push (`cloud::push_event`) uploads with.
 fn persist_message(
     workspace_dir: &Path,
     msg_id: &str,
     agent_id: &str,
     classified: &ClassifiedMessage,
     now: &str,
-) -> Result<bool, String> {
+) -> Result<Option<i64>, String> {
     store::with_connection(workspace_dir, |c| {
         // Wake idempotence keys on a per-session `seq` being monotonic, but the
         // harness `message.line` we classify into `seq` is NOT reliable: a wrapped
@@ -552,10 +563,68 @@ fn persist_message(
             if landed && classified.event_kind.as_deref() == Some("error") {
                 store::kv_set(c, "orchestration:last_error", &classified.body)?;
             }
-            Ok(landed)
+            Ok(landed.then_some(ingest_seq))
         })
     })
     .map_err(|e| format!("persist: {e}"))
+}
+
+/// Forward a freshly-landed event to the hosted brain
+/// (`POST /orchestration/v1/events`), which runs the wake cycle server-side.
+/// Builds the sanitized wire envelope (the security allowlist lives in
+/// [`super::wire`]) and spawns the upload so ingest never blocks on the network.
+/// Best-effort/fire-and-forget: a push failure (or offline) is logged and
+/// dropped — the render cache still holds the row and the first-login migration
+/// replay backfills anything missed while offline.
+fn forward_event(
+    config: &Config,
+    agent_id: &str,
+    ingest_seq: i64,
+    classified: &ClassifiedMessage,
+    now: &str,
+) {
+    // Content events carry the real per-session ordinal; a status/lifecycle
+    // event stamps seq 0 and would collide on the backend's idempotency key, so
+    // only forward seq-advancing events.
+    if ingest_seq <= 0 {
+        return;
+    }
+    let ts = super::wire::parse_ts_ms(&classified.timestamp)
+        .or_else(|| super::wire::parse_ts_ms(now))
+        .unwrap_or(0);
+    let kind = classified
+        .event_kind
+        .as_deref()
+        .unwrap_or_else(|| classified.chat_kind.as_str());
+    let envelope = super::wire::OrchestrationEventEnvelopeWire::build(
+        agent_id,
+        &classified.session_id,
+        ingest_seq,
+        &classified.role,
+        // For an inbound DM the sender is the counterpart agent itself.
+        agent_id,
+        &classified.body,
+        ts,
+        kind,
+    );
+    let config = config.clone();
+    tokio::spawn(async move {
+        match super::cloud::push_event(&config, &envelope).await {
+            Ok(cycle_id) => {
+                // Device-authoritative origin: record the cycle → counterpart we
+                // forwarded, so the local-execution trust gate can resolve this
+                // cycle's origin without trusting the backend (see `exec_gate`).
+                if let Some(cid) = cycle_id {
+                    super::exec_gate::record_cycle_origin(
+                        &cid,
+                        &envelope.counterpart_agent_id,
+                        &envelope.session_id,
+                    );
+                }
+            }
+            Err(e) => log::warn!(target: LOG, "[orchestration] cloud.shadow_push_failed: {e}"),
+        }
+    });
 }
 
 /// Entry point from the bus subscriber. Cheap no-op when orchestration is
@@ -657,17 +726,52 @@ async fn ingest_one(
     let landed = persist_message(&workspace_dir, &msg_id, &agent_id, &classified, &now)?;
 
     // 3. Acknowledge (consume once) + fan out for stages 4/7.
-    if landed {
+    if let Some(ingest_seq) = landed {
         if let Err(e) = acknowledge_message(&msg_id).await {
             log::warn!(target: LOG, "[orchestration] ingest.ack_failed id={msg_id}: {e}");
         }
-        publish_global(DomainEvent::OrchestrationSessionMessage {
-            agent_id,
-            session_id: classified.session_id,
-            chat_kind: classified.chat_kind.as_str().to_string(),
-        });
+
+        // Forward the sanitized event to the hosted brain, which runs the wake
+        // cycle and replies via socket effects. The device no longer wakes a
+        // local graph.
+        forward_event(config, &agent_id, ingest_seq, &classified, &now);
+
+        // Record a compact device world-observation for the hosted subconscious
+        // tier; the periodic uploader batches these to the world-diff route,
+        // whose receipt schedules a steering tick. Never carries the body — only
+        // a bounded derived note (see `world_model`).
+        let obs_ts = super::wire::parse_ts_ms(&classified.timestamp)
+            .or_else(|| super::wire::parse_ts_ms(&now))
+            .unwrap_or(0);
+        let obs_note = super::world_model::observe_ingest_note(
+            &classified.session_id,
+            &agent_id,
+            classified
+                .event_kind
+                .as_deref()
+                .unwrap_or_else(|| classified.chat_kind.as_str()),
+            &classified.body,
+        );
+        if let Err(e) = store::with_connection(&workspace_dir, |c| {
+            store::append_world_obs(c, &classified.session_id, &obs_note, obs_ts)
+        }) {
+            log::warn!(target: LOG, "[orchestration] world_obs.append_failed id={msg_id}: {e}");
+        }
+
+        // Live-UI nudge: fan the persisted message to the renderer socket so the
+        // affected chat targeted-refetches. Reasoning/reply is the hosted brain's
+        // job now — this is presentation only, no wake scheduling.
+        super::bus::notify_orchestration_message(
+            &agent_id,
+            &classified.session_id,
+            classified.chat_kind.as_str(),
+        );
     }
-    log::debug!(target: LOG, "[orchestration] ingest.exit id={msg_id} landed={landed}");
+    log::debug!(
+        target: LOG,
+        "[orchestration] ingest.exit id={msg_id} landed={}",
+        landed.is_some()
+    );
     Ok(())
 }
 
@@ -821,7 +925,10 @@ mod tests {
         let c = classify_message("just chatting".to_string(), "2026-07-02T09:00:00Z");
         assert_eq!(c.chat_kind, ChatKind::Master);
         assert_eq!(c.session_id, "master");
-        assert_eq!(c.role, "user");
+        // Inbound Master DMs are peer-authored → NOT an owner-authored role
+        // (`you`/`owner`/`user`), so the transcript left-aligns them.
+        assert_eq!(c.role, "peer");
+        assert!(!["you", "owner", "user"].contains(&c.role.as_str()));
         assert!(c.label.is_none());
         assert_eq!(c.seq, 0);
         assert_eq!(c.body, "just chatting");
@@ -1092,9 +1199,13 @@ mod tests {
             ),
             "2026-07-05T09:00:00Z",
         );
-        assert!(persist_message(tmp.path(), "si1", "@peer", &si, "now").unwrap());
+        assert!(persist_message(tmp.path(), "si1", "@peer", &si, "now")
+            .unwrap()
+            .is_some());
         // Re-persisting the SAME event id is idempotent (dedup on the relay id).
-        assert!(!persist_message(tmp.path(), "si1", "@peer", &si, "now").unwrap());
+        assert!(persist_message(tmp.path(), "si1", "@peer", &si, "now")
+            .unwrap()
+            .is_none());
 
         store::with_connection(tmp.path(), |c| {
             let s = store::load_session(c, "@peer", "w2")?.expect("session lazy-created");
@@ -1117,7 +1228,9 @@ mod tests {
             v2_env("agent_message", r#"{ "text": "working" }"#, "w2", "agent"),
             "2026-07-05T09:01:00Z",
         );
-        assert!(persist_message(tmp.path(), "m1", "@peer", &content, "now").unwrap());
+        assert!(persist_message(tmp.path(), "m1", "@peer", &content, "now")
+            .unwrap()
+            .is_some());
         let resumed = classify_message(
             v2_env(
                 "session_info",
@@ -1128,7 +1241,9 @@ mod tests {
             ),
             "2026-07-05T09:02:00Z",
         );
-        assert!(persist_message(tmp.path(), "si2", "@peer", &resumed, "now").unwrap());
+        assert!(persist_message(tmp.path(), "si2", "@peer", &resumed, "now")
+            .unwrap()
+            .is_some());
 
         store::with_connection(tmp.path(), |c| {
             let s = store::load_session(c, "@peer", "w2")?.expect("session");
@@ -1163,8 +1278,12 @@ mod tests {
         assert_eq!(v1.session_id, "w1");
         assert_eq!(v2.session_id, "w1");
 
-        assert!(persist_message(tmp.path(), "m-v1", "@peer", &v1, "now").unwrap());
-        assert!(persist_message(tmp.path(), "m-v2", "@peer", &v2, "now").unwrap());
+        assert!(persist_message(tmp.path(), "m-v1", "@peer", &v1, "now")
+            .unwrap()
+            .is_some());
+        assert!(persist_message(tmp.path(), "m-v2", "@peer", &v2, "now")
+            .unwrap()
+            .is_some());
         store::with_connection(tmp.path(), |c| {
             // Both rows land in the single "w1" session, seqs monotonic 1,2.
             assert_eq!(store::count_messages(c, "@peer", "w1")?, 2);
@@ -1186,7 +1305,9 @@ mod tests {
             v2_env("agent_message", r#"{ "text": "working" }"#, "w2", "agent"),
             "2026-07-05T09:00:00Z",
         );
-        assert!(persist_message(tmp.path(), "m1", "@peer", &msg, "now").unwrap());
+        assert!(persist_message(tmp.path(), "m1", "@peer", &msg, "now")
+            .unwrap()
+            .is_some());
         // A status event follows: it lands a (deduped) row + updates the session
         // status columns, but last_seq must stay at 1 (no spurious wake).
         let status = classify_message(
@@ -1198,7 +1319,9 @@ mod tests {
             ),
             "2026-07-05T09:00:00Z",
         );
-        assert!(persist_message(tmp.path(), "m2", "@peer", &status, "now").unwrap());
+        assert!(persist_message(tmp.path(), "m2", "@peer", &status, "now")
+            .unwrap()
+            .is_some());
 
         store::with_connection(tmp.path(), |c| {
             let session = store::load_session(c, "@peer", "w2")?.expect("session exists");
@@ -1231,7 +1354,9 @@ mod tests {
             ),
             "2026-07-05T09:00:00Z",
         );
-        assert!(persist_message(tmp.path(), "s1", "@peer", &running, "now").unwrap());
+        assert!(persist_message(tmp.path(), "s1", "@peer", &running, "now")
+            .unwrap()
+            .is_some());
         store::with_connection(tmp.path(), |c| {
             let s = store::load_session(c, "@peer", "w2")?.expect("session");
             assert_eq!(s.current_detail.as_deref(), Some("compiling"));
@@ -1247,7 +1372,9 @@ mod tests {
             v2_env("status", r#"{ "state": "idle" }"#, "w2", "agent"),
             "2026-07-05T09:01:00Z",
         );
-        assert!(persist_message(tmp.path(), "s2", "@peer", &idle, "now").unwrap());
+        assert!(persist_message(tmp.path(), "s2", "@peer", &idle, "now")
+            .unwrap()
+            .is_some());
         store::with_connection(tmp.path(), |c| {
             let s = store::load_session(c, "@peer", "w2")?.expect("session");
             assert_eq!(s.status_state.as_deref(), Some("idle"));
@@ -1274,7 +1401,9 @@ mod tests {
             ),
             "2026-07-05T09:00:00Z",
         );
-        assert!(persist_message(tmp.path(), "s1", "@peer", &running, "now").unwrap());
+        assert!(persist_message(tmp.path(), "s1", "@peer", &running, "now")
+            .unwrap()
+            .is_some());
         // A content event (agent_message) carries no run-state — it must COALESCE,
         // preserving the live status rather than nulling it.
         let msg = classify_message(
@@ -1286,7 +1415,9 @@ mod tests {
             ),
             "2026-07-05T09:00:30Z",
         );
-        assert!(persist_message(tmp.path(), "m1", "@peer", &msg, "now").unwrap());
+        assert!(persist_message(tmp.path(), "m1", "@peer", &msg, "now")
+            .unwrap()
+            .is_some());
         store::with_connection(tmp.path(), |c| {
             let s = store::load_session(c, "@peer", "w2")?.expect("session");
             assert_eq!(s.status_state.as_deref(), Some("running_tool"));
@@ -1309,7 +1440,9 @@ mod tests {
             ),
             "2026-07-05T09:00:00Z",
         );
-        assert!(persist_message(tmp.path(), "e1", "@peer", &err, "now").unwrap());
+        assert!(persist_message(tmp.path(), "e1", "@peer", &err, "now")
+            .unwrap()
+            .is_some());
         store::with_connection(tmp.path(), |c| {
             assert_eq!(
                 store::kv_get(c, "orchestration:last_error")?.as_deref(),
@@ -1328,10 +1461,16 @@ mod tests {
         let session = classify_message(ENVELOPE.to_string(), "2026-07-02T09:00:00Z");
         let master = classify_message("hi".to_string(), "2026-07-02T09:00:00Z");
 
-        assert!(persist_message(tmp.path(), "m1", "@peer", &session, "now").unwrap());
+        assert!(persist_message(tmp.path(), "m1", "@peer", &session, "now")
+            .unwrap()
+            .is_some());
         // Replay of the same relay id does not double-insert.
-        assert!(!persist_message(tmp.path(), "m1", "@peer", &session, "now").unwrap());
-        assert!(persist_message(tmp.path(), "m2", "@peer", &master, "now").unwrap());
+        assert!(persist_message(tmp.path(), "m1", "@peer", &session, "now")
+            .unwrap()
+            .is_none());
+        assert!(persist_message(tmp.path(), "m2", "@peer", &master, "now")
+            .unwrap()
+            .is_some());
 
         store::with_connection(tmp.path(), |c| {
             assert_eq!(store::count_messages(c, "@peer", "w1")?, 1); // per-pair wrapper id
@@ -1361,8 +1500,12 @@ mod tests {
         assert_eq!(first.seq, 0); // wire line is 0 for both …
         assert_eq!(second.seq, 0);
 
-        assert!(persist_message(tmp.path(), "mA", "@peer", &first, "now").unwrap());
-        assert!(persist_message(tmp.path(), "mB", "@peer", &second, "now").unwrap());
+        assert!(persist_message(tmp.path(), "mA", "@peer", &first, "now")
+            .unwrap()
+            .is_some());
+        assert!(persist_message(tmp.path(), "mB", "@peer", &second, "now")
+            .unwrap()
+            .is_some());
 
         store::with_connection(tmp.path(), |c| {
             // … but the persisted seqs are monotonic ingest ordinals 1 and 2, and

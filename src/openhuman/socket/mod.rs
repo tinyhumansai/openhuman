@@ -6,6 +6,7 @@
 
 mod event_handlers;
 pub mod manager;
+pub mod medulla;
 mod schemas;
 pub(crate) mod token_provider;
 pub mod types;

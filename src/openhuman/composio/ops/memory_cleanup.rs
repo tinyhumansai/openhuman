@@ -7,8 +7,6 @@ use crate::openhuman::memory::MemoryClient;
 use crate::openhuman::memory_store::chunks::store as memory_tree_store;
 use crate::openhuman::memory_store::chunks::types::SourceKind;
 
-use super::super::providers::sync_state::SyncState;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MemoryCleanupTarget {
     Exact(SourceKind, String),
@@ -96,7 +94,8 @@ async fn notion_memory_targets_for_connection(
             )
         })?,
     );
-    let state = SyncState::load(&memory, "notion", connection_id)
+    let adapter = crate::openhuman::tinycortex::HostSyncAdapter::new(memory);
+    let state = tinycortex::memory::sync::SyncState::load(&adapter, "notion", connection_id)
         .await
         .map_err(|error| {
             anyhow::anyhow!("failed to load notion sync state for memory cleanup: {error}")

@@ -32,6 +32,15 @@ fn flow_output() -> FieldSchema {
     }
 }
 
+fn draft_output() -> FieldSchema {
+    FieldSchema {
+        name: "draft",
+        ty: TypeSchema::Json,
+        comment: "The draft: { id, flow_id?, name, graph, origin, created_at, updated_at }.",
+        required: true,
+    }
+}
+
 /// Output field for the suggestion-returning controllers (`discover`,
 /// `list_suggestions`). Kept in one place so the schema mirrors
 /// `flows::types::FlowSuggestion`.
@@ -167,6 +176,29 @@ fn require_approval_input() -> FieldSchema {
     }
 }
 
+fn expected_version_input() -> FieldSchema {
+    FieldSchema {
+        name: "expected_version",
+        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+        comment:
+            "Optimistic-concurrency token: the flow's `updated_at` as last observed. If the \
+                  flow has changed since, the write is refused with a structured version_conflict \
+                  error carrying the current flow, instead of clobbering. Omit for last-write-wins.",
+        required: false,
+    }
+}
+
+fn strict_input() -> FieldSchema {
+    FieldSchema {
+        name: "strict",
+        ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+        comment: "Run the same author hard-gates an agent save must pass (unresolvable bindings, \
+                  unreal tool slugs, unwired required args) before persisting, rejecting the \
+                  write if any fail. Defaults to `false` — the permissive human-canvas path.",
+        required: false,
+    }
+}
+
 fn run_output_fields() -> Vec<FieldSchema> {
     vec![
         FieldSchema {
@@ -229,6 +261,16 @@ fn flow_connection_fields() -> Vec<FieldSchema> {
                       `bearer` | `basic` | `header`.",
             required: false,
         },
+        FieldSchema {
+            name: "platform_user_id",
+            ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+            comment: "Connected account's own platform user id (kind `composio` only), \
+                      e.g. Slack `U123ABC`. Non-secret identity metadata — lets the \
+                      workflow builder wire a self-targeted action (e.g. \"DM me\") to \
+                      the user's own account instead of guessing a public channel. \
+                      `None` when no identity has synced yet.",
+            required: false,
+        },
     ]
 }
 
@@ -248,6 +290,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("resume"),
         schemas("cancel_run"),
         schemas("list_runs"),
+        schemas("list_all_runs"),
         schemas("get_run"),
         schemas("prune_runs"),
         schemas("build"),
@@ -255,6 +298,17 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list_suggestions"),
         schemas("dismiss_suggestion"),
         schemas("mark_suggestion_built"),
+        schemas("draft_create"),
+        schemas("draft_get"),
+        schemas("draft_update"),
+        schemas("draft_list"),
+        schemas("draft_delete"),
+        schemas("draft_promote"),
+        schemas("get_history"),
+        schemas("rollback"),
+        schemas("search_tool_catalog"),
+        schemas("get_tool_contract"),
+        schemas("required_connections"),
     ]
 }
 
@@ -317,6 +371,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_list_runs,
         },
         RegisteredController {
+            schema: schemas("list_all_runs"),
+            handler: handle_list_all_runs,
+        },
+        RegisteredController {
             schema: schemas("get_run"),
             handler: handle_get_run,
         },
@@ -344,6 +402,50 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             schema: schemas("mark_suggestion_built"),
             handler: handle_mark_suggestion_built,
         },
+        RegisteredController {
+            schema: schemas("draft_create"),
+            handler: handle_draft_create,
+        },
+        RegisteredController {
+            schema: schemas("draft_get"),
+            handler: handle_draft_get,
+        },
+        RegisteredController {
+            schema: schemas("draft_update"),
+            handler: handle_draft_update,
+        },
+        RegisteredController {
+            schema: schemas("draft_list"),
+            handler: handle_draft_list,
+        },
+        RegisteredController {
+            schema: schemas("draft_delete"),
+            handler: handle_draft_delete,
+        },
+        RegisteredController {
+            schema: schemas("draft_promote"),
+            handler: handle_draft_promote,
+        },
+        RegisteredController {
+            schema: schemas("get_history"),
+            handler: handle_get_history,
+        },
+        RegisteredController {
+            schema: schemas("rollback"),
+            handler: handle_rollback,
+        },
+        RegisteredController {
+            schema: schemas("search_tool_catalog"),
+            handler: handle_search_tool_catalog,
+        },
+        RegisteredController {
+            schema: schemas("get_tool_contract"),
+            handler: handle_get_tool_contract,
+        },
+        RegisteredController {
+            schema: schemas("required_connections"),
+            handler: handle_required_connections,
+        },
     ]
 }
 
@@ -368,6 +470,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: true,
                 },
                 require_approval_input(),
+                strict_input(),
             ],
             outputs: vec![flow_output()],
         },
@@ -483,9 +586,11 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "list_connections",
             description: "List the connection sources a flow node's `connection_ref` can attach \
                           to: Composio connected accounts (kind `composio`) and stored HTTP \
-                          credentials (kind `http`). Returns ids + display labels + kind ONLY — \
-                          never any secret material (OAuth/bearer tokens, passwords, and API \
-                          keys stay server-side and are injected only at execution time).",
+                          credentials (kind `http`). Returns only non-secret metadata — ids, \
+                          display labels, kind, and (for Composio) the connected account's own \
+                          `platform_user_id` — never any secret material (OAuth/bearer tokens, \
+                          passwords, and API keys stay server-side and are injected only at \
+                          execution time).",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "connections",
@@ -516,6 +621,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: false,
                 },
                 require_approval_input(),
+                strict_input(),
+                expected_version_input(),
             ],
             outputs: vec![flow_output()],
         },
@@ -685,6 +792,23 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "runs",
                 ty: TypeSchema::Array(Box::new(TypeSchema::Ref("FlowRun"))),
                 comment: "Persisted run records for this flow, newest first.",
+                required: true,
+            }],
+        },
+        "list_all_runs" => ControllerSchema {
+            namespace: "flows",
+            function: "list_all_runs",
+            description: "List the most recent runs across all flows, newest first.",
+            inputs: vec![FieldSchema {
+                name: "limit",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Maximum number of runs to return; defaults to 100.",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "runs",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("FlowRun"))),
+                comment: "Persisted run records across all flows, newest first.",
                 required: true,
             }],
         },
@@ -867,6 +991,219 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "required_connections" => ControllerSchema {
+            namespace: "flows",
+            function: "required_connections",
+            description: "Compute which Composio toolkits a candidate graph needs and whether each \
+                          is connected — the data behind the canvas/proposal \"Connect <toolkit>\" \
+                          CTAs. Native oh: tools and http_request nodes need no connection.",
+            inputs: vec![FieldSchema {
+                name: "graph",
+                ty: TypeSchema::Json,
+                comment: "The WorkflowGraph to inspect.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "required_connections",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "One per needed toolkit: { toolkit, status: connected|missing }.",
+                required: true,
+            }],
+        },
+        "search_tool_catalog" => ControllerSchema {
+            namespace: "flows",
+            function: "search_tool_catalog",
+            description: "Search the live Composio tool catalog (secret-free) for the in-canvas \
+                          tool browser — the same core as the agent's search_tool_catalog tool.",
+            inputs: vec![
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::String,
+                    comment: "Keyword query matched against slug / toolkit / description.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "toolkit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Restrict to one toolkit slug (e.g. `gmail`); omit to search all.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "limit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Max results (default 25).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "tools",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "Matches: { slug, toolkit, description, required_args, output_fields, primary_array_path, featured }.",
+                required: true,
+            }],
+        },
+        "get_tool_contract" => ControllerSchema {
+            namespace: "flows",
+            function: "get_tool_contract",
+            description: "Fetch one Composio action's full contract (secret-free) for the canvas \
+                          tool browser — the same core as the agent's get_tool_contract tool.",
+            inputs: vec![FieldSchema {
+                name: "slug",
+                ty: TypeSchema::String,
+                comment: "The exact Composio action slug (e.g. `GMAIL_SEND_EMAIL`).",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "contract",
+                ty: TypeSchema::Json,
+                comment: "The action contract: { slug, toolkit, description, required_args, input_schema, output_fields, output_schema, primary_array_path, is_curated }.",
+                required: true,
+            }],
+        },
+        "get_history" => ControllerSchema {
+            namespace: "flows",
+            function: "get_history",
+            description: "List a flow's revision history — prior graph snapshots captured on each \
+                          update (capped, newest first). The safety rail behind rollback.",
+            inputs: vec![
+                id_input("Identifier of the flow whose history to list."),
+                FieldSchema {
+                    name: "limit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Max revisions to return (defaults to the retention cap).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "revisions",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "Revision snapshots: { id, flow_id, graph, name, require_approval, created_at }.",
+                required: true,
+            }],
+        },
+        "rollback" => ControllerSchema {
+            namespace: "flows",
+            function: "rollback",
+            description: "Roll a flow back to a prior revision (restores that revision's graph \
+                          through the normal update path — itself snapshotted, so rollback is \
+                          undoable). Honours optimistic concurrency via expected_version.",
+            inputs: vec![
+                id_input("Identifier of the flow to roll back."),
+                FieldSchema {
+                    name: "revision_id",
+                    ty: TypeSchema::String,
+                    comment: "The revision (from get_history) to restore.",
+                    required: true,
+                },
+                expected_version_input(),
+            ],
+            outputs: vec![flow_output()],
+        },
+        "draft_create" => ControllerSchema {
+            namespace: "flows",
+            function: "draft_create",
+            description: "Create a core-managed draft (a durable, non-live working copy of a graph) \
+                          shared by the agent tools and the canvas. Never persists a flow.",
+            inputs: vec![
+                FieldSchema {
+                    name: "name",
+                    ty: TypeSchema::String,
+                    comment: "Human-readable draft name (carried into the flow on promote).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "graph",
+                    ty: TypeSchema::Json,
+                    comment: "The (possibly incomplete) WorkflowGraph JSON to hold in the draft.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "flow_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "The saved flow this draft edits, if any (promote → update vs create).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "origin",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Where the draft came from: `chat` | `canvas` | `import`. Defaults to `canvas`.",
+                    required: false,
+                },
+            ],
+            outputs: vec![draft_output()],
+        },
+        "draft_get" => ControllerSchema {
+            namespace: "flows",
+            function: "draft_get",
+            description: "Fetch a draft by id.",
+            inputs: vec![id_input("Identifier of the draft to fetch.")],
+            outputs: vec![draft_output()],
+        },
+        "draft_update" => ControllerSchema {
+            namespace: "flows",
+            function: "draft_update",
+            description: "Patch a draft's name/graph/flow_id (any provided field) and bump its \
+                          updated_at. Never persists a flow.",
+            inputs: vec![
+                id_input("Identifier of the draft to update."),
+                FieldSchema {
+                    name: "name",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "New name, if changing it.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "graph",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "New graph JSON, if changing it.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "flow_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "New linked flow id, if changing it.",
+                    required: false,
+                },
+            ],
+            outputs: vec![draft_output()],
+        },
+        "draft_list" => ControllerSchema {
+            namespace: "flows",
+            function: "draft_list",
+            description: "List all drafts, newest-updated first.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "drafts",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "The drafts (each { id, flow_id?, name, graph, origin, created_at, updated_at }).",
+                required: true,
+            }],
+        },
+        "draft_delete" => ControllerSchema {
+            namespace: "flows",
+            function: "draft_delete",
+            description: "Delete a draft by id (idempotent).",
+            inputs: vec![id_input("Identifier of the draft to delete.")],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "`{ id, deleted }` — `deleted` is false if the id was already absent.",
+                required: true,
+            }],
+        },
+        "draft_promote" => ControllerSchema {
+            namespace: "flows",
+            function: "draft_promote",
+            description: "Promote a draft into a saved flow through the same create/update gates \
+                          (structural validation, forced require_approval floor, born-disabled for \
+                          automatic triggers), then delete the draft file. A draft with a flow_id \
+                          updates that flow; otherwise it creates a new one.",
+            inputs: vec![
+                id_input("Identifier of the draft to promote."),
+                require_approval_input(),
+            ],
+            outputs: vec![flow_output()],
+        },
         _other => ControllerSchema {
             namespace: "flows",
             function: "unknown",
@@ -896,6 +1233,16 @@ fn handle_create(params: Map<String, Value>) -> ControllerFuture {
             .get("require_approval")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        // Opt-in strict mode (F3): run the same author hard-gates an agent save
+        // must pass, before persisting. Default off — the human canvas save
+        // path stays permissive.
+        if params
+            .get("strict")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            ops::strict_gate(&config, &graph).await?;
+        }
         to_json(ops::flows_create(&config, name, graph, require_approval).await?)
     })
 }
@@ -964,7 +1311,33 @@ fn handle_update(params: Map<String, Value>) -> ControllerFuture {
             .map_err(|e| format!("invalid 'name': {e}"))?;
         let graph = params.get("graph").filter(|v| !v.is_null()).cloned();
         let require_approval = params.get("require_approval").and_then(Value::as_bool);
-        to_json(ops::flows_update(&config, id.trim(), name, graph, require_approval).await?)
+        let expected_version = params
+            .get("expected_version")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        // Opt-in strict mode (F3): when a new graph is supplied, run the same
+        // author hard-gates an agent save must pass, before persisting.
+        if params
+            .get("strict")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            if let Some(graph_json) = graph.as_ref() {
+                ops::strict_gate(&config, graph_json).await?;
+            }
+        }
+        to_json(
+            ops::flows_update(
+                &config,
+                id.trim(),
+                name,
+                graph,
+                require_approval,
+                expected_version,
+            )
+            .await?,
+        )
     })
 }
 
@@ -1050,6 +1423,18 @@ fn handle_list_runs(params: Map<String, Value>) -> ControllerFuture {
             .and_then(|n| usize::try_from(n).ok())
             .unwrap_or(20);
         to_json(ops::flows_list_runs(&config, id.trim(), limit).await?)
+    })
+}
+
+fn handle_list_all_runs(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(100);
+        to_json(ops::flows_list_all_runs(&config, limit).await?)
     })
 }
 
@@ -1142,6 +1527,146 @@ fn handle_mark_suggestion_built(params: Map<String, Value>) -> ControllerFuture 
     })
 }
 
+fn handle_required_connections(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let graph = read_required::<Value>(&params, "graph")?;
+        to_json(ops::flows_required_connections(&config, graph).await?)
+    })
+}
+
+fn handle_search_tool_catalog(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let query = read_required::<String>(&params, "query")?;
+        let toolkit = params
+            .get("toolkit")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .map(|n| n as usize)
+            .unwrap_or(25);
+        to_json(ops::flows_search_tool_catalog(&config, query.trim(), toolkit, limit).await?)
+    })
+}
+
+fn handle_get_tool_contract(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let slug = read_required::<String>(&params, "slug")?;
+        to_json(ops::flows_get_tool_contract(&config, slug.trim()).await?)
+    })
+}
+
+fn handle_get_history(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .map(|n| n as usize)
+            .unwrap_or(20);
+        to_json(ops::flows_get_history(&config, id.trim(), limit)?)
+    })
+}
+
+fn handle_rollback(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        let revision_id = read_required::<String>(&params, "revision_id")?;
+        let expected_version = params
+            .get("expected_version")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        to_json(
+            ops::flows_rollback(&config, id.trim(), revision_id.trim(), expected_version).await?,
+        )
+    })
+}
+
+fn handle_draft_create(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let name = read_required::<String>(&params, "name")?;
+        let graph = read_required::<Value>(&params, "graph")?;
+        let flow_id = params
+            .get("flow_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let origin = params
+            .get("origin")
+            .and_then(Value::as_str)
+            .and_then(|s| serde_json::from_value(Value::String(s.to_string())).ok())
+            .unwrap_or(crate::openhuman::flows::DraftOrigin::Canvas);
+        to_json(ops::flows_draft_create(
+            &config, flow_id, name, graph, origin,
+        )?)
+    })
+}
+
+fn handle_draft_get(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        to_json(ops::flows_draft_get(&config, id.trim())?)
+    })
+}
+
+fn handle_draft_update(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        let name = params
+            .get("name")
+            .filter(|v| !v.is_null())
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("invalid 'name': {e}"))?;
+        let graph = params.get("graph").filter(|v| !v.is_null()).cloned();
+        // A present `flow_id` (even null) re-links the draft; absent leaves it.
+        let flow_id = params
+            .get("flow_id")
+            .map(|v| v.as_str().filter(|s| !s.is_empty()).map(str::to_string));
+        to_json(ops::flows_draft_update(
+            &config,
+            id.trim(),
+            name,
+            graph,
+            flow_id,
+        )?)
+    })
+}
+
+fn handle_draft_list(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(ops::flows_draft_list(&config)?)
+    })
+}
+
+fn handle_draft_delete(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        to_json(ops::flows_draft_delete(&config, id.trim())?)
+    })
+}
+
+fn handle_draft_promote(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let id = read_required::<String>(&params, "id")?;
+        let require_approval = params.get("require_approval").and_then(Value::as_bool);
+        to_json(ops::flows_draft_promote(&config, id.trim(), require_approval).await?)
+    })
+}
+
 fn read_required<T: DeserializeOwned>(params: &Map<String, Value>, key: &str) -> Result<T, String> {
     let value = params
         .get(key)
@@ -1181,6 +1706,7 @@ mod tests {
                 "resume",
                 "cancel_run",
                 "list_runs",
+                "list_all_runs",
                 "get_run",
                 "prune_runs",
                 "build",
@@ -1188,6 +1714,17 @@ mod tests {
                 "list_suggestions",
                 "dismiss_suggestion",
                 "mark_suggestion_built",
+                "draft_create",
+                "draft_get",
+                "draft_update",
+                "draft_list",
+                "draft_delete",
+                "draft_promote",
+                "get_history",
+                "rollback",
+                "search_tool_catalog",
+                "get_tool_contract",
+                "required_connections",
             ]
         );
     }
@@ -1195,7 +1732,7 @@ mod tests {
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 21);
+        assert_eq!(controllers.len(), 33);
         let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
         assert_eq!(
             names,
@@ -1214,6 +1751,7 @@ mod tests {
                 "resume",
                 "cancel_run",
                 "list_runs",
+                "list_all_runs",
                 "get_run",
                 "prune_runs",
                 "build",
@@ -1221,6 +1759,17 @@ mod tests {
                 "list_suggestions",
                 "dismiss_suggestion",
                 "mark_suggestion_built",
+                "draft_create",
+                "draft_get",
+                "draft_update",
+                "draft_list",
+                "draft_delete",
+                "draft_promote",
+                "get_history",
+                "rollback",
+                "search_tool_catalog",
+                "get_tool_contract",
+                "required_connections",
             ]
         );
     }
@@ -1256,7 +1805,14 @@ mod tests {
                 let names: Vec<_> = fields.iter().map(|f| f.name).collect();
                 assert_eq!(
                     names,
-                    vec!["connection_ref", "kind", "display", "toolkit", "scheme"]
+                    vec![
+                        "connection_ref",
+                        "kind",
+                        "display",
+                        "toolkit",
+                        "scheme",
+                        "platform_user_id"
+                    ]
                 );
                 for f in fields {
                     let n = f.name.to_ascii_lowercase();

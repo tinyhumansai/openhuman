@@ -808,10 +808,10 @@ fn handle_reset_local_data(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::reset_local_data().await?) })
 }
 
-fn handle_get_data_paths(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async {
+fn handle_get_data_paths(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
         log::debug!("[config][rpc] get_data_paths enter");
-        match config_rpc::get_data_paths().await {
+        match resolve_data_paths(params).await {
             Ok(outcome) => {
                 log::debug!("[config][rpc] get_data_paths ok");
                 to_json(outcome)
@@ -822,6 +822,31 @@ fn handle_get_data_paths(_params: Map<String, Value>) -> ControllerFuture {
             }
         }
     })
+}
+
+/// Resolve the data paths for `get_data_paths`, honoring an optional `user_id`
+/// param. The Clear App Data flow passes the signed-in id (#4950) because it
+/// removes the active-user marker *before* the reset resolves paths — without
+/// the explicit id the core would fall back to the pre-login `users/local` dir
+/// and leave the real user's data behind. Absent/blank → marker-based
+/// resolution (the default used by the agent tool and diagnostics).
+async fn resolve_data_paths(
+    params: Map<String, Value>,
+) -> Result<crate::rpc::RpcOutcome<Value>, String> {
+    let user_id = params
+        .get("user_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(|id| id.to_string());
+    log::debug!(
+        "[config][rpc] get_data_paths: explicit_user_id={}",
+        user_id.is_some()
+    );
+    match user_id.as_deref() {
+        Some(id) => config_rpc::get_data_paths_for_user(id).await,
+        None => config_rpc::get_data_paths().await,
+    }
 }
 
 pub(super) fn handle_get_agent_paths(_params: Map<String, Value>) -> ControllerFuture {
@@ -1088,6 +1113,33 @@ fn handle_update_sandbox_settings(params: Map<String, Value>) -> ControllerFutur
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── get_data_paths user scoping (#4950) ─────────────────────
+
+    // The Clear App Data flow passes `user_id` so the reset targets the
+    // signed-in user's `users/<id>` slice even though the active-user marker
+    // was already removed by the preceding sign-out. Verify the handler parses
+    // the param and scopes the resolved current dir accordingly.
+    #[tokio::test]
+    async fn handle_get_data_paths_scopes_to_explicit_user_id() {
+        let mut params = Map::new();
+        params.insert(
+            "user_id".to_string(),
+            Value::String("clear-me-4950".to_string()),
+        );
+
+        let value = handle_get_data_paths(params).await.unwrap();
+        // `get_data_paths_for_user` attaches a log, so the outcome is wrapped as
+        // `{ "result": <paths>, "logs": [...] }`.
+        let current = value
+            .pointer("/result/current_openhuman_dir")
+            .and_then(Value::as_str)
+            .expect("current_openhuman_dir present");
+        assert!(
+            current.replace('\\', "/").ends_with("users/clear-me-4950"),
+            "current dir must be scoped to the explicit user id, got {current}"
+        );
+    }
 
     // ── platform slug validation (finding #6) ───────────────────
 

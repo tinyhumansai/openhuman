@@ -87,10 +87,9 @@ impl EventHandler for ChannelInboundSubscriber {
         // here so the surface stays segregated end-to-end.
         let client_id = derive_inbound_client_id(channel, sender.as_deref());
 
-        let mut event_rx =
-            crate::openhuman::channels::providers::web::subscribe_web_channel_events();
+        let mut event_rx = crate::openhuman::web_chat::subscribe_web_channel_events();
 
-        let request_id = match crate::openhuman::channels::providers::web::start_chat(
+        let request_id = match crate::openhuman::web_chat::start_chat(
             &client_id,
             &thread_id,
             message,
@@ -99,7 +98,7 @@ impl EventHandler for ChannelInboundSubscriber {
             None,
             None,
             None,
-            crate::openhuman::channels::providers::web::ChatRequestMetadata {
+            crate::openhuman::web_chat::ChatRequestMetadata {
                 // Tag inbound provider messages so traces classify as
                 // run:channel_inbound instead of interactive chat.
                 source: Some("channel_inbound".to_string()),

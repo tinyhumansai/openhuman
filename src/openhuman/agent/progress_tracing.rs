@@ -774,7 +774,7 @@ impl SpanCollector {
                 ("gen_ai.usage.reasoning_tokens", reasoning_tokens),
                 ("gen_ai.usage.cache_creation_tokens", cache_creation_tokens),
             ] {
-                if add == 0 && span.attributes.get(key).is_none() {
+                if add == 0 && !span.attributes.contains_key(key) {
                     continue;
                 }
                 let prior = span

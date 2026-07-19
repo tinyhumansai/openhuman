@@ -13,7 +13,7 @@
 //! Run with: `cargo test --test transcript_search_e2e`
 
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use serde_json::json;
 use tempfile::tempdir;
@@ -53,13 +53,13 @@ impl Drop for EnvVarGuard {
 }
 
 /// Serialises tests: `HOME` + `OPENHUMAN_WORKSPACE` are process-global.
-static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static ENV_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
     ENV_LOCK
-        .get_or_init(|| Mutex::new(()))
+        .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
-        .expect("env lock poisoned")
+        .await
 }
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
@@ -143,7 +143,7 @@ fn seed_workspace(workspace: &Path) -> ConversationStore {
 /// scopes the hit to the thread that actually contains it.
 #[tokio::test]
 async fn transcript_search_op_finds_message_in_prior_thread() {
-    let _lock = env_lock();
+    let _lock = env_lock().await;
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace = tmp.path().join("workspace");
@@ -174,7 +174,7 @@ async fn transcript_search_op_finds_message_in_prior_thread() {
 /// orchestrator can use to omit the active chat it already has in hand.
 #[tokio::test]
 async fn transcript_search_op_honours_exclude_thread() {
-    let _lock = env_lock();
+    let _lock = env_lock().await;
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace = tmp.path().join("workspace");
@@ -195,7 +195,7 @@ async fn transcript_search_op_honours_exclude_thread() {
 /// A query that matches nothing returns no hits (not an error).
 #[tokio::test]
 async fn transcript_search_op_returns_empty_on_no_match() {
-    let _lock = env_lock();
+    let _lock = env_lock().await;
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace = tmp.path().join("workspace");
@@ -215,7 +215,7 @@ async fn transcript_search_op_returns_empty_on_no_match() {
 /// source thread and quotes a snippet of the matched message.
 #[tokio::test]
 async fn transcript_search_tool_formats_hits_for_the_agent() {
-    let _lock = env_lock();
+    let _lock = env_lock().await;
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace = tmp.path().join("workspace");
@@ -247,7 +247,7 @@ async fn transcript_search_tool_formats_hits_for_the_agent() {
 /// can record "nothing in past chats" and move on.
 #[tokio::test]
 async fn transcript_search_tool_reports_no_match_cleanly() {
-    let _lock = env_lock();
+    let _lock = env_lock().await;
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace = tmp.path().join("workspace");
@@ -276,7 +276,7 @@ async fn transcript_search_tool_reports_no_match_cleanly() {
 /// clean no-match line.
 #[tokio::test]
 async fn transcript_search_tool_excludes_named_thread() {
-    let _lock = env_lock();
+    let _lock = env_lock().await;
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace = tmp.path().join("workspace");
@@ -301,7 +301,7 @@ async fn transcript_search_tool_excludes_named_thread() {
 /// searches all — this pins the empty-string contract regardless.)
 #[tokio::test]
 async fn transcript_search_tool_empty_exclude_searches_all_threads() {
-    let _lock = env_lock();
+    let _lock = env_lock().await;
     let tmp = tempdir().expect("tempdir");
     let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
     let workspace = tmp.path().join("workspace");

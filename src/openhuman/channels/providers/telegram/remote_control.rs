@@ -270,7 +270,7 @@ async fn build_new_session_response(ctx: &ChannelRuntimeContext, msg: &ChannelMe
         );
     }
 
-    crate::openhuman::channels::providers::web::invalidate_thread_sessions(&thread_id).await;
+    crate::openhuman::web_chat::invalidate_thread_sessions(&thread_id).await;
 
     tracing::info!(
         "{LOG_PREFIX} new session thread_id={thread_id} reply_target={} sender_key={sender_key}",

@@ -76,7 +76,7 @@ fn agent_error_to_user_message(err: &AgentError) -> &'static str {
             // contract, for clean notification-drawer rendering) names
             // the two highest-signal remedies — credits and model
             // configuration. The richer three-remedy copy lives on the
-            // chat-surface side (`channels/providers/web_errors.rs`'s
+            // chat-surface side (`web_chat/web_errors.rs`'s
             // empty_response arm) where there's no drawer-width limit.
             "Empty model response. Out of credits (Settings \u{2192} Billing) or try another model in Connections \u{2192} API keys \u{2192} LLM."
         }
@@ -433,11 +433,11 @@ fn is_api_key_unset_failure(
 }
 
 /// TAURI-RUST-12K — a cron **agent** job pinned to a **local** LLM provider
-/// (LM Studio / Ollama / llama.cpp on `localhost:<port>`) fails at the TCP
-/// layer with "connection refused" because the user's local server isn't
-/// running. This is a genuinely unpreventable user-environment state: the app
-/// has no lever to start a user's local model server, and retrying across the
-/// backoff loop cannot bring the port up within one cron cycle.
+/// (LM Studio / Ollama / llama.cpp on `localhost:<port>`) fails because the
+/// user's local runtime is unavailable or reachable-but-idle with no model
+/// loaded. This is a genuinely unpreventable user-environment state: the app
+/// has no lever to start a user's local model server or load a model there, and
+/// retrying across the backoff loop cannot fix it within one cron cycle.
 ///
 /// The provider / agent emit sites already demote this via
 /// `report_error_or_expected` (the `expected_error_kind` classifier routes it
@@ -448,13 +448,15 @@ fn is_api_key_unset_failure(
 /// the source demotion and the sibling billing / api-key guards
 /// (TAURI-RUST-514 / -BMW / -HCK).
 ///
-/// Delegates to the single-source matcher
+/// Delegates loopback-unreachable detection to the single-source matcher
 /// [`crate::core::observability::is_local_provider_unreachable_message`] so
-/// the wording cannot drift from the classifier emit site. Narrow by design:
-/// only **loopback** connection-refused matches, so a transient *remote*
-/// provider / backend network error still retries and still reports. Routes on
-/// `last_agent_error` first (the raw anyhow chain carrying the wire message),
-/// falling back to `last_output`. Restricted to `JobType::Agent`.
+/// the wording cannot drift from the classifier emit site. Also recognizes the
+/// inference provider's stable local-runtime "no model loaded" user message.
+/// Narrow by design: a transient *remote* provider / backend network error
+/// still retries and still reports. Checks both `last_agent_error` (the raw
+/// anyhow chain carrying the wire message) and `last_output` (the surfaced user
+/// message), because some provider paths preserve only one of those shapes.
+/// Restricted to `JobType::Agent`.
 fn is_local_provider_unreachable_failure(
     job_type: &JobType,
     last_agent_error: Option<&str>,
@@ -463,8 +465,17 @@ fn is_local_provider_unreachable_failure(
     if !matches!(job_type, JobType::Agent) {
         return false;
     }
-    let signal = last_agent_error.unwrap_or(last_output);
-    crate::core::observability::is_local_provider_unreachable_message(signal)
+    let raw_signal = last_agent_error.unwrap_or("");
+    crate::core::observability::is_local_provider_unreachable_message(raw_signal)
+        || crate::core::observability::is_local_provider_unreachable_message(last_output)
+        || is_local_provider_no_model_loaded_message(raw_signal)
+        || is_local_provider_no_model_loaded_message(last_output)
+}
+
+fn is_local_provider_no_model_loaded_message(signal: &str) -> bool {
+    let lower = signal.to_ascii_lowercase();
+    (lower.contains("local inference server") && lower.contains("no model loaded"))
+        || lower.contains("no models loaded")
 }
 
 async fn execute_job_with_retry(
@@ -472,6 +483,27 @@ async fn execute_job_with_retry(
     security: &SecurityPolicy,
     job: &CronJob,
 ) -> (bool, String) {
+    // Emergency stop: refuse every scheduled job while the kill switch is
+    // engaged. The tinyagents middleware already fails-closed on external-effect
+    // tools inside `JobType::Agent`, but `JobType::Shell` spawns `sh -lc` and
+    // `JobType::Flow` publishes a flow-trigger event — neither goes through the
+    // middleware, so without this check a due or Run Now shell/flow job could
+    // still perform external actions while automation is halted. Fail-closed at
+    // the outermost dispatch is the safest place: it applies to every job type
+    // and to every retry attempt, and never spawns the underlying process. See
+    // #4255.
+    if crate::openhuman::emergency_stop::is_engaged_global() {
+        log::warn!(
+            "[cron] action=refused_while_halted job_id={} job_type={:?} — emergency stop engaged",
+            job.id.as_str(),
+            job.job_type
+        );
+        return (
+            false,
+            "blocked by emergency stop: automation is halted — resume to run this job".to_string(),
+        );
+    }
+
     let mut last_output = String::new();
     let mut last_agent_error: Option<String> = None;
     let retries = config.reliability.scheduler_retries;
@@ -483,6 +515,23 @@ async fn execute_job_with_retry(
     let mut local_unreachable = false;
 
     for attempt in 0..=retries {
+        // Re-check the kill switch before each RETRY (attempt 0 is already
+        // covered by the pre-loop guard above): a user who engages Emergency
+        // Stop during the backoff sleep must not have the next attempt execute.
+        // Same fail-closed denial as the pre-loop guard (#4255).
+        if attempt > 0 && crate::openhuman::emergency_stop::is_engaged_global() {
+            log::warn!(
+                "[cron] action=refused_retry_while_halted job_id={} job_type={:?} attempt={} — emergency stop engaged",
+                job.id.as_str(),
+                job.job_type,
+                attempt
+            );
+            return (
+                false,
+                "blocked by emergency stop: automation is halted — resume to run this job"
+                    .to_string(),
+            );
+        }
         let (success, output, agent_error) = match job.job_type {
             JobType::Shell => {
                 let (success, output) = run_job_command(config, security, job).await;
@@ -715,15 +764,13 @@ fn permanent_halt_message(credits_exhausted: bool, budget_exhausted: bool) -> &'
 /// deep-link action even though no chat thread is active.
 fn publish_cron_user_error(kind: &str) {
     log::debug!("[cron] action=surface_user_error kind={kind}");
-    crate::openhuman::channels::providers::web::publish_web_channel_event(
-        crate::core::socketio::WebChannelEvent {
-            event: "user_error".to_string(),
-            client_id: "system".to_string(),
-            error_type: Some(kind.to_string()),
-            error_source: Some("cron".to_string()),
-            ..Default::default()
-        },
-    );
+    crate::openhuman::web_chat::publish_web_channel_event(crate::core::socketio::WebChannelEvent {
+        event: "user_error".to_string(),
+        client_id: "system".to_string(),
+        error_type: Some(kind.to_string()),
+        error_source: Some("cron".to_string()),
+        ..Default::default()
+    });
 }
 
 async fn process_due_jobs(config: &Config, security: &Arc<SecurityPolicy>, jobs: Vec<CronJob>) {
@@ -835,8 +882,16 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                     .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.to_string());
                 let resolved_model = match &def.model {
                     ModelSpec::Hint(workload) => {
-                        match crate::openhuman::inference::provider::create_chat_provider(
-                            workload, &effective,
+                        // Resolve the workload's configured model id via the crate
+                        // `ChatModel` factory (#4249 Phase 1). We only need the
+                        // resolved model string here, so the built model is
+                        // discarded — `create_chat_model_with_model_id` wraps the
+                        // same `create_chat_provider` resolution, so the model id is
+                        // identical; temperature is irrelevant to id resolution.
+                        match crate::openhuman::inference::provider::create_chat_model_with_model_id(
+                            workload,
+                            &effective,
+                            effective.default_temperature,
                         ) {
                             Ok((_, m)) => {
                                 tracing::debug!(
@@ -865,7 +920,12 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                     ModelSpec::Exact(name) => name.clone(),
                 };
                 effective.default_model = Some(resolved_model);
-                effective.agent.max_tool_iterations = def.max_iterations;
+                // Issue #4868 — the iteration cap is no longer set here. The
+                // session builder (`build_session_agent_inner`) resolves it
+                // from `def.effective_max_iterations()` directly, which (unlike
+                // this cron path previously) correctly honors
+                // `iteration_policy = "extended"` agents (e.g. `tools_agent`
+                // getting 50, not the raw `max_iterations = 10`).
             } else {
                 tracing::warn!(
                     job_id = %job.id,
@@ -956,7 +1016,11 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
             // and provider URLs are appropriate; it must NOT reach the
             // user-visible notification body.
             let user_message = classify_agent_anyhow_for_user(&e);
-            (false, user_message.to_string(), Some(e.to_string()))
+            // Preserve the FULL anyhow chain (`{:#}`), not just the top-level
+            // message: the loopback-unreachable classifier and the observability
+            // pipeline key on the transport cause (`… tcp connect error: Connection
+            // refused (os error N)`), which a bare `to_string()` drops.
+            (false, user_message.to_string(), Some(format!("{e:#}")))
         }
     }
 }

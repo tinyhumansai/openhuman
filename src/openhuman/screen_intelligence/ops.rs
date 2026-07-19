@@ -152,6 +152,19 @@ pub async fn accessibility_capture_image_ref() -> Result<RpcOutcome<CaptureImage
 pub async fn accessibility_input_action(
     payload: InputActionParams,
 ) -> Result<RpcOutcome<InputActionResult>, String> {
+    // Emergency stop: refuse desktop input while halted. `panic_stop` is
+    // exempt so a stop is never blocked by a stop.
+    if payload.action != "panic_stop" && crate::openhuman::emergency_stop::is_engaged_global() {
+        tracing::warn!(action = %payload.action, "[emergency] accessibility_input_action blocked — kill switch engaged");
+        return Ok(RpcOutcome::single_log(
+            InputActionResult {
+                accepted: false,
+                blocked: true,
+                reason: Some("emergency_stop".to_string()),
+            },
+            "screen intelligence input blocked by emergency stop",
+        ));
+    }
     let result = screen_intelligence::global_engine()
         .input_action(payload)
         .await?;
@@ -306,5 +319,60 @@ mod tests {
         let outcome = accessibility_vision_recent(Some(5)).await;
         // Either Ok or Err — just ensure the call doesn't panic.
         let _ = outcome;
+    }
+
+    #[tokio::test]
+    async fn input_action_blocked_while_emergency_engaged() {
+        use crate::openhuman::emergency_stop::state::{ClearEmergencyOnDrop, EMERGENCY_TEST_GUARD};
+        use crate::openhuman::emergency_stop::EmergencyStop;
+        let _g = EMERGENCY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let stop = EmergencyStop::init_global();
+        // Panic-safe cleanup: resets the process-global even if an assertion
+        // below panics, so a leaked engaged state can't poison later tests.
+        let _reset = ClearEmergencyOnDrop;
+        stop.engage(Some("test".into()), "user", 0);
+        let params = InputActionParams {
+            action: "click".into(),
+            x: Some(1),
+            y: Some(1),
+            button: None,
+            text: None,
+            key: None,
+            modifiers: None,
+        };
+        let out = accessibility_input_action(params).await.unwrap();
+        assert!(!out.value.accepted);
+        assert!(out.value.blocked);
+        assert_eq!(out.value.reason.as_deref(), Some("emergency_stop"));
+    }
+
+    #[tokio::test]
+    async fn panic_stop_passes_even_while_emergency_engaged() {
+        use crate::openhuman::emergency_stop::state::{ClearEmergencyOnDrop, EMERGENCY_TEST_GUARD};
+        use crate::openhuman::emergency_stop::EmergencyStop;
+        let _g = EMERGENCY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let stop = EmergencyStop::init_global();
+        let _reset = ClearEmergencyOnDrop;
+        stop.engage(None, "user", 0);
+        let params = InputActionParams {
+            action: "panic_stop".into(),
+            x: None,
+            y: None,
+            button: None,
+            text: None,
+            key: None,
+            modifiers: None,
+        };
+        // `panic_stop` must NOT be short-circuited by the emergency guard: the
+        // call reaches the engine rather than returning the guard's blocked
+        // outcome. Whatever the engine reports, it is never the emergency block.
+        let out = accessibility_input_action(params).await;
+        if let Ok(outcome) = out {
+            assert_ne!(outcome.value.reason.as_deref(), Some("emergency_stop"));
+        }
     }
 }

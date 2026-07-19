@@ -53,4 +53,12 @@ describe('i18n coverage', () => {
     const extra = Object.keys(flat).filter(k => !(k in enFlat));
     expect(extra).toEqual([]);
   });
+
+  it.each(['en', ...LOCALES])('locale %s contains no em dashes', locale => {
+    const flat = locale === 'en' ? enFlat : loadLocale(locale);
+    const keysWithEmDashes = Object.entries(flat)
+      .filter(([, value]) => value.includes('\u2014'))
+      .map(([key]) => key);
+    expect(keysWithEmDashes).toEqual([]);
+  });
 });

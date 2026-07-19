@@ -6,17 +6,43 @@
 //! This store is local-only; no data is transmitted to external services.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
-use crate::openhuman::whatsapp_data::sqlite_retry::{retry_on_sqlite_busy, BUSY_TIMEOUT};
+use crate::openhuman::whatsapp_data::sqlite_retry::{
+    is_sqlite_corrupt, retry_on_sqlite_busy, BUSY_TIMEOUT,
+};
 use crate::openhuman::whatsapp_data::types::{
     ChatMeta, IngestMessage, ListChatsRequest, ListMessagesRequest, SearchMessagesRequest,
     WhatsAppChat, WhatsAppMessage,
 };
+
+/// Process-wide latch so a `SQLITE_CORRUPT` flood is reported to Sentry
+/// **once**, not on every scan tick. The whatsapp_scanner re-ingests every
+/// 2–30s, so a wedged DB re-hits the malformed-image error on each poll — one
+/// corrupt file produced 1,813 escalating Sentry events from a single host
+/// (TAURI-RUST-KNH). Set on the first detection; cleared once a recovery
+/// attempt settles (quarantine + rebuild, or a quick_check that now passes) so
+/// a genuinely-new, later corruption can still page exactly once.
+static CORRUPT_REPORTED: AtomicBool = AtomicBool::new(false);
+
+/// Test-only override: when set, [`WhatsAppDataStore::integrity_check_ok`]
+/// reports the (rebuilt) DB as failing its integrity check. This is the seam
+/// that lets tests drive the "rebuild still fails integrity_check" branch of
+/// [`WhatsAppDataStore::recover_corrupt_db`] without forging a file that both
+/// survives quarantine and yet fails `PRAGMA integrity_check`.
+#[cfg(test)]
+static FORCE_INTEGRITY_CHECK_FAIL: AtomicBool = AtomicBool::new(false);
+
+/// Test-only serialization guard for the recovery-episode tests. `CORRUPT_REPORTED`
+/// and `FORCE_INTEGRITY_CHECK_FAIL` are process-wide, so tests that mutate them
+/// must not run concurrently or they clobber each other's latch observations.
+#[cfg(test)]
+static CORRUPT_TEST_GUARD: Mutex<()> = Mutex::new(());
 
 /// SQLite-backed store for WhatsApp chats and messages.
 pub struct WhatsAppDataStore {
@@ -40,8 +66,47 @@ impl WhatsAppDataStore {
             db_path,
             write_lock: Mutex::new(()),
         };
-        store.init_schema()?;
+        store.init_schema_or_recover()?;
         Ok(store)
+    }
+
+    /// Initialize the schema, self-healing a DB that is already corrupt **at
+    /// process startup**.
+    ///
+    /// Without this, a `whatsapp_data.db` that is malformed before the first
+    /// write RPC arrives makes `init_schema()` fail, `global::init` leaves the
+    /// store singleton unset, and every subsequent ingest RPC fails with
+    /// "store accessed before init" — the corruption never reaches the
+    /// quarantine + rebuild path (which only guards the *write* wrapper), so it
+    /// survives restarts and re-pages Sentry on every scanner tick. Recovering
+    /// here makes a boot-time corrupt DB heal exactly as a mid-run one does.
+    ///
+    /// The `CORRUPT_REPORTED` latch semantics are reused verbatim via
+    /// [`Self::report_and_recover`] (report once per episode, reset only on a
+    /// confirmed-healthy rebuild), so a boot-time corruption pages at most once.
+    fn init_schema_or_recover(&self) -> Result<()> {
+        match self.init_schema() {
+            Ok(()) => Ok(()),
+            Err(e) if is_sqlite_corrupt(&e) => {
+                log::error!(
+                    "[whatsapp_data] init_schema hit SQLITE_CORRUPT at startup for {} — \
+                     driving quarantine + rebuild before ingest can begin: {e:#}",
+                    self.db_path.display()
+                );
+                // Reports once (latch), quarantines the malformed image, and
+                // rebuilds the schema. `recover_corrupt_db` is safe to call on
+                // the just-constructed store: it only needs `db_path` +
+                // `init_schema`, both available before the store is published.
+                self.report_and_recover("init_schema", &e);
+                // Confirm the store is now usable. If recovery failed, this
+                // re-init returns Err and `global::init` correctly leaves the
+                // singleton unset — but now only when the DB is genuinely
+                // unrecoverable, not merely corrupt-on-boot.
+                self.init_schema()
+                    .context("re-init whatsapp_data schema after boot-time corrupt-DB recovery")
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Initialize the schema. Idempotent — safe to call on every startup.
@@ -84,6 +149,22 @@ impl WhatsAppDataStore {
         Ok(())
     }
 
+    /// Open a fresh connection to the DB file.
+    ///
+    /// Read paths (`list_chats` / `list_messages` / `search_messages`) call this
+    /// **without** taking `write_lock`, so a read can race the brief file-rename
+    /// window inside [`Self::recover_corrupt_db`] (which quarantines the corrupt
+    /// image then rebuilds under `write_lock`). We deliberately do NOT serialize
+    /// reads behind the write lock: the race is not a correctness or
+    /// data-integrity problem, only a rare transient read error that self-heals
+    /// on the next poll. Three outcomes are possible and all are safe —
+    /// (1) the read opens before the rename and reads valid (old) data via its
+    /// still-live fd; (2) it opens after the rebuild and reads the fresh schema;
+    /// (3) it opens in the sub-millisecond gap after the rename but before the
+    /// rebuild, gets an empty auto-created file, and returns a benign
+    /// "no such table" error the caller retries. Guarding this hot path with a
+    /// global read/write lock would trade that vanishingly-rare transient for
+    /// permanent read/write contention on every list/search — not worth it.
     fn open_conn(&self) -> Result<Connection> {
         let conn = Connection::open(&self.db_path)
             .with_context(|| format!("open whatsapp_data db: {}", self.db_path.display()))?;
@@ -115,6 +196,222 @@ impl WhatsAppDataStore {
             .unwrap_or(0)
     }
 
+    /// Run a write op through the busy-retry loop, and on a confirmed
+    /// `SQLITE_CORRUPT` malformed-image error drive a **once-per-call**
+    /// quarantine + rebuild recovery, then retry the op a single time against
+    /// the rebuilt schema.
+    ///
+    /// The recovery is bounded: at most one quarantine attempt and one retry
+    /// per public write call. A genuinely unrecoverable file therefore returns
+    /// the corrupt error to the caller after one recovery pass instead of
+    /// spinning — the process-wide report latch (`report_and_recover`) then
+    /// keeps Sentry from re-flooding on every scan tick.
+    fn write_with_corrupt_recovery<T>(
+        &self,
+        op_name: &str,
+        f: impl Fn() -> Result<T>,
+    ) -> Result<T> {
+        match retry_on_sqlite_busy(op_name, &f) {
+            Ok(val) => Ok(val),
+            Err(e) if is_sqlite_corrupt(&e) => {
+                self.report_and_recover(op_name, &e);
+                // Retry once against the (now rebuilt) DB. If this still fails,
+                // the error propagates — no further recovery, so a wedged
+                // filesystem can't loop.
+                retry_on_sqlite_busy(op_name, &f)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Report a confirmed `SQLITE_CORRUPT` failure to Sentry and drive the
+    /// quarantine + rebuild recovery. Factored out of
+    /// [`Self::write_with_corrupt_recovery`] so the report + recovery decision
+    /// is unit-testable without a live scanner loop.
+    fn report_and_recover(&self, op_name: &str, err: &anyhow::Error) {
+        // Report to Sentry at most once per corruption episode. Without this
+        // latch the scanner's 2–30s poll re-hits the wedged DB and re-pages on
+        // every tick (TAURI-RUST-KNH: 1,813 events from one host).
+        if !CORRUPT_REPORTED.swap(true, Ordering::Relaxed) {
+            crate::core::observability::report_error(
+                err,
+                "whatsapp_data",
+                "ingest_corrupt",
+                &[("op", op_name)],
+            );
+        }
+        log::error!(
+            "[whatsapp_data] {op_name} hit SQLITE_CORRUPT (malformed DB image), \
+             attempting quarantine + rebuild recovery: {err:#}"
+        );
+        match self.recover_corrupt_db() {
+            Ok(true) => {
+                log::warn!(
+                    "[whatsapp_data] {op_name} quarantined corrupt DB and rebuilt empty schema; \
+                     ingest will resume"
+                );
+                // Recovery settled — allow a future, genuinely-new corruption
+                // to page once more.
+                CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+            }
+            Ok(false) => {
+                log::info!(
+                    "[whatsapp_data] {op_name} corruption recovery: integrity check now passes, \
+                     no quarantine needed"
+                );
+                CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+            }
+            Err(rec_err) => log::error!(
+                "[whatsapp_data] {op_name} corruption recovery FAILED, ingest stays degraded: \
+                 {rec_err:#}"
+            ),
+        }
+    }
+
+    /// Recover from a `SQLITE_CORRUPT` (malformed image) on the whatsapp_data DB.
+    ///
+    /// A malformed on-disk image never heals on its own — every write fails
+    /// forever and the scanner re-pages Sentry on each poll (Sentry
+    /// TAURI-RUST-KNH: 1,813 events from a single host). This quarantines the
+    /// damaged file (and its WAL/SHM side-files) to a timestamped
+    /// `.corrupt-<ts>` copy — **preserved, not deleted**, so the bytes can be
+    /// inspected or salvaged — then rebuilds an empty schema so ingest resumes.
+    ///
+    /// Returns `Ok(true)` when a quarantine + rebuild happened, `Ok(false)`
+    /// when a fresh `PRAGMA quick_check` now passes (the earlier failure was
+    /// transient and quarantining would have destroyed good data), and `Err`
+    /// when the quarantine rename or the schema rebuild failed.
+    ///
+    /// The store opens a fresh `Connection` per call (no cached handle), so no
+    /// connection needs to be dropped before the rename — the next `open_conn`
+    /// naturally picks up the rebuilt file.
+    pub(crate) fn recover_corrupt_db(&self) -> Result<bool> {
+        // 1. Re-confirm corruption against the on-disk file. `quick_check` is
+        //    the cheap structural scan; if it now reports "ok" the image is
+        //    actually healthy (e.g. the original error was a transient mmap
+        //    fault) and we must NOT destroy good data — bail without quarantine.
+        if self.db_path.exists() {
+            match self.quick_check_ok() {
+                Ok(true) => {
+                    log::info!(
+                        "[whatsapp_data] quick_check passed for {} — no quarantine needed",
+                        self.db_path.display()
+                    );
+                    return Ok(false);
+                }
+                Ok(false) => {
+                    log::warn!(
+                        "[whatsapp_data] quick_check confirms corruption for {}, quarantining",
+                        self.db_path.display()
+                    );
+                }
+                Err(e) => {
+                    // The check couldn't even run (unopenable / unreadable
+                    // header). That is itself a malformed-image signal.
+                    log::warn!(
+                        "[whatsapp_data] quick_check could not run for {} ({e:#}); \
+                         treating as corrupt",
+                        self.db_path.display()
+                    );
+                }
+            }
+        } else {
+            log::warn!(
+                "[whatsapp_data] corrupt-recovery: {} is missing; rebuilding fresh schema",
+                self.db_path.display()
+            );
+        }
+
+        // 2. Quarantine the main DB + WAL/SHM side-files to `<name>.corrupt-<ts>`.
+        let ts = Self::now_secs();
+        let mut quarantined = 0usize;
+        for suffix in &["", "-wal", "-shm"] {
+            let src = with_name_suffix(&self.db_path, suffix);
+            if !src.exists() {
+                continue;
+            }
+            let dst = with_name_suffix(&src, &format!(".corrupt-{ts}"));
+            std::fs::rename(&src, &dst).with_context(|| {
+                format!(
+                    "quarantine corrupt whatsapp_data file {} -> {}",
+                    src.display(),
+                    dst.display()
+                )
+            })?;
+            log::warn!(
+                "[whatsapp_data] quarantined {} -> {}",
+                src.display(),
+                dst.display()
+            );
+            quarantined += 1;
+        }
+
+        // 3. Rebuild an empty schema by re-running init on a fresh file. The
+        //    damaged rows are not silently dropped — they live on in the
+        //    `.corrupt-<ts>` copy.
+        self.init_schema()
+            .context("rebuild whatsapp_data schema after quarantining corrupt DB")?;
+
+        // 4. Confirm the rebuilt image is structurally sound. This result is
+        //    load-bearing: `report_and_recover` only resets the process-wide
+        //    `CORRUPT_REPORTED` latch (and logs "ingest will resume") on
+        //    `Ok(true)`. If the rebuild still fails integrity_check — or the
+        //    check itself can't run — we MUST surface `Err`, otherwise the
+        //    latch resets, re-arming Sentry to page on the next scan tick and
+        //    breaking the report-once-per-episode guarantee this recovery
+        //    exists to protect.
+        match self.integrity_check_ok() {
+            Ok(true) => {
+                log::warn!(
+                    "[whatsapp_data] corruption recovery complete: quarantined {quarantined} file(s), \
+                     rebuilt empty schema, integrity_check=ok at {}",
+                    self.db_path.display()
+                );
+                Ok(true)
+            }
+            Ok(false) => {
+                log::error!(
+                    "[whatsapp_data] rebuilt DB still fails integrity_check at {}",
+                    self.db_path.display()
+                );
+                Err(anyhow::anyhow!(
+                    "rebuilt whatsapp_data db still fails integrity_check at {}",
+                    self.db_path.display()
+                ))
+            }
+            Err(e) => Err(e.context("integrity_check after rebuild could not run")),
+        }
+    }
+
+    /// Run `PRAGMA quick_check(1)` on a fresh, short-lived connection. Returns
+    /// `Ok(true)` when the structural scan reports `"ok"`, `Ok(false)` on any
+    /// reported corruption, and `Err` when the check itself can't run (file
+    /// unopenable / header unreadable — itself a corruption signal the caller
+    /// treats as malformed).
+    fn quick_check_ok(&self) -> Result<bool> {
+        let conn = Connection::open(&self.db_path)
+            .with_context(|| format!("open for quick_check: {}", self.db_path.display()))?;
+        let _ = conn.busy_timeout(BUSY_TIMEOUT);
+        let result: String = conn
+            .query_row("PRAGMA quick_check(1)", [], |row| row.get(0))
+            .context("running PRAGMA quick_check")?;
+        Ok(result.eq_ignore_ascii_case("ok"))
+    }
+
+    /// Run `PRAGMA integrity_check(1)` against the (rebuilt) DB to confirm it is
+    /// structurally sound. Returns `Ok(true)` when it reports `"ok"`.
+    fn integrity_check_ok(&self) -> Result<bool> {
+        #[cfg(test)]
+        if FORCE_INTEGRITY_CHECK_FAIL.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
+        let conn = self.open_conn()?;
+        let result: String = conn
+            .query_row("PRAGMA integrity_check(1)", [], |row| row.get(0))
+            .context("running PRAGMA integrity_check")?;
+        Ok(result.eq_ignore_ascii_case("ok"))
+    }
+
     /// Upsert chat metadata rows.  Returns the number of rows inserted or updated.
     pub fn upsert_chats(
         &self,
@@ -128,7 +425,7 @@ impl WhatsAppDataStore {
             .write_lock
             .lock()
             .map_err(|e| anyhow::anyhow!("whatsapp_data write lock poisoned: {e}"))?;
-        retry_on_sqlite_busy("upsert_chats", || {
+        self.write_with_corrupt_recovery("upsert_chats", || {
             self.upsert_chats_inner(account_id, chats)
         })
     }
@@ -172,7 +469,7 @@ impl WhatsAppDataStore {
             .write_lock
             .lock()
             .map_err(|e| anyhow::anyhow!("whatsapp_data write lock poisoned: {e}"))?;
-        retry_on_sqlite_busy("upsert_messages", || {
+        self.write_with_corrupt_recovery("upsert_messages", || {
             self.upsert_messages_inner(account_id, msgs)
         })
     }
@@ -265,7 +562,7 @@ impl WhatsAppDataStore {
             .write_lock
             .lock()
             .map_err(|e| anyhow::anyhow!("whatsapp_data write lock poisoned: {e}"))?;
-        retry_on_sqlite_busy("prune_old_messages", || {
+        self.write_with_corrupt_recovery("prune_old_messages", || {
             self.prune_old_messages_inner(cutoff_ts)
         })
     }
@@ -275,10 +572,17 @@ impl WhatsAppDataStore {
         let now = Self::now_secs();
 
         // Collect affected (account_id, chat_id) pairs before deleting.
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT account_id, chat_id FROM wa_messages
-             WHERE timestamp > 0 AND timestamp < ?1",
-        )?;
+        // Contextualized so a `SQLITE_CORRUPT` surfaced while compiling this
+        // scan still carries a `prune` frame marker the observability
+        // classifier keys on (otherwise a boot-time prune corruption would
+        // reach Sentry unfiltered — the prepare of a plain SELECT still reads
+        // the schema/root page where damage commonly lives).
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT account_id, chat_id FROM wa_messages
+                 WHERE timestamp > 0 AND timestamp < ?1",
+            )
+            .context("prune old wa_messages: scan affected chats")?;
         let affected: Vec<(String, String)> = stmt
             .query_map(params![cutoff_ts], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<rusqlite::Result<_>>()
@@ -499,6 +803,22 @@ impl WhatsAppDataStore {
         );
         Ok(msgs)
     }
+}
+
+/// Append `suffix` to the *file name* of `path` (so `whatsapp_data.db` + `-wal`
+/// = `whatsapp_data.db-wal`, and `whatsapp_data.db` + `.corrupt-123` =
+/// `whatsapp_data.db.corrupt-123`). SQLite names its side-files this way (not
+/// as a new extension), and the quarantine keeps the corrupt image alongside
+/// the original for inspection.
+fn with_name_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut p = path.to_path_buf();
+    let name = p
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    p.set_file_name(format!("{name}{suffix}"));
+    p
 }
 
 fn map_chat_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WhatsAppChat> {

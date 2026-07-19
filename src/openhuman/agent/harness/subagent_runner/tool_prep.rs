@@ -252,6 +252,11 @@ mod tests {
             "schedule_task",
             "make_presentation",
             "archive_session",
+            // `use_mcp_server` is `mcp_agent`'s `delegate_name`; the agent —
+            // and therefore this delegate tool — is compiled out with the
+            // `mcp` feature (#4799). `setup_mcp_server` belongs to
+            // `mcp_setup`, which stays registered in both builds.
+            #[cfg(feature = "mcp")]
             "use_mcp_server",
             "setup_mcp_server",
         ] {

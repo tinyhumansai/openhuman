@@ -177,7 +177,8 @@ describe('Notifications', () => {
     // may not have a bottom-tab button. Retry the hash set if it bounces.
     for (let attempt = 0; attempt < 3; attempt++) {
       await browser.execute(() => {
-        window.location.hash = '/notifications';
+        // `/notifications` now lands on the Welcome landing; jump to the alerts view.
+        window.location.hash = '/notifications?view=main';
       });
       await browser.pause(1_500);
       const h = await browser.execute(() => window.location.hash);

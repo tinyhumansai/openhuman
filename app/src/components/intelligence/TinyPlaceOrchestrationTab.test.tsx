@@ -164,7 +164,7 @@ describe('TinyPlaceOrchestrationTab', () => {
     });
   });
 
-  it('steering header shows the directive and Run review triggers the tinyplace kind', async () => {
+  it('steering header shows the directive and Run review triggers a subconscious tick', async () => {
     const { subconsciousTrigger } = await import('../../utils/tauriCommands/subconscious');
     statusMock.mockResolvedValue({
       steering: {
@@ -184,7 +184,7 @@ describe('TinyPlaceOrchestrationTab', () => {
     expect(within(header).getByText('prioritize the billing migration')).toBeInTheDocument();
 
     fireEvent.click(within(header).getByText('tinyplaceOrchestration.steeringHeader.runReview'));
-    await waitFor(() => expect(subconsciousTrigger).toHaveBeenCalledWith('tinyplace'));
+    await waitFor(() => expect(subconsciousTrigger).toHaveBeenCalledWith('all'));
   });
 
   it('renders pinned master and subconscious chats plus app sessions', async () => {
@@ -611,5 +611,11 @@ describe('TinyPlaceOrchestrationTab', () => {
         sessionId: 'sess-x',
       })
     );
+  });
+
+  it('shows the cloud-unreachable banner when the hosted brain is offline', async () => {
+    statusMock.mockResolvedValue({ cloudReachable: false });
+    render(<TinyPlaceOrchestrationTab />);
+    expect(await screen.findByText('orchestration.cloudUnreachable')).toBeInTheDocument();
   });
 });

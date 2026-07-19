@@ -17,7 +17,7 @@ use crate::core::event_bus::BackendMeetTurn;
 use crate::openhuman::config::{AutoSummarizePolicy, Config};
 use crate::openhuman::inference::provider::create_chat_model;
 use tinyagents::harness::message::Message;
-use tinyagents::harness::model::{ChatModel, ModelRequest};
+use tinyagents::harness::model::ModelRequest;
 
 use super::types::{ActionItem, ActionItemKind, MeetingSummary};
 

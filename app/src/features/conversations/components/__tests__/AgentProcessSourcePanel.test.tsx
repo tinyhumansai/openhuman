@@ -15,6 +15,7 @@ const fetchEntry = (id: string, url: string): ToolTimelineEntry => ({
   id,
   name: 'web_fetch',
   round: 1,
+  seq: 0,
   status: 'success',
   argsBuffer: JSON.stringify({ url }),
 });
@@ -82,6 +83,7 @@ describe('AgentProcessSourcePanel', () => {
             id: 'sa',
             name: 'subagent:researcher',
             round: 1,
+            seq: 0,
             status: 'success',
             subagent: {
               taskId: 'sub-1',
@@ -103,8 +105,8 @@ describe('AgentProcessSourcePanel', () => {
       <AgentProcessSourcePanel
         open
         entries={[
-          { id: 'c1', name: 'file_read', round: 1, status: 'success' },
-          { id: 'c2', name: 'file_read', round: 1, status: 'success' },
+          { id: 'c1', name: 'file_read', round: 1, seq: 0, status: 'success' },
+          { id: 'c2', name: 'file_read', round: 1, seq: 0, status: 'success' },
         ]}
         transcript={[
           { kind: 'narration', round: 1, seq: 0, text: 'Let me check both docs first.' },
@@ -132,6 +134,7 @@ describe('AgentProcessSourcePanel', () => {
             id: 'sa-1',
             name: 'subagent:researcher',
             round: 1,
+            seq: 0,
             status: 'success',
             subagent: {
               taskId: 'task-1',
@@ -160,6 +163,7 @@ describe('AgentProcessSourcePanel', () => {
       id: 'sa-scope',
       name: 'subagent:researcher',
       round: 1,
+      seq: 0,
       status: 'success',
       subagent: {
         taskId: 'task-9',
@@ -174,7 +178,7 @@ describe('AgentProcessSourcePanel', () => {
         entries={[
           scoped,
           // A second, unrelated step that must NOT show in the scoped view.
-          { id: 'other', name: 'web_fetch', round: 1, status: 'success' },
+          { id: 'other', name: 'web_fetch', round: 1, seq: 0, status: 'success' },
         ]}
         transcript={[{ kind: 'narration', round: 1, seq: 0, text: 'whole-run narration' }]}
         scopedEntry={scoped}
@@ -195,6 +199,7 @@ describe('AgentProcessSourcePanel', () => {
       id: 'tool-result-only',
       name: 'run_code',
       round: 1,
+      seq: 0,
       status: 'success',
       argsBuffer: '{"command":"pnpm test"}',
       result: 'exit 0\nAll checks passed.',
@@ -211,7 +216,7 @@ describe('AgentProcessSourcePanel', () => {
     renderPanel(
       <AgentProcessSourcePanel
         open
-        entries={[{ id: 'x', name: 'file_read', round: 1, status: 'success' }]}
+        entries={[{ id: 'x', name: 'file_read', round: 1, seq: 0, status: 'success' }]}
         onClose={() => {}}
       />
     );

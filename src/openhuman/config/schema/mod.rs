@@ -50,7 +50,7 @@ mod update;
 pub use accessibility::ScreenIntelligenceConfig;
 pub use agent::{
     AgentConfig, DelegateAgentConfig, MemoryContextWindow, MemoryWindowLimits,
-    OrchestratorModelConfig, TeamModelConfig,
+    OrchestratorModelConfig, RequiredOutputContract, TeamModelConfig,
 };
 pub use autocomplete::AutocompleteConfig;
 pub use autonomy::AutonomyConfig;
@@ -71,7 +71,10 @@ pub use local_ai::{LocalAiConfig, LocalAiUsage};
 pub use meet::{AutoJoinPolicy, AutoSummarizePolicy, CalendarProvider, MeetConfig};
 pub use node::NodeConfig;
 pub use observability::{AgentTracingBackend, AgentTracingConfig, ObservabilityConfig};
-pub use orchestration::OrchestrationConfig;
+pub use orchestration::{
+    MedullaClientConfig, MedullaCycleConfig, MedullaCycleLimits, MedullaPromptOverrides,
+    MedullaVerification, OrchestrationConfig,
+};
 pub use privacy::{PrivacyConfig, PrivacyMode};
 pub use proxy::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,

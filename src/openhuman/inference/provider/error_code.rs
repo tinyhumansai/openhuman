@@ -13,7 +13,7 @@
 //! runs their own provider key, no `errorCode` is present). The presence of an
 //! `errorCode` is therefore the single load-bearing signal for two decisions:
 //!
-//! 1. **Classification** ([`super::super::super::channels::providers::web_errors::classify_inference_error`]):
+//! 1. **Classification** ([`super::super::super::web_chat::web_errors::classify_inference_error`]):
 //!    when an `errorCode` is present, branch on it FIRST and ignore the
 //!    substring heuristics; when it is absent, fall back to the substring
 //!    ladder (the BYO / direct-provider path, whose "check your API key" /

@@ -26,6 +26,10 @@ use crate::openhuman::inference::provider::{
 };
 use crate::openhuman::tools::ToolSpec;
 
+pub(super) type TurnChatModel = Arc<dyn ChatModel<()>>;
+pub(super) type TierRoutes = Vec<(String, TurnChatModel)>;
+pub(super) type BuiltTurnModels = (TurnChatModel, TierRoutes, TurnChatModel);
+
 /// Translate a harness [`ModelRequest`] into openhuman's message list + tool
 /// specs (shared by the buffered and streaming paths).
 fn build_chat_inputs(
@@ -61,11 +65,11 @@ fn build_chat_inputs(
 ///
 /// The text-mode fallback parse needs each tool's positional parameter layout
 /// to reconstruct named JSON arguments from a P-Format `name[a|b]` body. The
-/// harness always populates `request.tools` (schemas are rendered into the
-/// prompt for prompt-guided providers, or advertised natively otherwise), so
-/// the registry is available in both modes. An empty registry (no tools
-/// advertised) makes the P-Format-aware parser short-circuit to the canonical
-/// grammar, so this is behaviour-neutral when there are no tools.
+/// harness populates `request.tools` when tools are available (schemas are
+/// rendered into the prompt for prompt-guided providers, or advertised natively
+/// otherwise), so the registry is available in both modes. Tool-less requests
+/// skip fallback parsing entirely; this empty registry is therefore consulted
+/// only alongside a non-empty advertised tool list.
 fn pformat_registry_from_request(
     request: &ModelRequest,
 ) -> crate::openhuman::agent::pformat::PFormatRegistry {
@@ -84,22 +88,25 @@ fn pformat_registry_from_request(
 /// Translate an openhuman [`ChatResponse`] into a harness [`ModelResponse`]
 /// (visible text + tool calls + token usage).
 ///
-/// Native `tool_calls` take precedence; when absent, the response text is parsed
-/// for prompt-guided (`<tool_call>…` / p-format) calls — matching the legacy
-/// dispatcher — so text-mode models drive the tinyagents loop too. The visible
-/// text is the prose with any tool-call markup stripped.
+/// Native `tool_calls` take precedence; when absent and the request advertised
+/// tools, the response text is parsed for prompt-guided (`<tool_call>…` /
+/// p-format) calls — matching the legacy dispatcher — so text-mode models drive
+/// the tinyagents loop too. Tool-less requests preserve response text verbatim,
+/// including literal tool-call examples. When parsing is enabled, visible text
+/// is the prose with any parsed tool-call markup stripped.
 ///
 /// `pformat_registry` carries the advertised tools' positional layouts so the
 /// text-mode fallback can recover P-Format (`name[a|b]`) calls that ~10 builtin
 /// prompts still teach — the migrated parse path had dropped that grammar and
 /// silently lost those calls (issue #4465). It is empty for the native-tool
-/// path (where `response.tool_calls` is used directly) and for tool-less turns.
+/// path, where `response.tool_calls` is used directly.
 ///
 /// Unknown-tool recovery is handled by `RunPolicy::unknown_tool`, so the model
 /// adapter preserves the provider-requested tool name.
 fn response_to_model_response(
     response: &ChatResponse,
     pformat_registry: &crate::openhuman::agent::pformat::PFormatRegistry,
+    parse_text_tool_calls: bool,
 ) -> ModelResponse {
     let (visible_text, tool_calls): (String, Vec<TaToolCall>) = if !response.tool_calls.is_empty() {
         let calls = response
@@ -109,10 +116,12 @@ fn response_to_model_response(
                 id: tc.id.clone(),
                 name: tc.name.clone(),
                 arguments: serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null),
+                invalid: None,
             })
             .collect();
         (response.text.clone().unwrap_or_default(), calls)
-    } else if let Some(text) = response.text.as_deref() {
+    } else if parse_text_tool_calls {
+        let text = response.text.as_deref().unwrap_or_default();
         let (prose, parsed) =
             crate::openhuman::agent::harness::parse_tool_calls_with_pformat(text, pformat_registry);
         if parsed.is_empty() {
@@ -127,12 +136,13 @@ fn response_to_model_response(
                     id: p.id.unwrap_or_else(|| format!("call_{i}")),
                     name: p.name,
                     arguments: p.arguments,
+                    invalid: None,
                 })
                 .collect();
             (prose, calls)
         }
     } else {
-        (String::new(), Vec::new())
+        (response.text.clone().unwrap_or_default(), Vec::new())
     };
 
     let mut content = Vec::new();
@@ -215,6 +225,47 @@ fn openhuman_usage_meta_raw(usage: Option<&UsageInfo>) -> Option<serde_json::Val
         context_window: u.context_window,
     };
     Some(serde_json::json!({ OPENHUMAN_USAGE_META_KEY: meta }))
+}
+
+/// Merge the host billing/context metadata the crate [`Usage`] cannot carry into
+/// a crate [`ModelResponse::raw`] under [`OPENHUMAN_USAGE_META_KEY`], so
+/// [`usage_info_from_response`] recovers the charged-USD + context window from a
+/// crate-native model (e.g. [`OpenHumanBackendModel`](crate::openhuman::inference::provider::OpenHumanBackendModel))
+/// exactly as it does from a [`ProviderModel`].
+///
+/// The crate `OpenAiModel` leaves the managed backend's `openhuman.{billing,usage}`
+/// envelope only on the raw wire JSON — it has no field for charged USD — so the
+/// crate-native managed path would otherwise report `$0` charged and fall back to
+/// the catalog estimate (issue #4249, Phase 3 usage-parity). This is the symmetric
+/// writer for [`usage_info_from_response`]'s reader.
+///
+/// No-op when both values are zero (keeps billing-free responses `raw`-clean);
+/// otherwise inserts the meta key into the existing raw object (preserving the
+/// wire JSON) or creates a fresh object.
+pub(crate) fn merge_openhuman_usage_meta(
+    raw: Option<serde_json::Value>,
+    charged_amount_usd: f64,
+    context_window: u64,
+) -> Option<serde_json::Value> {
+    if charged_amount_usd <= 0.0 && context_window == 0 {
+        return raw;
+    }
+    let meta = match serde_json::to_value(OpenhumanUsageMeta {
+        charged_amount_usd,
+        context_window,
+    }) {
+        Ok(v) => v,
+        Err(_) => return raw,
+    };
+    match raw {
+        Some(serde_json::Value::Object(mut obj)) => {
+            obj.insert(OPENHUMAN_USAGE_META_KEY.to_string(), meta);
+            Some(serde_json::Value::Object(obj))
+        }
+        // A non-object (or absent) raw can't hold the key alongside wire fields —
+        // stash the meta on its own so the reader still recovers it.
+        _ => Some(serde_json::json!({ OPENHUMAN_USAGE_META_KEY: meta })),
+    }
 }
 
 /// Reconstruct a host [`UsageInfo`] from a crate [`ModelResponse`], recovering
@@ -348,6 +399,41 @@ pub(crate) fn provider_chat_model(
     Arc::new(ProviderModel::new(provider, model, temperature))
 }
 
+pub(super) struct MaxTokensModel {
+    inner: Arc<dyn ChatModel<()>>,
+    max_tokens: u32,
+}
+
+impl MaxTokensModel {
+    pub(super) fn new(inner: Arc<dyn ChatModel<()>>, max_tokens: u32) -> Self {
+        Self { inner, max_tokens }
+    }
+
+    fn cap(&self, mut request: ModelRequest) -> ModelRequest {
+        request.max_tokens = Some(
+            request
+                .max_tokens
+                .map_or(self.max_tokens, |current| current.min(self.max_tokens)),
+        );
+        request
+    }
+}
+
+#[async_trait]
+impl ChatModel<()> for MaxTokensModel {
+    fn profile(&self) -> Option<&ModelProfile> {
+        self.inner.profile()
+    }
+
+    async fn invoke(&self, state: &(), request: ModelRequest) -> tinyagents::Result<ModelResponse> {
+        self.inner.invoke(state, self.cap(request)).await
+    }
+
+    async fn stream(&self, state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
+        self.inner.stream(state, self.cap(request)).await
+    }
+}
+
 impl ProviderModel {
     /// Build a model adapter for `provider`, pinned to `model`/`temperature`.
     ///
@@ -441,6 +527,15 @@ impl ProviderModel {
         self.profile.reasoning = reasoning;
         self
     }
+
+    /// Override tool calling for this model without changing the underlying
+    /// provider. Text-mode sub-agents use this to preserve injected providers
+    /// while omitting native tool schemas from their requests.
+    pub(super) fn with_tool_calling(mut self, enabled: bool) -> Self {
+        self.profile.tool_calling = enabled;
+        self.profile.parallel_tool_calls = enabled;
+        self
+    }
 }
 
 #[async_trait]
@@ -454,7 +549,7 @@ impl ChatModel<()> for ProviderModel {
         _state: &(),
         request: ModelRequest,
     ) -> tinyagents::Result<ModelResponse> {
-        let native = self.provider.supports_native_tools();
+        let native = self.profile.tool_calling;
         let (messages, specs) = build_chat_inputs(&request, native);
         // Honor a per-request temperature when the caller sets one (e.g. one-shot
         // inference callers that reuse a single model across prompts of differing
@@ -545,7 +640,11 @@ impl ChatModel<()> for ProviderModel {
         // Provider usage (charged USD / context window / cache-creation-reasoning)
         // now reaches the event bridge via `UsageCarryMiddleware`, which reads it
         // off the returned `ModelResponse` (G1) — the adapter no longer carries it.
-        Ok(response_to_model_response(&response, &pformat_registry))
+        Ok(response_to_model_response(
+            &response,
+            &pformat_registry,
+            !request.tools.is_empty(),
+        ))
     }
 
     /// Stream the model response, forwarding openhuman's `ProviderDelta` events
@@ -558,11 +657,12 @@ impl ChatModel<()> for ProviderModel {
     /// aggregated response, which still arrives as the terminal `Completed`
     /// item. Native tool calls always ride on `Completed`.
     async fn stream(&self, _state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
-        let native = self.provider.supports_native_tools();
+        let native = self.profile.tool_calling;
         let (messages, specs) = build_chat_inputs(&request, native);
         // Positional layouts for the text-mode P-Format fallback (issue #4465);
         // built here so it can move into the `'static` producer task below.
         let pformat_registry = pformat_registry_from_request(&request);
+        let parse_text_tool_calls = !request.tools.is_empty();
         let provider = self.provider.clone();
         let model = self.model.clone();
         // Per-request temperature when set (see `invoke`), else the pinned value;
@@ -662,7 +762,11 @@ impl ChatModel<()> for ProviderModel {
                     // Provider usage rides the `Completed` response's crate `Usage`
                     // + raw (G1); `UsageCarryMiddleware` reads it off the folded
                     // response for the bridge, so the adapter no longer pushes here.
-                    ModelStreamItem::Completed(response_to_model_response(&resp, &pformat_registry))
+                    ModelStreamItem::Completed(response_to_model_response(
+                        &resp,
+                        &pformat_registry,
+                        parse_text_tool_calls,
+                    ))
                 }
                 Err(e) => {
                     // Streaming failures ride `ModelStreamItem::Failed(String)`, which
@@ -740,7 +844,7 @@ mod g1_usage_tests {
             }),
             reasoning_content: None,
         };
-        let model_response = response_to_model_response(&chat, &empty_registry());
+        let model_response = response_to_model_response(&chat, &empty_registry(), false);
 
         // Crate Usage carries every token breakdown natively.
         let usage = model_response.usage.expect("usage present");
@@ -773,7 +877,7 @@ mod g1_usage_tests {
             }),
             reasoning_content: None,
         };
-        let model_response = response_to_model_response(&chat, &empty_registry());
+        let model_response = response_to_model_response(&chat, &empty_registry(), false);
         assert!(
             model_response.raw.is_none(),
             "no charged USD / window ⇒ raw stays None"
@@ -792,8 +896,36 @@ mod g1_usage_tests {
             usage: None,
             reasoning_content: None,
         };
-        let model_response = response_to_model_response(&chat, &empty_registry());
+        let model_response = response_to_model_response(&chat, &empty_registry(), false);
         assert!(usage_info_from_response(&model_response).is_none());
+    }
+
+    #[test]
+    fn tool_less_response_preserves_literal_tool_call_markup() {
+        let text = r#"Example: <tool_call>{"name":"lookup","arguments":{}}</tool_call>"#;
+        let chat = ChatResponse {
+            text: Some(text.to_string()),
+            ..Default::default()
+        };
+
+        let response = response_to_model_response(&chat, &empty_registry(), false);
+
+        assert_eq!(response.text(), text);
+        assert!(response.message.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn tool_enabled_response_still_extracts_tool_call_markup() {
+        let chat = ChatResponse {
+            text: Some(r#"<tool_call>{"name":"lookup","arguments":{}}</tool_call>"#.to_string()),
+            ..Default::default()
+        };
+
+        let response = response_to_model_response(&chat, &empty_registry(), true);
+
+        assert_eq!(response.text(), "");
+        assert_eq!(response.message.tool_calls.len(), 1);
+        assert_eq!(response.message.tool_calls[0].name, "lookup");
     }
 }
 

@@ -5,10 +5,26 @@ use std::sync::Arc;
 use super::cloud::{
     OpenHumanCloudEmbedding, DEFAULT_CLOUD_EMBEDDING_DIMENSIONS, DEFAULT_CLOUD_EMBEDDING_MODEL,
 };
-use super::cohere::CohereEmbedding;
-use super::provider_trait::EmbeddingProvider;
-use super::voyage::VoyageEmbedding;
-use super::{NoopEmbedding, OllamaEmbedding, OpenAiEmbedding};
+use super::provider_trait::{EmbeddingProvider, TinyAgentsEmbeddingProvider};
+use tinyagents::harness::embeddings::{
+    CohereEmbeddingModel, NoopEmbeddingModel, OllamaEmbeddingModel, OpenAiEmbeddingModel,
+    VoyageEmbeddingModel,
+};
+
+fn openai_model(
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    dims: usize,
+    required_key: bool,
+) -> OpenAiEmbeddingModel {
+    OpenAiEmbeddingModel::new(api_key)
+        .with_base_url(base_url)
+        .with_model(model)
+        .with_dimensions(dims)
+        .with_send_dimensions(model_supports_dimensions(model))
+        .with_required_api_key(required_key)
+}
 
 /// Whether to send the OpenAI `dimensions` request-body parameter for this
 /// model. Only the `text-embedding-3-*` family honors it (it's how 3-large is
@@ -43,25 +59,39 @@ pub fn create_embedding_provider(
         "cloud" | "managed" => Ok(Box::new(OpenHumanCloudEmbedding::new(
             None, None, true, model, dims,
         ))),
-        "voyage" => Ok(Box::new(VoyageEmbedding::new("", model, dims))),
+        "voyage" => Ok(TinyAgentsEmbeddingProvider::boxed(
+            VoyageEmbeddingModel::with_options(
+                "",
+                model,
+                dims,
+                tinyagents::harness::embeddings::VOYAGE_API_BASE,
+            ),
+        )),
         "ollama" => {
             let base_url = crate::openhuman::inference::local::ollama_base_url();
-            Ok(Box::new(OllamaEmbedding::try_new(&base_url, model, dims)?))
-        }
-        "openai" => Ok(Box::new(
-            OpenAiEmbedding::new("https://api.openai.com", "", model, dims)
-                .with_send_dimensions(model_supports_dimensions(model))
-                .with_required_api_key(true),
-        )),
-        "cohere" => Ok(Box::new(CohereEmbedding::new("", model, dims))),
-        name if name.starts_with("custom:") => {
-            let base_url = name.strip_prefix("custom:").unwrap_or("");
-            Ok(Box::new(
-                OpenAiEmbedding::new(base_url, "", model, dims)
-                    .with_send_dimensions(model_supports_dimensions(model)),
+            Ok(TinyAgentsEmbeddingProvider::boxed(
+                OllamaEmbeddingModel::try_new(&base_url, model, dims)?,
             ))
         }
-        "none" => Ok(Box::new(NoopEmbedding)),
+        "openai" => Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
+            "https://api.openai.com",
+            "",
+            model,
+            dims,
+            true,
+        ))),
+        "cohere" => Ok(TinyAgentsEmbeddingProvider::boxed(
+            CohereEmbeddingModel::new("")
+                .with_model(model)
+                .with_dimensions(dims),
+        )),
+        name if name.starts_with("custom:") => {
+            let base_url = name.strip_prefix("custom:").unwrap_or("");
+            Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
+                base_url, "", model, dims, false,
+            )))
+        }
+        "none" => Ok(TinyAgentsEmbeddingProvider::boxed(NoopEmbeddingModel)),
         unknown => Err(anyhow::anyhow!(
             "unknown embedding provider: \"{unknown}\". \
              Supported: \"managed\", \"voyage\", \"openai\", \"cohere\", \
@@ -85,32 +115,45 @@ pub fn create_embedding_provider_with_credentials(
         "cloud" | "managed" => Ok(Box::new(OpenHumanCloudEmbedding::new(
             None, None, true, model, dims,
         ))),
-        "voyage" => Ok(Box::new(VoyageEmbedding::new(api_key, model, dims))),
+        "voyage" => Ok(TinyAgentsEmbeddingProvider::boxed(
+            VoyageEmbeddingModel::with_options(
+                api_key,
+                model,
+                dims,
+                tinyagents::harness::embeddings::VOYAGE_API_BASE,
+            ),
+        )),
         "ollama" => {
             let base_url = crate::openhuman::inference::local::ollama_base_url();
-            Ok(Box::new(OllamaEmbedding::try_new(&base_url, model, dims)?))
+            Ok(TinyAgentsEmbeddingProvider::boxed(
+                OllamaEmbeddingModel::try_new(&base_url, model, dims)?,
+            ))
         }
-        "openai" => Ok(Box::new(
-            OpenAiEmbedding::new("https://api.openai.com", api_key, model, dims)
-                .with_send_dimensions(model_supports_dimensions(model))
-                .with_required_api_key(true),
+        "openai" => Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
+            "https://api.openai.com",
+            api_key,
+            model,
+            dims,
+            true,
+        ))),
+        "cohere" => Ok(TinyAgentsEmbeddingProvider::boxed(
+            CohereEmbeddingModel::new(api_key)
+                .with_model(model)
+                .with_dimensions(dims),
         )),
-        "cohere" => Ok(Box::new(CohereEmbedding::new(api_key, model, dims))),
         "custom" => {
             let url = custom_endpoint.unwrap_or("");
-            Ok(Box::new(
-                OpenAiEmbedding::new(url, api_key, model, dims)
-                    .with_send_dimensions(model_supports_dimensions(model)),
-            ))
+            Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
+                url, api_key, model, dims, false,
+            )))
         }
         name if name.starts_with("custom:") => {
             let url = custom_endpoint.unwrap_or_else(|| name.strip_prefix("custom:").unwrap_or(""));
-            Ok(Box::new(
-                OpenAiEmbedding::new(url, api_key, model, dims)
-                    .with_send_dimensions(model_supports_dimensions(model)),
-            ))
+            Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
+                url, api_key, model, dims, false,
+            )))
         }
-        "none" => Ok(Box::new(NoopEmbedding)),
+        "none" => Ok(TinyAgentsEmbeddingProvider::boxed(NoopEmbeddingModel)),
         unknown => Err(anyhow::anyhow!(
             "unknown embedding provider: \"{unknown}\". \
              Supported: \"managed\", \"voyage\", \"openai\", \"cohere\", \
@@ -137,5 +180,7 @@ pub fn default_embedding_provider() -> Arc<dyn EmbeddingProvider> {
 /// Returns the local Ollama-backed embedding provider. Only used when the
 /// caller has explicitly opted into local-only embeddings.
 pub fn default_local_embedding_provider() -> Arc<dyn EmbeddingProvider> {
-    Arc::new(OllamaEmbedding::default())
+    Arc::new(TinyAgentsEmbeddingProvider::new(
+        OllamaEmbeddingModel::default(),
+    ))
 }

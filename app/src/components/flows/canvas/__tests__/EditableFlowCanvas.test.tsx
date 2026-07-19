@@ -9,11 +9,13 @@
  * unit-tested directly against `isValidFlowConnection` in
  * `lib/flows/graphAdapter.test.ts`.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { createRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { FlowEdge, FlowNode } from '../../../../lib/flows/graphAdapter';
+import type { FlowNode } from '../../../../lib/flows/graphAdapter';
 import type { WorkflowGraph } from '../../../../lib/flows/types';
+import type { EditableFlowCanvasHandle } from '../EditableFlowCanvas';
 import FlowCanvas from '../FlowCanvas';
 
 // `FlowNodeComponent` / palette call `useT()`, which falls back to the bundled
@@ -69,8 +71,12 @@ describe('FlowCanvas (editable)', () => {
 
   it('serializes the live canvas to a valid WorkflowGraph on Save', () => {
     const onSave = vi.fn<(graph: WorkflowGraph) => void>();
+    // Save lives in the page header now and drives the canvas via the imperative
+    // handle, so exercise that handle directly here.
+    const ref = createRef<EditableFlowCanvasHandle>();
     renderCanvas(
       <FlowCanvas
+        ref={ref}
         editable
         nodes={[triggerNode()]}
         edges={[]}
@@ -79,9 +85,9 @@ describe('FlowCanvas (editable)', () => {
       />
     );
 
-    // Add an agent node, then save.
+    // Add an agent node, then save via the handle.
     fireEvent.click(screen.getByTestId('flow-palette-item-agent'));
-    fireEvent.click(screen.getByTestId('flow-editor-save'));
+    act(() => ref.current?.save());
 
     expect(onSave).toHaveBeenCalledTimes(1);
     const graph = onSave.mock.calls[0][0];
@@ -93,12 +99,16 @@ describe('FlowCanvas (editable)', () => {
     expect(graph.edges).toEqual([]);
   });
 
-  it('does not render Delete/Validate in the top toolbar (moved onto node cards)', () => {
+  it('keeps only undo/redo in the canvas toolbar (Save/Discard/Delete/Validate moved out)', () => {
     renderCanvas(<FlowCanvas editable nodes={[triggerNode()]} edges={[]} />);
     expect(screen.queryByTestId('flow-editor-delete')).not.toBeInTheDocument();
     expect(screen.queryByTestId('flow-editor-validate')).not.toBeInTheDocument();
-    // Undo/redo + Save still live in the toolbar.
+    // Save/Discard now live in the page header, not the canvas toolbar.
+    expect(screen.queryByTestId('flow-editor-save')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('flow-editor-discard')).not.toBeInTheDocument();
+    // Undo/redo remain on the canvas.
     expect(screen.getByTestId('flow-editor-undo')).toBeInTheDocument();
+    expect(screen.getByTestId('flow-editor-redo')).toBeInTheDocument();
   });
 
   it('shows the onboarding hint on a near-empty canvas and hides it after a node is added', () => {
@@ -127,10 +137,5 @@ describe('FlowCanvas (editable)', () => {
     // Redo brings it back.
     fireEvent.click(screen.getByTestId('flow-editor-redo'));
     expect(screen.getAllByTestId('flow-node')).toHaveLength(2);
-  });
-
-  it('exposes no Save button when onSave is not provided', () => {
-    renderCanvas(<FlowCanvas editable nodes={[triggerNode()]} edges={[] as FlowEdge[]} />);
-    expect(screen.queryByTestId('flow-editor-save')).not.toBeInTheDocument();
   });
 });

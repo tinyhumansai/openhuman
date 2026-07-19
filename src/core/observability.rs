@@ -151,6 +151,23 @@ pub enum ExpectedErrorKind {
     /// SQLite lock text, so unrelated DB lock errors in other domains still
     /// reach Sentry.
     WhatsAppDataSqliteBusy,
+    /// WhatsApp structured-ingest write hit a `SQLITE_CORRUPT` malformed on-disk
+    /// image ("database disk image is malformed" / "file is not a database").
+    ///
+    /// This is **defense-in-depth after** the store's own quarantine + rebuild
+    /// recovery (`whatsapp_data::store::WhatsAppDataStore::recover_corrupt_db`),
+    /// never instead of it: the store detects the corrupt image, reports it to
+    /// Sentry exactly once (process-wide latch), quarantines the damaged file,
+    /// and rebuilds an empty schema so ingest resumes. This classifier only
+    /// demotes the residual noise that can leak in the narrow window between
+    /// detection and a successful rebuild, or when a rebuild keeps failing on a
+    /// wedged host filesystem the app can't fix. Without both, one corrupt file
+    /// re-pages on every 2–30s scan tick (Sentry TAURI-RUST-KNH: 1,813
+    /// escalating events from a single host).
+    ///
+    /// Anchored to the whatsapp ingest failure envelope plus the malformed-image
+    /// text, so unrelated corruption in other domains still reaches Sentry.
+    WhatsAppDataSqliteCorrupt,
     /// Host disk is full — the filesystem returned `ENOSPC` to a write,
     /// `mkdir`, or `open` syscall. The user cannot recover from this without
     /// freeing space on their machine, and Sentry has no remediation path
@@ -194,7 +211,7 @@ pub enum ExpectedErrorKind {
     /// `agent::run_single` already suppresses the **agent-layer** Sentry
     /// event for this condition via the typed
     /// `AgentError::EmptyProviderResponse` + `AgentError::skips_sentry()`
-    /// (PR #2790, TAURI-RUST-4JX). But `channels::providers::web::
+    /// (PR #2790, TAURI-RUST-4JX). But `web_chat::
     /// run_chat_task` **re-reports** the same failure under
     /// `domain=web_channel operation=run_chat_task` after the typed error
     /// has been flattened to a `String` at the native-bus boundary — so the
@@ -285,7 +302,7 @@ pub enum ExpectedErrorKind {
     /// (`api_error`) already demotes its own per-attempt event; this catches
     /// the **re-report** when the same flattened error is raised again under
     /// `domain=web_channel` / `agent` (the path
-    /// `channels::providers::web::run_chat_task` →
+    /// `web_chat::run_chat_task` →
     /// `report_error_or_expected`). The FE surfaces actionable copy via
     /// `classify_inference_error`; Sentry must not double-report (F2/F4).
     ///
@@ -588,6 +605,12 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_memory_store_breaker_open(&lower) {
         return Some(ExpectedErrorKind::MemoryStoreBreakerOpen);
     }
+    // Corruption is checked before the busy matcher: the two envelopes are
+    // mutually exclusive by their SQLite text (malformed-image vs locked), but
+    // ordering keeps the more-specific on-disk-damage signal unambiguous.
+    if is_whatsapp_data_sqlite_corrupt_message(&lower) {
+        return Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt);
+    }
     if is_whatsapp_data_sqlite_busy_message(&lower) {
         return Some(ExpectedErrorKind::WhatsAppDataSqliteBusy);
     }
@@ -791,6 +814,39 @@ fn is_whatsapp_data_sqlite_busy_message(lower: &str) -> bool {
         || lower.contains("error code 5")
 }
 
+/// Match whatsapp structured-ingest failures caused by a `SQLITE_CORRUPT`
+/// malformed on-disk image. Scoped to the whatsapp ingest envelope plus an
+/// upsert write frame, so unrelated malformed-image errors in other domains
+/// still reach Sentry.
+///
+/// This is defense-in-depth **after** the store's quarantine + rebuild recovery
+/// (see [`ExpectedErrorKind::WhatsAppDataSqliteCorrupt`]) — the store already
+/// reports the first hit once and rebuilds the DB; this only demotes residual
+/// noise. The `upsert wa_chat` / `upsert wa_message` frames are matched because
+/// the observed Sentry symptom (TAURI-RUST-KNH) fired on the
+/// `upsert wa_chat <jid>@lid` path; the `prune` frame is matched because the
+/// same ingest RPC also runs the 90-day auto-prune under the same corrupt-DB
+/// recovery wrapper, and a malformed image surfaced from the prune step (its
+/// error context carries the word `prune`, e.g. `prune old wa_messages`) would
+/// otherwise reach Sentry unfiltered. All three still require the
+/// `[whatsapp_data] ingest failed:` envelope so unrelated malformed-image
+/// errors in other domains keep paging.
+fn is_whatsapp_data_sqlite_corrupt_message(lower: &str) -> bool {
+    if !lower.contains("[whatsapp_data] ingest failed:") {
+        return false;
+    }
+    let has_write_frame = lower.contains("upsert wa_message")
+        || lower.contains("upsert wa_chat")
+        || lower.contains("prune");
+    if !has_write_frame {
+        return false;
+    }
+    lower.contains("disk image is malformed")
+        || lower.contains("file is not a database")
+        || lower.contains("error code 11")
+        || lower.contains("error code 26")
+}
+
 /// Match subconscious-engine SQLite schema-init failures caused by the host
 /// filesystem being unable to open the DB file (`SQLITE_CANTOPEN` /
 /// `SQLITE_IOERR_SHMMAP`). Anchored to the subconscious open/DDL envelope so it
@@ -840,7 +896,9 @@ fn is_embedding_backend_auth_failure(lower: &str) -> bool {
 /// `embeddings::rpc::update_settings` as the save-time hard-block signal so the
 /// two never drift.
 pub(crate) fn is_embedding_endpoint_absent(lower: &str) -> bool {
-    lower.contains("embedding api error") && (lower.contains("(404") || lower.contains("(405"))
+    (lower.contains("embedding api error") && (lower.contains("(404") || lower.contains("(405")))
+        || (lower.contains("embeddings returned http")
+            && (lower.contains("http 404") || lower.contains("http 405")))
 }
 
 /// Detect a custom/cloud embeddings endpoint that IS an embeddings API but
@@ -917,7 +975,7 @@ fn is_memory_store_breaker_open(lower: &str) -> bool {
 /// - `"OpenHuman API error (401 Unauthorized): {…\"Session expired. Please
 ///   log in again.\"…}"` — emitted by `providers::ops::api_error` from the
 ///   OpenHuman backend and re-raised through `agent::run_single` /
-///   `channels::providers::web::run_chat_task` (OPENHUMAN-TAURI-26). The
+///   `web_chat::run_chat_task` (OPENHUMAN-TAURI-26). The
 ///   `"session expired"` substring anchors the match to the OpenHuman
 ///   backend's session-renewal body, not the bare numeric status.
 /// - `"OpenHuman API error (401 Unauthorized): {…\"error\":\"Invalid token\"…}"`
@@ -1640,6 +1698,27 @@ fn is_provider_user_state_message(lower: &str) -> bool {
         return true;
     }
 
+    // TAURI-RUST-K27 — the set-key sibling of X9. `composio_set_api_key`'s
+    // validate-before-store probe (added in #4318) rejects an obviously invalid
+    // BYO key *before* persisting it and returns its own user-facing prose,
+    // `COMPOSIO_INVALID_API_KEY_USER_MESSAGE` ("Invalid Composio API key. Re-enter
+    // a valid key in Connections > Composio."). That string carries
+    // neither the `[composio-direct]` prefix nor an `HTTP 401` token, and the word
+    // "Composio" splits the `invalid … api key` sequence — so the X9 arm above
+    // never claims it and the RPC-boundary `report_error` leaked as a Sentry error
+    // (473 events / 53 users, starting ~5 h after #4318 merged). Same user-state as
+    // X9: an invalid/revoked BYO key with zero client-side lever to make it valid;
+    // the Settings UI already surfaces the actionable re-entry copy. Anchor on the
+    // distinctive `COMPOSIO_INVALID_API_KEY_ANCHOR` phrase — it can only be produced
+    // by our own const (a genuine set-path defect renders a different `store_…
+    // failed` / `save config failed` body that still pages). Keyed off the shared
+    // anchor const (not a copied literal) and coupled to the typed source by
+    // `demotes_composio_set_key_invalid_key_rejection` so a reword that drops the
+    // phrase fails CI instead of silently re-opening the leak.
+    if lower.contains(crate::openhuman::composio::direct_auth::COMPOSIO_INVALID_API_KEY_ANCHOR) {
+        return true;
+    }
+
     // TAURI-RUST-34H — composio backend endpoint (e.g.
     // `/agent-integrations/composio/connections`) wraps an upstream
     // Cloudflare anti-bot challenge as `Backend returned 500 Internal
@@ -1791,7 +1870,7 @@ fn is_filesystem_user_path_invalid_message(lower: &str) -> bool {
 /// `text_chars=0 thinking_chars=0 tool_calls=0`.
 ///
 /// This catches the **web-channel re-report** (Sentry TAURI-RUST-4Z1):
-/// `channels::providers::web::run_chat_task` wraps the failure as
+/// `web_chat::run_chat_task` wraps the failure as
 /// `"run_chat_task failed client_id=… error=The model returned an empty
 /// response. Please try again."` and routes it through
 /// `report_error_or_expected` after the typed
@@ -2095,6 +2174,14 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 kind = "whatsapp_data_sqlite_busy",
                 "[observability] {domain}.{operation} skipped expected whatsapp_data sqlite busy/locked error"
+            );
+        }
+        ExpectedErrorKind::WhatsAppDataSqliteCorrupt => {
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "whatsapp_data_sqlite_corrupt",
+                "[observability] {domain}.{operation} skipped expected whatsapp_data sqlite corrupt error (store quarantines + rebuilds the DB and reports once)"
             );
         }
         ExpectedErrorKind::FilesystemUserPathInvalid => {
@@ -2511,7 +2598,7 @@ fn all_provider_attempts_are_transient(message: &str) -> bool {
 /// Defense-in-depth filter for the Sentry `before_send` hook: the primary
 /// suppression lives at the call sites in `agent::harness::session::
 /// runtime::run_single`, `channels::runtime::dispatch`, and
-/// `channels::providers::web::run_chat_task`, all of which now skip
+/// `web_chat::run_chat_task`, all of which now skip
 /// `report_error` when this variant is detected. This filter catches any
 /// future call site that re-emits the message without going through those
 /// funnels — e.g. a new wrapper that calls `tracing::error!` directly with
@@ -4331,6 +4418,81 @@ mod tests {
     }
 
     #[test]
+    fn classifies_whatsapp_data_sqlite_corrupt_errors() {
+        for raw in [
+            // The observed TAURI-RUST-KNH symptom: corruption on the wa_chat path.
+            r#"[whatsapp_data] ingest failed: upsert wa_chat 207897942335683@lid: database disk image is malformed: Error code 11: The database disk image is malformed"#,
+            // The wa_message path — same on-disk damage class.
+            r#"[whatsapp_data] ingest failed: upsert wa_message chat=120363402402350155@g.us msg=abc: file is not a database: Error code 26: File opened that is not a database file"#,
+            // Wrapped in outer RPC context — classifier runs on the full chain.
+            r#"rpc.invoke_method failed: [whatsapp_data] ingest failed: upsert wa_chat 207897942335683@lid: database disk image is malformed"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "should classify whatsapp_data sqlite corrupt: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_whatsapp_data_prune_path_sqlite_corrupt_errors() {
+        // The same ingest RPC runs the 90-day auto-prune under the store's
+        // corrupt-DB recovery wrapper. A malformed image surfaced from the prune
+        // step carries a `prune` frame (e.g. `prune old wa_messages`) instead of
+        // an `upsert` frame, and must still be demoted — otherwise a boot-time
+        // prune corruption re-floods Sentry on every scan tick (Finding 3).
+        for raw in [
+            r#"[whatsapp_data] ingest failed: prune old wa_messages: database disk image is malformed: Error code 11: The database disk image is malformed"#,
+            r#"[whatsapp_data] ingest failed: prune old wa_messages: scan affected chats: database disk image is malformed"#,
+            r#"[whatsapp_data] ingest failed: refresh chat stats after prune: chat@c.us: file is not a database: Error code 26"#,
+            r#"rpc.invoke_method failed: [whatsapp_data] ingest failed: prune old wa_messages: database disk image is malformed"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "should classify whatsapp_data prune-path sqlite corrupt: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_prune_errors_as_whatsapp_corrupt() {
+        for raw in [
+            // A `prune` word outside the whatsapp ingest envelope must still page.
+            "memory queue prune failed: database disk image is malformed",
+            // whatsapp prune-path lock contention is the *busy* bucket, not corrupt.
+            "[whatsapp_data] ingest failed: prune old wa_messages: database is locked",
+            // whatsapp prune-path constraint/logic error is a real bug, not on-disk damage.
+            "[whatsapp_data] ingest failed: prune old wa_messages: no such table: wa_messages",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "must not classify as whatsapp_data sqlite corrupt: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_corrupt_messages_as_whatsapp_corrupt() {
+        for raw in [
+            // Malformed image outside the whatsapp ingest envelope must still page.
+            "memory queue write failed: database disk image is malformed",
+            // Read-path whatsapp failure (no upsert frame) is not the ingest write.
+            "[whatsapp_data] list_messages failed: database disk image is malformed",
+            // whatsapp ingest lock contention is the *busy* bucket, not corrupt.
+            "[whatsapp_data] ingest failed: upsert wa_message chat=x msg=y: database is locked",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteCorrupt),
+                "must not classify as whatsapp_data sqlite corrupt: {raw}"
+            );
+        }
+    }
+
+    #[test]
     fn classifies_subconscious_schema_unavailable_errors() {
         for raw in [
             // SQLITE_IOERR_SHMMAP (4618) — the original escalating issue (#3231).
@@ -5496,6 +5658,60 @@ mod tests {
             Some(ExpectedErrorKind::ProviderUserState),
             "unrelated 401 (no [composio-direct] anchor) must NOT match the composio-direct arm"
         );
+    }
+
+    // ── TAURI-RUST-K27: composio set-key validation prose (sibling of X9) ──
+
+    #[test]
+    fn demotes_composio_set_key_invalid_key_rejection() {
+        // Drift coupler: assert the classifier demotes the EXACT const the
+        // `composio_set_api_key` validate-before-store probe returns. Keying
+        // off the shared const (not a copied literal) means any reword that
+        // drops the `"Invalid Composio API key"` anchor fails this test in CI
+        // instead of silently re-opening the TAURI-RUST-K27 leak.
+        assert_eq!(
+            expected_error_kind(
+                crate::openhuman::composio::direct_auth::COMPOSIO_INVALID_API_KEY_USER_MESSAGE
+            ),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "composio_set_api_key invalid-key rejection must demote to ProviderUserState"
+        );
+    }
+
+    #[test]
+    fn composio_set_key_anchor_is_substring_of_message() {
+        // Contract coupler: the classifier keys on the shared
+        // `COMPOSIO_INVALID_API_KEY_ANCHOR`; it is only correct if that anchor is a
+        // genuine lowercase substring of the message the probe returns. Assert the
+        // two consts stay in sync so neither can be reworded independently.
+        use crate::openhuman::composio::direct_auth::{
+            COMPOSIO_INVALID_API_KEY_ANCHOR, COMPOSIO_INVALID_API_KEY_USER_MESSAGE,
+        };
+        assert!(
+            COMPOSIO_INVALID_API_KEY_USER_MESSAGE
+                .to_lowercase()
+                .contains(COMPOSIO_INVALID_API_KEY_ANCHOR),
+            "the K27 anchor must be a lowercase substring of the user message"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_composio_set_key_store_failure_as_user_state() {
+        // Discrimination: a genuine defect on the set path — the key validated
+        // but persistence/config-save failed — renders a different body and
+        // MUST still page. The K27 arm keys on "invalid composio api key",
+        // which these do not contain, so they fall through to `None`.
+        let store_fail = "[composio-direct] store_composio_api_key failed: \
+                          keyring write denied (os error 5)";
+        let save_fail = "[composio-direct] save config failed: \
+                         config file is read-only";
+        for msg in [store_fail, save_fail] {
+            assert_eq!(
+                expected_error_kind(msg),
+                None,
+                "genuine composio set-path failure must still reach Sentry: {msg}"
+            );
+        }
     }
 
     #[test]

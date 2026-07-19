@@ -893,6 +893,26 @@ describe('AIPanel', () => {
     expect(screen.queryByRole('switch', { name: /Disconnect OpenAI/i })).not.toBeInTheDocument();
   });
 
+  // Regression for #4852: the Codex auth button had a hardcoded Korean fallback
+  // (`Codex 인증`) because the `settings.ai.codexAuthButton` key was missing from
+  // every locale, so the English UI rendered Korean text. Assert the English
+  // label renders and no Korean survives.
+  it('renders the Codex auth button with the active-locale (English) label', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(<AIPanel />);
+
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect OpenAI/i })).toBeInTheDocument()
+    );
+
+    const codexButton = screen.getByRole('button', { name: /Connect Codex/i });
+    expect(codexButton).toBeInTheDocument();
+    // The Korean fallback must be gone from the English onboarding screen.
+    expect(screen.queryByText(/인증/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Codex 인증/i })).not.toBeInTheDocument();
+  });
+
   it('connects OpenAI through Codex CLI auth without storing an API key', async () => {
     vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
 
@@ -902,7 +922,7 @@ describe('AIPanel', () => {
       expect(screen.getByRole('switch', { name: /Connect OpenAI/i })).toBeInTheDocument()
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Codex 인증/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Connect Codex/i }));
 
     await waitFor(() => expect(vi.mocked(importOpenAiCodexCliAuth)).toHaveBeenCalledTimes(1));
     expect(vi.mocked(startOpenAiCodexOAuth)).not.toHaveBeenCalled();
@@ -947,7 +967,7 @@ describe('AIPanel', () => {
       expect(screen.getByRole('switch', { name: /Connect OpenAI/i })).toBeInTheDocument()
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Codex 인증/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Connect Codex/i }));
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(expectedMessage));
     expect(vi.mocked(setCloudProviderKey)).not.toHaveBeenCalled();

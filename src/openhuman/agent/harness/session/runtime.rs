@@ -12,7 +12,7 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::ParsedToolCall;
 use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::agent_tool_policy::ToolPolicyEngine;
-use crate::openhuman::inference::provider::{self, ConversationMessage, Provider, ToolCall};
+use crate::openhuman::inference::provider::{self, ConversationMessage, ToolCall};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
@@ -57,12 +57,12 @@ impl Agent {
         AgentBuilder::new()
     }
 
-    /// Borrow the agent's provider as an `Arc`. Used by the sub-agent
-    /// runner to share the parent's provider instance with spawned
-    /// sub-agents (so they share connection pools, retry budgets, and
-    /// rate-limit state).
-    pub fn provider_arc(&self) -> Arc<dyn Provider> {
-        Arc::clone(&self.provider)
+    /// Clone the agent's model source. Used by the sub-agent runner /
+    /// parent-context builder to share the parent's provider instance with
+    /// spawned sub-agents (so they share connection pools, retry budgets, and
+    /// rate-limit state) — issue #4249, Phase 3 / Motion A.
+    pub fn turn_model_source(&self) -> crate::openhuman::tinyagents::TurnModelSource {
+        self.turn_model_source.clone()
     }
 
     /// Borrow the agent's tools as a slice. Used by the sub-agent runner
@@ -156,6 +156,21 @@ impl Agent {
     /// The agent's runtime config snapshot.
     pub fn agent_config(&self) -> &crate::openhuman::config::AgentConfig {
         &self.config
+    }
+
+    /// Override the agent's tool-iteration cap after construction.
+    ///
+    /// Issue #4868 — `build_session_agent_inner` now stamps every agent with
+    /// its `AgentDefinition::effective_max_iterations()`, which is the correct
+    /// behavior for direct-invocation call sites. A handful of callers need a
+    /// *different* cap than the definition's declared budget (e.g. long-running
+    /// workflow/task-dispatcher runs that intentionally exceed any single
+    /// agent's normal budget). Those callers should apply their override
+    /// AFTER construction via this setter, so the shared definition-cap logic
+    /// in the builder doesn't get silently clobbered by pre-construction
+    /// mutations (and vice versa).
+    pub fn set_max_tool_iterations(&mut self, cap: usize) {
+        self.config.max_tool_iterations = cap;
     }
 
     /// Returns the current conversation history.
@@ -378,6 +393,22 @@ impl Agent {
         std::mem::take(&mut self.last_turn_citations)
     }
 
+    /// Borrow the holistic token/cost/context totals for the latest completed
+    /// turn (parent + sub-agents) **without consuming them**. `None` until a
+    /// turn has run.
+    ///
+    /// This is the public, non-draining counterpart to
+    /// [`take_last_turn_usage_totals`](Self::take_last_turn_usage_totals): a
+    /// downstream crate embedding OpenHuman as a library (e.g. the OpenCompany
+    /// hosting platform's cost-metering hook) can read per-turn token and USD
+    /// totals after [`Agent::turn`](crate::openhuman::agent::Agent) returns,
+    /// while leaving the value in place for the web-channel drain path.
+    pub fn last_turn_usage(
+        &self,
+    ) -> Option<&crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage> {
+        self.last_turn_usage_totals.as_ref()
+    }
+
     /// Drain and return the holistic token/cost/context totals for the latest
     /// completed turn (parent + sub-agents). `None` until a turn has run.
     /// Consumed by web-channel delivery to populate the `chat_done` usage fields.
@@ -385,6 +416,15 @@ impl Agent {
         &mut self,
     ) -> Option<crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage> {
         self.last_turn_usage_totals.take()
+    }
+
+    /// Whether the most recently completed [`Self::turn`] / [`Self::run_single`]
+    /// paused because it hit `max_tool_iterations`, rather than finishing
+    /// naturally (see the field doc on `last_turn_hit_cap`). `false` before
+    /// any turn has run. Not draining — unlike the usage totals above, a
+    /// caller may reasonably check this more than once per turn.
+    pub fn last_turn_hit_cap(&self) -> bool {
+        self.last_turn_hit_cap
     }
 
     // ─────────────────────────────────────────────────────────────────

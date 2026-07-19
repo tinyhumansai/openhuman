@@ -35,7 +35,7 @@ use crate::openhuman::agent::harness::agent_graph::{
 };
 use crate::openhuman::agent::harness::subagent_runner::types::SubagentRunError;
 use crate::openhuman::agent::progress::AgentProgress;
-use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, Provider};
+use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage};
 use crate::openhuman::tinyagents::{run_turn_via_tinyagents_shared, SubagentScope};
 use crate::openhuman::tokenjuice::AgentTokenjuiceCompression;
 use crate::openhuman::tools::{Tool, ToolSpec};
@@ -59,7 +59,7 @@ pub(crate) async fn run_agent_turn_request_via_default_graph(
     req: AgentTurnRequest,
 ) -> Result<AgentTurnResult, SubagentRunError> {
     let AgentTurnRequest {
-        provider,
+        turn_model_source,
         model,
         temperature,
         mut history,
@@ -86,7 +86,7 @@ pub(crate) async fn run_agent_turn_request_via_default_graph(
 
     let (output, iterations, usage, early_exit_tool, hit_cap, breaker_halt) =
         run_subagent_via_graph(
-            provider,
+            turn_model_source,
             &model,
             temperature,
             &mut history,
@@ -134,7 +134,7 @@ pub(crate) async fn run_agent_turn_request_via_default_graph(
 /// (the caller surfaces this as `SubagentRunStatus::Incomplete`, #4096).
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_subagent_via_graph(
-    provider: Arc<dyn Provider>,
+    source: crate::openhuman::tinyagents::TurnModelSource,
     model: &str,
     temperature: f64,
     history: &mut Vec<ChatMessage>,
@@ -198,19 +198,6 @@ pub(super) async fn run_subagent_via_graph(
     // adapters advertise each tool via its own `spec()`, so it's unused here.
     let _ = &specs;
 
-    // Vision forwarding (parity with the legacy `run_inner_loop`): rehydrate
-    // `[IMAGE:…]` placeholders in the sub-agent's history when either the
-    // provider advertises vision or the sub-agent model is user-flagged as
-    // vision-capable (BYOK/custom). The expanded copy is provider-only — the
-    // persisted `history` written back below keeps the original markers.
-    let dispatch_history = if (provider.supports_vision() || model_vision)
-        && crate::openhuman::agent::multimodal::has_image_placeholders(history)
-    {
-        crate::openhuman::agent::multimodal::rehydrate_image_placeholders(history)
-    } else {
-        history.clone()
-    };
-
     // Child-progress attribution: mirror this sub-agent's iterations / tool calls
     // / text + thinking deltas as `Subagent*` events scoped to (`agent_id`,
     // `task_id`) so the parent thread can nest them under the live subagent row.
@@ -224,16 +211,36 @@ pub(super) async fn run_subagent_via_graph(
         extended_policy,
     });
 
-    // Keep a provider handle for the cap-hit summary call (the run consumes the
-    // other clone).
-    let summary_provider = provider.clone();
+    // A standalone summarizer model for the cap-hit checkpoint call below (the
+    // turn's own model set is consumed by the run). Built off the same source, so
+    // the checkpoint invokes a crate `ChatModel` without naming `Provider`
+    // (issue #4249, Phase 3 / Motion A).
+    let summary_model = source.build_summarizer(model, temperature)?;
 
     // Resolve the sub-agent model's effective context window so the harness runs
     // the context-window summarization step (issue #4249) on sub-agent turns too.
     // A long-running / resumed sub-agent (worker threads, durable sessions) can
     // accumulate a transcript past its own window; summarize before each model
     // call rather than relying solely on the parent's one-time trim.
-    let context_window = provider.effective_context_window(model).await;
+    let context_window = source.effective_context_window(model).await;
+
+    // Build the child turn's crate `ChatModel` set from the source; capability
+    // reads (vision/native-tools) + telemetry id now come off the built bundle,
+    // so the sub-agent path names crate model types only.
+    let turn_models = source.build(model, temperature, context_window)?;
+
+    // Vision forwarding (parity with the legacy `run_inner_loop`): rehydrate
+    // `[IMAGE:…]` placeholders in the sub-agent's history when either the model
+    // advertises vision or the sub-agent model is user-flagged as vision-capable
+    // (BYOK/custom). The expanded copy is provider-only — the persisted `history`
+    // written back below keeps the original markers.
+    let dispatch_history = if (turn_models.supports_vision() || model_vision)
+        && crate::openhuman::agent::multimodal::has_image_placeholders(history)
+    {
+        crate::openhuman::agent::multimodal::rehydrate_image_placeholders(history)
+    } else {
+        history.clone()
+    };
 
     // Build the sub-agent's context middleware from the live `[context]` config +
     // the agent's TokenJuice profile (#4466), matching how the chat path wires
@@ -259,18 +266,10 @@ pub(super) async fn run_subagent_via_graph(
     // `run_turn_via_tinyagents_shared` future would otherwise sit on the parent's
     // poll stack. Heap-allocate it (as the legacy `run_inner_loop` did) so the
     // parent+child harness drives don't overflow the stack.
-    // Capture native-tool support before `provider` is moved: the durable-history
-    // append below serializes this turn's typed suffix with the matching dispatcher.
-    let native_tools = provider.supports_native_tools();
-    // Build the child turn's crate `ChatModel` set from the resolved provider; the
-    // seam entry is crate-native (issue #4249, Phase 5).
-    let provider_id = provider.telemetry_provider_id();
-    let turn_models = crate::openhuman::tinyagents::build_turn_models(
-        provider,
-        model,
-        temperature,
-        context_window,
-    );
+    // Native-tool support drives the durable-history suffix dispatcher; capture it
+    // (and the telemetry id) before `turn_models` is moved into the runner.
+    let native_tools = turn_models.native_tools();
+    let provider_id = turn_models.provider_id().to_string();
     let run_result = Box::pin(run_turn_via_tinyagents_shared(
         turn_models,
         provider_id,
@@ -409,9 +408,7 @@ pub(super) async fn run_subagent_via_graph(
     if outcome.hit_cap {
         let digest = build_cap_digest(&outcome.conversation, &outcome.tool_outcomes);
         let strategy = super::checkpoint::SubagentCheckpoint {
-            provider: summary_provider.as_ref(),
-            model: model.to_string(),
-            temperature,
+            chat_model: summary_model.clone(),
             agent_id: agent_id.to_string(),
             // The checkpoint summary call's output cap. #4469 item 5: honour this
             // sub-agent definition's own per-call output budget (the same
@@ -1000,7 +997,7 @@ fn build_cap_digest(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::inference::provider::{ChatResponse, ToolCall};
+    use crate::openhuman::inference::provider::{ChatResponse, Provider, ToolCall};
     use crate::openhuman::tools::ToolResult;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1077,7 +1074,7 @@ mod tests {
         let mut history = vec![ChatMessage::user("please echo hi")];
 
         let (output, iterations, usage, early_exit, hit_cap, _breaker) = run_subagent_via_graph(
-            provider,
+            crate::openhuman::tinyagents::TurnModelSource::new(provider),
             "mock-model",
             0.0,
             &mut history,
@@ -1166,7 +1163,7 @@ mod tests {
         let mut history = vec![ChatMessage::user("hi")];
 
         let (output, _iters, _usage, _early, _hit_cap, _breaker) = run_subagent_via_graph(
-            Arc::new(ThinkingStreamProvider),
+            crate::openhuman::tinyagents::TurnModelSource::new(Arc::new(ThinkingStreamProvider)),
             "mock-model",
             0.0,
             &mut history,
@@ -1313,7 +1310,7 @@ mod tests {
         let mut history = vec![ChatMessage::user("help me")];
 
         let (output, iterations, _usage, early_exit, _hit_cap, _breaker) = run_subagent_via_graph(
-            provider.clone(),
+            crate::openhuman::tinyagents::TurnModelSource::new(provider.clone()),
             "mock-model",
             0.0,
             &mut history,
@@ -1420,7 +1417,7 @@ mod tests {
         let mut history = vec![ChatMessage::user("do a big task")];
 
         let (output, iterations, _usage, early_exit, hit_cap, _breaker) = run_subagent_via_graph(
-            Arc::new(LoopForeverProvider),
+            crate::openhuman::tinyagents::TurnModelSource::new(Arc::new(LoopForeverProvider)),
             "mock-model",
             0.0,
             &mut history,

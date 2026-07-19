@@ -42,7 +42,6 @@ use crate::openhuman::skill_runtime::{await_run_outcome, spawn_workflow_run_back
 use crate::openhuman::skills::schemas::resolve_workspace_dir;
 use crate::openhuman::todos::ops as board_ops;
 use crate::openhuman::todos::ops::{BoardLocation, CardPatch};
-use crate::openhuman::tools::policy::DefaultToolPolicy;
 use crate::openhuman::tools::traits::Tool;
 
 /// Serialize this module's tests (each touches process-global state).
@@ -240,7 +239,7 @@ async fn orchestrator_runs_workflow_tool_and_gets_inner_result() {
     let mut history = vec![ChatMessage::user("Triage my inbox.")];
 
     let result = run_channel_turn_via_graph(
-        provider,
+        crate::openhuman::tinyagents::TurnModelSource::new(provider),
         &mut history,
         tools,
         vec![],

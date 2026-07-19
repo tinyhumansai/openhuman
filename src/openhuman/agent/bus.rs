@@ -25,7 +25,7 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::turn_origin::{self, AgentTurnOrigin};
 use crate::openhuman::config::MultimodalConfig;
 use crate::openhuman::inference::provider::{
-    current_resolved_provider_route, with_resolved_provider_route_scope, ChatMessage, Provider,
+    current_resolved_provider_route, with_resolved_provider_route_scope, ChatMessage,
 };
 use crate::openhuman::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
@@ -46,9 +46,11 @@ pub const AGENT_RUN_TURN_METHOD: &str = "agent.run_turn";
 /// therefore pass trait objects (`Arc<dyn Provider>`, tool trait-object
 /// registries) and streaming senders (`on_delta`) through unchanged.
 pub struct AgentTurnRequest {
-    /// LLM provider, already constructed and warmed up by the caller.
-    /// Shared via Arc to allow sub-agents to reuse the same connection pool.
-    pub provider: Arc<dyn Provider>,
+    /// The turn's model source — the seam handle that builds this turn's tiered
+    /// crate `ChatModel` set (issue #4249, Phase 3 / Motion A). Replaces the raw
+    /// `Arc<dyn Provider>`: the bus/harness path names crate model types only,
+    /// and the `Provider` stays confined to the inference factory + seam.
+    pub turn_model_source: crate::openhuman::tinyagents::TurnModelSource,
 
     /// Full conversation history including system prompt and the incoming
     /// user message. The handler mutates an internal clone of this during
@@ -183,7 +185,7 @@ impl AgentTurnResponse {
 
 async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnResponse, String> {
     let AgentTurnRequest {
-        provider,
+        turn_model_source,
         mut history,
         tools_registry,
         provider_name,
@@ -303,7 +305,7 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
                     // `on_progress` text deltas, so it's intentionally unused.
                     let _ = (&provider_name, silent, &channel_name, on_delta);
                     run_channel_turn_via_graph(
-                        provider.clone(),
+                        turn_model_source.clone(),
                         &mut history,
                         tools_registry.clone(),
                         extra_tools,
@@ -469,10 +471,11 @@ pub async fn use_real_agent_handler() -> tokio::sync::MutexGuard<'static, ()> {
 mod tests {
     use super::*;
     use crate::core::event_bus::NativeRegistry;
+    use crate::openhuman::inference::provider::Provider;
     use async_trait::async_trait;
 
-    /// Minimal `Provider` implementation used only to satisfy the
-    /// `Arc<dyn Provider>` type in [`AgentTurnRequest`]. The tests below
+    /// Minimal `Provider` implementation used only to build the
+    /// [`TurnModelSource`] in [`AgentTurnRequest`]. The tests below
     /// override the bus handler with a stub that never calls any
     /// provider methods, so this no-op is sufficient — the only required
     /// trait method is `chat_with_system`, everything else has a default.
@@ -499,7 +502,9 @@ mod tests {
     /// invoked — it only needs to satisfy the type.
     fn test_request() -> AgentTurnRequest {
         AgentTurnRequest {
-            provider: Arc::new(NoopProvider),
+            turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(Arc::new(
+                NoopProvider,
+            )),
             history: vec![
                 ChatMessage::system("you are a test bot"),
                 ChatMessage::user("hello"),

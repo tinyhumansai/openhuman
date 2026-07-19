@@ -28,7 +28,8 @@ use tokio::sync::mpsc::Sender;
 use crate::openhuman::agent::harness::run_queue::RunQueue;
 use crate::openhuman::agent::harness::subagent_runner::SubagentRunError;
 use crate::openhuman::agent::progress::AgentProgress;
-use crate::openhuman::inference::provider::{ChatMessage, Provider};
+use crate::openhuman::inference::provider::ChatMessage;
+use crate::openhuman::tinyagents::TurnModelSource;
 use crate::openhuman::tools::{Tool, ToolSpec};
 
 /// The assembled inputs for one sub-agent turn, handed to a custom
@@ -38,7 +39,9 @@ use crate::openhuman::tools::{Tool, ToolSpec};
 /// future without borrowing the caller's stack — mirrors the positional
 /// arguments the default `run_subagent_via_graph` takes.
 pub struct AgentTurnRequest {
-    pub provider: Arc<dyn Provider>,
+    /// The turn's model source — builds the sub-agent's tiered crate `ChatModel`
+    /// set (issue #4249, Phase 3 / Motion A). Replaces the raw `Arc<dyn Provider>`.
+    pub turn_model_source: TurnModelSource,
     pub model: String,
     pub temperature: f64,
     /// Full working transcript for the turn (system + prior + this user turn).

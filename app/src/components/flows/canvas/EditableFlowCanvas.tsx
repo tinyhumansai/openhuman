@@ -25,15 +25,25 @@ import {
   BackgroundVariant,
   type Connection,
   Controls,
-  MiniMap,
   ReactFlow,
   type ReactFlowInstance,
   useEdgesState,
   useNodesState,
+  type Viewport,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import createDebug from 'debug';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ForwardedRef,
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { FLOW_RUN_NODE_STATUS_CLASS, useFlowRunProgress } from '../../../hooks/useFlowRunProgress';
 import { erroredNodeIds } from '../../../lib/flows/flowValidation';
@@ -170,28 +180,100 @@ export interface EditableFlowCanvasProps {
    * remount.
    */
   initialDirty?: boolean;
+  /** Show the drag-and-drop node palette ("Legend"). Defaults to `true`. */
+  showPalette?: boolean;
+  /**
+   * Reports Save-button state up so the host can render Save/Discard in its own
+   * header (the canvas keeps only undo/redo). Fires whenever any field changes.
+   */
+  onSaveMetaChange?: (meta: EditorSaveMeta) => void;
+  /**
+   * The viewport (pan/zoom) to restore on mount, captured from a previous
+   * mount of this same logical canvas via `onViewportChange` (F4/F5 fix). The
+   * host (`FlowCanvasPage`) keeps this in a ref that survives the `canvasVersion`
+   * remounts Save/Accept/Reject trigger, so a remount can restore the user's
+   * pan/zoom instead of `fitView` silently resetting it. `null`/absent means no
+   * prior viewport is known (first-ever mount) — `fitView` runs normally.
+   */
+  savedViewport?: Viewport | null;
+  /**
+   * Fired on every viewport change (pan/zoom) so the host can capture the
+   * latest value for `savedViewport` on the next remount (F4/F5 fix).
+   */
+  onViewportChange?: (viewport: Viewport) => void;
+}
+
+/** Save/Discard state the host header needs to render + gate its own buttons. */
+export interface EditorSaveMeta {
+  dirty: boolean;
+  hasErrors: boolean;
+  saving: boolean;
+}
+
+/** Imperative handle so the host header's Save/Discard buttons drive the canvas. */
+export interface EditableFlowCanvasHandle {
+  save: () => void;
+  discard: () => void;
+  /**
+   * Clear the forced-dirty flag and advance the baseline to the CURRENT live
+   * graph, without going through `save()` / `onSave` (the host has already
+   * persisted the graph itself — see `handleAcceptProposal` in
+   * `FlowCanvasPage.tsx`). Needed for the Accept path: it calls the page's
+   * `handleSave` directly (bypassing this canvas's own `save()`, whose ref is
+   * stale mid-remount) and only remounts a SECOND time when the server
+   * actually normalized the graph. When it doesn't (the common "echoed back
+   * unchanged" case), this already-mounted instance's `forcedDirty` — seeded
+   * `true` by Accept's own remount, before the persist resolved — would
+   * otherwise never clear, since only this canvas's own `save()`/`discard()`
+   * do that. Call this after such an out-of-band persist succeeds to sync it.
+   */
+  clearForcedDirty: () => void;
 }
 
 const EMPTY_ID_SET: ReadonlySet<string> = new Set();
 
-function EditableFlowCanvas({
-  nodes: initialNodes,
-  edges: initialEdges,
-  meta,
-  onSave,
-  onInvalidConnection,
-  onDirtyChange,
-  activeRunId = null,
-  onGraphChange,
-  addedNodeIds = EMPTY_ID_SET,
-  removedNodeIds = EMPTY_ID_SET,
-  saveDisabled = false,
-  initialDirty = false,
-}: EditableFlowCanvasProps) {
+function EditableFlowCanvas(
+  {
+    nodes: initialNodes,
+    edges: initialEdges,
+    meta,
+    onSave,
+    onInvalidConnection,
+    onDirtyChange,
+    activeRunId = null,
+    onGraphChange,
+    addedNodeIds = EMPTY_ID_SET,
+    removedNodeIds = EMPTY_ID_SET,
+    saveDisabled = false,
+    initialDirty = false,
+    showPalette = true,
+    onSaveMetaChange,
+    savedViewport = null,
+    onViewportChange,
+  }: EditableFlowCanvasProps,
+  ref: ForwardedRef<EditableFlowCanvasHandle>
+) {
   const { t } = useT();
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>(initialEdges);
   const rfRef = useRef<ReactFlowInstance<FlowNode, FlowEdge> | null>(null);
+
+  // F4/F5 fix diagnostic: log once per mount whether this instance restores a
+  // caller-supplied viewport (`savedViewport`, threaded through from
+  // `FlowCanvasPage`'s `viewportRef`) or falls back to React Flow's own
+  // `fitView` (first-ever mount, or a host that doesn't track viewport).
+  useEffect(() => {
+    log(
+      'mount: viewport %s x=%s y=%s zoom=%s',
+      savedViewport ? 'restored' : 'fitView-fallback',
+      savedViewport?.x,
+      savedViewport?.y,
+      savedViewport?.zoom
+    );
+    // Mount-only — a later `savedViewport` prop change (from panning) must
+    // not re-log; only a fresh mount (new instance) should.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Undo / redo history ───────────────────────────────────────────────────
   // A bounded past/future stack of {nodes, edges} snapshots so structural edits
@@ -551,6 +633,33 @@ function EditableFlowCanvas({
     setForcedDirty(false);
   }, [baseline, setNodes, setEdges, pushHistory]);
 
+  // Expose Save/Discard so the host header can drive them (the canvas now shows
+  // only undo/redo). Guarded internally by the same dirty/error/saving gates.
+  useImperativeHandle(
+    ref,
+    () => ({
+      save: () => {
+        if (!dirty || hasErrors || saving || saveDisabled) return;
+        void handleSave();
+      },
+      discard: () => {
+        if (!dirty || saving) return;
+        handleDiscard();
+      },
+      clearForcedDirty: () => {
+        log('clearForcedDirty: host persisted externally — syncing baseline');
+        setBaseline({ nodes, edges });
+        setForcedDirty(false);
+      },
+    }),
+    [dirty, hasErrors, saving, saveDisabled, handleSave, handleDiscard, nodes, edges]
+  );
+
+  // Mirror the Save-button state up so the header can render + gate its buttons.
+  useEffect(() => {
+    onSaveMetaChange?.({ dirty, hasErrors, saving });
+  }, [dirty, hasErrors, saving, onSaveMetaChange]);
+
   // Canvas actions surfaced on the selected node card (delete this node /
   // validate the graph) — see `canvasActions.ts`. Memoised so the context
   // value is stable across renders that don't change validation state.
@@ -656,14 +765,15 @@ function EditableFlowCanvas({
         className="flow-canvas relative h-full w-full"
         data-testid="flow-canvas"
         data-editable="true"
+        data-viewport-restored={savedViewport ? 'true' : 'false'}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onKeyDown={handleCanvasKeyDown}>
-        <NodePalette onAdd={handlePaletteAdd} />
+        {showPalette && <NodePalette onAdd={handlePaletteAdd} />}
 
-        {/* Undo/redo on the left, then the draft-state cluster (unsaved badge →
-          Discard → Save). Per-node Validate/Delete now live on the selected node
-          card (see FlowNodeComponent), so they're no longer in this toolbar. */}
+        {/* Undo/redo stay on the canvas (top-right). Save/Discard + the unsaved
+        badge now live in the page header (driven via the imperative handle).
+        Per-node Validate/Delete live on the selected node card. */}
         <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2">
           <div className="pointer-events-auto flex items-center gap-1">
             <Button
@@ -691,41 +801,11 @@ function EditableFlowCanvas({
               <RedoIcon />
             </Button>
           </div>
-          <div className="pointer-events-auto flex items-center gap-2 border-l border-line pl-2">
-            {dirty && (
-              <span
-                className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
-                data-testid="flow-editor-dirty">
-                {t('flows.editor.unsaved')}
-              </span>
-            )}
-            <Button
-              type="button"
-              variant="tertiary"
-              size="xs"
-              data-testid="flow-editor-discard"
-              disabled={!dirty || saving}
-              onClick={handleDiscard}>
-              {t('flows.editor.discard')}
-            </Button>
-            {onSave && (
-              <Button
-                type="button"
-                variant="primary"
-                size="xs"
-                data-testid="flow-editor-save"
-                title={hasErrors ? t('flows.editor.saveBlocked') : undefined}
-                disabled={!dirty || hasErrors || saving || saveDisabled}
-                onClick={handleSave}>
-                {saving ? t('flows.editor.saving') : t('flows.editor.save')}
-              </Button>
-            )}
-          </div>
         </div>
 
         {/* First-run hint: a near-empty canvas (a fresh scratch flow opens with
-          just its trigger) gets a non-blocking nudge toward the palette. Hides
-          itself as soon as a second node lands. */}
+        just its trigger) gets a non-blocking nudge toward the palette. Hides
+        itself as soon as a second node lands. */}
         {showOnboarding && (
           <div
             className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center px-6"
@@ -764,11 +844,12 @@ function EditableFlowCanvas({
           nodesDraggable
           nodesConnectable
           elementsSelectable
-          fitView
+          fitView={!savedViewport}
+          defaultViewport={savedViewport ?? undefined}
+          onViewportChange={onViewportChange}
           panOnScroll
           zoomOnScroll>
           <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
-          <MiniMap pannable zoomable />
           <Controls showInteractive={false} />
         </ReactFlow>
 
@@ -787,4 +868,4 @@ function EditableFlowCanvas({
   );
 }
 
-export default memo(EditableFlowCanvas);
+export default memo(forwardRef(EditableFlowCanvas));

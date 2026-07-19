@@ -16,6 +16,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tinyagents::graph::SqliteCheckpointer;
+use tinyagents::harness::model::ModelRequest;
 use tinyflows::caps::{
     AgentRunner, Capabilities, CodeLanguage, CodeRunner, HttpClient, LlmProvider, StateStore,
     ToolInvoker, WorkflowResolver,
@@ -31,7 +32,7 @@ use crate::openhuman::config::{Config, HttpRequestConfig};
 use crate::openhuman::credentials::{HttpCredential, HttpCredentialsStore};
 use crate::openhuman::flows;
 use crate::openhuman::inference::provider::{
-    create_chat_provider, is_raw_passthrough_model, role_for_model_tier, ChatMessage, ChatRequest,
+    create_chat_model_with_model_id, is_raw_passthrough_model, role_for_model_tier, ChatMessage,
     UsageInfo,
 };
 use crate::openhuman::sandbox::{execute_in_sandbox, resolve_sandbox_policy};
@@ -57,6 +58,25 @@ fn usage_to_json(usage: &Option<UsageInfo>) -> Value {
             "charged_amount_usd": u.charged_amount_usd,
         }),
     }
+}
+
+fn model_response_to_completion_value(
+    response: &tinyagents::harness::model::ModelResponse,
+) -> Value {
+    json!({
+        "text": response.text(),
+        "tool_calls": response
+            .tool_calls()
+            .iter()
+            .map(crate::openhuman::tinyagents::ta_call_to_oh_call)
+            .collect::<Vec<_>>(),
+        "usage": usage_to_json(
+            &crate::openhuman::tinyagents::model::usage_info_from_response(response)
+        ),
+        "reasoning_content": crate::openhuman::tinyagents::reasoning_from_content(
+            &response.message.content
+        ),
+    })
 }
 
 /// Hard autonomy-tier gate for an *acting* flow node (Phase 2).
@@ -516,23 +536,25 @@ impl LlmProvider for OpenHumanLlm {
             "[flows] llm.complete: dispatching agent-node completion"
         );
 
-        let (provider, model) = create_chat_provider(role, &self.config)
+        let (chat_model, model) = create_chat_model_with_model_id(role, &self.config, temperature)
             .map_err(|e| EngineError::Capability(e.to_string()))?;
         // `create_chat_provider` handed back the role's default model. If the node
         // pinned a raw/BYOK id, forward it verbatim instead (issue #4598).
         let model = resolve_completion_model(node_model, model);
 
-        let response = provider
-            .chat(
-                ChatRequest {
-                    messages: &messages,
-                    tools: None,
-                    stream: None,
-                    max_tokens,
-                },
-                &model,
-                temperature,
-            )
+        let mut model_request = ModelRequest::new(
+            messages
+                .iter()
+                .map(crate::openhuman::tinyagents::chat_message_to_message)
+                .collect(),
+        )
+        .with_model(model.clone())
+        .with_temperature(temperature);
+        if let Some(max_tokens) = max_tokens {
+            model_request = model_request.with_max_tokens(max_tokens);
+        }
+        let response = chat_model
+            .invoke(&(), model_request)
             .await
             .map_err(|e| EngineError::Capability(e.to_string()))?;
 
@@ -541,7 +563,8 @@ impl LlmProvider for OpenHumanLlm {
         // agent node's output_parser sub-port then validates it against the
         // configured schema (and auto-fixes when it doesn't parse here).
         if structured {
-            if let Some(parsed) = response.text.as_deref().and_then(parse_llm_json) {
+            let text = response.text();
+            if let Some(parsed) = parse_llm_json(&text) {
                 tracing::debug!(
                     target: "flows",
                     "[flows] llm.complete: structured output parsed from completion text"
@@ -556,12 +579,7 @@ impl LlmProvider for OpenHumanLlm {
             );
         }
 
-        Ok(json!({
-            "text": response.text,
-            "tool_calls": response.tool_calls,
-            "usage": usage_to_json(&response.usage),
-            "reasoning_content": response.reasoning_content,
-        }))
+        Ok(model_response_to_completion_value(&response))
     }
 }
 
@@ -573,6 +591,7 @@ impl LlmProvider for OpenHumanLlm {
 ///    the node builds a real session agent
 ///    ([`Agent::from_config_for_agent`](crate::openhuman::agent::Agent::from_config_for_agent)
 ///    + `set_agent_definition_name`) and drives one full turn via
+///
 ///    [`Agent::run_single`](crate::openhuman::agent::Agent::run_single) — the
 ///    complete tool loop. The definition's `ToolScope` / `sandbox_mode` /
 ///    `max_iterations` govern the turn, so an agent node gains its curated
@@ -636,6 +655,59 @@ pub(crate) fn route_for_agent_ref(agent_ref: &str) -> AgentRoute {
 /// provider/tool call must never wedge the flow run.
 pub(crate) fn clamp_run_timeout_secs(requested: Option<u64>) -> u64 {
     requested.map(|s| s.clamp(10, 600)).unwrap_or(240)
+}
+
+/// Issue #4868 — scale `base_timeout_secs` up for agents whose effective
+/// iteration cap exceeds the (until now, universal) global default of 10.
+///
+/// A `tools_agent`/`code_executor`/etc. node now legitimately runs up to 50
+/// iterations (`iteration_policy = "extended"`). At a worst case of
+/// ~10s/iteration that's ~500s, comfortably exceeding the 240s
+/// `clamp_run_timeout_secs` default — the node would be killed by timeout
+/// before it could use its own declared budget. Agents whose effective cap is
+/// still at or below the old global default (10) are unaffected and keep the
+/// unscaled `base_timeout_secs`. The scaled floor is capped at the existing
+/// 600s maximum `clamp_run_timeout_secs` already enforces, so this can only
+/// ever raise the effective timeout up to that ceiling, never past it.
+pub(crate) fn scale_timeout_for_iteration_cap(
+    base_timeout_secs: u64,
+    effective_iteration_cap: usize,
+) -> u64 {
+    if effective_iteration_cap > 10 {
+        let scaled = (effective_iteration_cap as u64).saturating_mul(12).min(600);
+        base_timeout_secs.max(scaled)
+    } else {
+        base_timeout_secs
+    }
+}
+
+/// Resolves the actual wall-clock timeout for one agent-node harness turn,
+/// combining [`clamp_run_timeout_secs`] and [`scale_timeout_for_iteration_cap`]
+/// per the post-merge Codex P2 finding on issue #4868's iteration-cap timeout
+/// scaling: **an explicit `timeout_secs` the flow author set on the node must
+/// never be scaled up.**
+///
+/// A node's `timeout_secs` can be an intentional fast-fail/SLA bound (e.g.
+/// `timeout_secs: 120` to bound a health-check-style agent call) — scaling
+/// that up to match a 50-iteration-cap agent would silently defeat the
+/// author's explicit choice. So the iteration-cap scaling only ever widens
+/// the *default* (no `timeout_secs` supplied) 240s bound; an explicit value is
+/// clamped to `10..=600` (as it always was) and returned as-is.
+///
+/// `requested_timeout_secs` is the raw `request["timeout_secs"]` (before
+/// clamping) so this function can distinguish "caller supplied a value" from
+/// "caller supplied nothing" — [`clamp_run_timeout_secs`] alone collapses that
+/// distinction into a plain `u64`.
+pub(crate) fn resolve_run_timeout_secs(
+    requested_timeout_secs: Option<u64>,
+    effective_iteration_cap: usize,
+) -> u64 {
+    let base_timeout_secs = clamp_run_timeout_secs(requested_timeout_secs);
+    if requested_timeout_secs.is_some() {
+        base_timeout_secs
+    } else {
+        scale_timeout_for_iteration_cap(base_timeout_secs, effective_iteration_cap)
+    }
 }
 
 /// Renders an agent-node completion `request` into the single user message
@@ -881,14 +953,33 @@ impl OpenHumanAgentRunner {
 
         let prompt = build_harness_run_prompt(&request);
 
+        let requested_timeout_secs = request.get("timeout_secs").and_then(Value::as_u64);
+        let base_timeout_secs = clamp_run_timeout_secs(requested_timeout_secs);
+
+        // Issue #4868 — the session builder now stamps `agent_ref`'s own
+        // `effective_max_iterations()` onto the agent (instead of the global
+        // default of 10), so `code_executor`/`tools_agent`/etc. can run up to
+        // 50 iterations here. Read the cap actually applied to `agent`
+        // (reflects the definition cap or the global fallback, whichever the
+        // builder resolved) and scale the DEFAULT timeout accordingly — see
+        // `scale_timeout_for_iteration_cap`.
+        //
+        // Post-merge Codex P2 finding: an EXPLICIT `timeout_secs` the node
+        // config supplied is a caller-chosen bound (e.g. a fast-fail/SLA of
+        // 120s) and must be honored as-is, never scaled up just because the
+        // agent's iteration cap is high — see `resolve_run_timeout_secs`.
+        let effective_iteration_cap = agent.agent_config().max_tool_iterations;
         let timeout_secs =
-            clamp_run_timeout_secs(request.get("timeout_secs").and_then(Value::as_u64));
+            resolve_run_timeout_secs(requested_timeout_secs, effective_iteration_cap);
 
         tracing::debug!(
             target: "flows",
             agent_ref,
             node_model = node_model.as_deref().unwrap_or("<definition-default>"),
             default_model = effective.default_model.as_deref().unwrap_or("<config-default>"),
+            effective_iteration_cap,
+            explicit_timeout_secs = requested_timeout_secs.is_some(),
+            base_timeout_secs,
             timeout_secs,
             prompt_len = prompt.len(),
             "[flows] agent_runner: dispatching full harness turn"
@@ -1105,6 +1196,71 @@ impl AgentRunner for SchemaAwareMockAgentRunner {
                      mirroring the vendored MockAgentRunner echo shape"
                 );
                 Ok(json!({ "agent": agent_ref, "request": request, "connection": conn }))
+            }
+        }
+    }
+}
+
+/// A **dry-run-only** [`LlmProvider`] mock that, unlike the vendored crate's
+/// `tinyflows::caps::mock::MockLlm`, respects an `agent` node's
+/// `config.output_parser.schema` when synthesizing its completion.
+///
+/// This closes the OTHER half of the same gap [`SchemaAwareMockAgentRunner`]
+/// closes. The vendored `agent` node only routes to an [`AgentRunner`] when the
+/// node carries a **non-empty `agent_ref`** AND the host wired an agent registry
+/// (`vendor/tinyflows/src/nodes/integration/agent.rs`, `run_turn`:
+/// `(Some(agent_ref), Some(runner)) => runner.run_agent(...)`); **every other
+/// case** — and builder-generated agent nodes carry NO `agent_ref` — falls back
+/// to `ctx.caps.llm.complete(cfg.clone(), conn)`. So in the sandbox those plain
+/// agent nodes never reach `SchemaAwareMockAgentRunner` at all: they hit the
+/// `llm` slot, which (with the vendored `MockLlm`) echoes
+/// `{ "completion": <config>, "connection": <conn> }`. The agent node's
+/// output-parser sub-port then validates that echo against the declared schema
+/// (`schema::parse_and_validate` — it validates the WHOLE completion value, not
+/// a `.text` field), no field matches, and it falls to a one-shot LLM auto-fix
+/// that the same `MockLlm` also can't satisfy — so the dry run errors with
+/// `output_parser: value failed schema validation after auto-fix: missing
+/// required property ...` even for a workflow a real run would execute cleanly.
+/// This false-failure burned many dry-run cycles for correctly-built graphs.
+///
+/// When `request` (the node config the node hands to `complete` — see the
+/// `_ => ctx.caps.llm.complete(cfg.clone(), conn)` arm above) carries a non-null
+/// `output_parser.schema`, this returns [`placeholder_for_schema`] DIRECTLY.
+/// The sub-port receives that already-schema-valid object as its `value`
+/// (`validate` returns no errors), so it returns `Ok` WITHOUT ever invoking the
+/// auto-fix LLM path — exactly the shape the vendored validator's
+/// `type`/`required`/`enum` checks accept, with no real model call. With no
+/// schema, it mirrors the vendored `MockLlm` echo shape byte-for-byte
+/// (`{ "completion": request, "connection": conn }`) so schema-less agent
+/// dry-run behavior — and downstream `=nodes.<agent>.item.json.completion...`
+/// bindings — stay identical to today.
+#[derive(Debug, Default, Clone)]
+pub struct SchemaAwareMockLlm;
+
+#[async_trait]
+impl LlmProvider for SchemaAwareMockLlm {
+    async fn complete(&self, request: Value, conn: Option<&str>) -> Result<Value> {
+        let schema = request
+            .get("output_parser")
+            .and_then(|parser| parser.get("schema"))
+            .filter(|schema| !schema.is_null());
+        match schema {
+            Some(schema) => {
+                let placeholder = placeholder_for_schema(schema);
+                tracing::debug!(
+                    target: "flows",
+                    "[flows] dry_run: schema-aware mock LLM synthesized a placeholder \
+                     matching output_parser.schema (plain agent node, no agent_ref)"
+                );
+                Ok(placeholder)
+            }
+            None => {
+                tracing::debug!(
+                    target: "flows",
+                    "[flows] dry_run: schema-aware mock LLM has no output_parser.schema — \
+                     mirroring the vendored MockLlm echo shape"
+                );
+                Ok(json!({ "completion": request, "connection": conn }))
             }
         }
     }
@@ -1371,6 +1527,38 @@ async fn connected_toolkit_slugs(config: &Config) -> Option<Vec<String>> {
     )
 }
 
+/// Effect-aware classification of a Composio `tool_call` slug into the
+/// [`CommandClass`] the autonomy-tier gate ([`enforce_node_tier_gate`])
+/// evaluates it under.
+///
+/// Reuses [`curated_scope_for`](crate::openhuman::memory_sync::composio::providers::curated_scope_for),
+/// the same catalog walk `composio::ops`'s `gated_tools` hints use — a
+/// registered native provider's `curated_tools()` first, then the static
+/// `catalog_for_toolkit` fallback. **Fail-safe by construction:** only a
+/// slug that resolves to a curated entry with `ToolScope::Read` maps to
+/// `CommandClass::Read` (the one class every tier `Allow`s outright, so a
+/// read never parks as a pending approval). Every other outcome — a
+/// curated `Write`/`Admin` entry, a toolkit with no catalog entry for this
+/// slug, a toolkit with no catalog at all, or an unparseable/empty slug —
+/// maps to `CommandClass::Network`, the same class `http_request` uses
+/// (prompts under Supervised/Full, blocks under ReadOnly).
+///
+/// Deliberately does **not** fall back to
+/// [`classify_unknown`](crate::openhuman::memory_sync::composio::providers::classify_unknown)
+/// for uncurated slugs: that heuristic is tuned for the *curation*
+/// allowlist (`flow_tool_allowed`'s Path B — "is this slug even visible to
+/// the agent"), not for deciding whether a real side-effecting call skips
+/// a human approval prompt. A "SEARCH"/"GET"-shaped uncurated slug must
+/// still prompt until OpenHuman has actually hand-curated it as `Read`.
+async fn classify_composio_action_for_tier(slug: &str) -> CommandClass {
+    use crate::openhuman::memory_sync::composio::providers::{curated_scope_for, ToolScope};
+
+    match curated_scope_for(slug) {
+        Some(ToolScope::Read) => CommandClass::Read,
+        Some(ToolScope::Write) | Some(ToolScope::Admin) | None => CommandClass::Network,
+    }
+}
+
 /// Deny-by-default curation gate for a flow `tool_call` slug (see
 /// [`flow_tool_allowed`] for the decision matrix). Fetches the user's live
 /// connected-toolkit set only when the slug's toolkit has no static catalog.
@@ -1460,6 +1648,7 @@ async fn resolve_composio_account(
 /// // approval when a trigger-driven run's tool/http config contains `=`-exprs.
 pub struct OpenHumanTools {
     pub config: Arc<Config>,
+    pub security: Arc<SecurityPolicy>,
 }
 
 /// Prefix marking a `tool_call` node's slug as a NATIVE OpenHuman tool (the
@@ -2406,18 +2595,13 @@ impl ToolInvoker for OpenHumanTools {
                 ));
             }
 
-            let security = SecurityPolicy::from_config(
-                &self.config.autonomy,
-                &self.config.workspace_dir,
-                &self.config.action_dir,
-            );
             let class = crate::openhuman::runtime_node::ops::classify_tool_call(
                 &self.config,
                 tool_name,
                 &args,
             )
             .map_err(EngineError::Capability)?;
-            let tier_decision = enforce_node_tier_gate(&security, class, "tool_call")?;
+            let tier_decision = enforce_node_tier_gate(&self.security, class, "tool_call")?;
             let summary = crate::openhuman::approval::summarize_action(tool_name, &args);
             let redacted = crate::openhuman::approval::redact_args(&args);
             let (outcome, _request_id) =
@@ -2445,6 +2629,30 @@ impl ToolInvoker for OpenHumanTools {
             });
         }
 
+        // Autonomy-tier gate (Phase 2, made effect-aware): the node's
+        // [`CommandClass`] is derived from the action's curated
+        // [`ToolScope`](crate::openhuman::memory_sync::composio::providers::ToolScope)
+        // via [`classify_composio_action_for_tier`] — a curated Read action
+        // (e.g. `TWITTER_RECENT_SEARCH`) is `CommandClass::Read`, which every
+        // tier `Allow`s; a curated Write/Admin action, or anything not
+        // curated, is `CommandClass::Network` (same class `http_request`
+        // uses — fail-safe: only a curated Read skips the prompt). A
+        // read-only run `Block`s on a non-Read class here and never reaches
+        // curation, the preflight, or the approval gate; Supervised/Full
+        // fall through to `gate_call_for_tier` below. Runs BEFORE the
+        // curation check (unlike the pre-fix behavior) so a read-only tier
+        // can never even probe which slugs are curated.
+        let composio_class = classify_composio_action_for_tier(slug).await;
+        let tier_decision = enforce_node_tier_gate(&self.security, composio_class, "tool_call")?;
+        tracing::debug!(
+            target: "flows",
+            %slug,
+            ?composio_class,
+            ?tier_decision,
+            tier = ?self.security.autonomy,
+            "[flows] tool_call: composio node tier gate evaluated"
+        );
+
         // Curation + scope gate — hard allowlist (see [`is_curated_flow_tool`]'s
         // doc for why this differs from the general agent tool-call path).
         // Runs before anything else — a rejected slug never reaches the
@@ -2467,22 +2675,41 @@ impl ToolInvoker for OpenHumanTools {
         // provider or asks the user to approve a call that cannot succeed.
         preflight_composio_args(&self.config, slug, &args).await?;
 
-        // Approval gate (see the struct doc). Mirrors
-        // `tinyagents/middleware.rs::ApprovalSecurityMiddleware::wrap_tool`'s
-        // shape exactly: compute summary/redacted args only when a gate is
-        // installed, deny short-circuits before any composio call, allow
-        // records an audit id to close out after the call resolves.
-        let mut audit_id: Option<String> = None;
-        if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
-            let summary = crate::openhuman::approval::summarize_action(slug, &args);
-            let redacted = crate::openhuman::approval::redact_args(&args);
-            let (outcome, request_id) = gate.intercept_audited(slug, &summary, redacted).await;
-            match outcome {
-                crate::openhuman::approval::GateOutcome::Deny { reason } => {
-                    return Err(EngineError::Capability(reason));
-                }
-                crate::openhuman::approval::GateOutcome::Allow => audit_id = request_id,
-            }
+        // Approval gate (see the struct doc). Mirrors `OpenHumanHttp::request`'s
+        // shape exactly: `gate_call_for_tier` is what actually performs the
+        // `Prompt` round-trip — it escalates a Supervised `Prompt` decision
+        // into a forced approval regardless of the flow's own
+        // `require_approval` toggle (Codex P1), same as the `http_request` and
+        // `code` node paths. Deny short-circuits before any composio call;
+        // Allow records an audit id to close out after the call resolves.
+        //
+        // Effect-aware short-circuit: when the tier decision is already
+        // `Allow` (a curated Read action — the only `CommandClass` this
+        // classifier maps to `Read`), skip `gate_call_for_tier`/
+        // `intercept_audited` entirely. This matters
+        // because `flows/ops.rs`'s Rule 2 force-sets `require_approval: true`
+        // on any saved flow that contains a `tool_call` node, regardless of
+        // which actions it calls — without this short-circuit, that forced
+        // `Workflow { require_approval: true }` origin would still route a
+        // curated-Read `Allow` decision through `intercept_audited`'s normal
+        // parking flow, re-introducing the "reads wait for approval" bug via
+        // a different path than the one this fix closes at the tier gate.
+        // Refining Rule 2 itself to be scope-aware is a deferred follow-up.
+        let summary = crate::openhuman::approval::summarize_action(slug, &args);
+        let redacted = crate::openhuman::approval::redact_args(&args);
+        let (outcome, audit_id) = if tier_decision == GateDecision::Allow {
+            (crate::openhuman::approval::GateOutcome::Allow, None)
+        } else {
+            gate_call_for_tier(tier_decision, slug, &summary, redacted).await
+        };
+        if let crate::openhuman::approval::GateOutcome::Deny { reason } = outcome {
+            tracing::warn!(
+                target: "flows",
+                %slug,
+                ?tier_decision,
+                "[flows] tool_call: approval gate denied before Composio dispatch"
+            );
+            return Err(EngineError::Capability(reason));
         }
 
         let kind = create_composio_client(&self.config)
@@ -3121,6 +3348,7 @@ pub fn build_capabilities(config: Arc<Config>, state_namespace: impl Into<String
         }),
         tools: Arc::new(OpenHumanTools {
             config: config.clone(),
+            security: security.clone(),
         }),
         http: Arc::new(OpenHumanHttp {
             security: security.clone(),
@@ -3486,6 +3714,62 @@ mod tests {
             .expect("run_agent");
         assert_eq!(out["agent"], "researcher");
         assert_eq!(out["request"], request);
+    }
+
+    // ── SchemaAwareMockLlm ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn schema_aware_mock_llm_mirrors_vendored_echo_without_a_schema() {
+        // No `output_parser.schema`: byte-identical to the vendored `MockLlm`
+        // so schema-less agent dry runs (which route to the `llm` slot, not the
+        // runner) keep today's `{ completion, connection }` shape.
+        let llm = SchemaAwareMockLlm;
+        let request = json!({ "prompt": "hi" });
+        let out = llm
+            .complete(request.clone(), Some("conn_1"))
+            .await
+            .expect("complete");
+        assert_eq!(out["completion"], request);
+        assert_eq!(out["connection"], "conn_1");
+
+        let without_conn = llm.complete(request, None).await.expect("complete");
+        assert!(without_conn["connection"].is_null());
+    }
+
+    #[tokio::test]
+    async fn schema_aware_mock_llm_synthesizes_a_schema_valid_completion() {
+        // A plain agent node (no `agent_ref`) hands its config to the `llm`
+        // slot; the returned object must pass the output-parser sub-port's
+        // validator directly (no auto-fix hop) for every declared type.
+        let llm = SchemaAwareMockLlm;
+        let request = json!({
+            "prompt": "extract",
+            "output_parser": { "schema": { "type": "object",
+                "required": ["email", "count", "active", "meta", "tags"],
+                "properties": {
+                    "email": { "type": "string" },
+                    "count": { "type": "integer" },
+                    "active": { "type": "boolean" },
+                    "meta": { "type": "object" },
+                    "tags": { "type": "array" }
+                } } }
+        });
+        let out = llm.complete(request, None).await.expect("complete");
+        assert_eq!(out["email"], "");
+        assert_eq!(out["count"], 0);
+        assert_eq!(out["active"], false);
+        assert_eq!(out["meta"], json!({}));
+        assert_eq!(out["tags"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn schema_aware_mock_llm_ignores_null_schema() {
+        // `output_parser: { schema: null }` is treated as "no schema" — the
+        // vendored echo shape, same as the runner's null-schema handling.
+        let llm = SchemaAwareMockLlm;
+        let request = json!({ "prompt": "hi", "output_parser": { "schema": null } });
+        let out = llm.complete(request.clone(), None).await.expect("complete");
+        assert_eq!(out["completion"], request);
     }
 
     #[test]
@@ -3959,6 +4243,191 @@ mod tests {
         }
     }
 
+    /// End-to-end at the adapter: a Composio `tool_call` node under a
+    /// read-only tier is refused BEFORE it ever reaches the curation gate or
+    /// any Composio dispatch — closes the compound bypass where the Composio
+    /// branch of `OpenHumanTools::invoke` reached `intercept_audited` without
+    /// ever consulting the autonomy tier, unlike the native `oh:`,
+    /// `http_request`, and `code` node paths, which all gate on tier first.
+    #[tokio::test]
+    async fn composio_tool_call_blocks_under_readonly_tier() {
+        use crate::openhuman::security::AutonomyLevel;
+
+        let tools = OpenHumanTools {
+            config: Arc::new(Config::default()),
+            security: Arc::new(policy(AutonomyLevel::ReadOnly)),
+        };
+
+        let err = tools
+            .invoke("SLACK_SEND_MESSAGE", json!({}), None)
+            .await
+            .expect_err("read-only tier must block a Composio tool_call node before dispatch");
+        if let EngineError::Capability(msg) = err {
+            assert!(
+                msg.contains(POLICY_BLOCKED_MARKER),
+                "expected a policy-blocked refusal, got: {msg}"
+            );
+        } else {
+            panic!("expected EngineError::Capability");
+        }
+    }
+
+    // ── Effect-aware Composio tier gating (fixes reads parking as pending
+    // approvals): the tier gate must classify a Composio action by its
+    // curated [`ToolScope`], not blanket-treat every action as `Network`.
+    // Only a curated `Read` entry skips the prompt; curated `Write`/`Admin`,
+    // an uncurated toolkit, or an unparseable slug all still classify as
+    // `Network` (fail-safe — same class `http_request` uses).
+
+    /// A genuinely curated read (`TWITTER_RECENT_SEARCH`) must resolve to
+    /// `CommandClass::Read`, which `ReadOnly`'s gate matrix allows — closing
+    /// the bug where every Composio action (reads included) hard-blocked
+    /// under a read-only tier.
+    #[tokio::test]
+    async fn composio_read_action_allowed_under_readonly_tier() {
+        use crate::openhuman::security::AutonomyLevel;
+
+        let class = classify_composio_action_for_tier("TWITTER_RECENT_SEARCH").await;
+        assert_eq!(class, CommandClass::Read);
+        assert_eq!(
+            enforce_node_tier_gate(&policy(AutonomyLevel::ReadOnly), class, "tool_call")
+                .expect("a curated Read action must not be blocked under ReadOnly"),
+            GateDecision::Allow
+        );
+
+        // End-to-end: the adapter itself must not refuse before dispatch —
+        // it may still fail downstream (no Composio session configured in
+        // this test), but never with the policy-blocked marker.
+        let tools = OpenHumanTools {
+            config: Arc::new(Config::default()),
+            security: Arc::new(policy(AutonomyLevel::ReadOnly)),
+        };
+        let err = tools
+            .invoke("TWITTER_RECENT_SEARCH", json!({}), None)
+            .await
+            .expect_err("no live Composio session is configured in this test");
+        if let EngineError::Capability(msg) = err {
+            assert!(
+                !msg.contains(POLICY_BLOCKED_MARKER),
+                "a curated read must never be refused by the autonomy-tier gate, got: {msg}"
+            );
+        } else {
+            panic!("expected EngineError::Capability");
+        }
+    }
+
+    /// A curated read under Supervised classifies as `CommandClass::Read`,
+    /// which the gate matrix always `Allow`s — so it can never trigger the
+    /// Supervised `Prompt` round-trip (the actual pending-approval bug: a
+    /// blanket `Network` classification prompted for every Composio call,
+    /// reads included).
+    #[tokio::test]
+    async fn composio_read_action_does_not_prompt_under_supervised_tier() {
+        use crate::openhuman::security::AutonomyLevel;
+
+        let class = classify_composio_action_for_tier("TWITTER_RECENT_SEARCH").await;
+        assert_eq!(class, CommandClass::Read);
+        assert_eq!(
+            enforce_node_tier_gate(&policy(AutonomyLevel::Supervised), class, "tool_call")
+                .expect("a curated Read action must not be blocked under Supervised"),
+            GateDecision::Allow,
+            "a curated read must resolve to Allow, never Prompt, under Supervised"
+        );
+
+        let tools = OpenHumanTools {
+            config: Arc::new(Config::default()),
+            security: Arc::new(policy(AutonomyLevel::Supervised)),
+        };
+        let err = tools
+            .invoke("TWITTER_RECENT_SEARCH", json!({}), None)
+            .await
+            .expect_err("no live Composio session is configured in this test");
+        if let EngineError::Capability(msg) = err {
+            assert!(
+                !msg.contains(POLICY_BLOCKED_MARKER),
+                "a curated read must pass the tier gate under Supervised, got: {msg}"
+            );
+        } else {
+            panic!("expected EngineError::Capability");
+        }
+    }
+
+    /// Guard: a curated *write* action must still resolve to a
+    /// `Network`-class decision that `Prompt`s under Supervised — the
+    /// effect-aware classification must never widen who skips approval
+    /// beyond curated reads.
+    #[tokio::test]
+    async fn composio_write_action_still_prompts_under_supervised_tier() {
+        use crate::openhuman::security::AutonomyLevel;
+
+        for slug in ["TWITTER_CREATION_OF_A_POST", "GMAIL_SEND_EMAIL"] {
+            let class = classify_composio_action_for_tier(slug).await;
+            assert_eq!(
+                class,
+                CommandClass::Network,
+                "slug {slug} must classify as Network"
+            );
+            assert_eq!(
+                enforce_node_tier_gate(&policy(AutonomyLevel::Supervised), class, "tool_call")
+                    .expect(
+                        "a Network-class action is not blocked (only prompted) under Supervised"
+                    ),
+                GateDecision::Prompt,
+                "slug {slug} must still require a Supervised-tier approval prompt"
+            );
+        }
+    }
+
+    /// Guard: an uncurated / unrecognized slug must fail safe to
+    /// `Network` (never `Read`) so it still prompts under Supervised and
+    /// blocks under ReadOnly — an agent can't dodge approval just by
+    /// calling a toolkit action OpenHuman hasn't curated yet.
+    #[tokio::test]
+    async fn composio_unknown_slug_prompts_under_supervised_tier() {
+        use crate::openhuman::security::AutonomyLevel;
+
+        let class = classify_composio_action_for_tier("UNKNOWN_SERVICE_DO_THING").await;
+        assert_eq!(class, CommandClass::Network);
+        assert_eq!(
+            enforce_node_tier_gate(&policy(AutonomyLevel::Supervised), class, "tool_call")
+                .expect("Network-class is prompted, not blocked, under Supervised"),
+            GateDecision::Prompt
+        );
+        assert!(
+            enforce_node_tier_gate(&policy(AutonomyLevel::ReadOnly), class, "tool_call").is_err()
+        );
+    }
+
+    /// Unit coverage of the classifier itself, independent of the gate: a
+    /// curated Read entry classifies as `Read`; curated Write/Admin entries,
+    /// an uncurated toolkit, and an unparseable/empty slug all classify as
+    /// `Network` (fail-safe default — never silently widen to Read).
+    #[tokio::test]
+    async fn classify_composio_action_for_tier_matches_curated_scope_fail_safe() {
+        assert_eq!(
+            classify_composio_action_for_tier("TWITTER_RECENT_SEARCH").await,
+            CommandClass::Read
+        );
+        assert_eq!(
+            classify_composio_action_for_tier("TWITTER_CREATION_OF_A_POST").await,
+            CommandClass::Network
+        );
+        assert_eq!(
+            classify_composio_action_for_tier("TWITTER_POST_DELETE_BY_POST_ID").await,
+            CommandClass::Network
+        );
+        // Uncurated toolkit (no catalog at all for "unknown").
+        assert_eq!(
+            classify_composio_action_for_tier("UNKNOWN_SERVICE_DO_THING").await,
+            CommandClass::Network
+        );
+        // Unparseable / empty slug.
+        assert_eq!(
+            classify_composio_action_for_tier("").await,
+            CommandClass::Network
+        );
+    }
+
     // ── Codex P1: Prompt-tier decisions must escalate past a workflow's own
     // require_approval=false default, never silently auto-allow ────────────
 
@@ -4081,6 +4550,94 @@ mod tests {
     #[test]
     fn nested_harness_does_not_escalate_without_an_origin() {
         assert!(escalated_origin_for_nested_harness(None).is_none());
+    }
+
+    // ── Issue #4868 — agent-node iteration cap + timeout scaling ───────────
+
+    #[test]
+    fn scale_timeout_for_iteration_cap_leaves_default_cap_unscaled() {
+        // An agent whose effective cap is at or below the old global default
+        // (10) doesn't need extra wall-clock time.
+        assert_eq!(scale_timeout_for_iteration_cap(240, 10), 240);
+        assert_eq!(scale_timeout_for_iteration_cap(240, 3), 240);
+    }
+
+    #[test]
+    fn scale_timeout_for_iteration_cap_scales_extended_agents_up() {
+        // 50 iterations * 12s/iter = 600s, exactly the existing ceiling.
+        assert_eq!(scale_timeout_for_iteration_cap(240, 50), 600);
+    }
+
+    #[test]
+    fn scale_timeout_for_iteration_cap_never_lowers_an_explicit_request() {
+        // A caller-requested timeout higher than the scaled floor must win.
+        assert_eq!(scale_timeout_for_iteration_cap(600, 50), 600);
+    }
+
+    #[test]
+    fn scale_timeout_for_iteration_cap_caps_at_600_even_for_very_high_iteration_counts() {
+        assert_eq!(scale_timeout_for_iteration_cap(240, 200), 600);
+    }
+
+    /// Post-merge Codex P2 finding on issue #4868: an explicit `timeout_secs`
+    /// the node config supplied (a caller-chosen fast-fail/SLA bound) must be
+    /// honored as-is — never scaled up just because the agent's iteration cap
+    /// is high — while the absence of one still gets the iteration-cap
+    /// scaling so a 50-iteration agent isn't killed by the 240s default.
+    #[test]
+    fn resolve_run_timeout_secs_preserves_an_explicit_request_even_for_a_high_cap_agent() {
+        assert_eq!(resolve_run_timeout_secs(Some(120), 50), 120);
+    }
+
+    #[test]
+    fn resolve_run_timeout_secs_scales_the_default_up_for_a_high_cap_agent() {
+        // No explicit timeout_secs (None) -> default 240s, scaled by the
+        // 50-iteration cap to min(50*12, 600) = 600.
+        assert_eq!(resolve_run_timeout_secs(None, 50), 600);
+    }
+
+    #[test]
+    fn resolve_run_timeout_secs_leaves_low_cap_agents_unscaled_either_way() {
+        assert_eq!(resolve_run_timeout_secs(None, 10), 240);
+        assert_eq!(resolve_run_timeout_secs(Some(120), 10), 120);
+    }
+
+    /// Regression for issue #4868: the agent-node runtime path
+    /// (`OpenHumanAgentRunner::run_via_harness`) must build an `Agent` that
+    /// carries `agent_ref`'s definition's effective cap (50 for an
+    /// extended-policy agent), not the global `config.agent.max_tool_iterations`
+    /// default (10). This mirrors the exact build step `run_via_harness` takes
+    /// before dispatching the turn (so it doesn't require a live model
+    /// provider to exercise).
+    #[test]
+    fn agent_node_runtime_resolves_to_the_definitions_effective_iteration_cap() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = resolver_test_config(&tmp);
+        assert_eq!(config.agent.max_tool_iterations, 10);
+
+        crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global(
+            &config.workspace_dir,
+        )
+        .expect("agent registry init");
+        let def = crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global()
+            .expect("registry initialised")
+            .get("code_executor")
+            .expect("code_executor definition registered")
+            .clone();
+        let expected = def.effective_max_iterations();
+        assert_eq!(expected, 50);
+
+        let agent = crate::openhuman::agent::Agent::from_config_for_agent(&config, "code_executor")
+            .expect("build code_executor agent");
+        assert_eq!(agent.agent_config().max_tool_iterations, expected);
+
+        // And the timeout scaling this cap feeds into actually widens the
+        // default 240s bound for this node.
+        let base_timeout = clamp_run_timeout_secs(None);
+        assert_eq!(base_timeout, 240);
+        let scaled =
+            scale_timeout_for_iteration_cap(base_timeout, agent.agent_config().max_tool_iterations);
+        assert_eq!(scaled, 600);
     }
 
     // ── Phase 7: sub_workflow-by-id resolver ───────────────────────────────
@@ -4801,5 +5358,51 @@ mod tests {
             resolve_completion_model(Some("   "), "chat-v1".to_string()),
             "chat-v1"
         );
+    }
+
+    #[test]
+    fn crate_model_response_preserves_flow_completion_contract() {
+        use tinyagents::harness::message::{AssistantMessage, ContentBlock};
+        use tinyagents::harness::model::ModelResponse;
+        use tinyagents::harness::tool::ToolCall;
+        use tinyagents::harness::usage::Usage;
+
+        let usage = Usage::new(11, 7);
+        let response = ModelResponse {
+            message: AssistantMessage {
+                id: Some("msg-1".to_string()),
+                content: vec![
+                    ContentBlock::Text("done".to_string()),
+                    ContentBlock::thinking("private chain"),
+                ],
+                tool_calls: vec![ToolCall {
+                    id: "call-1".to_string(),
+                    name: "lookup".to_string(),
+                    arguments: json!({"query": "weather"}),
+                    invalid: None,
+                }],
+                usage: Some(usage),
+            },
+            usage: Some(usage),
+            finish_reason: Some("tool_calls".to_string()),
+            raw: crate::openhuman::tinyagents::model::merge_openhuman_usage_meta(
+                None, 0.125, 128_000,
+            ),
+            resolved_model: None,
+        };
+
+        let value = model_response_to_completion_value(&response);
+        assert_eq!(value["text"], "done");
+        assert_eq!(value["tool_calls"][0]["id"], "call-1");
+        assert_eq!(value["tool_calls"][0]["name"], "lookup");
+        assert_eq!(
+            value["tool_calls"][0]["arguments"],
+            r#"{"query":"weather"}"#
+        );
+        assert_eq!(value["usage"]["input_tokens"], 11);
+        assert_eq!(value["usage"]["output_tokens"], 7);
+        assert_eq!(value["usage"]["context_window"], 128_000);
+        assert_eq!(value["usage"]["charged_amount_usd"], 0.125);
+        assert_eq!(value["reasoning_content"], "private chain");
     }
 }

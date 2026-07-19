@@ -118,6 +118,7 @@ describe('chatRuntimeSlice', () => {
             id: 'call-1',
             name: 'search',
             round: 1,
+            seq: 0,
             status: 'running',
             argsBuffer: '{"q":"hello"}',
           },
@@ -126,7 +127,14 @@ describe('chatRuntimeSlice', () => {
     );
 
     expect(withTimeline.toolTimelineByThread['thread-1']).toEqual([
-      { id: 'call-1', name: 'search', round: 1, status: 'running', argsBuffer: '{"q":"hello"}' },
+      {
+        id: 'call-1',
+        name: 'search',
+        round: 1,
+        seq: 0,
+        status: 'running',
+        argsBuffer: '{"q":"hello"}',
+      },
     ]);
 
     const cleared = reducer(withTimeline, clearToolTimelineForThread({ threadId: 'thread-1' }));
@@ -223,6 +231,7 @@ describe('chatRuntimeSlice', () => {
         id: 'tc-1',
         name: 'shell',
         round: 3,
+        seq: 0,
         status: 'running',
         argsBuffer: '{"cmd":"ls"}',
         displayName: undefined,
@@ -478,7 +487,7 @@ describe('chatRuntimeSlice', () => {
       ),
       setToolTimelineForThread({
         threadId: 'thread-1',
-        entries: [{ id: 'call-1', name: 'search', round: 1, status: 'running' }],
+        entries: [{ id: 'call-1', name: 'search', round: 1, seq: 0, status: 'running' }],
       })
     );
 
@@ -943,8 +952,72 @@ describe('toolCallReceived (Phase 3 reducer-side merge)', () => {
     const rows = state.toolTimelineByThread['t1'];
     expect(rows).toHaveLength(1);
     expect(rows[0].round).toBe(1);
+    // The row keeps its original `seq` across the upsert — issue order is set
+    // once, at first creation, and must not shift on a later update event.
+    expect(rows[0].seq).toBe(0);
     // Processing pointer is recorded once for the stable callId.
     expect(state.processingByThread['t1']).toHaveLength(1);
+  });
+
+  it('assigns a monotonically increasing seq to each newly created row per thread', () => {
+    let state = reducer(
+      undefined,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'search', toolCallId: 'c1' })
+    );
+    state = reducer(
+      state,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'search', toolCallId: 'c2' })
+    );
+    state = reducer(
+      state,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'search', toolCallId: 'c3' })
+    );
+    const rows = state.toolTimelineByThread['t1'];
+    expect(rows.map(r => r.seq)).toEqual([0, 1, 2]);
+    // A different thread gets its own independent counter.
+    state = reducer(
+      state,
+      toolCallReceived({ threadId: 't2', round: 0, toolName: 'search', toolCallId: 'd1' })
+    );
+    expect(state.toolTimelineByThread['t2'][0].seq).toBe(0);
+  });
+
+  it('keeps the seq from first creation when args arrive before the tool_call event', () => {
+    // A `tool_args_delta` for call B can race ahead of call A's `tool_call`
+    // event when the agent issues two parallel calls in one turn. The row
+    // created by whichever event lands first gets seq 0; the row's `seq`
+    // must not change when the (later) sibling event for the same call
+    // arrives and only updates the existing row in place.
+    let state = reducer(
+      undefined,
+      toolArgsDeltaReceived({
+        threadId: 't1',
+        round: 0,
+        delta: '{"q":"b"}',
+        toolName: 'search',
+        toolCallId: 'call-b',
+      })
+    );
+    state = reducer(
+      state,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'search', toolCallId: 'call-a' })
+    );
+    // call-b's row was created first (seq 0) even though call-a's
+    // `tool_call` event is semantically "first" in the pair — the point is
+    // that whichever event creates the row locks in the seq, and a later
+    // `toolCallReceived` for that same id does not reassign it.
+    state = reducer(
+      state,
+      toolCallReceived({ threadId: 't1', round: 0, toolName: 'search', toolCallId: 'call-b' })
+    );
+    const rows = state.toolTimelineByThread['t1'];
+    const rowB = rows.find(r => r.id === 'call-b');
+    const rowA = rows.find(r => r.id === 'call-a');
+    expect(rowB?.seq).toBe(0);
+    expect(rowA?.seq).toBe(1);
+    // Re-receiving call-b's tool_call event (args arrived first) must not
+    // bump its seq to a later value.
+    expect(rowB?.seq).toBe(0);
   });
 });
 
@@ -954,7 +1027,7 @@ describe('toolResultReceived (Phase 3 reducer-side merge)', () => {
       undefined,
       setToolTimelineForThread({
         threadId: 't1',
-        entries: [{ id: 'call-1', name: 'shell', round: 0, status: 'running' }],
+        entries: [{ id: 'call-1', name: 'shell', round: 0, seq: 0, status: 'running' }],
       })
     );
 
@@ -976,12 +1049,48 @@ describe('toolResultReceived (Phase 3 reducer-side merge)', () => {
     });
   });
 
-  it('falls back to the newest running row of the same name+round when no id matches', () => {
+  it('falls back to the (only) running row of the same name+round when no id matches', () => {
     const state = reducer(
       withRunningRow(),
       toolResultReceived({ threadId: 't1', round: 0, toolName: 'shell', success: false })
     );
     expect(state.toolTimelineByThread['t1'][0].status).toBe('error');
+  });
+
+  it('FIFO: settles the oldest (not newest) running row of the same name+round when no id matches', () => {
+    // Two parallel `get_tool_contract` calls with the same name+round and no
+    // toolCallId on the result (mirrors a legacy/incomplete socket payload).
+    // The fallback must settle the row that was issued FIRST (lowest seq),
+    // not the most recently created one — otherwise a result for the first
+    // call can incorrectly settle the second call's still-running row.
+    let state = reducer(
+      undefined,
+      setToolTimelineForThread({
+        threadId: 't1',
+        entries: [
+          { id: 'call-old', name: 'get_tool_contract', round: 0, seq: 0, status: 'running' },
+          { id: 'call-new', name: 'get_tool_contract', round: 0, seq: 1, status: 'running' },
+        ],
+      })
+    );
+    state = reducer(
+      state,
+      toolResultReceived({
+        threadId: 't1',
+        round: 0,
+        toolName: 'get_tool_contract',
+        success: true,
+        output: 'first result',
+      })
+    );
+    const rows = state.toolTimelineByThread['t1'];
+    const oldRow = rows.find(r => r.id === 'call-old');
+    const newRow = rows.find(r => r.id === 'call-new');
+    expect(oldRow?.status).toBe('success');
+    expect(oldRow?.result).toBe('first result');
+    // The newer call's row is untouched — still running, awaiting its own result.
+    expect(newRow?.status).toBe('running');
+    expect(newRow?.result).toBeUndefined();
   });
 
   it('is a no-op when nothing matches (mirrors the provider changed-guard)', () => {
@@ -1105,6 +1214,7 @@ describe('subagent event reducers (Phase 3)', () => {
             id: 'spawn-1',
             name: 'spawn_subagent',
             round: 0,
+            seq: 0,
             status: 'running',
             detail: 'go research',
           },
@@ -1259,7 +1369,9 @@ describe('toolArgsDeltaReceived (Phase 3 reducer-side merge)', () => {
       undefined,
       setToolTimelineForThread({
         threadId: 't1',
-        entries: [{ id: 'r1', name: 'search', round: 0, status: 'running', argsBuffer: '{' }],
+        entries: [
+          { id: 'r1', name: 'search', round: 0, seq: 0, status: 'running', argsBuffer: '{' },
+        ],
       })
     );
     state = reducer(

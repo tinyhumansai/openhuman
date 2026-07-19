@@ -30,7 +30,7 @@ use crate::openhuman::channels::yuanbao::YuanbaoChannel;
 use crate::openhuman::channels::Channel;
 use crate::openhuman::config::Config;
 use crate::openhuman::context::channels_prompt::build_system_prompt;
-use crate::openhuman::inference::provider::{self, Provider};
+use crate::openhuman::inference::provider;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::memory_store;
 use crate::openhuman::security::SecurityPolicy;
@@ -166,11 +166,20 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     crate::openhuman::agent_meetings::bus::register_meeting_event_subscriber();
     // Surface parked ApprovalGate requests as chat messages so the user can
     // answer yes/no in the thread (chat-native approval, issue #1339).
-    crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
+    crate::openhuman::web_chat::register_approval_surface_subscriber();
     // Surface generated-artifact lifecycle events (ArtifactReady /
     // ArtifactFailed) as `artifact_ready` / `artifact_failed` web-channel
     // events so the frontend ArtifactCard can render in chat (#2779).
-    crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
+    crate::openhuman::web_chat::register_artifact_surface_subscriber();
+    // Bridge emergency-stop halt/resume (AutomationHalted / AutomationResumed)
+    // to the `automation_halt` web-channel socket event, broadcast to every
+    // client via the "system" room, so the frontend kill-switch UI updates
+    // globally (#4255).
+    crate::openhuman::web_chat::register_automation_halt_subscriber();
+    // Surface external-egress disclosure events (ExternalTransferPending) as
+    // `external_transfer_pending` web-channel events so the frontend can show a
+    // per-action "what leaves, to where, why" card (privacy epic S2, #4436).
+    crate::openhuman::web_chat::register_egress_surface_subscriber();
     // Spawn the per-toolkit provider periodic sync scheduler. This is
     // a thin tokio task that ticks every minute and dispatches into
     // any provider whose `sync_interval_secs` has elapsed for an
@@ -193,79 +202,11 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // channel dispatch calls `request_native_global("agent.run_turn", …)`
     // for every inbound message.
     crate::openhuman::agent::bus::register_agent_handlers();
-    // Phase 2 learning producers: email-signature subscriber reacts to
-    // DocumentCanonicalized events and emits Identity candidates into the buffer.
-    // The handle is intentionally leaked into a static so the subscription stays
-    // alive for the lifetime of the process (same pattern as TracingSubscriber).
-    {
-        use crate::core::event_bus::SubscriptionHandle;
-        use std::sync::OnceLock;
-        static EMAIL_SIG_HANDLE: OnceLock<Option<SubscriptionHandle>> = OnceLock::new();
-        EMAIL_SIG_HANDLE.get_or_init(|| {
-            crate::openhuman::learning::extract::signature::register_email_signature_subscriber()
-        });
-    }
-
-    // Phase 3 learning: register the event-driven rebuild trigger.
-    // The stability detector is wired up only when the global memory client is
-    // already initialised (it may not be in the channel runtime path — the
-    // client is initialised later in `start_channels`).
-    {
-        use crate::core::event_bus::SubscriptionHandle;
-        use std::sync::OnceLock;
-        static REBUILD_TRIGGER_HANDLE: OnceLock<Option<SubscriptionHandle>> = OnceLock::new();
-        REBUILD_TRIGGER_HANDLE.get_or_init(|| {
-            if let Some(client) = crate::openhuman::memory::global::client_if_ready() {
-                use crate::openhuman::learning::cache::FacetCache;
-                use crate::openhuman::learning::scheduler::register_event_trigger;
-                use crate::openhuman::learning::StabilityDetector;
-                use std::sync::Arc;
-                let cache = FacetCache::new(client.profile_conn());
-                let detector = Arc::new(StabilityDetector::new(cache));
-                // Also spawn the periodic rebuild loop (30-minute cadence).
-                let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-                // Leak the sender so the loop never receives a shutdown signal
-                // until the process exits. This matches the pattern used by
-                // other always-on background tasks.
-                Box::leak(Box::new(shutdown_tx));
-                crate::openhuman::learning::scheduler::spawn_rebuild_loop(
-                    Arc::clone(&detector),
-                    crate::openhuman::learning::scheduler::DEFAULT_REBUILD_INTERVAL,
-                    shutdown_rx,
-                );
-                register_event_trigger(detector)
-            } else {
-                tracing::debug!("[learning::scheduler] memory client not ready at channel startup, skipping event-trigger registration");
-                None
-            }
-        });
-    }
-
-    // Phase 4 learning: register the ProfileMdRenderer subscriber.
-    // Subscribes to CacheRebuilt events and re-renders the five cache-derived
-    // PROFILE.md blocks (style, identity, tooling, vetoes, goals).
-    {
-        use crate::core::event_bus::SubscriptionHandle;
-        use std::sync::OnceLock;
-        static PROFILE_MD_RENDERER_HANDLE: OnceLock<Option<SubscriptionHandle>> = OnceLock::new();
-        PROFILE_MD_RENDERER_HANDLE.get_or_init(|| {
-            if let Some(client) = crate::openhuman::memory::global::client_if_ready() {
-                use crate::openhuman::learning::cache::FacetCache;
-                use crate::openhuman::learning::ProfileMdRenderer;
-                use std::sync::Arc;
-                let cache = Arc::new(FacetCache::new(client.profile_conn()));
-                let renderer =
-                    Arc::new(ProfileMdRenderer::new(cache, config.workspace_dir.clone()));
-                ProfileMdRenderer::subscribe(renderer)
-            } else {
-                tracing::debug!(
-                    "[learning::profile_md_renderer] memory client not ready at startup, \
-                     skipping ProfileMdRenderer registration"
-                );
-                None
-            }
-        });
-    }
+    // The Phase 2/3/4 self-improvement subscribers (email-signature producer,
+    // rebuild trigger, ProfileMdRenderer) are registered in
+    // core::jsonrpc::register_domain_subscribers instead. start_channels is
+    // skipped when no channel is configured, so wiring them here silently
+    // dropped user-profile inference for channel-less users (#5003).
 
     tracing::debug!("[event_bus] global singleton initialized in start_channels");
 
@@ -289,42 +230,32 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
-    let (provider, model, provider_name): (Arc<dyn Provider>, String, String) =
-        match resolve_chat_workload(&config) {
-            ChatWorkloadResolution::Cloud => {
-                let p: Arc<dyn Provider> =
-                    Arc::from(provider::create_intelligent_routing_provider(
-                        config.inference_url.as_deref(),
-                        config.api_url.as_deref(),
-                        config.api_key.as_deref(),
-                        &config,
-                        &provider_runtime_options,
-                    )?);
-                let m = config
-                    .default_model
-                    .clone()
-                    .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into());
-                (p, m, provider::INFERENCE_BACKEND_ID.to_string())
-            }
-            ChatWorkloadResolution::Workload {
-                provider_string,
-                slug,
-            } => {
-                tracing::info!(
-                    chat_provider = %provider_string,
-                    slug = %slug,
-                    "[channels][startup] chat workload routed to per-workload provider — building dedicated channel provider"
-                );
-                let (boxed, model_id) = provider::create_chat_provider("chat", &config)?;
-                (Arc::from(boxed), model_id, slug)
-            }
-        };
-
-    // Warm up the provider connection pool (TLS handshake, DNS, HTTP/2 setup)
-    // so the first real message doesn't hit a cold-start timeout.
-    if let Err(e) = provider.warmup().await {
-        tracing::warn!("Provider warmup failed (non-fatal): {e}");
-    }
+    let (model, provider_name) = match resolve_chat_workload(&config) {
+        ChatWorkloadResolution::Cloud => {
+            let (_chat, model) = provider::create_chat_model_with_model_id(
+                "chat",
+                &config,
+                config.default_temperature,
+            )?;
+            (model, provider::INFERENCE_BACKEND_ID.to_string())
+        }
+        ChatWorkloadResolution::Workload {
+            provider_string,
+            slug,
+        } => {
+            tracing::info!(
+                chat_provider = %provider_string,
+                slug = %slug,
+                "[channels][startup] chat workload routed to per-workload provider — building dedicated channel provider"
+            );
+            let (_chat, model_id) = provider::create_chat_model_with_model_id(
+                "chat",
+                &config,
+                config.default_temperature,
+            )?;
+            (model_id, slug)
+        }
+    };
 
     let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(host_runtime::create_runtime(
         &config.runtime,
@@ -905,14 +836,12 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
 
-    let mut provider_cache_seed: HashMap<String, Arc<dyn Provider>> = HashMap::new();
-    provider_cache_seed.insert(provider_name.clone(), Arc::clone(&provider));
     let message_timeout_secs =
         effective_channel_message_timeout_secs(config.channels_config.message_timeout_secs);
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name,
-        provider: Arc::clone(&provider),
+        provider: None,
         default_provider: Arc::new(provider_name),
         memory: Arc::clone(&mem),
         tools_registry: Arc::clone(&tools_registry),
@@ -923,7 +852,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         max_tool_iterations: config.agent.max_tool_iterations,
         min_relevance_score: config.memory.min_relevance_score,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
-        provider_cache: Arc::new(Mutex::new(provider_cache_seed)),
+        provider_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: config.api_url.clone(),
         inference_url: config.inference_url.clone(),
@@ -933,6 +862,8 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         message_timeout_secs,
         multimodal: config.multimodal.clone(),
         multimodal_files: config.multimodal_files.clone(),
+        // Crate-native turn models for the channel turn (Phase 3 P3-B).
+        config: Some(std::sync::Arc::new(config.clone())),
     });
 
     run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages).await;

@@ -260,6 +260,40 @@ fn all_tools_always_registers_curl() {
     );
 }
 
+// Compile-time `media` feature gate (#4804). The media-generation agent tools
+// (`media_generate_*`) are present only when the `media` feature is compiled
+// in AND an integration client is configured. The disabled build proves the
+// module + its single call site drop out entirely (leaf gate, no stub facade).
+#[cfg(feature = "media")]
+#[test]
+fn media_tools_registered_when_feature_on() {
+    let tmp = TempDir::new().unwrap();
+    let cfg = integration_test_config(&tmp, "http://127.0.0.1:1");
+    store_test_session_token(&cfg);
+    let tools = integration_tools_for_config(&tmp, &cfg);
+    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    assert!(
+        names.contains(&"media_generate_image"),
+        "media tools must register with the `media` feature on + an integration \
+         client; got: {names:?}"
+    );
+}
+
+#[cfg(not(feature = "media"))]
+#[test]
+fn media_tools_absent_when_feature_off() {
+    let tmp = TempDir::new().unwrap();
+    let cfg = integration_test_config(&tmp, "http://127.0.0.1:1");
+    store_test_session_token(&cfg);
+    let tools = integration_tools_for_config(&tmp, &cfg);
+    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    assert!(
+        !names.iter().any(|n| n.starts_with("media_")),
+        "no `media_*` tools may be registered when the `media` feature is off; \
+         got: {names:?}"
+    );
+}
+
 #[test]
 fn all_tools_registers_gitbooks_when_enabled() {
     let tmp = TempDir::new().unwrap();
@@ -298,6 +332,11 @@ fn all_tools_registers_gitbooks_when_enabled() {
 }
 
 #[test]
+// Wholly about the static MCP bridge surface, which the `mcp` feature compiles
+// out — no meaningful residue to assert in the disabled build (the
+// "no MCP tools registered" direction is covered by
+// `all_tools_omits_mcp_tools_when_gate_off` below).
+#[cfg(feature = "mcp")]
 fn all_tools_registers_generic_mcp_bridge_tools_when_servers_exist() {
     let tmp = TempDir::new().unwrap();
     let mut cfg = test_config(&tmp);
@@ -324,6 +363,50 @@ fn all_tools_registers_generic_mcp_bridge_tools_when_servers_exist() {
     assert_contains_all(
         &names,
         &["mcp_list_servers", "mcp_list_tools", "mcp_call_tool"],
+    );
+}
+
+/// The disabled direction of the `mcp` gate (#4799): even with MCP servers
+/// declared in config, a build without the `mcp` feature registers NO MCP tool
+/// of any family — neither the static bridge (`mcp_*`), the dynamic registry
+/// (`mcp_registry_*`), nor the setup-agent surface (`mcp_setup_*`).
+///
+/// Deliberately asserts by prefix rather than naming the ~19 tools: a new MCP
+/// tool added later must not be able to leak into slim builds just because
+/// nobody remembered to extend a hardcoded list here.
+#[test]
+#[cfg(not(feature = "mcp"))]
+fn all_tools_omits_mcp_tools_when_gate_off() {
+    let tmp = TempDir::new().unwrap();
+    let mut cfg = test_config(&tmp);
+    cfg.gitbooks.enabled = false;
+    cfg.mcp_client
+        .servers
+        .push(crate::openhuman::config::McpServerConfig {
+            name: "docs".into(),
+            endpoint: "https://example.com/mcp".into(),
+            command: String::new(),
+            args: Vec::new(),
+            env: std::collections::HashMap::new(),
+            cwd: None,
+            description: Some("Example docs MCP".into()),
+            enabled: true,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            timeout_secs: 30,
+            auth: crate::openhuman::config::McpAuthConfig::None,
+        });
+
+    let names = tool_names(&integration_tools_for_config(&tmp, &cfg));
+    let leaked: Vec<&String> = names
+        .iter()
+        .filter(|n| n.starts_with("mcp_") || n.starts_with("mcp_registry_"))
+        .collect();
+
+    assert!(
+        leaked.is_empty(),
+        "no MCP tool may be registered when the `mcp` feature is compiled out, \
+         even with `[[mcp_client.servers]]` declared in config; leaked: {leaked:?}"
     );
 }
 
@@ -1743,7 +1826,7 @@ const KNOWLEDGE_TOOLS: &[&str] = &[
     "read_workflow_resource",
     "list_workflow_runs",
     "read_workflow_run_log",
-    "create_workflow",
+    "create_skill",
     "install_workflow_from_url",
     "uninstall_workflow",
     "thread_list",
@@ -1777,7 +1860,7 @@ const KNOWLEDGE_TOOLS: &[&str] = &[
 
 const KNOWLEDGE_DEFAULT_OFF: &[&str] = &[
     "people_refresh_address_book",
-    "create_workflow",
+    "create_skill",
     "install_workflow_from_url",
     "uninstall_workflow",
     "thread_delete",
@@ -2092,15 +2175,29 @@ const DESKTOP_TOOLS: &[&str] = &[
     "screen_intelligence_globe_listener_stop",
     "screen_intelligence_request_permissions",
     "screen_intelligence_request_permission",
+    // The `mcp_registry_*` desktop surface is compiled out with the `mcp`
+    // feature, so these expectations are gated per-element rather than gating
+    // the three tests below away wholesale — the non-MCP desktop tools must
+    // keep their coverage in both builds.
+    #[cfg(feature = "mcp")]
     "mcp_registry_search",
+    #[cfg(feature = "mcp")]
     "mcp_registry_get",
+    #[cfg(feature = "mcp")]
     "mcp_registry_installed_list",
+    #[cfg(feature = "mcp")]
     "mcp_registry_status",
+    #[cfg(feature = "mcp")]
     "mcp_registry_connect",
+    #[cfg(feature = "mcp")]
     "mcp_registry_disconnect",
+    #[cfg(feature = "mcp")]
     "mcp_registry_tool_call",
+    #[cfg(feature = "mcp")]
     "mcp_registry_config_assist",
+    #[cfg(feature = "mcp")]
     "mcp_registry_install",
+    #[cfg(feature = "mcp")]
     "mcp_registry_uninstall",
     "workspace_read_persona",
     "workspace_update_persona",
@@ -2111,7 +2208,9 @@ const DESKTOP_TOOLS: &[&str] = &[
 const DESKTOP_DEFAULT_OFF: &[&str] = &[
     "screen_intelligence_request_permissions",
     "screen_intelligence_request_permission",
+    #[cfg(feature = "mcp")]
     "mcp_registry_install",
+    #[cfg(feature = "mcp")]
     "mcp_registry_uninstall",
     "workspace_update_persona",
     "workspace_reset_persona",
@@ -2121,8 +2220,11 @@ const DESKTOP_DEFAULT_OFF: &[&str] = &[
 const DESKTOP_ALWAYS_ON: &[&str] = &[
     "screen_intelligence_status",
     "screen_intelligence_capture_now",
+    #[cfg(feature = "mcp")]
     "mcp_registry_search",
+    #[cfg(feature = "mcp")]
     "mcp_registry_tool_call",
+    #[cfg(feature = "mcp")]
     "mcp_registry_connect",
     "workspace_read_persona",
 ];
@@ -2171,6 +2273,189 @@ fn desktop_default_off_tools_retained_when_opted_in() {
         assert!(
             names.iter().any(|n| n == on),
             "opted-in tool `{on}` must be retained; got: {names:?}"
+        );
+    }
+}
+
+// --- DomainSet tool classifier (#4796) ----------------------------------
+
+#[test]
+fn tool_group_classifies_gate_and_harness_families() {
+    use crate::core::all::DomainGroup;
+
+    // Gate families → their gate group (dropped under harness()).
+    assert_eq!(tool_group("wallet_status"), DomainGroup::Web3);
+    assert_eq!(tool_group("web3_swap_quote"), DomainGroup::Web3);
+    assert_eq!(tool_group("x402_request"), DomainGroup::Web3);
+    assert_eq!(tool_group("mcp_registry_search"), DomainGroup::Mcp);
+    assert_eq!(tool_group("mcp_call_tool"), DomainGroup::Mcp);
+    assert_eq!(tool_group("run_workflow"), DomainGroup::Skills);
+    assert_eq!(tool_group("skill_registry_browse"), DomainGroup::Skills);
+    assert_eq!(tool_group("list_workflows"), DomainGroup::Skills);
+    // Flows has no name prefix, so EVERY flow-owned tool must be classified
+    // explicitly — a missing one falls through to Platform and stays callable
+    // when the Flows domain is runtime-gated off (#4797 maintainer review).
+    // This list mirrors the compile-time `#[cfg(feature = "flows")]`
+    // registrations and `default_tools_omits_flows_tools_when_feature_off`.
+    for flow_tool in [
+        "propose_workflow",
+        "revise_workflow",
+        "edit_workflow",
+        "validate_workflow",
+        "get_flow_history",
+        "dry_run_workflow",
+        "save_workflow",
+        "suggest_workflows",
+        "run_flow",
+        "list_flow_runs",
+        "resume_flow_run",
+        "cancel_flow_run",
+        "create_workflow",
+        "duplicate_flow",
+        "list_flows",
+        "get_flow",
+        "get_flow_run",
+        "list_flow_connections",
+        "search_tool_catalog",
+        "get_tool_contract",
+        "get_tool_output_sample",
+        "list_agent_profiles",
+        "list_connectable_toolkits",
+        "list_node_kinds",
+        "get_node_kind_contract",
+        "rhai_workflows",
+    ] {
+        assert_eq!(
+            tool_group(flow_tool),
+            DomainGroup::Flows,
+            "flow-owned tool `{flow_tool}` must classify as Flows, not fall through to Platform"
+        );
+    }
+    assert_eq!(tool_group("media_generate_image"), DomainGroup::Media);
+    // Voice audio_* tools have no voice_/tts_/stt_ prefix — must be classified
+    // explicitly, not fall through to Platform (#4808 review).
+    assert_eq!(tool_group("audio_generate_podcast"), DomainGroup::Voice);
+    assert_eq!(tool_group("audio_email_podcast"), DomainGroup::Voice);
+    assert_eq!(
+        tool_group("audio_generate_and_email_podcast"),
+        DomainGroup::Voice
+    );
+    // Channels read-only WhatsApp data tools.
+    assert_eq!(
+        tool_group("whatsapp_data_list_chats"),
+        DomainGroup::Channels
+    );
+    assert_eq!(
+        tool_group("whatsapp_data_search_messages"),
+        DomainGroup::Channels
+    );
+
+    // Harness-mapped families → kept under harness().
+    assert_eq!(tool_group("memory_store"), DomainGroup::Memory);
+    assert_eq!(tool_group("goals_add"), DomainGroup::Memory);
+    assert_eq!(tool_group("update_memory_md"), DomainGroup::Memory);
+    assert_eq!(tool_group("thread_list"), DomainGroup::Threads);
+    assert_eq!(tool_group("todo_add"), DomainGroup::Threads);
+    assert_eq!(tool_group("goal_get"), DomainGroup::Threads);
+
+    // Everything else → Platform (dropped under harness()).
+    assert_eq!(tool_group("shell"), DomainGroup::Platform);
+    assert_eq!(tool_group("file_read"), DomainGroup::Platform);
+    assert_eq!(tool_group("config_snapshot"), DomainGroup::Platform);
+    assert_eq!(tool_group("spawn_subagent"), DomainGroup::Platform);
+}
+
+#[test]
+fn tool_group_gate_families_dropped_under_harness_not_full() {
+    use crate::core::runtime::DomainSet;
+
+    let full = DomainSet::full();
+    let harness = DomainSet::harness();
+    // Full keeps every family.
+    for name in ["wallet_status", "run_workflow", "memory_store", "shell"] {
+        assert!(full.allows(tool_group(name)), "full() keeps {name}");
+    }
+    // Harness keeps memory/threads, drops gate families AND platform.
+    assert!(harness.allows(tool_group("memory_store")));
+    assert!(harness.allows(tool_group("thread_list")));
+    assert!(!harness.allows(tool_group("wallet_status")));
+    assert!(!harness.allows(tool_group("run_workflow")));
+    assert!(!harness.allows(tool_group("shell")));
+    // The previously-misclassified gate-family tools now drop under harness.
+    assert!(!harness.allows(tool_group("audio_generate_podcast")));
+    assert!(!harness.allows(tool_group("whatsapp_data_list_chats")));
+}
+
+#[test]
+fn no_gate_family_tool_silently_defaults_to_platform() {
+    use crate::core::all::DomainGroup;
+    // #4808 maintainer review: a future tool in a prefix-gated family must NOT
+    // fall through to Platform — otherwise it would stay callable under a custom
+    // `DomainSet { platform: true, <family>: false }`, leaking the gated surface.
+    // These synthetic names match no exact list, only the family prefix.
+    for name in [
+        "wallet_new_thing",
+        "web3_new_thing",
+        "x402_new_thing",
+        "mcp_new_thing",
+        "media_new_thing",
+        "whatsapp_data_new_thing",
+    ] {
+        assert_ne!(
+            tool_group(name),
+            DomainGroup::Platform,
+            "gate-family tool `{name}` must not silently default to Platform"
+        );
+    }
+}
+
+// --- #4797: `flows` compile-time gate ---------------------------------------
+
+/// With the `flows` feature off, every flows-owned agent tool — and the
+/// `rhai_workflows` tool whose engine the gate sheds via `tinyagents/repl` — is
+/// compiled out of the default registry entirely.
+///
+/// `SecurityPolicy::default()` is `Supervised` (not `ReadOnly`), so the
+/// `rhai_workflows` assertion is a real one: that tool *would* be registered at
+/// this tier if the feature were on.
+#[test]
+#[cfg(not(feature = "flows"))]
+fn default_tools_omits_flows_tools_when_feature_off() {
+    let security = Arc::new(SecurityPolicy::default());
+    let tools = default_tools(security);
+    let names = tool_names(&tools);
+
+    for absent in [
+        "propose_workflow",
+        "revise_workflow",
+        "edit_workflow",
+        "validate_workflow",
+        "get_flow_history",
+        "list_flow_runs",
+        "resume_flow_run",
+        "cancel_flow_run",
+        "create_workflow",
+        "duplicate_flow",
+        "list_flows",
+        "get_flow",
+        "get_flow_run",
+        "list_flow_connections",
+        "search_tool_catalog",
+        "get_tool_contract",
+        "get_tool_output_sample",
+        "list_agent_profiles",
+        "list_connectable_toolkits",
+        "list_node_kinds",
+        "get_node_kind_contract",
+        "dry_run_workflow",
+        "run_flow",
+        "save_workflow",
+        "suggest_workflows",
+        "rhai_workflows",
+    ] {
+        assert!(
+            !names.iter().any(|n| n == absent),
+            "tool `{absent}` must be compiled out when the `flows` feature is off; got: {names:?}"
         );
     }
 }

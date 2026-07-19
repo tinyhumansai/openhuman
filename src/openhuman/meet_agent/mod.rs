@@ -33,19 +33,57 @@
 //! - `openhuman.meet_agent_push_listen_pcm` — shell pushes captured PCM frames
 //! - `openhuman.meet_agent_poll_speech`     — shell pulls synthesized PCM frames
 //! - `openhuman.meet_agent_stop_session`    — close session, flush pending audio
+//!
+//! ## Compile-time gating (`meet` feature, #4800)
+//!
+//! Every submodule here is `#[cfg(feature = "meet")]` — **except [`wav`]**.
+//!
+//! ### ⚠ The `wav` carve-out is load-bearing — do not "tidy" it
+//!
+//! [`wav::pack_pcm16le_mono_wav`] is called by
+//! `desktop_companion::pipeline::stt`, which is `DomainGroup::Platform` and is
+//! therefore compiled in **every** build, including `--no-default-features`.
+//! `wav` must stay ungated so that call site keeps its **real** implementation.
+//!
+//! This is safe to leave ungated at zero cost: `wav.rs` is a self-contained
+//! hand-rolled RIFF writer with no `use` statements and no dependencies. It
+//! pulls in nothing when the rest of the domain is compiled out. (It is
+//! hand-rolled precisely so Meet never needed `hound`, which the `voice` gate
+//! already owns and sheds.)
+//!
+//! **If you ever add `#[cfg(feature = "meet")]` to `pub mod wav;`**, the
+//! `--no-default-features` build will fail loudly at `desktop_companion`. That
+//! failure is *correct and useful*. Do **not** "fix" it by stubbing
+//! `pack_pcm16le_mono_wav` to return an empty/placeholder buffer: that turns a
+//! compile error into green CI while silently corrupting desktop-companion STT
+//! forever (the STT backend would receive a malformed WAV). Revert the cfg
+//! instead — or, if `wav` genuinely must move, relocate it to a always-compiled
+//! home rather than stubbing it.
 
+#[cfg(feature = "meet")]
 pub mod brain;
+#[cfg(feature = "meet")]
 pub mod ops;
+#[cfg(feature = "meet")]
 pub mod rpc;
+#[cfg(feature = "meet")]
 pub mod schemas;
+#[cfg(feature = "meet")]
 pub mod session;
+#[cfg(feature = "meet")]
 pub mod store;
+#[cfg(feature = "meet")]
 pub mod types;
+// NOT gated — see the carve-out note above. `desktop_companion` (always-on)
+// depends on the real implementation.
 pub mod wav;
 
+#[cfg(feature = "meet")]
 pub use schemas::{
     all_controller_schemas as all_meet_agent_controller_schemas,
     all_registered_controllers as all_meet_agent_registered_controllers,
 };
+#[cfg(feature = "meet")]
 pub use session::{MeetAgentSession, MeetAgentSessionRegistry, SESSION_REGISTRY};
+#[cfg(feature = "meet")]
 pub use types::*;

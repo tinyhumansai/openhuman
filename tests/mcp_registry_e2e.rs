@@ -7,6 +7,12 @@
 //! → `connections::disconnect` round-trips correctly through the unified
 //! `mcp_client::McpStdioClient` transport.
 
+// Exercises the gated `mcp_registry` / `mcp_client` surface, so the whole suite
+// is compiled only when the `mcp` feature is on. Without this gate the slim
+// build's `cargo test --no-default-features --features tokenjuice-treesitter
+// --tests` fails to compile against the removed APIs (#4799).
+#![cfg(feature = "mcp")]
+
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::mcp_registry::connections;
 use openhuman_core::openhuman::mcp_registry::store;

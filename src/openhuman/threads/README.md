@@ -72,7 +72,7 @@ Wired into the registry from `src/core/all.rs` (controllers + schemas extended w
 - `crate::openhuman::memory` / `memory_conversations` — thread + message store types and CRUD (`ensure_thread`, `list_threads`, `get_messages`, `append_message`, `update_thread_*`, `ConversationStore`, etc.); also the `ApiEnvelope`/`ApiMeta`/request/response DTOs.
 - `crate::openhuman::config::Config` — resolves `workspace_dir` and inference/runtime/secrets settings (`load_or_init`).
 - `crate::openhuman::inference::provider` — builds the intelligent-routing provider used for AI title generation (`create_intelligent_routing_provider`, `ProviderRuntimeOptions`).
-- `crate::openhuman::channels::providers::web` — `invalidate_thread_sessions` on thread delete (so a deleted thread's live web session can't keep appending).
+- `crate::openhuman::web_chat` — `invalidate_thread_sessions` on thread delete (so a deleted thread's live web session can't keep appending).
 - `crate::openhuman::agent::task_board` — `TaskBoard`, `TaskBoardCard`, `TaskBoardStore`, `board_for_thread` for the task-board RPCs; also the optional `task_board` field on `TurnState`.
 - `crate::openhuman::agent::progress::AgentProgress` — progress events consumed by `TurnStateMirror`.
 - `crate::core::all` — `ControllerFuture`, `RegisteredController` for the registry.
@@ -83,7 +83,7 @@ Wired into the registry from `src/core/all.rs` (controllers + schemas extended w
 
 - `src/core/all.rs` — registers the controllers/schemas into the JSON-RPC + CLI registry.
 - `src/core/jsonrpc.rs` — references threads (transport routing).
-- `src/openhuman/channels/providers/web.rs` — drives `TurnStateMirror` / turn-state store during chat turns; consumes `invalidate_thread_sessions`.
+- `src/openhuman/web_chat/` — drives `TurnStateMirror` / turn-state store during chat turns; consumes `invalidate_thread_sessions`.
 - `src/openhuman/startup/ops.rs` — invokes the welcome migration and/or turn-state startup handling.
 
 ## Notes / gotchas

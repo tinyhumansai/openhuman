@@ -67,9 +67,20 @@ Secrets supplied for any mode are stored through OpenHuman's credential layer an
 
 ***
 
+## Where to connect a channel
+
+Channels are set up under **Connections → Channels** in the left sidebar — **not** under Settings, and not under any "Automation & Channels" menu (no such menu exists). Open that tab, pick a platform tile, and follow its setup card:
+
+* **Discord** — choose *Connect via OpenHuman* (link your account or install the bot via OAuth), or paste your own Discord bot token.
+* **Telegram** — message the managed OpenHuman bot to link, or paste a BotFather bot token.
+
+Slack is connected as an **app** under **Connections → OAuth** (Composio) so the agent can read and act in Slack; it is not set up as a talk-back channel in the Channels tab.
+
+***
+
 ## Choosing the default channel
 
-Open **Settings → Automation & Channels → Messaging Channels** to pick which channel is the **active route**: the one OpenHuman uses for proactive, recipient-less delivery (cron, triggers, subconscious). The default is the in-app **Web** chat until you change it. Setting a new default takes effect immediately, without restarting the channel runtime, and the panel shows which channel is currently active. Inbound messages always get answered on whatever channel they arrived on, regardless of the default route.
+Open **Connections → Channels** to pick which channel is the **active route**: the one OpenHuman uses for proactive, recipient-less delivery (cron, triggers, subconscious). The default is the in-app **Web** chat until you change it. Setting a new default takes effect immediately, without restarting the channel runtime, and the panel shows which channel is currently active. Inbound messages always get answered on whatever channel they arrived on, regardless of the default route.
 
 ***
 

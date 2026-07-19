@@ -56,7 +56,7 @@ None. This module gates other domains' tools; it owns no tools of its own (no `t
 
 Published via `publish_global` (domain `approval`, defined in `src/core/event_bus/events.rs`):
 
-- `DomainEvent::ApprovalRequested { request_id, tool_name, action_summary, args_redacted, session_id, thread_id, client_id }` — emitted when a call is parked. Bridged to the `approval_request` web-channel socket event by `ApprovalSurfaceSubscriber` (defined in `src/openhuman/channels/providers/web.rs`).
+- `DomainEvent::ApprovalRequested { request_id, tool_name, action_summary, args_redacted, session_id, thread_id, client_id }` — emitted when a call is parked. Bridged to the `approval_request` web-channel socket event by `ApprovalSurfaceSubscriber` (defined in `src/openhuman/web_chat/`).
 - `DomainEvent::ApprovalDecided { request_id, tool_name, decision }` — emitted when a decision is applied.
 
 No `bus.rs` in this module — it only publishes; the subscriber lives in the `channels` web provider.
@@ -80,7 +80,7 @@ SQLite DB at `{workspace_dir}/approval/approval.db`, table `pending_approvals` (
 - `src/core/jsonrpc.rs` — installs the global gate (`ApprovalGate::init_global`) at startup; wires the approval RPCs.
 - `src/core/all.rs` — registers the controller schemas.
 - `src/openhuman/tinyagents/middleware.rs` (`ApprovalSecurityMiddleware`, a `wrap_tool` middleware on every turn path) — routes external-effect tool calls through the gate before `execute()` and records the terminal audit row.
-- `src/openhuman/channels/providers/web.rs` — sets `APPROVAL_CHAT_CONTEXT`, hosts `ApprovalSurfaceSubscriber`, and routes typed yes/no replies to `approval_decide`.
+- `src/openhuman/web_chat/` — sets `APPROVAL_CHAT_CONTEXT`, hosts `ApprovalSurfaceSubscriber`, and routes typed yes/no replies to `approval_decide`.
 - `src/openhuman/channels/proactive.rs`, `src/openhuman/agent/triage/escalation.rs`, `src/openhuman/tools/impl/system/install_tool.rs`, `src/openhuman/wallet/execution.rs` — interact with the gate / approval types.
 
 ## Notes / gotchas

@@ -3,10 +3,9 @@ use crate::openhuman::composio::providers::sync_state::KV_NAMESPACE;
 use crate::openhuman::embeddings::NoopEmbedding;
 use crate::openhuman::memory::ingest_pipeline::ingest_chat;
 use crate::openhuman::memory_queue::drain_until_idle;
+use crate::openhuman::memory_store::content::raw::{write_raw_items, RawItem, RawKind};
 use crate::openhuman::memory_store::unified::UnifiedMemory;
 use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
-use crate::openhuman::memory_sync::composio::providers::slack::ingest::ingest_page_into_memory_tree as ingest_slack_page;
-use crate::openhuman::memory_sync::composio::providers::slack::SlackMessage;
 use chrono::{TimeZone, Utc};
 use rusqlite::params;
 use std::sync::Arc;
@@ -46,21 +45,37 @@ async fn seed_chat_chunk(cfg: &Config, source: &str, body: &str) {
 }
 
 async fn seed_slack_chunk_with_raw_archive(cfg: &Config) -> String {
-    let msg = SlackMessage {
-        channel_id: "C123".into(),
-        channel_name: "engineering".into(),
-        is_private: false,
-        author: "alice".into(),
-        author_id: "U123".into(),
-        text: "Phoenix migration launch window is Friday at 22:00 UTC.".into(),
-        timestamp: Utc.timestamp_opt(1_700_000_000, 0).single().unwrap(),
-        ts_raw: "1700000000.000100".into(),
-        thread_ts: None,
-        permalink: Some("https://slack.example.test/archives/C123/p1700000000000100".into()),
+    let timestamp = Utc.timestamp_opt(1_700_000_000, 0).single().unwrap();
+    write_raw_items(
+        &cfg.memory_tree_content_root(),
+        "slack:conn-slack-1",
+        &[RawItem {
+            uid: "1700000000.000100",
+            created_at_ms: timestamp.timestamp_millis(),
+            markdown: "**Channel:** #engineering\n**Author:** alice\n\nPhoenix migration launch window is Friday at 22:00 UTC.",
+            kind: RawKind::Chat,
+        }],
+    )
+    .expect("seed raw Slack artifact");
+    let batch = ChatBatch {
+        platform: "slack".into(),
+        channel_label: "#engineering".into(),
+        messages: vec![ChatMessage {
+            author: "alice".into(),
+            timestamp,
+            text: "Phoenix migration launch window is Friday at 22:00 UTC.".into(),
+            source_ref: Some("slack://archives/C123/1700000000.000100".into()),
+        }],
     };
-    ingest_slack_page(cfg, "alice", "conn-slack-1", &[msg])
-        .await
-        .expect("seed slack ingest");
+    ingest_chat(
+        cfg,
+        "slack:conn-slack-1",
+        "alice",
+        vec!["slack".into(), "ingested".into()],
+        batch,
+    )
+    .await
+    .expect("seed slack ingest");
     drain_until_idle(cfg).await.expect("drain slack ingest");
 
     list_chunks_rpc(cfg, ChunkFilter::default())

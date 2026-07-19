@@ -64,6 +64,7 @@ impl ArchivistHook {
     /// - NEVER mutates DB state (no `segment_set_summary`, no embedding).
     /// - NEVER closes a segment.
     /// - Safe to call on both open and closed segments.
+    ///
     /// Summarize a set of episodic entries into a recap string.
     ///
     /// Returns `(text, produced_by_llm)`. `produced_by_llm == false` means the
@@ -117,6 +118,9 @@ impl ArchivistHook {
             tree_kind: TreeKind::Source,
             target_level: 0,
             token_budget: 2_000,
+            input_token_budget: tinycortex::memory::config::INPUT_TOKEN_BUDGET,
+            overhead_reserve_tokens: tinycortex::memory::config::SUMMARY_OVERHEAD_RESERVE_TOKENS,
+            ask: None,
         };
 
         let first = entries.first().map(|e| e.content.as_str()).unwrap_or("");

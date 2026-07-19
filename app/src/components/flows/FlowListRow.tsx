@@ -3,14 +3,17 @@
  *
  * Mirrors the row layout of `CoreJobList`
  * (`app/src/components/settings/panels/cron/CoreJobList.tsx`): name + status
- * badge header, a line of run metadata, then a row of `Button` actions. Swaps
- * the cron "pause/resume" text button for a `SettingsSwitch` toggle (the
- * canonical boolean control — see `components/settings/controls`) since
- * enable/disable here is a persistent setting, not a one-off action.
+ * badge header, a line of run metadata, then a row of `Button` actions. Uses
+ * the canonical `SettingsSwitch` boolean control (`components/settings/controls`)
+ * for enable/disable, since that's a persistent setting, not a one-off action —
+ * not an icon `Button`, so its state reads at a glance instead of needing a
+ * hover/title to disambiguate on vs. off.
  *
  * "View runs" (issue B5a.1) opens `FlowRunsDrawer` (mounted by `FlowsPage`)
  * for this flow's run history — re-added now that B3b's run inspector has
- * landed and the drawer has somewhere to send the user.
+ * landed and the drawer has somewhere to send the user. Delete lives in the
+ * same overflow menu (destructive actions shouldn't sit in the flat button
+ * row next to Run/toggle, where a mis-click is one tap away).
  *
  * The flow name (issue B5b.1) is itself the "View" affordance for the new
  * read-only Workflow Canvas: it's rendered as a button that calls `onView`,
@@ -25,6 +28,14 @@ import type { Flow } from '../../services/api/flowsApi';
 import SettingsSwitch from '../settings/controls/SettingsSwitch';
 import Button from '../ui/Button';
 import FlowRowMenu from './FlowRowMenu';
+
+function PlayIcon() {
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M7 5l12 7-12 7V5z" />
+    </svg>
+  );
+}
 
 /** Which of this row's actions currently has a request in flight, if any. */
 export type FlowListRowBusy = 'toggle' | 'run' | null;
@@ -96,86 +107,76 @@ const FlowListRow = ({
   return (
     <div
       data-testid={`flow-row-${flow.id}`}
-      className="space-y-3 border-t border-line p-4 first:border-t-0">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <button
-            type="button"
-            data-testid={`flow-view-${flow.id}`}
-            title={t('flows.list.view')}
-            aria-label={`${t('flows.list.view')}: ${flow.name}`}
-            onClick={() => onView(flow)}
-            className="max-w-full truncate text-left text-sm font-semibold text-content hover:text-primary-600 hover:underline dark:hover:text-primary-400">
-            {flow.name}
-          </button>
-          <div className="mt-0.5 text-[11px] text-content-faint">{lastRunLabel}</div>
-        </div>
-        {/* Enable/disable control paired with its state label as a single group,
-            so the toggle is self-describing (the bare switch was ambiguous) and
-            state isn't split between a top-right badge and a bottom-left switch. */}
-        <div className="flex flex-shrink-0 items-center gap-2">
-          <span
-            data-testid={`flow-status-${flow.id}`}
-            className={`text-[11px] font-semibold uppercase tracking-wide ${
-              flow.enabled ? 'text-sage-700 dark:text-sage-300' : 'text-content-secondary'
-            }`}>
-            {flow.enabled ? t('flows.list.enabled') : t('flows.list.paused')}
-          </span>
-          <SettingsSwitch
-            id={`flow-toggle-${flow.id}`}
-            data-testid={`flow-toggle-${flow.id}`}
-            checked={flow.enabled}
-            disabled={toggleBusy}
-            aria-label={t('flows.list.toggleEnabled')}
-            onCheckedChange={() => onToggle(flow)}
-          />
-        </div>
+      className="flex items-center gap-3 border-t border-line p-4 first:border-t-0">
+      <div className="min-w-0 flex-1">
+        <button
+          type="button"
+          data-testid={`flow-view-${flow.id}`}
+          title={t('flows.list.view')}
+          aria-label={`${t('flows.list.view')}: ${flow.name}`}
+          onClick={() => onView(flow)}
+          className="max-w-full truncate text-left text-sm font-semibold text-content hover:text-primary-600 hover:underline dark:hover:text-primary-400">
+          {flow.name}
+        </button>
+        <div className="mt-0.5 text-[11px] text-content-faint">{lastRunLabel}</div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
+      {/* All controls sit together on the right: the toggle (enabled/paused —
+          the switch alone communicates state), then Run, and an overflow menu
+          with the secondary/destructive actions (view runs / export /
+          duplicate / delete). */}
+      <div className="flex flex-shrink-0 items-center gap-1.5">
+        <SettingsSwitch
+          id={`flow-switch-${flow.id}`}
+          checked={flow.enabled}
+          onCheckedChange={() => onToggle(flow)}
+          disabled={toggleBusy}
+          aria-label={t('flows.list.toggleEnabled')}
+          data-testid={`flow-toggle-${flow.id}`}
+        />
         <Button
           type="button"
-          variant="secondary"
+          variant="primary"
           size="sm"
-          data-testid={`flow-view-runs-${flow.id}`}
-          onClick={() => onViewRuns(flow)}>
-          {t('flows.list.viewRuns')}
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
+          analyticsId="flows-list-run"
+          iconOnly
           data-testid={`flow-run-${flow.id}`}
+          aria-label={runBusy ? t('flows.list.running') : t('flows.list.runNow')}
+          title={runBusy ? t('flows.list.running') : t('flows.list.runNow')}
           disabled={runBusy}
           onClick={() => onRun(flow)}>
-          {runBusy ? t('flows.list.running') : t('flows.list.runNow')}
+          <PlayIcon />
         </Button>
-        <div className="ml-auto">
-          <FlowRowMenu
-            rowId={flow.id}
-            items={[
-              {
-                key: 'export',
-                label: t('flows.list.export'),
-                onSelect: () => onExport(flow),
-                testId: `flow-export-${flow.id}`,
-              },
-              {
-                key: 'duplicate',
-                label: t('flows.list.duplicate'),
-                onSelect: () => onDuplicate(flow),
-                testId: `flow-duplicate-${flow.id}`,
-              },
-              {
-                key: 'delete',
-                label: t('flows.list.delete'),
-                onSelect: () => onDelete(flow),
-                danger: true,
-                testId: `flow-delete-${flow.id}`,
-              },
-            ]}
-          />
-        </div>
+        <FlowRowMenu
+          rowId={flow.id}
+          items={[
+            {
+              key: 'view-runs',
+              label: t('flows.list.viewRuns'),
+              onSelect: () => onViewRuns(flow),
+              testId: `flow-view-runs-${flow.id}`,
+            },
+            {
+              key: 'export',
+              label: t('flows.list.export'),
+              onSelect: () => onExport(flow),
+              testId: `flow-export-${flow.id}`,
+            },
+            {
+              key: 'duplicate',
+              label: t('flows.list.duplicate'),
+              onSelect: () => onDuplicate(flow),
+              testId: `flow-duplicate-${flow.id}`,
+            },
+            {
+              key: 'delete',
+              label: t('flows.list.delete'),
+              onSelect: () => onDelete(flow),
+              danger: true,
+              testId: `flow-delete-${flow.id}`,
+            },
+          ]}
+        />
       </div>
     </div>
   );

@@ -41,6 +41,10 @@ mod summarize;
 pub(crate) mod tools;
 mod topology;
 
+pub(crate) use convert::{
+    chat_message_to_message, reasoning_from_content, spec_to_schema, ta_call_to_oh_call,
+};
+
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -75,7 +79,7 @@ pub(crate) use embeddings::ProviderEmbeddingModel;
 pub(crate) use middleware::{
     HandoffConfig, SuperContextConfig, TranscriptSnapshotSink, TurnContextMiddleware,
 };
-use model::ProviderModel;
+use model::{BuiltTurnModels, ProviderModel, TierRoutes, TurnChatModel};
 pub(crate) use observability::SubagentScope;
 use observability::{
     CapPauser, IterationCursor, OpenhumanEventBridge, ProviderUsageCarry, ToolFailureMap,
@@ -138,11 +142,59 @@ pub(crate) struct ToolPolicyEnforcement {
 /// [`routes::route_fallback_policy`]); it is safe to enable now because
 /// `ReliableProvider` does *not* fail over across the registered workload-tier
 /// routes (chat→burst, reasoning→agentic, …) the way the harness registry can.
+/// Default per-turn wall-clock ceiling for an openhuman agent turn, in seconds
+/// (issue #4746). Applied as the harness `RunLimits::max_wall_clock_ms` so the
+/// loop interrupts a hung/slow model or tool/sub-agent call instead of parking
+/// forever with no terminal event. Deliberately generous — a normal turn, even
+/// a slow multi-step reasoning one, finishes well under it; this is a hang
+/// backstop, not a UX deadline. 10 minutes.
+const DEFAULT_AGENT_TURN_TIMEOUT_SECS: u64 = 600;
+
+/// Resolve the per-turn wall-clock ceiling in milliseconds for the harness
+/// policy. Reads `OPENHUMAN_AGENT_TURN_TIMEOUT_SECS` (falling back to
+/// [`DEFAULT_AGENT_TURN_TIMEOUT_SECS`]); `0` means "no ceiling" → `None`, which
+/// restores the previous unbounded behavior for callers that deliberately opt
+/// out (e.g. very long autonomous runs).
+fn agent_turn_wall_clock_ms() -> Option<u64> {
+    parse_agent_turn_wall_clock_ms(
+        std::env::var("OPENHUMAN_AGENT_TURN_TIMEOUT_SECS")
+            .ok()
+            .as_deref(),
+    )
+}
+
+/// Pure core of [`agent_turn_wall_clock_ms`]: map an optional
+/// `OPENHUMAN_AGENT_TURN_TIMEOUT_SECS` value to a wall-clock ceiling in
+/// milliseconds. An absent/unparseable value falls back to
+/// [`DEFAULT_AGENT_TURN_TIMEOUT_SECS`]; `0` yields `None` (unbounded opt-out).
+/// Kept env-free so it is deterministically unit-testable.
+fn parse_agent_turn_wall_clock_ms(env_value: Option<&str>) -> Option<u64> {
+    let secs = env_value
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_AGENT_TURN_TIMEOUT_SECS);
+    (secs > 0).then(|| secs.saturating_mul(1_000))
+}
+
 fn run_policy_for(max_iterations: usize, response_cache_enabled: bool) -> RunPolicy {
     let mut policy = RunPolicy::default();
     policy.limits.max_model_calls = max_iterations;
     policy.limits.max_tool_calls = max_iterations.saturating_mul(8).max(8);
     policy.limits.max_depth = MAX_SPAWN_DEPTH;
+    // Wall-clock ceiling for the whole turn (issue #4746). The harness bounds
+    // every individual model AND tool call by the run's *remaining* wall-clock
+    // budget (`with_call_budget` → `tokio::time::timeout`), but ONLY when a
+    // deadline is configured — with `max_wall_clock_ms = None` (the default)
+    // `call_budget()` returns `None` and each call is awaited UNBOUNDED. That is
+    // exactly how a turn shipped an empty reply: a hung/slow model stream or a
+    // delegated sub-agent tool call that never returned left the loop parked
+    // inside an await, so the between-call deadline check never ran and no
+    // terminal event (loop `Timeout` → chat_error) ever fired. Setting the cap
+    // here arms the harness's per-call timeout so a wedged call is interrupted
+    // mid-flight and the turn degrades gracefully. It also bounds sub-agents:
+    // the parent's remaining-budget wraps the sub-agent tool call, and a child
+    // turn with no per-run timeout inherits this policy-level cap. Generous by
+    // design (a backstop, not a UX deadline); env-overridable, `0` disables.
+    policy.limits.max_wall_clock_ms = agent_turn_wall_clock_ms();
     // Crate-owned retry (Phase 3a): mirror the former `ReliableProvider` schedule
     // (2 retries, 500 ms exponential backoff). `backoff_sleep` is on so a
     // transient 429/5xx actually waits before retrying, as it did before.
@@ -1120,15 +1172,53 @@ fn tinyagents_depth_error(
 /// `Provider` → `ChatModel` adaptation is confined to `build_turn_models`.
 pub(crate) struct TurnModels {
     /// The turn's effective/primary model (registry default + dispatch target).
-    primary: Arc<dyn tinyagents::harness::model::ChatModel<()>>,
+    primary: TurnChatModel,
     /// Additive workload-tier routes (registry name → model), excluding the
     /// primary; the crate registry resolves fallback/selection across them.
-    routes: Vec<(String, Arc<dyn tinyagents::harness::model::ChatModel<()>>)>,
+    routes: TierRoutes,
     /// A model for the context-window summarizer (a distinct adapter instance so
     /// its provider errors don't touch the turn's `error_slot`).
-    summarizer: Arc<dyn tinyagents::harness::model::ChatModel<()>>,
+    summarizer: TurnChatModel,
     /// Recovers the primary's original (downcastable) provider error on failure.
     error_slot: crate::openhuman::tinyagents::model::ProviderErrorSlot,
+    /// Provider telemetry id (`{provider_id}.{model}` in Langfuse), captured from
+    /// the source `Provider` at build time. Carried here (issue #4249, Phase 3 /
+    /// Motion A) so the harness turn path no longer reads it off a raw
+    /// `Provider` — the harness holds crate model types only.
+    provider_id: String,
+    /// The primary model's effective context window (drives the context-window
+    /// summarization step). Resolved by the producer/factory before build so the
+    /// harness graph no longer makes the async `effective_context_window` call.
+    context_window: Option<u64>,
+    /// Whether the source provider does native tool-calling — the harness uses
+    /// this only to pick the history-suffix dispatcher (native envelope vs
+    /// prompt-guided text). Captured from the provider at build time.
+    native_tools: bool,
+    /// Whether the source provider is vision-capable — the harness uses this to
+    /// gate multimodal placeholder rehydration. Captured at build time.
+    supports_vision: bool,
+}
+
+impl TurnModels {
+    /// Provider telemetry id for this turn (`{provider_id}.{model}`).
+    pub(crate) fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
+    /// The primary model's effective context window, if known.
+    pub(crate) fn context_window(&self) -> Option<u64> {
+        self.context_window
+    }
+
+    /// Whether the source provider does native tool-calling.
+    pub(crate) fn native_tools(&self) -> bool {
+        self.native_tools
+    }
+
+    /// Whether the source provider is vision-capable.
+    pub(crate) fn supports_vision(&self) -> bool {
+        self.supports_vision
+    }
 }
 
 /// Build the per-turn [`TurnModels`] from an openhuman [`Provider`] — the sole
@@ -1142,6 +1232,13 @@ pub(crate) fn build_turn_models(
     temperature: f64,
     context_window: Option<u64>,
 ) -> TurnModels {
+    // Capture the provider metadata the harness turn path used to read directly
+    // off the raw `Provider` (issue #4249, Phase 3 / Motion A). Recording it on
+    // `TurnModels` is what lets `AgentTurnRequest`/`Agent`/the harness graph hold
+    // crate model types only — no `dyn Provider` above the seam.
+    let provider_id = provider.telemetry_provider_id();
+    let native_tools = provider.supports_native_tools();
+    let supports_vision = provider.supports_vision();
     let summary_provider = provider.clone();
     let mut primary = ProviderModel::new(provider, model, temperature);
     // Record the model's context window on its capability profile (issue #4249,
@@ -1171,6 +1268,383 @@ pub(crate) fn build_turn_models(
         routes,
         summarizer,
         error_slot,
+        provider_id,
+        context_window,
+        native_tools,
+        supports_vision,
+    }
+}
+
+/// Build the per-turn [`TurnModels`] **crate-natively** from `(role, config)` —
+/// the Phase 3 P3-B cutover of [`build_turn_models`]: instead of wrapping one host
+/// `Provider` per tier in a [`ProviderModel`], each tier is built as a crate-native
+/// [`ChatModel`] via [`factory::create_turn_chat_model`] (managed →
+/// `OpenHumanBackendModel`, local/cloud → crate `OpenAiModel`).
+///
+/// The `TurnModels` shape is identical to [`build_turn_models`] so
+/// [`assemble_turn_harness`] is unchanged. The provider metadata
+/// (`provider_id` / `native_tools` / `supports_vision`) is derived by the caller
+/// ([`TurnModelSource::build`]) from the resolved provider string and config.
+/// `error_slot` is a fresh
+/// empty slot — crate-native models surface `TinyAgentsError` directly (no
+/// downcastable `anyhow` to preserve), so typed provider-error *recovery* is unused
+/// here (Sentry suppression is unaffected — both `skips_sentry` cases are raised in
+/// the host turn loop).
+#[allow(clippy::too_many_arguments)]
+fn build_turn_models_crate(
+    role: &str,
+    config: &crate::openhuman::config::Config,
+    model: &str,
+    temperature: f64,
+    context_window: Option<u64>,
+    primary_override: Option<&str>,
+    provider_id: String,
+    native_tools: bool,
+    supports_vision: bool,
+    force_text_mode: bool,
+) -> anyhow::Result<TurnModels> {
+    use crate::openhuman::inference::provider::factory;
+
+    // The primary honours an explicit provider-string override when the producer's
+    // effective provider differs from `provider_for_role(role)` (triage #1257).
+    let build_primary = |m: &str| -> anyhow::Result<TurnChatModel> {
+        match primary_override {
+            Some(ps) => factory::create_turn_chat_model_from_string_with_native_tools(
+                role,
+                ps,
+                config,
+                m,
+                temperature,
+                !force_text_mode,
+            ),
+            None => factory::create_turn_chat_model_with_native_tools(
+                role,
+                config,
+                m,
+                temperature,
+                !force_text_mode,
+            ),
+        }
+    };
+
+    // Build the primary, every workload-tier route, and the summarizer under one
+    // per-turn egress-dedup ledger: each managed construction resolves through the
+    // same `resolve_managed_backend` chokepoint and would otherwise publish a
+    // separate `ExternalTransferPending` for the same logical destination (codex
+    // P2, PR #4812). `dedup_turn_scope` collapses same-destination repeats to one
+    // disclosure per turn while still surfacing each distinct tier model.
+    let (primary, routes, summarizer): BuiltTurnModels =
+        crate::openhuman::security::egress::dedup_turn_scope(|| {
+            let primary = build_primary(model)?;
+
+            // Additive workload-tier routes: one crate-native model per tier (skipping the
+            // turn's own model, which is registered as the default primary), each pinned to
+            // the tier alias so the crate registry resolves cross-route fallback across them.
+            let mut routes: TierRoutes = Vec::new();
+            for &tier in routes::WORKLOAD_ROUTE_TIERS {
+                if tier == model {
+                    continue;
+                }
+                let tier_role = factory::role_for_model_tier(tier);
+                match factory::create_turn_chat_model(tier_role, config, tier, temperature) {
+                    Ok(route_model) => routes.push((tier.to_string(), route_model)),
+                    Err(e) => {
+                        // A route that can't be built (e.g. an unconfigured BYOK tier) is
+                        // skipped, not fatal — the primary still dispatches (parity with the
+                        // `Provider` path, where an unresolved tier simply isn't registered).
+                        tracing::debug!(
+                            route = tier,
+                            error = %e,
+                            "[models] skipping crate-native workload route that failed to build"
+                        );
+                    }
+                }
+            }
+
+            // The summarizer is a distinct adapter instance (own empty error slot).
+            let summarizer = build_primary(model)?;
+
+            anyhow::Ok((primary, routes, summarizer))
+        })?;
+
+    Ok(TurnModels {
+        primary,
+        routes,
+        summarizer,
+        error_slot: Arc::new(std::sync::Mutex::new(None)),
+        provider_id,
+        context_window,
+        native_tools,
+        supports_vision,
+    })
+}
+
+/// A model-agnostic source of per-turn [`TurnModels`] — the seam-owned handle the
+/// agent harness holds instead of a raw `Arc<dyn Provider>` (issue #4249, Phase 3
+/// / Motion A).
+///
+/// An [`Agent`](crate::openhuman::agent::Agent) (and each channel/subagent turn
+/// request) is model-agnostic: it holds this source and builds a *tiered* crate
+/// [`ChatModel`] set (primary + workload-tier fallback routes + summarizer) per
+/// turn. Production sources retain only crate-native role/config metadata;
+/// provider-backed sources remain for injected tests and bespoke clients. Constructed in
+/// exactly one place — [`create_turn_model_source`](crate::openhuman::inference::provider::factory::create_turn_model_source).
+#[derive(Clone)]
+pub struct TurnModelSource {
+    provider: Option<Arc<dyn Provider>>,
+    /// When set, [`build`](Self::build) / [`build_summarizer`](Self::build_summarizer)
+    /// construct **crate-native** models from `(role, config)` (Phase 3 P3-B) via
+    /// [`build_turn_models_crate`]. Crate-native sources keep `provider` as
+    /// `None`; build failures propagate instead of falling back to the host wire
+    /// client.
+    crate_native: Option<CrateNativeSource>,
+    force_text_mode: bool,
+}
+
+/// The `(role, config)` a crate-native [`TurnModelSource`] builds its tiered
+/// [`TurnModels`] from per turn.
+#[derive(Clone)]
+struct CrateNativeSource {
+    role: String,
+    config: Arc<crate::openhuman::config::Config>,
+    /// An explicit provider string for the **primary** model, overriding the
+    /// role's default resolution. Set when a producer's effective provider differs
+    /// from `provider_for_role(role)` — e.g. triage's #1257 force-managed override
+    /// (`build_remote_provider`). `None` builds the primary from `role`. Routes
+    /// always use the standard workload tiers.
+    primary_override: Option<String>,
+    force_text_mode: bool,
+}
+
+impl TurnModelSource {
+    /// Wrap a resolved provider. The host↔seam boundary: the inference factory
+    /// (or a producer holding a resolved provider) builds a source here; the
+    /// agent harness above the seam then names only `TurnModelSource`, never the
+    /// `Provider` trait. `pub` so the native-bus request type
+    /// ([`AgentTurnRequest`](crate::openhuman::agent::bus::AgentTurnRequest)) and
+    /// its integration tests can construct one.
+    pub fn new(provider: Arc<dyn Provider>) -> Self {
+        Self {
+            provider: Some(provider),
+            crate_native: None,
+            force_text_mode: false,
+        }
+    }
+
+    /// Build a crate-native source: [`build`](Self::build) constructs the tiered
+    /// [`TurnModels`] from `(role, config)` via [`build_turn_models_crate`] rather
+    /// than wrapping a provider in `ProviderModel`s. Used by the session-builder producer
+    /// (`crate_native_provider`); the triage path uses
+    /// [`new_crate_native_from_string`](Self::new_crate_native_from_string).
+    pub(crate) fn new_crate_native(
+        role: impl Into<String>,
+        config: Arc<crate::openhuman::config::Config>,
+    ) -> Self {
+        Self {
+            provider: None,
+            crate_native: Some(CrateNativeSource {
+                role: role.into(),
+                config,
+                primary_override: None,
+                force_text_mode: false,
+            }),
+            force_text_mode: false,
+        }
+    }
+
+    /// Build a crate-native source whose **primary** model is built from an explicit
+    /// `provider_string` (via [`factory::create_turn_chat_model_from_string`]) rather
+    /// than the role's default resolution — the triage path's #1257 force-managed
+    /// override (`build_remote_provider` picks the effective string). Routes still
+    /// use the standard workload tiers.
+    pub(crate) fn new_crate_native_from_string(
+        role: impl Into<String>,
+        provider_string: impl Into<String>,
+        config: Arc<crate::openhuman::config::Config>,
+    ) -> Self {
+        Self {
+            provider: None,
+            crate_native: Some(CrateNativeSource {
+                role: role.into(),
+                config,
+                primary_override: Some(provider_string.into()),
+                force_text_mode: false,
+            }),
+            force_text_mode: false,
+        }
+    }
+
+    /// Force prompt-guided tool calling without resolving a host provider.
+    pub(crate) fn with_text_mode(mut self) -> Self {
+        self.force_text_mode = true;
+        if let Some(source) = self.crate_native.as_mut() {
+            source.force_text_mode = true;
+        }
+        self
+    }
+
+    /// Resolve the model's effective context window (async provider probe) — the
+    /// value that drives the context-window summarization step. Resolved before
+    /// [`build`](Self::build) so the harness graph makes no async `Provider` call.
+    pub(crate) async fn effective_context_window(&self, model: &str) -> Option<u64> {
+        if let Some(provider) = &self.provider {
+            return provider.effective_context_window(model).await;
+        }
+        let provider_string = self.crate_native.as_ref().map(|source| {
+            source.primary_override.clone().unwrap_or_else(|| {
+                crate::openhuman::inference::provider::provider_for_role(
+                    &source.role,
+                    &source.config,
+                )
+            })
+        });
+        let local_kind = provider_string
+            .as_deref()
+            .and_then(crate::openhuman::inference::local::profile::kind_from_provider_string);
+        crate::openhuman::inference::model_context::context_window_for_model_with_local_fallback(
+            model, local_kind,
+        )
+    }
+
+    /// Whether the underlying provider is a local runtime (Ollama / LM Studio).
+    /// A passthrough so callers (e.g. the sub-agent summarization-route decision)
+    /// can branch on locality without naming the `Provider` trait.
+    pub(crate) fn is_local_provider(&self) -> bool {
+        if let Some(provider) = &self.provider {
+            return provider.is_local_provider();
+        }
+        self.crate_native.as_ref().is_some_and(|source| {
+            let provider = source.primary_override.clone().unwrap_or_else(|| {
+                crate::openhuman::inference::provider::provider_for_role(
+                    &source.role,
+                    &source.config,
+                )
+            });
+            crate::openhuman::inference::local::profile::is_local_provider_string(&provider)
+        })
+    }
+
+    /// The underlying provider handle. An escape hatch for the few seam-boundary
+    /// sites that still resolve/inherit a raw provider (sub-agent provider
+    /// resolution + its unit tests, the rhai-workflow model build): they consume
+    /// it inline rather than holding it, so no agent-harness *struct* carries an
+    /// `Arc<dyn Provider>`. Shrinks further as those callers move to the crate
+    /// `ModelRegistry` (Motion B).
+    pub(crate) fn provider(&self) -> anyhow::Result<Arc<dyn Provider>> {
+        if let Some(provider) = &self.provider {
+            return Ok(provider.clone());
+        }
+        let source = self
+            .crate_native
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("turn model source has no provider configuration"))?;
+        let built = match source.primary_override.as_deref() {
+            Some(provider) => {
+                crate::openhuman::inference::provider::factory::create_chat_provider_from_string(
+                    &source.role,
+                    provider,
+                    &source.config,
+                )
+            }
+            None => crate::openhuman::inference::provider::create_chat_provider(
+                &source.role,
+                &source.config,
+            ),
+        }?;
+        Ok(Arc::from(built.0))
+    }
+
+    /// Build this turn's [`TurnModels`] (primary + tier routes + summarizer),
+    /// capturing provider telemetry id + capabilities onto the bundle.
+    pub(crate) fn build(
+        &self,
+        model: &str,
+        temperature: f64,
+        context_window: Option<u64>,
+    ) -> anyhow::Result<TurnModels> {
+        if let Some(cn) = &self.crate_native {
+            let provider_string = cn.primary_override.clone().unwrap_or_else(|| {
+                crate::openhuman::inference::provider::provider_for_role(&cn.role, &cn.config)
+            });
+            let is_local = crate::openhuman::inference::local::profile::is_local_provider_string(
+                &provider_string,
+            );
+            let provider_id = if provider_string == "openhuman"
+                || provider_string.is_empty()
+                || provider_string == "cloud"
+            {
+                "managed".to_string()
+            } else {
+                provider_string
+                    .split(':')
+                    .next()
+                    .unwrap_or(&provider_string)
+                    .to_string()
+            };
+            return build_turn_models_crate(
+                &cn.role,
+                &cn.config,
+                model,
+                temperature,
+                context_window,
+                cn.primary_override.as_deref(),
+                provider_id,
+                !is_local,
+                !is_local,
+                cn.force_text_mode,
+            );
+        }
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("provider-backed turn source is missing its provider")
+        })?;
+        let mut models = build_turn_models(provider.clone(), model, temperature, context_window);
+        if self.force_text_mode {
+            let primary =
+                ProviderModel::new(provider.clone(), model, temperature).with_tool_calling(false);
+            let primary = if let Some(window) = context_window.filter(|w| *w > 0) {
+                primary.with_context_window(window)
+            } else {
+                primary
+            };
+            models.error_slot = primary.error_slot();
+            models.primary = Arc::new(primary);
+            models.native_tools = false;
+        }
+        Ok(models)
+    }
+
+    /// Build a standalone summarizer [`ChatModel`](tinyagents::harness::model::ChatModel)
+    /// over this source's provider — a fresh adapter (own error slot) for one-off
+    /// summary calls outside the main turn (e.g. the sub-agent cap-hit checkpoint),
+    /// so the caller can `invoke` without naming the `Provider` trait. The output
+    /// cap rides the per-call `ModelRequest`, not the model.
+    pub(crate) fn build_summarizer(
+        &self,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<Arc<dyn tinyagents::harness::model::ChatModel<()>>> {
+        if let Some(cn) = &self.crate_native {
+            let built = match cn.primary_override.as_deref() {
+                Some(ps) => crate::openhuman::inference::provider::factory::create_turn_chat_model_from_string(
+                    &cn.role, ps, &cn.config, model, temperature,
+                ),
+                None => crate::openhuman::inference::provider::factory::create_turn_chat_model(
+                    &cn.role,
+                    &cn.config,
+                    model,
+                    temperature,
+                ),
+            };
+            return built;
+        }
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("provider-backed turn source is missing its provider")
+        })?;
+        Ok(Arc::new(ProviderModel::new(
+            provider.clone(),
+            model,
+            temperature,
+        )))
     }
 }
 
@@ -1191,7 +1665,8 @@ struct AssembledTurnHarness {
     /// Shared `call_id → (success, failure, elapsed_ms, output_chars)`
     /// side-channel: the tool-outcome capture middleware classifies each outcome
     /// + records its duration/output size; the event bridge reads it to project
-    /// real success + a user-facing failure + timing onto `ToolCallCompleted`.
+    ///
+    /// Real success + a user-facing failure + timing onto `ToolCallCompleted`.
     failure_map: ToolFailureMap,
     /// Shared FIFO carry of per-call provider `UsageInfo` (charged USD + context
     /// window): the model adapter pushes, the event bridge pops when recording
@@ -1303,6 +1778,9 @@ fn assemble_turn_harness(
         routes,
         summarizer: summarizer_model,
         error_slot,
+        // Provider metadata (id/context-window/caps) is consumed by the turn-path
+        // caller before dispatch, not by harness assembly.
+        ..
     } = turn_models;
     capability_registry.replace_model(model, primary.clone());
     harness

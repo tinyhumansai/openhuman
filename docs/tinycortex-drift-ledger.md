@@ -25,8 +25,18 @@ touched an engine-mapping memory module after the port line, and classifies each
 | Host audit SHA | `7850cf363559bcbb7ba688cbc4fccdb6bd9ce754` (`main`, 2026-07-04) |
 | TinyCortex submodule | `vendor/tinycortex` → `tinyhumansai/tinycortex` |
 | TinyCortex audit SHA | `d1a8c7be2babc8fff7a72ed93861f459f3d6fa58` |
+| **TinyCortex pinned SHA (current)** | `a8e10f7dd8ebdb9b0905e1380fefcc6bf5a65207` — audit SHA **+ #59** (native-dep alignment, §0.4) **+ #63/#64** (D2/D1 drift ports) merged; this is the live gitlink |
 | TinyCortex crate version | `0.1.1` |
 | **Port line (derived)** | **after 2026-06-25, before 2026-06-28** (see below) |
+
+> **Execution status (2026-07-10). Drift closure COMPLETE — all rows CLOSED.**
+> The submodule is pinned at `a8e10f7`. **D3 CLOSED** (folded into #59);
+> **D2 CLOSED** — merged as **tinycortex#63** (`is_host_io_error`, `e352435`);
+> **D1 CLOSED** — merged as **tinycortex#64** (rank-before-materialize, `a8e10f7`).
+> Host gitlink bumped `33dda94 → a8e10f7` (`chore(vendor): bump tinycortex …
+> (tinycortex#63, #64)`). With every drift row closed, **W4** (queue) and **W7**
+> (conversations) are now unblocked per the gate rule. D4 (memory_sync corpus,
+> W-SYNC) remains its own separate track.
 
 ### How the port line was located
 
@@ -59,16 +69,16 @@ then per-commit file lists intersected with engine-mapping modules, then content
 
 | # | Host commit | Module | Change | Crate state (verified) | Upstream target |
 | --- | --- | --- | --- | --- | --- |
-| D1 | `007a99b62` (06-30) `perf(memory_conversations): rank before cloning hits in cross-thread search` | `memory_conversations/inverted_index.rs` | Rank matches on cheap borrowed keys (`(doc_id:u32, matched:usize, created_at:&str)`), truncate to `limit`, **then** materialize the KB-sized `CrossThreadHit`. Order-equivalent to score ranking. | **ABSENT.** `vendor/tinycortex/src/memory/conversations/inverted_index.rs:286–301` builds the full `CrossThreadHit` (with `content.clone()`, `message_id.clone()`, `created_at.clone()`) for **every** matched doc, then `sort_by(score)` + `truncate`. Pre-fix clone-then-rank shape. | `conversations::inverted_index` — port the rank-before-materialize refactor + its `ranks_by_score_then_recency_before_truncating` test. |
-| D2 | `d7bee77e3` (06-30) `fix(memory-queue): classify host-FS I/O errors to stop the tree_jobs Sentry flood` | `memory_queue/worker.rs` | Adds `is_host_io_error(&anyhow::Error) -> bool` classifying **persistent** host-FS failures (EIO/ENOSPC/EROFS) distinct from transient SQLite busy/I-O, so the worker backs off and reports Sentry **once** instead of ~10k events/50min (Sentry CORE-RUST-19J). | **PARTIAL.** `vendor/tinycortex/src/memory/queue/worker.rs:89–107` has `is_sqlite_io_transient` (transient family) but **no** `is_host_io_error` (persistent host-FS family). | `queue::worker` — port the `is_host_io_error` predicate + its unit tests (EIO/ENOSPC/EROFS, context-layer, text fallback). **Only the predicate.** The Sentry-once emission and the `mark_storage_degraded` flag are host-owned (see D2-host below). |
-| D3 | `c43f79641` (07-03) (within TinyAgents migration) | `memory_store/vectors/store.rs` | `count()` reads `COUNT(*)` as `i64` and converts via `usize::try_from(...).context(...)` instead of `row.get::<usize>` directly — robustness against platform `usize`/`i64` mismatch. | **ABSENT.** `vendor/tinycortex/src/memory/store/vectors/store.rs:370–380` still does `let count: usize = ... row.get(0)` then `Ok(count)`. | `store::vectors::store` — small; port the `i64` + `try_from` guard. |
+| D1 | `007a99b62` (06-30) `perf(memory_conversations): rank before cloning hits in cross-thread search` | `memory_conversations/inverted_index.rs` | Rank matches on cheap borrowed keys (`(doc_id:u32, matched:usize, created_at:&str)`), truncate to `limit`, **then** materialize the KB-sized `CrossThreadHit`. Order-equivalent to score ranking. | ✅ **CLOSED.** Ported + merged as **tinycortex#64** (`a8e10f7`): the rank-before-materialize refactor + `ranks_by_score_then_recency_before_truncating` test. Was pre-fix clone-then-rank at the port line. | — (closed) |
+| D2 | `d7bee77e3` (06-30) `fix(memory-queue): classify host-FS I/O errors to stop the tree_jobs Sentry flood` | `memory_queue/worker.rs` | Adds `is_host_io_error(&anyhow::Error) -> bool` classifying **persistent** host-FS failures (EIO/ENOSPC/EROFS) distinct from transient SQLite busy/I-O, so the worker backs off and reports Sentry **once** instead of ~10k events/50min (Sentry CORE-RUST-19J). | ✅ **CLOSED.** Ported + merged as **tinycortex#63** (`e352435`): the `is_host_io_error` predicate + 2 unit tests (EIO/ENOSPC/EROFS × typed/context/text; negatives). **Predicate only** — the Sentry-once emission and `mark_storage_degraded` flag stay host-owned (see D2-host below). | — (closed) |
+| D3 | `c43f79641` (07-03) (within TinyAgents migration) | `memory_store/vectors/store.rs` | `count()` reads `COUNT(*)` as `i64` and converts via `usize::try_from(...).context(...)` instead of `row.get::<usize>` directly — robustness against platform `usize`/`i64` mismatch. | ✅ **CLOSED.** Present at `vendor/tinycortex/src/memory/store/vectors/store.rs:371–384` (`usize::try_from(count).context(...)`) — folded into #59's `usize`→`i64`/`try_from` rusqlite-0.40 sweep and merged. | — (closed) |
 
-**Open drift rows: D1, D2 (predicate), D3.** These are the only three engine behavior changes since the
-port line. All three are small-to-moderate and independent.
+**Drift rows: D1, D2 (predicate), D3** — the only three engine behavior changes since the port line,
+all small and independent, **now all CLOSED** (gitlink `a8e10f7`).
 
-- D1 gates **W7** (long tail — conversations).
-- D2 gates **W4** (queue).
-- D3 gates **W3** (store + chunks).
+- D1 gates **W7** (long tail — conversations). ✅ **CLOSED** — merged as tinycortex#64.
+- D2 gates **W4** (queue). ✅ **CLOSED** — merged as tinycortex#63.
+- D3 gates **W3** (store + chunks). ✅ **CLOSED** — already in the crate via #59.
 
 ### HOST-OWNED — same commits, layers that stay in OpenHuman (no upstream)
 
@@ -102,10 +112,10 @@ not as drift. See `tinycortex-api-gap-audit.md`.
 
 | Engine module | Maps to crate | Open drift | Gates workstream | Status |
 | --- | --- | --- | --- | --- |
-| `memory_store` (chunks, content, vectors, kv, entity_index, safety) | `store/`, `chunks/` | **D3** (vectors count guard). `wiki_git`/`obsidian*` host-retained (not drift). | W3 | **OPEN** (D3) |
+| `memory_store` (chunks, content, vectors, kv, entity_index, safety) | `store/`, `chunks/` | **D3** (vectors count guard) ✅ closed via #59. `wiki_git`/`obsidian*` host-retained (not drift). | W3 | **CLEAR** (D3 closed) |
 | `memory_tree` (tree, retrieval, score, summarise) | `tree/`, `retrieval/`, `score/` | none (health/rpc/embed-compute are host-owned) | W5 | **CLEAR** |
-| `memory_queue` | `queue/` | **D2** (predicate) | W4 | **OPEN** (D2) |
-| `memory_conversations` | `conversations/` | **D1** (rank-before-clone) | W7 | **OPEN** (D1) |
+| `memory_queue` | `queue/` | **D2** (predicate) — ✅ merged tinycortex#63 | W4 | **CLEAR** (D2 closed) |
+| `memory_conversations` | `conversations/` | **D1** (rank-before-clone) — ✅ merged tinycortex#64 | W7 | **CLEAR** (D1 closed) |
 | `memory_diff` | `diff/` | none (git-ledger captured) | W7 | **CLEAR** |
 | `memory_entities` | `entities/` | none | W7 | **CLEAR** |
 | `memory_graph` | `graph/` | none | W7 | **CLEAR** |
@@ -115,9 +125,33 @@ not as drift. See `tinycortex-api-gap-audit.md`.
 | `memory_tools` (engine part) | `tool_memory/` | none | W7 | **CLEAR** |
 | `memory_search` (`vector`, `scoring` engine parts; `tools` are host) | `retrieval/`, `score/` | none (churn only) | W5 | **CLEAR** (classify tools vs engine in W5) |
 
-**Summary:** 3 open drift rows (D1, D2, D3), each small and independent, each a single-module
-tinycortex PR. Nothing else drifted. `memory_search` is a mixed module not in the plan's move table —
+**Summary:** 3 drift rows total, **all CLOSED** — **D3** via #59, **D2** via tinycortex#63,
+**D1** via tinycortex#64; gitlink now `a8e10f7`. No engine drift remains open; **W4 and W7 are
+unblocked**. Nothing else drifted. `memory_search` is a mixed module not in the plan's move table —
 its `tools/` stay host (agent tools), its `vector`/`scoring` are engine (W5) — flagged for the gap audit.
+
+## D4 — memory_sync corpus (2026-07-09 reclassification, W-SYNC)
+
+The plan's §8 amendment moves the sync engine into the crate, so the blanket **HOST-OWNED
+"live sync"** classification above is superseded for engine-mapping sync code. Unlike D1–D3 there
+is **no existing crate port to diff against** — the entire `memory_sync/` engine (plus the
+`memory_sources` dispatcher/reconcile parts) is port scope. The port baseline for W-SYNC is taken
+**fresh from host `main` at W-SYNC.1 branch time**, so ordinary drift cannot accumulate; this entry
+exists to (a) record the reclassification and (b) pin the post-port-line commits that already
+touched the corpus, so the W-SYNC.1 port provably includes them:
+
+| # | Host commit | Files in corpus | Note |
+| --- | --- | --- | --- |
+| D4.1 | `c43f79641` (07-03) | `composio/providers/{sync_state,traits}.rs` | TinyAgents-cutover import churn |
+| D4.2 | `27b00b539` (07-05) | `sources/rebuild.rs` | test-parity cleanup (1 line) |
+| D4.3 | `653e6e143` (07-06) | `memory_sources/sync.rs` (+312) | self-heal drifted content-sha tokens + prune vanished folder items |
+| D4.4 | `e456b7799` (07-07) | `memory_sources/{rpc,sync}.rs`, `canonicalize/email.rs`, `composio/providers/{gmail/post_process,notion/source,orchestrator}.rs`, `sources/github.rs` | orchestration-fixes wave |
+
+**Gate:** W-SYNC.1 (crate scaffolding PR) requires this enumeration current as of its branch point
+(re-run the scan: `git log --since=2026-06-25 --oneline -- src/openhuman/memory_sync
+src/openhuman/memory_sources`); the W-SYNC.3 host flip requires D4 **CLOSED** — every listed commit
+(and any accrued since) verifiably contained in the crate port or explicitly waived. Host-retained
+parts (schedulers, bus subscribers, RPC wrappers, keychain/OAuth) remain HOST-OWNED as before.
 
 ## Closing the ledger (procedure)
 

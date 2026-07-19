@@ -5,6 +5,7 @@ import PanelPage, { type PanelPageTab } from '../../layout/PanelPage';
 import SettingsBackButton from '../components/SettingsBackButton';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import { findEntryById } from '../settingsRouteRegistry';
+import { useSettingsLayout } from './SettingsLayoutContext';
 import SettingsSubNav from './SettingsSubNav';
 
 export interface SettingsPanelProps<T extends string = string> {
@@ -63,6 +64,32 @@ export default function SettingsPanel<T extends string = string>({
 }: SettingsPanelProps<T>) {
   const { t } = useT();
   const { currentRoute, navigateBack } = useSettingsNavigation();
+  const { headerless } = useSettingsLayout();
+
+  // Headerless: a host (the Connections pane) already renders a page header
+  // above this panel, so render just the tabs/body without title/description/
+  // sub-nav to avoid a doubled header.
+  if (headerless) {
+    if (tabs && tabs.length > 0) {
+      return (
+        <PanelPage<T>
+          className="z-10"
+          testId={testId}
+          action={action}
+          tabs={tabs}
+          value={value}
+          onChange={onChange}
+          tabsAriaLabel={tabsAriaLabel}
+          tabsTestIdPrefix={tabsTestIdPrefix}
+        />
+      );
+    }
+    return (
+      <PanelPage className="z-10" testId={testId} action={action}>
+        {children}
+      </PanelPage>
+    );
+  }
 
   const entry = findEntryById(currentRoute);
   const resolvedTitle = title ?? (entry ? t(entry.titleKey) : t('nav.settings'));

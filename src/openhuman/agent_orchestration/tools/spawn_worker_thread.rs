@@ -408,7 +408,9 @@ mod tests {
             model_name: "test".into(),
             temperature: 0.4,
             workspace_dir,
-            provider: Arc::new(MockProvider),
+            turn_model_source: crate::openhuman::tinyagents::TurnModelSource::new(Arc::new(
+                MockProvider,
+            )),
             memory: Arc::new(MockMemory),
             channel: "test".into(),
             all_tools: Arc::new(vec![]),

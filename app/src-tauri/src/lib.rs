@@ -3,6 +3,20 @@
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("src-tauri host supports desktop (Windows/macOS/Linux) only. Mobile lives in app/src-tauri-mobile.");
 
+// The shipped desktop app must always embed the real voice domain. Cargo
+// features are per-crate, so `#[cfg(feature = "voice")]` here would test THIS
+// crate's features, not the core's — a voice-less core is only observable via
+// the core's own always-compiled facade. Without this assert the failure is
+// silent and runtime-only: every `openhuman.voice_*` RPC answers "unknown
+// method" and the UI blames a stale sidecar (#4901). Keep `voice` in the
+// `openhuman_core` feature list in Cargo.toml to satisfy this.
+const _: () = assert!(
+    openhuman_core::openhuman::voice::VOICE_COMPILED_IN,
+    "openhuman_core must be built with the `voice` feature: the desktop app ships voice, \
+     and without it every openhuman.voice_* controller is unregistered (#4901). \
+     Add \"voice\" to the openhuman_core `features` list in app/src-tauri/Cargo.toml."
+);
+
 mod app_update;
 // Artifact export commands (#2779, #3162) — both cross-platform
 // (macOS/Windows/Linux): native Save-As dialog (rfd) + Downloads copy.
@@ -399,9 +413,7 @@ async fn restart_app(app: tauri::AppHandle<AppRuntime>) -> Result<(), String> {
     perform_early_teardown_async(&app).await;
     log::info!("[app] restart_app — early teardown complete, restarting");
 
-    app.restart();
-    // restart() does not return, but we must satisfy the signature
-    Ok(())
+    app.restart()
 }
 
 /// Read the authoritative active user id from `active_user.toml` so the
@@ -1183,7 +1195,7 @@ fn mascot_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[mascot-window] show requested");
     #[cfg(target_os = "macos")]
     {
-        return mascot_native_window::show(&app);
+        mascot_native_window::show(&app)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1214,7 +1226,7 @@ fn mascot_native_window_is_open() -> bool {
     mascot_native_window::is_open()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 fn mascot_native_window_is_open() -> bool {
     false
 }
@@ -1246,11 +1258,11 @@ fn notch_window_show(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[notch-window] show requested");
     #[cfg(target_os = "macos")]
     {
-        return dispatch_notch_on_main(app, |app| {
+        dispatch_notch_on_main(app, |app| {
             if let Err(e) = notch_window::show(app) {
                 log::warn!("[notch-window] show failed: {e}");
             }
-        });
+        })
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1265,7 +1277,7 @@ fn notch_window_hide(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[notch-window] hide requested");
     #[cfg(target_os = "macos")]
     {
-        return dispatch_notch_on_main(app, |_app| notch_window::hide());
+        dispatch_notch_on_main(app, |_app| notch_window::hide())
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1292,13 +1304,12 @@ fn set_main_window_hidden(hide: bool) {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, ShowWindow, SW_HIDE,
-        SW_SHOW,
+        EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, ShowWindow,
     };
 
     struct EnumCtx {
         target_pid: u32,
-        action: i32,
+        hide: bool,
         require_visible: bool,
         matched: u32,
     }
@@ -1324,15 +1335,20 @@ fn set_main_window_hidden(hide: bool) {
         if class != "Chrome_WidgetWin_1" {
             return 1;
         }
-        unsafe { ShowWindow(hwnd, ctx.action) };
+        // Choose the restore command per frame: a minimized frame needs
+        // SW_RESTORE to un-minimize, but a hidden-but-maximized frame must be
+        // shown with SW_SHOW so it stays maximized (#4818). IsIconic is only
+        // consulted on the restore path.
+        let is_iconic = !ctx.hide && unsafe { IsIconic(hwnd) } != 0;
+        let action = window_show_command(ctx.hide, is_iconic);
+        unsafe { ShowWindow(hwnd, action) };
         ctx.matched += 1;
         1
     }
 
-    let action = if hide { SW_HIDE } else { SW_SHOW };
     let mut ctx = EnumCtx {
         target_pid: std::process::id(),
-        action,
+        hide,
         // Hide path: only touch currently-visible frames. Show path: also
         // pick up frames already in the SW_HIDE state.
         require_visible: hide,
@@ -1341,10 +1357,47 @@ fn set_main_window_hidden(hide: bool) {
     unsafe { EnumWindows(Some(enum_proc), &mut ctx as *mut _ as LPARAM) };
     log::info!(
         "[window-hide] EnumWindows: action={} matched={} pid={}",
-        if hide { "SW_HIDE" } else { "SW_SHOW" },
+        if hide {
+            "SW_HIDE"
+        } else {
+            "restore(SW_RESTORE/SW_SHOW)"
+        },
         ctx.matched,
         ctx.target_pid,
     );
+}
+
+/// `ShowWindow` command for [`set_main_window_hidden`], chosen per frame.
+///
+/// Restore is *not* a single command — it depends on whether the frame is
+/// iconic (minimized):
+///
+/// - **Minimized frame** (`is_iconic`): `SW_RESTORE`. `SW_SHOW` displays a
+///   window in its *current* state, so a minimized `Chrome_WidgetWin_1` frame
+///   stays minimized — clicking the desktop shortcut / taskbar entry while the
+///   app was minimized did nothing, because the second-instance callback ran a
+///   no-op `SW_SHOW` and then `WebviewWindow::unminimize()`, which the vendored
+///   CEF runtime routes to the internal `cef::Window` proxy handle rather than
+///   the visible top-level frame (#1607), so neither un-minimized the OS window
+///   (#4809). `SW_RESTORE` un-minimizes AND un-hides.
+/// - **Hidden-but-not-minimized frame** (the plain hide-to-tray case, which may
+///   be **maximized**): `SW_SHOW`. `SW_RESTORE` would force a maximized frame
+///   back to its normal size, so a window closed to the tray while maximized
+///   would come back un-maximized. `SW_SHOW` displays it in its current state,
+///   preserving the maximized geometry (chatgpt-codex review on #4809/#4818).
+///
+/// Split out as a pure `i32`-returning helper so the command selection is unit
+/// testable without driving real windows.
+#[cfg(target_os = "windows")]
+const fn window_show_command(hide: bool, is_iconic: bool) -> i32 {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_RESTORE, SW_SHOW};
+    if hide {
+        SW_HIDE
+    } else if is_iconic {
+        SW_RESTORE
+    } else {
+        SW_SHOW
+    }
 }
 
 /// Look up the main `WebviewWindow`, optionally waiting briefly on Windows
@@ -1807,7 +1860,9 @@ async fn perform_early_teardown_async(app_handle: &AppHandle<AppRuntime>) {
     log::info!("[app] perform_early_teardown_async — early teardown complete");
 }
 
-/// Explicitly winds down CEF and Tauri before an app.exit(0)
+/// Explicitly wind down CEF and the core before exiting from desktop-owned
+/// quit actions. Linux does not build the tray or macOS application menu.
+#[cfg(not(target_os = "linux"))]
 fn shutdown_app_sync(app_handle: &AppHandle<AppRuntime>, exit_code: i32) {
     log::info!("[app] shutdown_app_sync — starting early teardown");
     perform_early_teardown_sync_once(app_handle, "shutdown_app_sync");
@@ -2220,8 +2275,13 @@ fn strip_time_ticks_at_unix_epoch(args: &mut Vec<CefCommandLineArg>) {
 /// in PR #2032 but blocks any actual use of the app on a Wayland host).
 ///
 /// XSetErrorHandler is a process-global registration; safe to install before
-/// any X display is opened. libX11 is already a runtime dep (verified via
-/// ldd of the compiled OpenHuman binary).
+/// any X display is opened. libX11 is only pulled in transitively at *runtime*
+/// (via GTK/WebKit), so the `extern` block must carry an explicit
+/// `#[link(name = "X11")]` — otherwise `rust-lld` can't resolve the symbol at
+/// link time and the full desktop build fails with `undefined symbol:
+/// XSetErrorHandler` (only surfaces in the CI-Full / release bundle link step,
+/// not CI-Lite). libX11 is present on every Linux desktop host, so linking it
+/// directly is safe.
 #[cfg(target_os = "linux")]
 fn install_silent_x_error_handler() {
     use std::ffi::c_void;
@@ -2240,6 +2300,7 @@ fn install_silent_x_error_handler() {
     }
 
     type ErrorHandler = unsafe extern "C" fn(*mut c_void, *mut XErrorEvent) -> c_int;
+    #[link(name = "X11")]
     unsafe extern "C" {
         fn XSetErrorHandler(handler: Option<ErrorHandler>) -> Option<ErrorHandler>;
     }
@@ -3905,6 +3966,19 @@ pub fn run() {
                     "[window] close requested on main window — hiding to tray"
                 );
                 api.prevent_close();
+                // Persist geometry now, while the window handle is still
+                // reachable. On Windows the hide below is a raw SW_HIDE on the
+                // OS frame, after which `get_webview_window("main")` returns
+                // `None` until the window is shown again (#1607). If the user
+                // then picks tray "Quit" while hidden, the ExitRequested save
+                // finds no window and nothing is persisted, so the next launch
+                // falls back to the default geometry (#4810). Saving here
+                // captures the last on-screen size/position before it becomes
+                // unreachable; ExitRequested still saves for the shown-window
+                // quit paths (`save_main` is best-effort and idempotent).
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    window_state::save_main(&window);
+                }
                 // Hide the OS top-level Chrome_WidgetWin_1 frame via
                 // EnumWindows + SW_HIDE — full hide-to-tray as PR #1548
                 // intended. `window.hide()` and `window.minimize()` through
@@ -3925,6 +3999,18 @@ pub fn run() {
                 }
             }
             RunEvent::ExitRequested { .. } => {
+                // Persist the main window's geometry on every clean quit
+                // (Cmd+Q, tray "Quit", dock quit, or the frontend
+                // `app_quit` command) so the next launch restores the
+                // user's size + position. Previously `save_main` ran only
+                // on the identity-flip `restart_app` path (#900): a normal
+                // quit never saved, so the window always reopened at the
+                // default small centered size (#4810). `save_main` is
+                // best-effort and idempotent — safe to also run here even
+                // though `restart_app` saves before it triggers exit.
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    window_state::save_main(&window);
+                }
                 // Run our cleanup BEFORE CEF's own Exit handler does
                 // `close_all_windows() → cef::shutdown()`. Doing this in
                 // RunEvent::Exit instead races CEF's teardown and the

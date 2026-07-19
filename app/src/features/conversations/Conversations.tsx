@@ -5,6 +5,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../../chat/chatSendError';
 import { checkPromptInjection, promptGuardMessage } from '../../chat/promptInjectionGuard';
+import { trackAnalyticsEvent } from '../../components/analytics';
 import ApprovalRequestCard from '../../components/chat/ApprovalRequestCard';
 import ArtifactCard from '../../components/chat/ArtifactCard';
 import ChatComposer from '../../components/chat/ChatComposer';
@@ -76,7 +77,6 @@ import {
   validateAndReadFile,
 } from '../../lib/attachments';
 import { useT } from '../../lib/i18n/I18nContext';
-import { trackEvent } from '../../services/analytics';
 import { applyOpenRouterFreeModels } from '../../services/api/openrouterFreeModels';
 import { subagentApi } from '../../services/api/subagentApi';
 import { threadApi } from '../../services/api/threadApi';
@@ -115,6 +115,7 @@ import {
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { selectSocketStatus } from '../../store/socketSelectors';
 import {
+  addInferenceResponse,
   addMessageLocal,
   clearThreadInferenceActive,
   createNewThread,
@@ -525,6 +526,11 @@ const Conversations = ({
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   const composerFooterRef = useRef<HTMLDivElement>(null);
   const isComposingTextRef = useRef(false);
+  // One-shot guard for the Stop/ESC partial-preservation path (#4862): request
+  // ids whose partial reply has already been persisted, so a repeated Stop/ESC
+  // fired before the `cancelled` event clears the live stream can't append the
+  // same partial twice.
+  const stoppedRequestIdsRef = useRef<Set<string>>(new Set());
   // Threads with an in-flight send, guarding against double-submit to the SAME
   // thread. Per-thread (a Set) so a send to thread B isn't blocked by an
   // in-flight send to thread A.
@@ -1192,7 +1198,10 @@ const Conversations = ({
         profileId: selectedAgentProfileId,
         locale: uiLocale,
       });
-      trackEvent('chat_message_sent');
+      trackAnalyticsEvent('chat_message_sent', {
+        send_mode: 'standard',
+        has_attachments: pendingAttachments.length > 0,
+      });
       // Backend accepted the send; lifecycle ('started' → 'streaming') now
       // owns the `isSending` UI lock. Release the pending guard so the next
       // user turn isn't blocked by a stale ref/state.
@@ -1292,7 +1301,10 @@ const Conversations = ({
       if (requestId) {
         dispatch(registerParallelRequest({ threadId, requestId }));
       }
-      trackEvent('chat_parallel_message_sent');
+      trackAnalyticsEvent('chat_message_sent', {
+        send_mode: 'parallel',
+        has_attachments: pendingAttachments.length > 0,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setSendError(chatSendError('cloud_send_failed', msg));
@@ -1371,7 +1383,10 @@ const Conversations = ({
       setInputValue('');
       setAttachments([]);
       dispatch(enqueueFollowup({ threadId, message: followupMessage, label }));
-      trackEvent('chat_followup_queued');
+      trackAnalyticsEvent('chat_message_sent', {
+        send_mode: 'followup',
+        has_attachments: pendingAttachments.length > 0,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setSendError(chatSendError('cloud_send_failed', msg));
@@ -1399,11 +1414,63 @@ const Conversations = ({
     selectedThreadActive ? handleSendFollowup(text) : handleSendMessage(text);
 
   // Cancel the in-flight turn for the selected thread. Shared by the in-composer
-  // Stop button (text mode) and the footer Cancel control (mic-cloud / voice
-  // modes) so the cancel path lives in one place.
+  // Stop button (text mode), the ESC-to-interrupt shortcut, and the footer
+  // Cancel control (mic-cloud / voice modes) so the cancel path lives in one
+  // place.
+  //
+  // Any assistant text already streamed for this turn is persisted as its own
+  // message flagged `stopped: true` so the partial output stays in the
+  // transcript (clearly marked) instead of vanishing when the `cancelled`
+  // chat_error clears the live streaming preview (#4862). The matching
+  // `onError` path deliberately appends no message for `cancelled`, so this can
+  // never double-render the partial reply.
+  //
+  // Persistence is gated on the cancel actually being accepted: `chatCancel`
+  // resolves `false` (no throw) when the socket is down or the RPC is rejected,
+  // and in that case the original turn may keep running and later append its
+  // own final response — so persisting a partial here would leave a
+  // misleading/duplicate bubble. On failure we release the one-shot claim so a
+  // retry can still preserve the partial once cancellation succeeds.
   const handleStopGeneration = useCallback(() => {
-    if (selectedThreadId) void chatCancel(selectedThreadId);
-  }, [selectedThreadId]);
+    if (!selectedThreadId) {
+      debug('[chat] stop generation: no selected thread — noop');
+      return;
+    }
+    const threadId = selectedThreadId;
+    const streaming = streamingAssistantByThread[threadId];
+    const partial = streaming?.content ?? '';
+    const requestId = streaming?.requestId;
+    // Claim the turn synchronously so a second Stop/ESC in the same tick (before
+    // the cancel round-trips) can't queue a duplicate persist.
+    const shouldPersist =
+      partial.trim().length > 0 && (!requestId || !stoppedRequestIdsRef.current.has(requestId));
+    if (shouldPersist && requestId) stoppedRequestIdsRef.current.add(requestId);
+    debug(
+      '[chat] stop generation: thread=%s request=%s partialLen=%d willPersist=%s',
+      threadId,
+      requestId ?? 'none',
+      partial.trim().length,
+      shouldPersist
+    );
+    void chatCancel(threadId).then(cancelled => {
+      debug('[chat] stop generation: chatCancel thread=%s ok=%s', threadId, cancelled);
+      if (!cancelled) {
+        // Cancel not accepted: don't leave a misleading partial, and release the
+        // claim so a later Stop/ESC can persist once cancellation goes through.
+        if (shouldPersist && requestId) stoppedRequestIdsRef.current.delete(requestId);
+        return;
+      }
+      if (shouldPersist) {
+        void dispatch(
+          addInferenceResponse({
+            content: partial,
+            threadId,
+            extraMetadata: { stopped: true, ...(requestId ? { requestId } : {}) },
+          })
+        ).then(() => debug('[chat] stop generation: persisted stopped reply thread=%s', threadId));
+      }
+    });
+  }, [selectedThreadId, streamingAssistantByThread, dispatch]);
 
   const transcribeAndSendAudio = async (mimeType: string) => {
     setIsRecording(false);
@@ -1577,6 +1644,47 @@ const Conversations = ({
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (isComposingTextRef.current || isImeCompositionKeyEvent(e)) return;
+
+    // ESC while the selected thread is streaming interrupts the turn AND
+    // restores the user's last prompt into the composer for re-editing in
+    // place (#4862). Interrupt always fires; the prompt is only re-hydrated
+    // when the composer is empty so a follow-up the user already started
+    // typing is never clobbered. When nothing is streaming, ESC is left to its
+    // default behaviour (blur / no-op).
+    if (e.key === 'Escape' && selectedThreadActive) {
+      e.preventDefault();
+      const composerEmpty = inputValue.trim().length === 0;
+      debug(
+        '[chat] esc interrupt: thread=%s composerEmpty=%s',
+        selectedThreadId ?? 'none',
+        composerEmpty
+      );
+      handleStopGeneration();
+      if (composerEmpty) {
+        // Restore the last *visible* user prompt (hidden system/injected
+        // messages are excluded here to match how the transcript is rendered).
+        const lastUserMessage = [...messages]
+          .reverse()
+          .find(m => m.sender === 'user' && !m.extraMetadata?.hidden);
+        const restored = lastUserMessage
+          ? parseMessageImages(lastUserMessage.content ?? '').text
+          : '';
+        if (restored.length > 0) {
+          debug('[chat] esc interrupt: restored prompt len=%d', restored.length);
+          setInputValue(restored);
+          // Drop any stale inline ghost-completion so it doesn't reappear over
+          // the freshly restored prompt.
+          setInlineSuggestionValue('');
+          window.requestAnimationFrame(() => {
+            const ta = textInputRef.current;
+            if (!ta) return;
+            ta.focus();
+            ta.setSelectionRange(restored.length, restored.length);
+          });
+        }
+      }
+      return;
+    }
 
     const inlineSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
     const textarea = e.currentTarget;
@@ -1875,6 +1983,15 @@ const Conversations = ({
             entries={selectedThreadToolTimeline}
             onViewDetails={openScopedDetail}
             onViewWholeRun={openWholeRunSource}
+            // Reuse `isSending` rather than a raw `in` membership check on
+            // `inferenceTurnLifecycleByThread`: that map also carries
+            // `'interrupted'` entries (a turn that crashed mid-flight in a
+            // PRIOR core process, written by `hydrateRuntimeFromSnapshot` on
+            // cold boot) which have no live driver and must NOT read as an
+            // active turn, or stale disclosure state leaks into a later
+            // retry. `isSending` already excludes it (only `'started'` /
+            // `'streaming'`, same as this component's own live-turn checks).
+            turnActive={isSending}
           />
         ) : (
           // Transcript-only turn: reasoning/narration was streamed but no tool
@@ -1908,6 +2025,22 @@ const Conversations = ({
         )}
       </>
     ) : null;
+
+  // Standalone fallback slot (rendered once, below all messages) for the
+  // rare thread with no user message at all (e.g. a proactive-only run), so
+  // `agentInsights` is never unreachable. This slot sits at a fixed JSX
+  // position with no per-thread key of its own, so switching directly
+  // between two threads that both hit this fallback (e.g. two proactive-only
+  // threads) would otherwise reuse the same `ToolTimelineBlock` instance
+  // instead of remounting it — leaking its sticky `userOverrideOpen`
+  // disclosure state from the old thread into the new one (flagged in
+  // review on #4942). Keying on thread id forces a clean remount on every
+  // thread switch, matching the `key={msg.id}` pattern used for the in-flow
+  // timeline above.
+  const proactiveInsightsFallback = (() => {
+    if (lastUserMessageId) return null;
+    return <Fragment key={selectedThreadId ?? 'none'}>{agentInsights}</Fragment>;
+  })();
 
   const filteredThreads = useMemo(() => {
     return threads.filter(t => isThreadVisibleInTab(t, selectedLabel));
@@ -2245,6 +2378,22 @@ const Conversations = ({
                                   );
                                 })()}
                             </div>
+                            {/* Stopped marker (#4862): the partial reply that was
+                                preserved when the user hit Stop / ESC mid-stream. */}
+                            {msg.extraMetadata?.stopped === true && (
+                              <p
+                                data-testid="stopped-marker"
+                                className="flex items-center gap-1 px-1 text-[10px] font-medium text-content-faint">
+                                <svg
+                                  className="h-2.5 w-2.5"
+                                  fill="currentColor"
+                                  viewBox="0 0 24 24"
+                                  aria-hidden>
+                                  <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                                </svg>
+                                {t('chat.stoppedByUser')}
+                              </p>
+                            )}
                             {(() => {
                               const raw = msg.extraMetadata?.citations;
                               if (!Array.isArray(raw)) return null;
@@ -2551,6 +2700,7 @@ const Conversations = ({
                             id: 'active-tool',
                             name: selectedInferenceStatus.activeTool ?? 'tool',
                             round: selectedInferenceStatus.iteration,
+                            seq: 0,
                             status: 'running',
                           }
                         ).title
@@ -2562,6 +2712,7 @@ const Conversations = ({
                             id: 'active-subagent',
                             name: `subagent:${selectedInferenceStatus.activeSubagent ?? ''}`,
                             round: selectedInferenceStatus.iteration,
+                            seq: 0,
                             status: 'running',
                           }
                         ).title
@@ -2571,13 +2722,11 @@ const Conversations = ({
               )}
             {/* The "Agentic task insights" panel is rendered inline *above* the
                 latest answer (right after the latest turn's user message) so
-                processing reads before the result. This fallback only fires for
-                the rare thread with no user message (e.g. a proactive-only
-                thread) so the recorded steps are never unreachable. The cancel
-                control + view-process-source opener now live in `agentInsights`
-                and the floating footer respectively (upstream relocated the
-                in-flow cancel button below the composer). */}
-            {!lastUserMessageId && agentInsights}
+                processing reads before the result. `proactiveInsightsFallback`
+                (defined above, near `agentInsights`) covers the rare thread
+                with no user message at all — see its doc comment for the
+                per-thread keying that fix keeps this remount-safe. */}
+            {proactiveInsightsFallback}
             <div ref={messagesEndRef} />
           </div>
         ) : isNewWindow ? (
@@ -3091,7 +3240,9 @@ const Conversations = ({
                   activity — use the raw `messages` (not `hasVisibleMessages`,
                   which ignores hidden transcript entries) so an already-started
                   thread never looks "fresh" here. */}
-              {messages.length === 0 && <SuperContextToggle />}
+              {/* Key by thread so switching to another empty chat remounts the
+                  toggle and re-runs its off-by-default reset (PR #4874 review). */}
+              {messages.length === 0 && <SuperContextToggle key={selectedThreadId ?? 'new-chat'} />}
               {selectedThreadId && (
                 <button
                   type="button"

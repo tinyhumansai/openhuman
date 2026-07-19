@@ -14,7 +14,7 @@ use crate::openhuman::agent::host_runtime;
 use crate::openhuman::agent_memory::memory_loader::DefaultMemoryLoader;
 use crate::openhuman::config::Config;
 use crate::openhuman::context::prompt::SystemPromptBuilder;
-use crate::openhuman::inference::provider::{self, Provider};
+use crate::openhuman::inference::provider;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::memory_store;
 use crate::openhuman::memory_tools::ToolMemoryCaptureHook;
@@ -300,8 +300,13 @@ impl Agent {
     /// the subconscious LLM cited when it produced the spawning
     /// reflection (#623). Empty / `None` is the default for normal chat
     /// threads — the section is omitted entirely.
+    // `pub(crate)` (rather than private) so `builder_tests` can drive the
+    // definition-cap resolution logic (issue #4868) directly with a
+    // hand-picked `target_def`, independent of the process-global
+    // `AgentDefinitionRegistry` singleton's init-once state. Still not part
+    // of the crate's public API.
     #[allow(clippy::too_many_arguments)]
-    fn build_session_agent_inner(
+    pub(crate) fn build_session_agent_inner(
         config: &Config,
         agent_id: &str,
         target_def: Option<&crate::openhuman::agent::harness::definition::AgentDefinition>,
@@ -340,14 +345,16 @@ impl Agent {
             config,
             &config.memory.embedding_provider,
         );
-        let memory: Arc<dyn Memory> = Arc::from(memory_store::create_memory_with_local_ai(
+        let session_memory = memory_store::factories::create_session_memory_with_local_ai(
             &config.memory,
             local_embedding.as_deref(),
             &embedding_api_key,
             &config.embedding_routes,
             Some(&config.storage.provider.config),
             &config.workspace_dir,
-        )?);
+        )?;
+        let archivist_connection = session_memory.sqlite_connection;
+        let memory: Arc<dyn Memory> = Arc::from(session_memory.memory);
 
         // Per-profile skill (workflow) + MCP-server allowlists. `None` = all.
         let profile_skill_allowlist: Option<std::collections::HashSet<String>> = profile
@@ -476,14 +483,21 @@ impl Agent {
         // double-retry every transient error. Cross-route fallback is likewise
         // the crate registry `FallbackPolicy`, so `config.reliability.*` no longer
         // layers on the turn path (it still governs the non-seam provider paths).
-        let (provider, mut model_name): (Box<dyn Provider>, String) =
-            crate::openhuman::inference::provider::create_chat_provider(provider_role, config)?;
+        let (resolved_chat_model, mut model_name) =
+            crate::openhuman::inference::provider::create_chat_model_with_model_id(
+                provider_role,
+                config,
+                config.default_temperature,
+            )?;
+        let supports_native = resolved_chat_model
+            .profile()
+            .is_none_or(|profile| profile.tool_calling);
         log::info!(
             "[session-builder] agent_id={} provider_role={} resolved_model={} supports_native_tools={}",
             agent_id,
             provider_role,
             model_name,
-            provider.supports_native_tools()
+            supports_native
         );
         let target_agent_id = target_def
             .map(|def| def.id.as_str())
@@ -530,7 +544,6 @@ impl Agent {
         // the choice string now so the provider borrow doesn't conflict
         // with the later `provider` move into the builder.
         let dispatcher_choice = config.agent.tool_dispatcher.clone();
-        let supports_native = provider.supports_native_tools();
 
         // Build prompt builder — either the default "orchestrator /
         // main agent" layout that bootstraps from workspace identity
@@ -693,23 +706,12 @@ impl Agent {
                 > = if config.learning.reflection_source
                     == crate::openhuman::config::ReflectionSource::Cloud
                 {
-                    // Reflection always calls with the `hint:reasoning` route +
-                    // 0.3 temperature (formerly `simple_chat(prompt,
-                    // "hint:reasoning", 0.3)`), so bake both into the wrapped
-                    // model. The routed provider still resolves the hint per call.
-                    let routed = provider::create_routed_provider(
-                        config.inference_url.as_deref(),
-                        config.api_url.as_deref(),
-                        config.api_key.as_deref(),
-                        &config.reliability,
-                        &config.model_routes,
-                        &model_name,
-                    )?;
-                    Some(provider::chat_model_from_provider(
-                        routed,
-                        "hint:reasoning".to_string(),
-                        0.3,
-                    ))
+                    let (model, resolved_model) =
+                        provider::create_chat_model_with_model_id("reasoning", config, 0.3)?;
+                    log::debug!(
+                        "[learning] built crate-native reflection model resolved_model={resolved_model}"
+                    );
+                    Some(model)
                 } else {
                     None
                 };
@@ -763,33 +765,24 @@ impl Agent {
         // is the system-of-record for chat turns and must stay active even when
         // the inference stack (`reflection`, `stability_detector`) is disabled.
         // Gated only on `config.learning.episodic_capture_enabled` (default: true)
-        // and on the memory backend exposing a SQLite connection.
+        // using the explicit SQLite resource returned by the session factory.
         let archivist_hook_arc: Option<
             Arc<crate::openhuman::agent::harness::archivist::ArchivistHook>,
         > = if config.learning.episodic_capture_enabled {
-            match memory.sqlite_conn() {
-                Some(conn) => {
-                    let hook = Arc::new(
-                        crate::openhuman::agent::harness::archivist::ArchivistHook::new(conn, true)
-                            .with_config(config.clone()),
-                    );
-                    post_turn_hooks
-                        .push(Arc::clone(&hook)
-                            as Arc<dyn crate::openhuman::agent::hooks::PostTurnHook>);
-                    log::info!(
-                        "[archivist] episodic capture hook registered (learning.enabled={})",
-                        config.learning.enabled
-                    );
-                    Some(hook)
-                }
-                None => {
-                    log::warn!(
-                        "[archivist] no SQLite connection available from memory backend — \
-                         episodic capture disabled"
-                    );
-                    None
-                }
-            }
+            let hook = Arc::new(
+                crate::openhuman::agent::harness::archivist::ArchivistHook::new(
+                    archivist_connection,
+                    true,
+                )
+                .with_config(config.clone()),
+            );
+            post_turn_hooks
+                .push(Arc::clone(&hook) as Arc<dyn crate::openhuman::agent::hooks::PostTurnHook>);
+            log::info!(
+                "[archivist] episodic capture hook registered (learning.enabled={})",
+                config.learning.enabled
+            );
+            Some(hook)
         } else {
             log::info!(
                 "[archivist] episodic_capture_enabled=false — archivist hook not registered"
@@ -1140,8 +1133,38 @@ impl Agent {
             None
         };
 
+        // Crate-native turn models (Phase 3 P3-B): the production main-turn agent
+        // builds crate `ChatModel`s from `(provider_role, config)` without retaining
+        // a host provider. The
+        // `agent_harness_e2e` mock now serves SSE for streaming, so the crate-native
+        // streaming path is exercised end-to-end.
+        //
+        // Issue #4868 — resolve the per-agent iteration cap. When a named
+        // definition is present, its `effective_max_iterations()` (which honors
+        // `iteration_policy = "extended"` -> 50, and the declared `max_iterations`
+        // for strict agents) takes priority over the global
+        // `config.agent.max_tool_iterations` (default 10). This is the single
+        // shared resolution point that closes #4868 for every direct-invocation
+        // path: flows_build, flows_discover, agent-node runtime, cron, MCP
+        // server, etc. Falls back to the global default when there is no
+        // definition for this agent_id.
+        let mut effective_agent_config = config.agent.clone();
+        if let Some(def) = target_def {
+            let def_cap = def.effective_max_iterations();
+            log::info!(
+                "[agent::builder] applying definition iteration cap for agent_id={}: \
+                 definition.max_iterations={} iteration_policy={:?} -> effective={} \
+                 (was global default {})",
+                agent_id,
+                def.max_iterations,
+                def.iteration_policy,
+                def_cap,
+                config.agent.max_tool_iterations,
+            );
+            effective_agent_config.max_tool_iterations = def_cap;
+        }
         let mut builder = Agent::builder()
-            .provider(provider)
+            .crate_native_provider(provider_role, std::sync::Arc::new(config.clone()))
             .tools(tools)
             .visible_tool_names(visible)
             .memory(memory)
@@ -1163,7 +1186,7 @@ impl Agent {
                     ),
             ))
             .prompt_builder(prompt_builder)
-            .config(config.agent.clone())
+            .config(effective_agent_config)
             .context_config(config.context.clone())
             .model_name(model_name)
             .model_vision(model_vision)

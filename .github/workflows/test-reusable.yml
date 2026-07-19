@@ -2,9 +2,11 @@
 # Reusable test workflow — frontend unit tests, Rust core tests, Rust Tauri
 # shell tests. Used by PR/push (`test.yml`).
 #
-# Caching: pnpm store, Swatinem rust-cache, CEF runtime, and sccache backed
-# by the GitHub Actions cache. Cache keys mirror what the release build
-# matrix uses so warm caches survive across workflows on the same SHA.
+# Caching: pnpm store, Swatinem rust-cache (full target/), and CEF runtime,
+# backed by the GitHub Actions cache. Cache keys mirror what the release build
+# matrix uses so warm caches survive across workflows on the same SHA. sccache
+# is intentionally not layered on top — under a warm rust-cache it logged 0%
+# additional hits (see ci-lite.yml) and only doubled the cache footprint.
 name: Test (reusable)
 
 on:
@@ -144,6 +146,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           submodules: recursive
+      # Single dep-cache strategy repo-wide: Swatinem rust-cache (full target/).
+      # sccache was removed here to match the ci-lite lanes — layered on a warm
+      # rust-cache it logged 0% additional hits and just doubled cache footprint.
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -151,7 +156,72 @@ jobs:
           cache-on-failure: true
           key: core
       - name: Test core crate (openhuman)
-        run: bash scripts/ci-cancel-aware.sh cargo test -p openhuman
+        # This script uses Bash-only process substitution below. Reusable
+        # workflows do not inherit the caller's `defaults.run.shell`, and
+        # container jobs otherwise execute multiline steps with `sh`.
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          integration_test_targets() {
+            find tests -maxdepth 1 -type f -name '*.rs' -print |
+              sed -e 's#^tests/##' -e 's#\.rs$##' |
+              sort
+          }
+
+          raw_coverage_modules() {
+            find tests/raw_coverage -maxdepth 1 -type f -name '*.rs' -print |
+              sed -e 's#^tests/raw_coverage/##' -e 's#\.rs$##' |
+              sort
+          }
+
+          bash scripts/ci-cancel-aware.sh cargo test -p openhuman --lib --bins
+          bash scripts/ci-cancel-aware.sh cargo test -p openhuman --doc
+
+          while IFS= read -r target; do
+            [ -n "${target}" ] || continue
+            if [ "${target}" = "raw_coverage_all" ]; then
+              while IFS= read -r module; do
+                [ -n "${module}" ] || continue
+                echo "[test-reusable] raw coverage module: ${module}"
+                bash scripts/ci-cancel-aware.sh cargo test -p openhuman --test "${target}" -- "${module}::" --test-threads=1
+              done < <(raw_coverage_modules)
+            else
+              bash scripts/ci-cancel-aware.sh cargo test -p openhuman --test "${target}"
+            fi
+          done < <(integration_test_targets)
+
+  tinycortex-tests:
+    if: inputs.run_rust_core
+    name: TinyCortex Memory Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Init tinycortex submodule
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --recursive vendor/tinycortex
+
+      - name: Cache TinyCortex build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vendor/tinycortex -> vendor/tinycortex/target
+          cache-on-failure: true
+          key: tinycortex-full
+
+      - name: Run TinyCortex engine and Composio sync tests
+        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinycortex/Cargo.toml --features git-diff,sync
 
   rust-core-tests-windows:
     if: inputs.run_rust_core
@@ -168,6 +238,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           submodules: recursive
+      # See rust-core-tests: rust-cache only, sccache dropped (0% hits warm).
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -195,8 +266,6 @@ jobs:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
       CARGO_INCREMENTAL: "0"
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -206,6 +275,7 @@ jobs:
           # Required for app/src-tauri/vendor/tauri-cef.
           persist-credentials: false
           submodules: recursive
+      # See rust-core-tests: rust-cache only, sccache dropped (0% hits warm).
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -221,7 +291,5 @@ jobs:
           key: cef-ubuntu-22.04-${{ hashFiles('app/src-tauri/Cargo.toml') }}
           restore-keys: |
             cef-ubuntu-22.04-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
       - name: Test Tauri shell (OpenHuman)
         run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path app/src-tauri/Cargo.toml

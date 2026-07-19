@@ -278,7 +278,7 @@ pub(crate) struct QuoteOwner {
 /// channel from which a `quote_id` could leak.
 ///
 // SAFETY: relies on the inline `.await` chain in
-// `channels/providers/web.rs::run_chat_task`. `tokio::task_local!` propagates
+// `web_chat::run_chat_task`. `tokio::task_local!` propagates
 // across `.await` but **not** across `tokio::spawn`. If the chat path ever
 // detaches the tool loop onto a freshly-spawned task without wrapping it in
 // `APPROVAL_CHAT_CONTEXT.scope(...)`, this helper will silently start

@@ -16,8 +16,9 @@ use crate::openhuman::agent_memory::memory_loader::MemoryLoader;
 use crate::openhuman::agent_tool_policy::ToolPolicySession;
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::context::ContextManager;
-use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, Provider};
+use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage};
 use crate::openhuman::memory::Memory;
+use crate::openhuman::tinyagents::TurnModelSource;
 use crate::openhuman::tools::{Tool, ToolSpec};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,7 +29,10 @@ use std::sync::Arc;
 /// executes tools based on model requests, and interacts with the memory
 /// system to maintain context across turns.
 pub struct Agent {
-    pub(super) provider: Arc<dyn Provider>,
+    /// The turn's model source — builds this agent's tiered crate `ChatModel`
+    /// set per turn (issue #4249, Phase 3 / Motion A). Replaces the raw
+    /// `Arc<dyn Provider>`; the harness names crate model types only.
+    pub(super) turn_model_source: TurnModelSource,
     /// Full tool registry. Sub-agents pull from this via
     /// [`ParentExecutionContext::all_tools`].
     pub(super) tools: Arc<Vec<Box<dyn Tool>>>,
@@ -76,6 +80,16 @@ pub struct Agent {
     /// the first turn completes.
     pub(super) last_turn_usage_totals:
         Option<crate::openhuman::agent::harness::turn_subagent_usage::LastTurnUsage>,
+    /// Whether the most recent turn's tinyagents loop paused because it hit
+    /// `max_tool_iterations` (`TinyagentsTurnOutcome::hit_cap`), rather than
+    /// finishing naturally. `false` until the first turn completes, and reset
+    /// on every subsequent turn — so it only ever reflects the LAST turn, not
+    /// "any turn ever". Consumed by callers that run a single headless turn
+    /// via [`run_single`](super::runtime) (e.g. `flows_build`) and need to
+    /// distinguish "the agent paused mid-work" from "the agent asked a
+    /// question" or "the agent finished" — `run_single` only returns the
+    /// checkpoint/final text, with no other signal for which case occurred.
+    pub(super) last_turn_hit_cap: bool,
     pub(super) history: Vec<ConversationMessage>,
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) learning_enabled: bool,
@@ -310,7 +324,7 @@ pub struct Agent {
 
 /// A builder for creating `Agent` instances with custom configuration.
 pub struct AgentBuilder {
-    pub(super) provider: Option<Arc<dyn Provider>>,
+    pub(super) turn_model_source: Option<TurnModelSource>,
     pub(super) tools: Option<Vec<Box<dyn Tool>>>,
     /// When set, restricts which tools the main agent sees/calls.
     pub(super) visible_tool_names: Option<std::collections::HashSet<String>>,
@@ -386,7 +400,7 @@ mod tests {
 
         assert_eq!(builder.learning_enabled, default_builder.learning_enabled);
         assert_eq!(builder.auto_save, default_builder.auto_save);
-        assert!(builder.provider.is_none());
+        assert!(builder.turn_model_source.is_none());
         assert!(builder.tools.is_none());
         assert!(builder.memory.is_none());
         assert!(builder.event_session_id.is_none());

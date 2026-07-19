@@ -16,6 +16,7 @@ pub mod help;
 pub mod image_agent;
 pub mod integrations_agent;
 pub mod markets_agent;
+#[cfg(feature = "mcp")]
 pub mod mcp_agent;
 pub mod mcp_setup;
 pub mod morning_briefing;

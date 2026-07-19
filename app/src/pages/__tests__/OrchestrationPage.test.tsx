@@ -1,13 +1,23 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../test/test-utils';
 import OrchestrationPage from '../OrchestrationPage';
 
 vi.mock('../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
 
-// Stub the four data-backed panels so the shell's tab routing is tested in
+// Medulla access is toggled per-test; default to granted so the shell-routing
+// tests exercise the live panels.
+let medullaAccess = true;
+vi.mock('../../lib/orchestration/useMedullaAccess', () => ({
+  useMedullaAccess: () => medullaAccess,
+}));
+
+// Stub the data-backed panels so the shell's tab routing is tested in
 // isolation (the panels have their own unit tests).
+vi.mock('../../components/orchestration/MedullaOverviewPanel', () => ({
+  default: () => <div data-testid="panel-medulla" />,
+}));
 vi.mock('../../components/orchestration/AgentChatPanel', () => ({
   default: () => <div data-testid="panel-agent" />,
 }));
@@ -24,11 +34,25 @@ vi.mock('../../components/orchestration/DiscoverPanel', () => ({
 vi.mock('../../components/orchestration/UsagePanel', () => ({
   default: () => <div data-testid="panel-usage" />,
 }));
+vi.mock('../../components/orchestration/OrchestratorTaskBoard', () => ({
+  default: () => <div data-testid="panel-tasks" />,
+}));
 
 describe('OrchestrationPage shell', () => {
-  it('defaults to the agent chat panel', async () => {
+  beforeEach(() => {
+    medullaAccess = true;
+  });
+
+  it('defaults to the Medulla overview panel', async () => {
     await act(async () => {
       renderWithProviders(<OrchestrationPage />, { initialEntries: ['/orchestration'] });
+    });
+    expect(screen.getByTestId('panel-medulla')).toBeInTheDocument();
+  });
+
+  it('renders the agent chat panel from ?tab=agent', async () => {
+    await act(async () => {
+      renderWithProviders(<OrchestrationPage />, { initialEntries: ['/orchestration?tab=agent'] });
     });
     expect(screen.getByTestId('panel-agent')).toBeInTheDocument();
   });
@@ -48,12 +72,13 @@ describe('OrchestrationPage shell', () => {
     await act(async () => {
       renderWithProviders(<OrchestrationPage />, { initialEntries: ['/orchestration'] });
     });
-    // Sub-nav renders via the sidebar portal once the outlet mounts.
-    const usageNav = await screen.findByTestId('two-pane-nav-usage');
+    // Sub-nav renders via the sidebar portal once the outlet mounts. `usage` is
+    // now a chip sub of the `network` tab, so the top-level nav exposes `network`.
+    const networkNav = await screen.findByTestId('two-pane-nav-network');
     await act(async () => {
-      fireEvent.click(usageNav);
+      fireEvent.click(networkNav);
     });
-    await waitFor(() => expect(screen.getByTestId('panel-usage')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('panel-connections')).toBeInTheDocument());
   });
 
   it('lets the connections panel jump to discover via its callback', async () => {
@@ -66,5 +91,36 @@ describe('OrchestrationPage shell', () => {
       fireEvent.click(screen.getByTestId('panel-connections'));
     });
     await waitFor(() => expect(screen.getByTestId('panel-discover')).toBeInTheDocument());
+  });
+});
+
+describe('OrchestrationPage scale showcase (no Medulla access)', () => {
+  beforeEach(() => {
+    medullaAccess = false;
+  });
+
+  it.each([
+    ['agent', 'orch-demo-chat'],
+    ['overview', 'orch-demo-graph'],
+    ['network', 'orch-demo-network'],
+  ])('renders the demo surface for ?tab=%s', async (tab, testId) => {
+    await act(async () => {
+      renderWithProviders(<OrchestrationPage />, { initialEntries: [`/orchestration?tab=${tab}`] });
+    });
+    expect(screen.getByTestId(testId)).toBeInTheDocument();
+  });
+
+  it('keeps the real task board available without Medulla access', async () => {
+    await act(async () => {
+      renderWithProviders(<OrchestrationPage />, { initialEntries: ['/orchestration?tab=tasks'] });
+    });
+    expect(screen.getByTestId('panel-tasks')).toBeInTheDocument();
+  });
+
+  it('still lands on the Medulla overview by default', async () => {
+    await act(async () => {
+      renderWithProviders(<OrchestrationPage />, { initialEntries: ['/orchestration'] });
+    });
+    expect(screen.getByTestId('panel-medulla')).toBeInTheDocument();
   });
 });

@@ -594,3 +594,18 @@ fn workflows_changed_domain_and_name() {
     assert_eq!(event.domain(), "workflow");
     assert_eq!(event.variant_name(), "WorkflowsChanged");
 }
+
+#[test]
+fn automation_events_map_to_system_domain() {
+    let halted = DomainEvent::AutomationHalted {
+        reason: Some("user".into()),
+        source: "user".into(),
+    };
+    let resumed = DomainEvent::AutomationResumed {
+        source: "user".into(),
+    };
+    assert_eq!(halted.domain(), "system");
+    assert_eq!(resumed.domain(), "system");
+    assert_eq!(halted.variant_name(), "AutomationHalted");
+    assert_eq!(resumed.variant_name(), "AutomationResumed");
+}

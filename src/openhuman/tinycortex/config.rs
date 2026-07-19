@@ -35,6 +35,7 @@ use crate::openhuman::config::Config;
 /// is gated by the W3 golden-workspace harness).
 pub fn memory_config_from(config: &Config, workspace: PathBuf) -> MemoryConfig {
     let mut mc = MemoryConfig::new(workspace);
+    mc.content_root = Some(config.memory_tree_content_root());
     mc.embedding = EmbeddingConfig {
         dim: config.memory.embedding_dimensions,
         model: config.memory.embedding_model.clone(),

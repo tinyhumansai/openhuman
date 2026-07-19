@@ -2,7 +2,9 @@ use super::*;
 use crate::core::event_bus::{global, init_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::XmlToolDispatcher;
 use crate::openhuman::agent::error::AgentError;
-use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, ChatResponse, UsageInfo};
+use crate::openhuman::inference::provider::{
+    ChatMessage, ChatRequest, ChatResponse, Provider, UsageInfo,
+};
 use crate::openhuman::memory::Memory;
 use anyhow::anyhow;
 use async_trait::async_trait;

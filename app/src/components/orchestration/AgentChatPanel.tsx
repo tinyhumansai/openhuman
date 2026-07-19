@@ -19,12 +19,14 @@ import debugFactory from 'debug';
 import {
   type KeyboardEvent,
   type ReactNode,
+  type Ref,
   useCallback,
   useEffect,
   useRef,
   useState,
 } from 'react';
 
+import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { useT } from '../../lib/i18n/I18nContext';
 import {
   orchestrationClient,
@@ -47,6 +49,10 @@ import SessionTranscript from './SessionTranscript';
 
 const debug = debugFactory('orchestration:agent-chat');
 
+// Stable identity for an empty transcript so `useStickToBottom`'s layout effect
+// doesn't re-run every render when the selected chat has no messages yet.
+const EMPTY_MESSAGES: readonly unknown[] = [];
+
 function sessionLabel(session: SessionSummary): string {
   return session.label?.trim() || session.sessionId;
 }
@@ -60,10 +66,12 @@ function sessionLabel(session: SessionSummary): string {
 function ChatPageScaffold({
   header,
   footer,
+  scrollRef,
   children,
 }: {
   header?: ReactNode;
   footer?: ReactNode;
+  scrollRef?: Ref<HTMLDivElement>;
   children: ReactNode;
 }) {
   const footerRef = useRef<HTMLDivElement | null>(null);
@@ -91,6 +99,8 @@ function ChatPageScaffold({
     <div className="relative flex h-full flex-col overflow-hidden bg-surface/70 dark:bg-black/40">
       {header}
       <div
+        ref={scrollRef}
+        data-testid="orch-chat-scroll"
         className="min-h-0 flex-1 overflow-y-auto"
         style={footer ? { paddingBottom: footerHeight } : undefined}>
         {children}
@@ -184,6 +194,11 @@ function AgentComposer({
 function SessionChatView({ session }: { session: SessionSummary }) {
   const { t } = useT();
   const { state, messages, refresh } = useSessionTranscript(session.sessionId);
+  const { containerRef: scrollRef } = useStickToBottom(
+    messages,
+    session.sessionId,
+    session.sessionId
+  );
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -226,12 +241,44 @@ function SessionChatView({ session }: { session: SessionSummary }) {
     [body, sending, session.agentId, session.sessionId, refresh]
   );
 
+  // A runtime tool-approval decision → reply "allow"/"deny" to the peer. Rethrows
+  // on failure so SessionTranscript rolls the card back to buttons for a retry.
+  const decide = useCallback(
+    async (decision: 'allow' | 'deny'): Promise<void> => {
+      setSendError(null);
+      debug(
+        '[orchestration:agent-chat] approval decision: send session=%s decision=%s',
+        session.sessionId,
+        decision
+      );
+      try {
+        await orchestrationClient.sendMasterMessage({
+          body: decision,
+          recipient: session.agentId,
+          sessionId: session.sessionId,
+        });
+        if (mountedRef.current) void refresh();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debug(
+          '[orchestration:agent-chat] approval decision: failed session=%s %s',
+          session.sessionId,
+          message
+        );
+        if (mountedRef.current) setSendError(message);
+        throw error;
+      }
+    },
+    [session.agentId, session.sessionId, refresh]
+  );
+
   const runtime = session.harnessType || session.source || null;
   const directory = session.workspace?.trim() || null;
   const runningOn = session.agentId?.trim() || null;
 
   return (
     <ChatPageScaffold
+      scrollRef={scrollRef}
       header={
         // Agent metadata, centered to the same width-capped column as the chat.
         <div className="border-b border-line bg-surface/60 dark:bg-black/30">
@@ -307,7 +354,10 @@ function SessionChatView({ session }: { session: SessionSummary }) {
             {t('tinyplaceOrchestration.noMessages')}
           </p>
         ) : (
-          <SessionTranscript messages={messages} />
+          <SessionTranscript
+            messages={messages}
+            onDecide={(_message, decision) => decide(decision === 'deny' ? 'deny' : 'allow')}
+          />
         )}
       </div>
     </ChatPageScaffold>
@@ -343,6 +393,14 @@ export default function AgentChatPanel({
     sendMessage,
   } = useOrchestrationChats(t);
   const contactSessions = useContactSessions();
+  // Keep the transcript pinned to the newest message (and disengage when the
+  // user scrolls up). Called before the `openSession` early return so hook order
+  // stays stable; `selectedId` as thread + reset key snaps fresh on tab switch.
+  const { containerRef: masterScrollRef } = useStickToBottom(
+    selected?.messages ?? EMPTY_MESSAGES,
+    selectedId,
+    selectedId
+  );
 
   const [composerBody, setComposerBody] = useState('');
   const [sending, setSending] = useState(false);
@@ -379,7 +437,9 @@ export default function AgentChatPanel({
     debug('steering review: trigger');
     setRunningReview(true);
     try {
-      await subconsciousTrigger('tinyplace');
+      // Steering review runs on the hosted brain now; nudge the device
+      // subconscious (memory) so a manual tick still works locally.
+      await subconsciousTrigger('all');
     } catch (err) {
       debug('steering review trigger failed: %o', err);
     } finally {
@@ -454,6 +514,7 @@ export default function AgentChatPanel({
     // switching chip in the footer. When subconscious is active, the steering
     // directive + "Run review" ride alongside the chip (no header bar).
     <ChatPageScaffold
+      scrollRef={masterScrollRef}
       footer={
         <div className="flex flex-col gap-2">
           {showComposer ? (

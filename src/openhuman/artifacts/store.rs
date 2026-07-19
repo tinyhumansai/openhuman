@@ -208,7 +208,7 @@ pub(crate) async fn list_artifacts(
     }
 
     // Sort descending by created_at (newest first)
-    all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    all.sort_by_key(|item| std::cmp::Reverse(item.created_at));
 
     // Apply thread filter BEFORE pagination so `total` reflects the
     // per-thread count the UI surfaces, and so a small page doesn't get
@@ -616,7 +616,7 @@ pub async fn fail_artifact(
 }
 
 /// Read the active [`ApprovalChatContext`] task-local (set by
-/// `channels::providers::web` around each chat turn) and return its
+/// `web_chat` around each chat turn) and return its
 /// thread + client ids. Returns `(None, None)` for non-chat callers
 /// (CLI, cron, sub-agent runners) so artifact emit hooks degrade
 /// gracefully — the event is still published but the web subscriber

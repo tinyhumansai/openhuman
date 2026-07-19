@@ -24,7 +24,6 @@ Options:
   --output <file>       Write generated Markdown to a file instead of stdout.
   --no-ai               Build deterministic Markdown without calling OpenAI.
   --dry-run             Print the OpenAI prompt/input JSON without calling OpenAI.
-  --max-prs <n>         Refuse ranges with more than n PRs. Defaults to 250.
   --help                Show this help.
 
 Environment:
@@ -52,7 +51,6 @@ export function parseArgs(argv) {
     output: null,
     noAi: false,
     dryRun: false,
-    maxPrs: 250,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -79,12 +77,6 @@ export function parseArgs(argv) {
       options.model = readValue(arg);
     } else if (arg === '--output' || arg === '-o') {
       options.output = readValue(arg);
-    } else if (arg === '--max-prs') {
-      const parsed = Number.parseInt(readValue(arg), 10);
-      if (!Number.isInteger(parsed) || parsed < 1) {
-        throw new Error('--max-prs must be a positive integer');
-      }
-      options.maxPrs = parsed;
     } else if (arg === '--no-ai') {
       options.noAi = true;
     } else if (arg === '--dry-run') {
@@ -295,12 +287,9 @@ function fetchPullRequest(repo, number) {
   }
 }
 
-function collectPullRequests(repo, commits, maxPrs) {
+function collectPullRequests(repo, commits) {
   const prCommits = collectPrCommits(commits);
   const numbers = [...prCommits.keys()].sort((a, b) => a - b);
-  if (numbers.length > maxPrs) {
-    throw new Error(`Range contains ${numbers.length} PRs, above --max-prs ${maxPrs}`);
-  }
 
   return numbers.map((number) => {
     const detail = fetchPullRequest(repo, number);
@@ -373,12 +362,7 @@ export function buildReleasePayload({ from, to, resolvedTo, repo, commits, pullR
 }
 
 export function buildOpenAiRequest({ model, title, payload }) {
-  const compactPayload = JSON.stringify(payload);
-  if (compactPayload.length > MAX_PROMPT_CHARS) {
-    throw new Error(
-      `Release payload is ${compactPayload.length} characters, above ${MAX_PROMPT_CHARS}. Use a narrower range.`,
-    );
-  }
+  const compactPayload = serializeOpenAiPayload(payload);
 
   return {
     model,
@@ -411,6 +395,49 @@ ${compactPayload}`,
       },
     ],
   };
+}
+
+function serializeOpenAiPayload(payload) {
+  const fullPayload = JSON.stringify(payload);
+  if (fullPayload.length <= MAX_PROMPT_CHARS) {
+    return fullPayload;
+  }
+
+  const compact = {
+    ...payload,
+    contributors: payload.contributors.map(({ name, isNew }) => ({ name, isNew })),
+    pullRequests: payload.pullRequests.map(({ number, title, url, author, labels }) => ({
+      number,
+      title,
+      url,
+      author,
+      labels,
+    })),
+    uncategorizedCommits: payload.uncategorizedCommits.map(({ subject, authorName }) => ({
+      subject,
+      authorName,
+    })),
+  };
+  const compactPayload = JSON.stringify(compact);
+  if (compactPayload.length <= MAX_PROMPT_CHARS) {
+    return compactPayload;
+  }
+
+  const bounded = {
+    ...compact,
+    pullRequests: [],
+    omittedPullRequests: compact.pullRequests.length,
+  };
+  for (const pullRequest of compact.pullRequests) {
+    bounded.pullRequests.push(pullRequest);
+    bounded.omittedPullRequests -= 1;
+    if (JSON.stringify(bounded).length > MAX_PROMPT_CHARS) {
+      bounded.pullRequests.pop();
+      bounded.omittedPullRequests += 1;
+      break;
+    }
+  }
+  return JSON.stringify(bounded);
 }
 
 function getOpenAiKey() {
@@ -646,7 +673,7 @@ async function main() {
   console.error(`[release-notes] Collecting ${repo} changes from ${from} to ${resolvedTo}`);
   const commits = collectCommits(from, resolvedTo);
   const contributors = collectContributorStats(commits, priorAuthorKeys(from));
-  const pullRequests = collectPullRequests(repo, commits, options.maxPrs);
+  const pullRequests = collectPullRequests(repo, commits);
   const payload = buildReleasePayload({
     from,
     to: options.to,

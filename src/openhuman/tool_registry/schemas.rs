@@ -192,9 +192,19 @@ mod tests {
             .get("tools")
             .and_then(Value::as_array)
             .expect("tools array");
+
+        // `memory.search` is an MCP-transport entry, absent when the `mcp`
+        // feature is compiled out. The behaviour under test is that `list`
+        // returns a populated registry object, so assert against an entry that
+        // exists in the build at hand rather than gating the test away.
+        #[cfg(feature = "mcp")]
+        let expected = "memory.search";
+        #[cfg(not(feature = "mcp"))]
+        let expected = "tools.web_search";
+
         assert!(tools
             .iter()
-            .any(|tool| { tool.get("tool_id").and_then(Value::as_str) == Some("memory.search") }));
+            .any(|tool| { tool.get("tool_id").and_then(Value::as_str) == Some(expected) }));
     }
 
     #[tokio::test]

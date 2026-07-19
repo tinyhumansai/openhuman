@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
+mod messages;
+pub(crate) use messages::{COMPOSIO_INVALID_API_KEY_ANCHOR, COMPOSIO_INVALID_API_KEY_USER_MESSAGE};
+
 pub(crate) const DIRECT_INVALID_API_KEY_THRESHOLD: u32 = 3;
 
 static DIRECT_AUTH_FAILURES: LazyLock<Mutex<HashMap<u64, u32>>> =
@@ -80,7 +83,7 @@ pub(crate) fn direct_auth_backoff_error(key_id: u64) -> Option<String> {
 
 pub(crate) fn invalid_api_key_backoff_message(consecutive: u32) -> String {
     format!(
-        "Direct-mode Composio API key was rejected {consecutive} consecutive times with HTTP 401 Invalid API key; re-enter a valid key in Settings > Connections > Composio to resume polling."
+        "Direct-mode Composio API key was rejected {consecutive} consecutive times with HTTP 401 Invalid API key; re-enter a valid key in Connections > Composio to resume polling."
     )
 }
 

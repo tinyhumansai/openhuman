@@ -138,15 +138,6 @@ pub enum DomainEvent {
         source: String,
     },
 
-    /// A tiny.place harness session DM was ingested and persisted. Metadata only
-    /// — bodies stay in the workspace-internal orchestration store. Consumed by
-    /// later stages (graph run, UI socket push).
-    OrchestrationSessionMessage {
-        agent_id: String,
-        session_id: String,
-        chat_kind: String,
-    },
-
     // ── Subconscious orchestrator ───────────────────────────────────────
     /// A subconscious trigger finished gate evaluation (promote or drop).
     /// Observability only — lets dashboards see ingestion volume and the
@@ -472,6 +463,23 @@ pub enum DomainEvent {
         status: String,
     },
 
+    /// A saved flow's definition changed (created / updated / deleted /
+    /// enable-toggled). Bridged to a `flow:changed` socket event so an open
+    /// Workflows list or canvas refetches instead of silently showing stale
+    /// state — most importantly, so an agent `save_workflow` becomes visible in
+    /// a canvas the user has open (audit F6). Best-effort (broadcast bridges
+    /// drop on lag); the UI's own refetch-on-focus remains the backstop.
+    FlowChanged {
+        /// The affected flow's id.
+        flow_id: String,
+        /// What happened: `"created"` | `"updated"` | `"deleted"` |
+        /// `"enabled_changed"`.
+        kind: String,
+        /// Who made the change: `"agent"` | `"user"` | `"system"` — a coarse
+        /// hint for the UI banner ("an assistant edited this flow").
+        actor: String,
+    },
+
     // ── Skills ──────────────────────────────────────────────────────────
     /// A skill was loaded into the runtime.
     WorkflowLoaded { skill_id: String, runtime: String },
@@ -571,7 +579,7 @@ pub enum DomainEvent {
     /// flow-approval-surface, PR2/PR3). Unlike `ApprovalRequested`, this
     /// event carries no `thread_id`/`client_id` — a flow run has neither, so
     /// the generic chat-routed socket bridge
-    /// (`channels::providers::web::event_bus::ApprovalSurfaceSubscriber`)
+    /// (`web_chat::event_bus::ApprovalSurfaceSubscriber`)
     /// silently drops it (that gap was the original silent-deadlock bug).
     /// Published by `ApprovalGate::intercept_audited` alongside the existing
     /// `ApprovalRequested`, bridged by `core::socketio` directly to a
@@ -591,6 +599,35 @@ pub enum DomainEvent {
         /// Short human-readable summary of the action (redacted, same as
         /// `ApprovalRequested::action_summary`).
         summary: String,
+    },
+
+    // ── Egress (privacy spine) ──────────────────────────────────────────
+    /// An external data transfer is about to leave the device. Published by
+    /// [`crate::openhuman::security::egress::emit_external_transfer`] from every
+    /// external-egress point (LLM inference, Composio tool calls, backend
+    /// integrations, network-fetch tools, cloud embeddings) *before* the
+    /// transfer, carrying an [`EgressDescriptor`](crate::openhuman::security::egress::EgressDescriptor)
+    /// that answers "what leaves, to where, why". Privacy epic S2 (#4436).
+    ///
+    /// Bridged to the `external_transfer_pending` web-channel socket event by
+    /// `EgressSurfaceSubscriber` (defined in
+    /// `src/openhuman/web_chat/event_bus.rs`) when the emitting
+    /// turn carries chat routing. `thread_id` / `client_id` come from the
+    /// ambient `APPROVAL_CHAT_CONTEXT` and are `None` for CLI / cron /
+    /// background transfers (no chat surface to route to).
+    ///
+    /// Only external transfers fire this event — local-only inference
+    /// (Ollama / LM Studio / …) never leaves the device and is not published.
+    ExternalTransferPending {
+        /// What leaves, to where, and why (plus S5 identification-risk fields,
+        /// default-empty until the detector lands).
+        descriptor: crate::openhuman::security::egress::EgressDescriptor,
+        /// Chat thread the transfer belongs to, when the turn originated from a
+        /// chat channel. `None` for non-chat callers.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the disclosure to, when known.
+        /// `None` for non-chat callers.
+        client_id: Option<String>,
     },
 
     // ── Plan review (interactive plan-mode gate) ────────────────────────
@@ -1090,6 +1127,22 @@ pub enum DomainEvent {
         overall: String,
         failed_required: bool,
     },
+    /// Emergency stop engaged — all desktop automation is halted and every
+    /// external-effect / accessibility action is refused until resumed.
+    /// Published by `emergency_stop::ops::emergency_stop`; bridged to the
+    /// `automation_halt` web-channel socket event.
+    AutomationHalted {
+        /// Optional human-readable reason (redacted of PII by the caller).
+        reason: Option<String>,
+        /// Who engaged it: `"user"`, `"hotkey"`, or `"system"`.
+        source: String,
+    },
+    /// Emergency stop cleared — automation may resume. Published by
+    /// `emergency_stop::ops::emergency_resume`.
+    AutomationResumed {
+        /// Who cleared it: `"user"`, `"hotkey"`, or `"system"`.
+        source: String,
+    },
 
     // ── Keyring ─────────────────────────────────────────────────────────
     /// The OS keyring is unavailable and no user consent for local fallback
@@ -1324,7 +1377,6 @@ impl DomainEvent {
             | Self::AgentOrchestrationFailed { .. }
             | Self::AgentOrchestrationClosed { .. }
             | Self::OrchestrationPairingChanged { .. }
-            | Self::OrchestrationSessionMessage { .. }
             | Self::RunQueueMessageQueued { .. }
             | Self::RunQueueFollowupDispatched { .. }
             | Self::RunQueueInterrupted { .. }
@@ -1360,7 +1412,8 @@ impl DomainEvent {
             | Self::CronDeliveryRequested { .. }
             | Self::ProactiveMessageRequested { .. }
             | Self::FlowScheduleTick { .. }
-            | Self::FlowRunProgress { .. } => "cron",
+            | Self::FlowRunProgress { .. }
+            | Self::FlowChanged { .. } => "cron",
 
             Self::WorkflowLoaded { .. }
             | Self::WorkflowStopped { .. }
@@ -1417,7 +1470,9 @@ impl DomainEvent {
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. }
             | Self::HarnessInitProgress { .. }
-            | Self::HarnessInitCompleted { .. } => "system",
+            | Self::HarnessInitCompleted { .. }
+            | Self::AutomationHalted { .. }
+            | Self::AutomationResumed { .. } => "system",
 
             Self::KeyringConsentRequired | Self::KeyringDecryptFailed { .. } => "keyring",
 
@@ -1442,6 +1497,8 @@ impl DomainEvent {
             | Self::FlowApprovalRequested { .. } => "approval",
 
             Self::PlanReviewRequested { .. } | Self::PlanReviewDecided { .. } => "plan_review",
+
+            Self::ExternalTransferPending { .. } => "egress",
 
             Self::ArtifactReady { .. }
             | Self::ArtifactFailed { .. }
@@ -1490,7 +1547,6 @@ impl DomainEvent {
             Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
             Self::AgentOrchestrationClosed { .. } => "AgentOrchestrationClosed",
             Self::OrchestrationPairingChanged { .. } => "OrchestrationPairingChanged",
-            Self::OrchestrationSessionMessage { .. } => "OrchestrationSessionMessage",
             Self::SubconsciousTriggerProcessed { .. } => "SubconsciousTriggerProcessed",
             Self::RunQueueMessageQueued { .. } => "RunQueueMessageQueued",
             Self::RunQueueFollowupDispatched { .. } => "RunQueueFollowupDispatched",
@@ -1523,6 +1579,7 @@ impl DomainEvent {
             Self::ProactiveMessageRequested { .. } => "ProactiveMessageRequested",
             Self::FlowScheduleTick { .. } => "FlowScheduleTick",
             Self::FlowRunProgress { .. } => "FlowRunProgress",
+            Self::FlowChanged { .. } => "FlowChanged",
             Self::WorkflowLoaded { .. } => "WorkflowLoaded",
             Self::WorkflowStopped { .. } => "WorkflowStopped",
             Self::WorkflowStartFailed { .. } => "WorkflowStartFailed",
@@ -1571,6 +1628,8 @@ impl DomainEvent {
             Self::HealthRestarted { .. } => "HealthRestarted",
             Self::HarnessInitProgress { .. } => "HarnessInitProgress",
             Self::HarnessInitCompleted { .. } => "HarnessInitCompleted",
+            Self::AutomationHalted { .. } => "AutomationHalted",
+            Self::AutomationResumed { .. } => "AutomationResumed",
             Self::KeyringConsentRequired => "KeyringConsentRequired",
             Self::KeyringDecryptFailed { .. } => "KeyringDecryptFailed",
             Self::SessionExpired { .. } => "SessionExpired",
@@ -1579,6 +1638,7 @@ impl DomainEvent {
             Self::FlowApprovalRequested { .. } => "FlowApprovalRequested",
             Self::PlanReviewRequested { .. } => "PlanReviewRequested",
             Self::PlanReviewDecided { .. } => "PlanReviewDecided",
+            Self::ExternalTransferPending { .. } => "ExternalTransferPending",
             Self::ApprovalGateOverrideIgnored { .. } => "ApprovalGateOverrideIgnored",
             Self::ApprovalGateDisabled { .. } => "ApprovalGateDisabled",
             Self::ArtifactReady { .. } => "ArtifactReady",

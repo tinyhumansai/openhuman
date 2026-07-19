@@ -132,7 +132,8 @@ impl TriggerOrchestrator {
 
     /// Non-blocking ingestion entry point for the bus subscriber. Normalizes
     /// + admits synchronously, then spawns the gate task for admitted
-    /// triggers so event dispatch is never blocked on an LLM call.
+    ///
+    /// Triggers ensure event dispatch is never blocked on an LLM call.
     pub fn ingest(self: &Arc<Self>, event: &DomainEvent) {
         let now = now_secs();
         let Some(trigger) = normalize(event, now) else {

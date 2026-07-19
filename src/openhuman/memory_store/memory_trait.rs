@@ -45,13 +45,24 @@ fn normalize_namespace(namespace: Option<&str>) -> &str {
 }
 
 /// Helper to convert a raw string category from the database into a `MemoryCategory`.
+///
+/// The store persists a category via its `Display` form, and the current
+/// TinyCortex format renders `Custom(name)` as `custom:{name}` (so `Custom("core")`
+/// stays distinct from `Core`). Parse back through `FromStr` — the true inverse of
+/// `Display` — so the `custom:` prefix is stripped symmetrically. Wrapping the raw
+/// string in `Custom(_)` instead (the previous behaviour) double-prefixed on
+/// read-back once the wire format gained the prefix. An empty stored value has no
+/// `FromStr` mapping, so it falls back to an empty `Custom` (matching the prior
+/// catch-all for that degenerate case).
 fn memory_category_from_stored(raw: &str) -> MemoryCategory {
-    match raw {
-        "core" => MemoryCategory::Core,
-        "daily" => MemoryCategory::Daily,
-        "conversation" => MemoryCategory::Conversation,
-        other => MemoryCategory::Custom(other.to_string()),
-    }
+    raw.parse().unwrap_or_else(|error| {
+        tracing::debug!(
+            category_chars = raw.chars().count(),
+            reason = %error,
+            "[memory_store] invalid stored category; preserving as custom"
+        );
+        MemoryCategory::Custom(raw.to_string())
+    })
 }
 
 #[async_trait]
@@ -122,8 +133,31 @@ impl Memory for UnifiedMemory {
     ) -> anyhow::Result<Vec<MemoryEntry>> {
         let namespace = normalize_namespace(opts.namespace);
 
+        // Self-echo guard (agent-agnostic): when this recall runs inside a
+        // live chat turn, the harness has an ambient "current thread" id
+        // (set by the web channel around `agent.run_single`, see
+        // `inference::provider::thread_context`) and the turn's own user
+        // message was just auto-saved as a `[conversation]` document tagged
+        // with that same id (`agent::harness::session::turn::core`). Exclude
+        // it here so the agent's own on-demand `memory_recall` never surfaces
+        // the very request that triggered it. Outside a chat turn (cron,
+        // CLI, tests, standalone) the ambient id is `None` and this is a
+        // no-op — behavior is byte-for-byte unchanged.
+        let exclude_session_id =
+            crate::openhuman::inference::provider::thread_context::current_thread_id();
+        if let Some(ref excluded) = exclude_session_id {
+            tracing::debug!(
+                "[memory-trait] recall applying same-session exclusion namespace={namespace} \
+                 exclude_session_id={excluded}"
+            );
+        }
         let ranked = self
-            .query_namespace_ranked(namespace, query, limit as u32)
+            .query_namespace_ranked_excluding_session(
+                namespace,
+                query,
+                limit as u32,
+                exclude_session_id.as_deref(),
+            )
             .await
             .map_err(anyhow::Error::msg)?;
 
@@ -348,50 +382,38 @@ impl Memory for UnifiedMemory {
         &self,
         namespace: Option<&str>,
         category: Option<&MemoryCategory>,
-        _session_id: Option<&str>,
+        session_id: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
-        let ns = normalize_namespace(namespace);
-        let docs = self
-            .list_documents(Some(ns))
-            .await
-            .map_err(anyhow::Error::msg)?;
-        let mut out = Vec::new();
-        let items = docs
-            .get("documents")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        for (idx, d) in items.into_iter().enumerate() {
-            let cat = category.cloned().unwrap_or(MemoryCategory::Core);
-            let taint_str = d
-                .get("taint")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("internal");
-            out.push(MemoryEntry {
-                id: d
-                    .get("documentId")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                key: d
-                    .get("key")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                content: d
-                    .get("title")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                namespace: Some(ns.to_string()),
-                category: cat,
-                timestamp: format!("idx-{idx}"),
-                session_id: None,
+        let ns = UnifiedMemory::sanitize_namespace(normalize_namespace(namespace));
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT document_id, key, content, category, session_id, updated_at, taint
+             FROM memory_docs WHERE namespace = ?1 ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map(params![ns], |row| {
+            let stored_category: String = row.get(3)?;
+            Ok(MemoryEntry {
+                id: row.get(0)?,
+                key: row.get(1)?,
+                content: row.get(2)?,
+                namespace: Some(ns.clone()),
+                category: memory_category_from_stored(&stored_category),
+                session_id: row.get(4)?,
+                timestamp: timestamp_to_rfc3339(row.get(5)?),
                 score: None,
-                taint: crate::openhuman::memory::MemoryTaint::from_db_str(taint_str),
-            });
+                taint: crate::openhuman::memory::MemoryTaint::from_db_str(
+                    &row.get::<_, String>(6)?,
+                ),
+            })
+        })?;
+        let mut entries = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        if let Some(category) = category {
+            entries.retain(|entry| &entry.category == category);
         }
-        Ok(out)
+        if let Some(session_id) = session_id {
+            entries.retain(|entry| entry.session_id.as_deref() == Some(session_id));
+        }
+        Ok(entries)
     }
 
     async fn forget(&self, namespace: &str, key: &str) -> anyhow::Result<bool> {
@@ -454,10 +476,6 @@ impl Memory for UnifiedMemory {
     async fn health_check(&self) -> bool {
         self.workspace_dir.exists() && self.db_path.exists()
     }
-
-    fn sqlite_conn(&self) -> Option<std::sync::Arc<parking_lot::Mutex<rusqlite::Connection>>> {
-        Some(std::sync::Arc::clone(&self.conn))
-    }
 }
 
 #[cfg(test)]
@@ -500,14 +518,51 @@ mod tests {
 
         let in_b = mem.list(Some("ns_b"), None, None).await.unwrap();
         assert_eq!(in_b.len(), 1);
-        // `list` currently maps title → content (pre-Phase-A quirk preserved).
-        // What matters here is namespace isolation: ns_a rows must not appear.
+        assert_eq!(in_b[0].content, "b");
         assert!(in_b.iter().all(|e| e.namespace.as_deref() == Some("ns_b")));
 
         // Forget in ns_a must not delete ns_b's row
         assert!(mem.forget("ns_a", "k1").await.unwrap());
         assert!(mem.get("ns_b", "k1").await.unwrap().is_some());
         assert!(mem.get("ns_a", "k1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn list_returns_stored_fields_and_applies_category_and_session_filters() {
+        let (_tmp, mem) = fresh_mem();
+        mem.store(
+            "rules",
+            "core",
+            "core body",
+            MemoryCategory::Core,
+            Some("session-a"),
+        )
+        .await
+        .unwrap();
+        mem.store(
+            "rules",
+            "procedure",
+            "procedure body",
+            MemoryCategory::Daily,
+            Some("session-b"),
+        )
+        .await
+        .unwrap();
+
+        let entries = mem
+            .list(
+                Some("rules"),
+                Some(&MemoryCategory::Daily),
+                Some("session-b"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, "procedure");
+        assert_eq!(entries[0].content, "procedure body");
+        assert_eq!(entries[0].category, MemoryCategory::Daily);
+        assert_eq!(entries[0].session_id.as_deref(), Some("session-b"));
+        assert!(!entries[0].timestamp.starts_with("idx-"));
     }
 
     #[tokio::test]
@@ -858,6 +913,106 @@ mod tests {
         assert!(
             any_internal,
             "user-driven row must keep its Internal label so mixed contexts don't over-escalate"
+        );
+    }
+
+    // ── Same-session self-echo exclusion, via the ambient thread scope ────
+    //
+    // `Memory::recall` (backing the agent's `memory_recall` tool) reads the
+    // ambient chat-thread id set by `inference::provider::thread_context`
+    // around a live turn, and excludes documents tagged with that same id —
+    // guarding against the harness's own `user_msg:<uuid>` autosave being
+    // recalled as the top "relevant" result for the very request that
+    // triggered the search. See `agent::harness::session::turn::core`
+    // (autosave tagging) and `query::query_namespace_hits_excluding_session`
+    // (the exclusion mechanism).
+
+    #[tokio::test]
+    async fn recall_excludes_document_from_ambient_current_thread() {
+        use crate::openhuman::inference::provider::thread_context::with_thread_id;
+
+        let (_tmp, mem) = fresh_mem();
+        mem.store(
+            "global",
+            "user_msg:current-turn",
+            "Please look up Jordan Rivera's chat platform user ID for me.",
+            MemoryCategory::Conversation,
+            Some("thread-current"),
+        )
+        .await
+        .unwrap();
+        mem.store(
+            "global",
+            "fact:jordan-rivera-platform-id",
+            "Jordan Rivera's chat platform user ID is U0000042.",
+            MemoryCategory::Conversation,
+            Some("thread-other"),
+        )
+        .await
+        .unwrap();
+
+        let entries = with_thread_id("thread-current", async {
+            mem.recall(
+                "Jordan Rivera chat platform user ID",
+                10,
+                RecallOpts {
+                    namespace: Some("global"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+        })
+        .await;
+
+        assert!(
+            !entries.iter().any(|e| e.key == "user_msg:current-turn"),
+            "recall inside the ambient current-thread scope must exclude that thread's own \
+             autosaved request, got {entries:#?}"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.key == "fact:jordan-rivera-platform-id"),
+            "an unrelated document from a different session must still be recalled, got {entries:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn recall_outside_any_thread_scope_is_unaffected() {
+        let (_tmp, mem) = fresh_mem();
+        mem.store(
+            "global",
+            "user_msg:current-turn",
+            "Please look up Jordan Rivera's chat platform user ID for me.",
+            MemoryCategory::Conversation,
+            Some("thread-current"),
+        )
+        .await
+        .unwrap();
+
+        // No `with_thread_id(...)` scope active — mirrors cron, CLI,
+        // standalone, and any pre-existing caller. `current_thread_id()`
+        // returns `None`, so no exclusion applies and behavior is
+        // byte-for-byte the same as before this fix.
+        let entries = mem
+            .recall(
+                "Jordan Rivera chat platform user ID",
+                10,
+                RecallOpts {
+                    namespace: Some("global"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            entries.iter().any(|e| e.key == "user_msg:current-turn"),
+            "with no ambient thread scope, recall must return the document exactly as before \
+             this fix, got {entries:#?}"
         );
     }
 }

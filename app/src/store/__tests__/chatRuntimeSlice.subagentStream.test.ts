@@ -18,6 +18,7 @@ function withSubagentRow(): ReturnType<typeof reducer> {
     id: ROW_ID,
     name: 'subagent:researcher',
     round: 1,
+    seq: 0,
     status: 'running',
     subagent: { taskId: 'sub-1', agentId: 'researcher', toolCalls: [], transcript: [] },
   };

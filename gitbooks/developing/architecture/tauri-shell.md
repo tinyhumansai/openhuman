@@ -10,10 +10,10 @@ The desktop host for OpenHuman: Tauri v2 + WebView, IPC commands, window managem
 ## Responsibilities
 
 1. **Web UI**. Load the Vite build from `app/dist` (or dev server on port 1420).
-2. **IPC**. Expose a small, explicit set of Tauri commands (see [Commands](#tauri-ipc-commands-app-src-tauri)).
-3. **Core lifecycle**. Start the in-process core server and proxy JSON-RPC via `core_rpc_relay`.
-4. **AI prompts on disk**. Resolve bundled `src/openhuman/agent/prompts` from resources / dev cwd for `ai_get_config` / `write_ai_config_file`.
-5. **Window + tray**. Desktop window behavior and system tray (see `lib.rs`).
+2. **IPC**. Expose an explicit set of Tauri commands (see [Commands](#tauri-ipc-commands-app-src-tauri)).
+3. **Core lifecycle**. Run the core JSON-RPC server as an in-process tokio task (`core_process.rs`) and hand the renderer its URL/bearer via `core_rpc_url` / `core_rpc_token`.
+4. **Provider webviews**. Host embedded CEF child webviews for channel providers (`webview_accounts/`, per-provider scanners) and their CDP plumbing (`cdp/`).
+5. **Window + tray**. Desktop window behavior (main, mascot, notch, overlay windows) and system tray (see `lib.rs`).
 
 ## Core process model
 
@@ -31,26 +31,42 @@ Startup recovery skips when `OPENHUMAN_CORE_REUSE_EXISTING=1` is set (so manual 
 
 ### Overview
 
-The **`app/src-tauri`** crate (Rust package **`OpenHuman`**, binary **`OpenHuman`**) is a **desktop-only** host. It embeds the React UI, registers plugins (deep link, opener, OS, notifications, autostart, updater), manages the main window and tray, and **relays JSON-RPC** to the embedded core server.
+The **`app/src-tauri`** crate (Rust package **`OpenHuman`**, binary **`OpenHuman`**) is a **desktop-only** host. It embeds the React UI, registers plugins (deep link, opener, OS, notifications, autostart, updater), manages the main window and tray, and runs the core JSON-RPC server **in-process**.
 
 Non-desktop targets fail at compile time (`compile_error!` in `lib.rs`).
 
 ### Directory layout (actual)
 
+`app/src-tauri/src/` is a flat set of modules (no `commands/` or `utils/` subtree). Key modules:
+
 ```
 app/src-tauri/src/
-├── lib.rs                 # `run()`, tray/menu actions, plugins, `generate_handler!`, core startup
-├── main.rs                # Binary entry
-├── core_process.rs        # CoreProcessHandle, embedded core server task
-├── core_rpc.rs            # HTTP client to core JSON-RPC
-├── commands/
-│   ├── mod.rs             # Re-exports
-│   ├── core_relay.rs      # `core_rpc_relay`, service-managed core bootstrap
-│   ├── openhuman.rs       # Daemon host config, systemd-style service helpers
-│   └── window.rs          # show/hide/minimize/close window
-└── utils/
-    ├── mod.rs
-    └── dev_paths.rs       # Resolve bundled AI prompts paths
+├── lib.rs                  # `run()`, tray/menu, plugins, `generate_handler!`, most window/update/lifecycle commands
+├── main.rs                 # Binary entry
+├── core_process.rs         # CoreProcessHandle — embedded core server task, RPC token, port conflict handling
+├── core_rpc.rs             # Auth helpers + `relay_http_rpc` host-side HTTP relay
+├── cdp/                    # Chrome DevTools Protocol plumbing for child webviews
+├── cef_preflight.rs / cef_profile.rs / cef_singleton_wait.rs / cef_stale_reap.rs   # CEF cache/profile management
+├── webview_accounts/       # Embedded provider account webviews (open/close/bounds/notifications)
+├── webview_apis/           # WS bridge for webview-side APIs
+├── discord_scanner/ … whatsapp_scanner/ …   # Per-provider scanners (slack, telegram, wechat,
+│                                            # gmessages, imessage, meet, …) driving CDP
+├── meet_audio/ meet_call/ meet_video/       # Google Meet call window + media capture
+├── fake_camera/            # Virtual camera support
+├── screen_capture/         # Screen share picker sessions (getDisplayMedia shim backend)
+├── mascot_native_window.rs / notch_window.rs / window_state.rs
+├── dictation_hotkeys.rs / ptt_hotkeys.rs / ptt_overlay.rs / companion_commands.rs
+├── native_notifications/ notification_settings/
+├── artifact_commands.rs    # Artifact export (save dialog / Downloads)
+├── workspace_paths.rs      # Safe workspace-relative file open/reveal/preview
+├── app_update.rs           # Updater support (commands live in lib.rs)
+├── loopback_oauth.rs       # Localhost OAuth redirect listener
+├── claude_code.rs          # Claude Code login launch
+├── mcp_commands.rs         # MCP client helpers
+├── file_logging.rs         # Log file sink + logs-folder commands
+├── process_recovery.rs / process_kill.rs / local_data_reset.rs
+├── deep_link_ipc.rs / deep_link_ipc_windows.rs / deep_link_registration_check.rs
+└── stderr_panic_hook.rs / reset_reboot_schedule.rs
 ```
 
 There is **no** `src-tauri/src/services/session_service.rs` in this tree; session semantics are handled in the web layer + backend + core as applicable.
@@ -58,92 +74,106 @@ There is **no** `src-tauri/src/services/session_service.rs` in this tree; sessio
 ### Data flow: UI → core
 
 ```
-React (invoke)
-    → core_rpc_relay { method, params, serviceManaged? }
-        → core_rpc::call HTTP POST to OPENHUMAN_CORE_RPC_URL
-            → embedded openhuman core server
+React (fetch)
+    → POST http://127.0.0.1:<port>/rpc   (URL from `core_rpc_url`,
+                                          bearer from `core_rpc_token`)
+        → embedded openhuman core server (tokio task in this process)
 ```
 
-`CoreProcessHandle` in `core_process.rs` owns the embedded server task; `commands/core_relay.rs` optionally ensures a **service-managed** core is running before relaying.
+The renderer talks to the local core **directly over HTTP** — `app/src/services/coreRpcClient.ts` invokes `core_rpc_url` / `core_rpc_token` once, then issues plain `fetch()` calls. The `relay_http_rpc` Tauri command is a host-side fallback used only when the RPC URL is **not** a trustworthy origin for the secure `tauri://localhost` webview (e.g. a self-hosted runtime on a LAN IP, blocked as mixed content — #3865): the Rust host performs the POST with `reqwest` and mirrors status + body back verbatim.
+
+`CoreProcessHandle` in `core_process.rs` owns the embedded server task (started via `openhuman_core::core::jsonrpc::run_server_embedded_with_ready` with a per-launch random bearer token) and handles stale-listener/port-conflict recovery.
 
 ### Window and tray behavior
 
-- The shell creates a tray icon at startup and wires actions to open the main window or quit.
-- In daemon mode (`daemon` / `--daemon`), the main window is hidden on launch and can be reopened from tray actions.
-- On macOS `RunEvent::Reopen` also restores and focuses the main window.
-- Windows and Linux use the same tray actions (`Open OpenHuman`, `Quit`), with desktop-environment-specific tray rendering differences on some Linux setups.
+- The shell creates a tray icon at startup (`RunEvent::Ready`) and wires actions to open the main window or quit. Tray setup is skipped on Linux packaged runs (GTK panic).
+- Hide-to-tray is implemented in the `RunEvent::WindowEvent { CloseRequested }` handlers in `lib.rs`, not as IPC commands: macOS hides the whole app (`AppHandle::hide()`, #2049), Windows hides the top-level `Chrome_WidgetWin_1` frame via `EnumWindows` + `SW_HIDE` (#1607).
+- On macOS `RunEvent::Reopen` (Dock click) restores and focuses the main window.
 
 ### Bundled resources
 
-`tauri.conf.json` bundles **`../../skills/skills`** and **`../../src/openhuman/agent/prompts`** so skills and prompt markdown ship with the app.
+`tauri.conf.json` bundles **`../../src/openhuman/agent/prompts`** and **`recipes/**/*`** so prompt markdown and provider recipes ship with the app.
 
 ### Related
 
 - IPC surface: see the [Commands](#tauri-ipc-commands-app-src-tauri) section below
 - HTTP bridge: see the [Core bridge & helpers](#core-bridge-helpers-app-src-tauri) section below
-- Rust domains (implementation): repo root `src/openhuman/`, `src/core_server/`
+- Rust domains (implementation): repo root `src/openhuman/`, `src/core/`
 
 ## Tauri IPC commands (`app/src-tauri`)
 
-All commands are registered in **`app/src-tauri/src/lib.rs`** inside `tauri::generate_handler![...]` (desktop build). Names below are the **Rust** command names (camelCase in JS via serde where applicable).
+All commands are registered in **`app/src-tauri/src/lib.rs`** inside `tauri::generate_handler![...]` — that list is the authoritative reference. The major families:
 
-### Demo / diagnostics
+### Core RPC & diagnostics
 
-| Command | Purpose                                    |
-| ------- | ------------------------------------------ |
-| `greet` | Demo string (safe to remove in production) |
-
-### AI configuration (bundled prompts)
-
-| Command                | Purpose                                                                                                   |
-| ---------------------- | --------------------------------------------------------------------------------------------------------- |
-| `ai_get_config`        | Build `AIPreview` from resolved `SOUL.md` / `TOOLS.md` under bundled or dev `src/openhuman/agent/prompts` |
-| `ai_refresh_config`    | Same read path as `ai_get_config` (refresh hook)                                                          |
-| `write_ai_config_file` | Write a single `.md` under repo `src/openhuman/agent/prompts` (dev / safe filename checks)                |
-
-### Core JSON-RPC relay
-
-| Command          | Purpose                                                                                                             |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `core_rpc_relay` | Body: `{ method, params?, serviceManaged? }` → forwards to local **`openhuman-core`** HTTP JSON-RPC (`core_rpc.rs`) |
+| Command                         | Purpose                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------- |
+| `core_rpc_url`                  | Return the local core JSON-RPC URL (`http://127.0.0.1:<port>/rpc`)                         |
+| `core_rpc_token`                | Return the per-launch bearer token for the embedded core                                     |
+| `relay_http_rpc`                | Host-side JSON-RPC POST (`{ url, token?, body }` → `{ status, body }`) for self-hosted runtimes the webview cannot fetch (mixed content, #3865) |
+| `overlay_parent_rpc_url`        | RPC URL inherited from a parent process (overlay windows), from `OPENHUMAN_CORE_RPC_URL`   |
+| `process_diagnostics_list_owned`| List OpenHuman processes owned by this app bundle (macOS; empty elsewhere)                  |
 
 Use **`app/src/services/coreRpcClient.ts`** (`callCoreRpc`) from the frontend.
 
+### Core & app lifecycle
+
+| Command | Purpose |
+| ------- | ------- |
+| `start_core_process` / `restart_core_process` | Start / restart the embedded core server task |
+| `recover_port_conflict` / `force_quit_port_owner` | Resolve a foreign listener on the core port |
+| `reset_local_data` | Wipe local app data (`local_data_reset.rs`) |
+| `app_quit` / `restart_app` | Quit or relaunch the app |
+| `get_active_user_id` | Read the active user id |
+| `schedule_cef_profile_purge` | Schedule a CEF profile purge for a user |
+
+### Updates
+
+`check_core_update` / `apply_core_update` (embedded core) and `check_app_update` / `download_app_update` / `install_app_update` / `apply_app_update` (desktop app, via the updater plugin).
+
+### Hotkeys (dictation, PTT, companion)
+
+| Command | Purpose |
+| ------- | ------- |
+| `register_dictation_hotkey` / `unregister_dictation_hotkey` | Global dictation shortcuts (`dictation_hotkeys.rs`) |
+| `register_ptt_hotkey` / `unregister_ptt_hotkey` / `show_ptt_overlay` | Push-to-talk — see the [PTT section](#push-to-talk-ptt-hotkey--overlay) below |
+| `register_companion_hotkey` / `unregister_companion_hotkey` / `companion_activate` | Companion window hotkey + activation (`companion_commands.rs`) |
+
+### Provider webviews (`webview_accounts::*`)
+
+Lifecycle and layout of embedded CEF account webviews: `webview_account_open` / `_prewarm` / `_close` / `_purge` / `_bounds` / `_reveal` / `_hide` / `_show`, `webview_set_focused_account`, `webview_recipe_event`, plus webview-notification controls (`webview_notification_permission_state` / `_permission_request` / `_set_dnd` / `_mute_account` / `_get_bypass_prefs`).
+
+### Notifications
+
+`notification_settings_get` / `notification_settings_set` (persisted settings) and `native_notifications::notification_permission_state` / `notification_permission_request` / `show_native_notification` (OS-level).
+
 ### Window management
 
-From **`commands/window.rs`** (names may vary slightly; see `lib.rs`):
+| Command | Purpose |
+| ------- | ------- |
+| `activate_main_window` | Show + focus the main window |
+| `mascot_window_show` / `mascot_window_hide` | Toggle the mascot native window |
+| `notch_window_show` / `notch_window_hide` | Toggle the notch window |
+| `meet_call_open_window` / `meet_call_close_window` | Open/close the Meet call window (`meet_call/`) |
 
-| Command             | Purpose           |
-| ------------------- | ----------------- |
-| `show_window`       | Show main window  |
-| `hide_window`       | Hide main window  |
-| `toggle_window`     | Toggle visibility |
-| `is_window_visible` | Query visibility  |
-| `minimize_window`   | Minimize          |
-| `maximize_window`   | Maximize          |
-| `close_window`      | Close             |
-| `set_window_title`  | Set title string  |
+Hide-to-tray / reopen behavior is **not** an IPC command — it lives in the `RunEvent` handlers in `lib.rs` (see [Window and tray behavior](#window-and-tray-behavior)).
 
-### OpenHuman daemon / service helpers
+### Artifacts, logs, MCP, OAuth
 
-From **`commands/openhuman.rs`** (see source for exact payloads):
-
-| Command                            | Purpose                                        |
-| ---------------------------------- | ---------------------------------------------- |
-| `openhuman_get_daemon_host_config` | Read daemon host preferences (e.g. tray)       |
-| `openhuman_set_daemon_host_config` | Persist daemon host preferences                |
-| `openhuman_service_install`        | Install background service (platform-specific) |
-| `openhuman_service_start`          | Start service                                  |
-| `openhuman_service_stop`           | Stop service                                   |
-| `openhuman_service_status`         | Query status                                   |
-| `openhuman_service_uninstall`      | Uninstall service                              |
+| Command | Purpose |
+| ------- | ------- |
+| `save_artifact_via_dialog` / `download_artifact_to_downloads` | Export an artifact via Save-As dialog or straight to Downloads (`artifact_commands.rs`) |
+| `reveal_logs_folder` / `logs_folder_path` | Open / return the file-logging folder (`file_logging.rs`) |
+| `mcp_resolve_binary_path` / `mcp_open_client_config` | MCP client helpers (`mcp_commands.rs`) |
+| `start_loopback_oauth_listener` / `stop_loopback_oauth_listener` | Localhost OAuth redirect listener (`loopback_oauth.rs`) |
+| `claude_code_login_launch` | Launch the Claude Code login flow (`claude_code.rs`) |
 
 ### Screen share picker (CEF / macOS)
 
 From **`screen_capture/mod.rs`**. Backs the in-page `getDisplayMedia` shim in `webview_accounts/runtime.js`. Session-gated: the shim must open a session with a live user gesture before enumeration / thumbnail captures succeed. See issue #713 (picker UX) + #812 (session gating).
 
 | Command                         | Purpose                                                                                                                                                               |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `screen_share_begin_session`    | Open a 30s session from an account webview, after a `navigator.userActivation.isActive` gesture. Returns `{ token, sources }`. Rate-limited to 10/minute per account. |
 | `screen_share_thumbnail`        | Capture a single source's thumbnail as base64 PNG. Requires a live token and an `id` that the session was issued for. macOS only; other platforms return an error.    |
 | `screen_share_finalize_session` | Close the session. Called by the shim on Share or Cancel; safe to call with an unknown/expired token (no-op).                                                         |
@@ -152,11 +182,12 @@ From **`screen_capture/mod.rs`**. Backs the in-page `getDisplayMedia` shim in `w
 
 From **`workspace_paths.rs`** (closes `#1402`). These commands accept workspace-relative paths only. The shell resolves each path against the active OpenHuman workspace, canonicalizes the target, and rejects traversal, absolute paths, URI-like prefixes, and symlink escapes before opening or reading anything.
 
-| Command                  | Purpose                                                                |
-| ------------------------ | ---------------------------------------------------------------------- |
-| `open_workspace_path`    | Open an existing workspace file or directory with the OS default app.  |
-| `reveal_workspace_path`  | Reveal an existing workspace file or directory in the OS file manager. |
-| `preview_workspace_text` | Read a capped UTF-8 text preview from an existing workspace file.      |
+| Command                           | Purpose                                                                |
+| --------------------------------- | ---------------------------------------------------------------------- |
+| `open_workspace_path`             | Open an existing workspace file or directory with the OS default app.  |
+| `reveal_workspace_path`           | Reveal an existing workspace file or directory in the OS file manager. |
+| `preview_workspace_text`          | Read a capped UTF-8 text preview from an existing workspace file.      |
+| `resolve_workspace_absolute_path` | Resolve a workspace-relative path to its validated absolute path.      |
 
 ### Push-to-talk (PTT) hotkey + overlay
 
@@ -196,57 +227,37 @@ the shell runs it via `AppHandle::run_on_main_thread`.
 
 ### Removed / not present
 
-The following **do not** exist in the current `generate_handler!` list: `exchange_token`, `get_auth_state`, `socket_connect`, `start_telegram_login`. Authentication and sockets are handled in the **React** app and **core** process, not via these IPC names.
+The following **do not** exist in the current `generate_handler!` list: `greet`, `core_rpc_relay` (superseded by direct `fetch` + `relay_http_rpc`), `ai_get_config` / `ai_refresh_config` / `write_ai_config_file`, `show_window` / `hide_window` / `toggle_window` / `minimize_window` / `maximize_window` / `close_window`, the `openhuman_*` daemon/service helpers, `exchange_token`, `get_auth_state`, `socket_connect`, `start_telegram_login`. Authentication and sockets are handled in the **React** app and **core** process, not via these IPC names.
 
 ### Example: core RPC
 
 ```typescript
-import { invoke } from "@tauri-apps/api/core";
+import { callCoreRpc } from "../services/coreRpcClient"; // app/src/services/coreRpcClient.ts
 
-const result = await invoke("core_rpc_relay", {
-  request: {
-    method: "your.rpc.method",
-    params: { foo: "bar" },
-    serviceManaged: false,
-  },
+// Direct HTTP to the embedded core (URL + bearer resolved via
+// `core_rpc_url` / `core_rpc_token` under the hood):
+const result = await callCoreRpc({
+  method: "your.rpc.method",
+  params: { foo: "bar" },
 });
 ```
 
 ---
 
-_See `app/src-tauri/src/lib.rs` for the authoritative list._
+_See `app/src-tauri/src/lib.rs` (`generate_handler!`) for the authoritative list._
 
 ## Core bridge & helpers (`app/src-tauri`)
 
-This document replaces the old “SessionService / SocketService” split. The Tauri crate **does not** embed a duplicate Socket.io server or Telegram client; instead it focuses on **process management** and **HTTP JSON-RPC** to the **`openhuman-core`** binary.
+The Tauri crate **does not** embed a duplicate Socket.io server or Telegram client; it focuses on **in-process core lifecycle** and the thin HTTP/auth glue around the core's JSON-RPC surface.
 
 ### `CoreProcessHandle` (`core_process.rs`)
 
-- Resolves the **`openhuman-core`** executable (staged under `binaries/` or `PATH` / dev layout).
-- Starts or attaches to the core process and exposes its RPC URL (`OPENHUMAN_CORE_RPC_URL`).
-- Used during app setup in `lib.rs` (`app.manage(core_handle)`).
+- Runs the core's HTTP/JSON-RPC server as a **tokio task inside the Tauri host** via `openhuman_core::core::jsonrpc::run_server_embedded_with_ready` — no sidecar binary.
+- Generates a per-launch 256-bit hex bearer token (`generate_rpc_token`) and hands it to the embedded server; the renderer reads it via the `core_rpc_token` command.
+- Stale-listener policy (#1130): if the core port is already occupied, probes whether the listener is an old OpenHuman core (terminate + respawn) or something foreign (surface the conflict). `OPENHUMAN_CORE_REUSE_EXISTING=1` opts back into attach-to-existing for debugging.
+- Managed as Tauri state in `lib.rs` (`app.manage(core_handle)`).
 
 ### `core_rpc` (`core_rpc.rs`)
 
-- HTTP client for the core’s JSON-RPC surface (localhost).
-- Used by **`core_rpc_relay`** to forward `method` + `params` from the frontend.
-
-### `commands/core_relay.rs`
-
-- **`core_rpc_relay`**. ensures the core is running (in-process handle or **service-managed** path), then calls `core_rpc`.
-- **`ensure_service_managed_core_running`**. bootstraps systemd/launchd-style service when RPC is down (platform-specific behavior inside core CLI).
-
-### `commands/openhuman.rs`
-
-- Daemon host JSON config (e.g. tray visibility) under the app data directory.
-- Install/start/stop/status/uninstall helpers for the **openhuman** background service.
-
-### `utils/dev_paths.rs`
-
-- Resolves **`src/openhuman/agent/prompts`** for development and bundled resource paths for AI preview.
-
-### `utils/tauriSocket.ts` (frontend)
-
-Not in `src-tauri`, but **pairs** with the shell: the React app listens for Tauri events that mirror socket activity when using the Rust-side client. See `app/src/utils/tauriSocket.ts` and the [Frontend Services](frontend.md#services-layer) chapter.
-
----
+- Shared auth helpers for host-side calls to the local core (URL from `OPENHUMAN_CORE_RPC_URL` or the default port; bearer from `core_process::current_rpc_token`).
+- **`relay_http_rpc`** Tauri command: host-side `reqwest` POST for self-hosted runtimes on non-trustworthy origins (see [Core RPC & diagnostics](#core-rpc--diagnostics)).

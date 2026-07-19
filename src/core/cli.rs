@@ -14,10 +14,6 @@ use crate::core::jsonrpc::{default_state, invoke_method, parse_json_params};
 use crate::core::logging::CliLogDefault;
 use crate::core::{ControllerSchema, TypeSchema};
 
-/// Debug/e2e agent paths can build deep async poll stacks while assembling
-/// prompts, provider requests, and sub-agent tool loops.
-const CLI_RUNTIME_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
-
 /// The ASCII banner displayed when the CLI starts.
 const CLI_BANNER: &str = r#"
 
@@ -224,6 +220,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
     let mut port: Option<u16> = None;
     let mut host: Option<String> = None;
     let mut socketio_enabled = true;
+    let mut headless_api = false;
     let mut verbose = false;
     let mut log_scope = CliLogDefault::Global;
     let mut i = 0usize;
@@ -253,6 +250,11 @@ fn run_server_command(args: &[String]) -> Result<()> {
                 socketio_enabled = false;
                 i += 1;
             }
+            "--headless-api" => {
+                socketio_enabled = false;
+                headless_api = true;
+                i += 1;
+            }
             "-v" | "--verbose" => {
                 verbose = true;
                 i += 1;
@@ -263,7 +265,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
                 i += 1;
             }
             "-h" | "--help" => {
-                println!("Usage: openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only] [--autocomplete-logs] [-v|--verbose]");
+                println!("Usage: openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only|--headless-api] [--autocomplete-logs] [-v|--verbose]");
                 println!();
                 println!(
                     "  --host <addr>    Bind address (default: 127.0.0.1 or OPENHUMAN_CORE_HOST)"
@@ -272,6 +274,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
                     "  --port <u16>     Listen address port (default: 7788 or OPENHUMAN_CORE_PORT)"
                 );
                 println!("  --jsonrpc-only   HTTP JSON-RPC only; disable Socket.IO");
+                println!("  --headless-api   HTTP JSON-RPC only; disable all background services");
                 autocomplete_cli_adapter::print_run_scope_help_line();
                 println!("  -v, --verbose    Shorthand for RUST_LOG=debug when RUST_LOG is unset");
                 println!();
@@ -298,7 +301,11 @@ fn run_server_command(args: &[String]) -> Result<()> {
         .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
         .build()?;
     rt.block_on(async {
-        crate::core::jsonrpc::run_server(host.as_deref(), port, socketio_enabled).await
+        if headless_api {
+            crate::core::jsonrpc::run_server_headless(host.as_deref(), port).await
+        } else {
+            crate::core::jsonrpc::run_server(host.as_deref(), port, socketio_enabled).await
+        }
     })?;
     Ok(())
 }
@@ -437,14 +444,6 @@ fn run_namespace_command(
 
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
-}
-
-fn build_cli_runtime() -> Result<tokio::runtime::Runtime> {
-    tokio::runtime::Builder::new_multi_thread()
-        .thread_stack_size(CLI_RUNTIME_THREAD_STACK_SIZE)
-        .enable_all()
-        .build()
-        .map_err(Into::into)
 }
 
 /// Parses command-line arguments into a JSON map based on a function's schema.

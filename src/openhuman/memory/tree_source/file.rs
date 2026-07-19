@@ -134,6 +134,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::memory_store::trees::types::{TreeKind, TreeStatus};
     use chrono::TimeZone;
     use tempfile::TempDir;
 
@@ -149,6 +150,7 @@ mod tests {
             id: "source:abc".into(),
             kind: TreeKind::Source,
             scope: scope.into(),
+            ask: None,
             root_id: None,
             max_level: 0,
             status: TreeStatus::Active,

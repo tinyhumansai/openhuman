@@ -12,9 +12,9 @@
 
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::config::AgentConfig;
-use crate::openhuman::inference::provider::Provider;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::skills::Workflow;
+use crate::openhuman::tinyagents::TurnModelSource;
 use crate::openhuman::tools::{Tool, ToolSpec};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -40,9 +40,10 @@ pub struct ParentExecutionContext {
     /// generic `spawn_subagent` tool. Empty means no generic subagent spawns.
     pub allowed_subagent_ids: HashSet<String>,
 
-    /// Parent's provider — sub-agents call into the same instance so
-    /// connection pools, retry budgets, and credentials are shared.
-    pub provider: Arc<dyn Provider>,
+    /// Parent's model source — sub-agents build off the same source so
+    /// connection pools, retry budgets, and credentials are shared (issue #4249,
+    /// Phase 3 / Motion A; replaces the raw `Arc<dyn Provider>`).
+    pub turn_model_source: TurnModelSource,
 
     /// Parent's full tool registry. The sub-agent runner re-filters this
     /// per-archetype before handing it to the sub-agent's tool loop.

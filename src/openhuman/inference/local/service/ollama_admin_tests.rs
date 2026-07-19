@@ -1,4 +1,4 @@
-use super::interrupted_pull_settle_window_secs;
+use super::util::interrupted_pull_settle_window_secs;
 
 #[test]
 fn interrupted_pull_waits_when_bytes_were_observed() {

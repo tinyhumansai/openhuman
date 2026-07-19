@@ -43,7 +43,7 @@ end tell"#;
             .args(["-e", script])
             .spawn()
             .map_err(|e| format!("failed to open Terminal.app: {e}"))?;
-        return Ok("Terminal.app".into());
+        Ok("Terminal.app".into())
     }
 
     #[cfg(target_os = "linux")]
@@ -61,7 +61,7 @@ end tell"#;
                 Err(_) => continue,
             }
         }
-        return Err("no terminal emulator found (tried x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, xterm). Run `claude login` manually.".into());
+        Err("no terminal emulator found (tried x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, xterm). Run `claude login` manually.".into())
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]

@@ -11,17 +11,6 @@ test.describe('Settings - Developer Options', () => {
     await bootAuthenticatedPage(page, 'pw-settings-dev-user');
   });
 
-  test('mounts Webhooks Debug panel', async ({ page }) => {
-    await page.goto('/#/settings/webhooks-debug');
-    await waitForAppReady(page);
-    await dismissWalkthroughIfPresent(page);
-
-    await expect(page.getByTestId('webhooks-debug-panel')).toBeVisible();
-    await expect(page.getByText('Registered Webhooks')).toBeVisible();
-    await expect(page.getByText('Captured Requests')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Refresh' }).first()).toBeVisible();
-  });
-
   test('mounts Memory Debug panel', async ({ page }) => {
     await page.goto('/#/settings/memory-debug');
     await waitForAppReady(page);

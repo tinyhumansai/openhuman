@@ -176,19 +176,11 @@ pub async fn composio_sync(
     );
     let client = resolve_client(config)?;
     let toolkit = resolve_toolkit_for_connection(&client, connection_id).await?;
-    let provider = get_provider(&toolkit).ok_or_else(|| {
+    get_provider(&toolkit).ok_or_else(|| {
         format!("[composio] no native provider registered for toolkit '{toolkit}'")
     })?;
     let _ = client;
-
-    let ctx = ProviderContext {
-        config: Arc::new(config.clone()),
-        toolkit: toolkit.clone(),
-        connection_id: Some(connection_id.to_string()),
-        usage: Default::default(),
-        max_items: None,
-        sync_depth_days: None,
-    };
+    let config_for_task = config.clone();
     let started_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -197,21 +189,26 @@ pub async fn composio_sync(
     let connection_id_for_log = connection_id.to_string();
 
     tokio::spawn(async move {
-        let toolkit_in_task = ctx.toolkit.clone();
-        match provider.sync(&ctx, reason).await {
+        match crate::openhuman::tinycortex::run_composio_connection(
+            &toolkit_for_outcome,
+            &connection_id_for_log,
+            &config_for_task,
+        )
+        .await
+        {
             Ok(out) => {
                 tracing::info!(
-                    toolkit = %toolkit_in_task,
+                    toolkit = %toolkit_for_outcome,
                     connection_id = %connection_id_for_log,
-                    items_ingested = out.items_ingested,
-                    elapsed_ms = out.elapsed_ms(),
+                    items_ingested = out.records_ingested,
+                    actions_called = out.actions_called,
                     "[composio] background sync ok"
                 );
             }
             Err(e) => {
                 report_composio_op_error("sync", &e);
                 tracing::warn!(
-                    toolkit = %toolkit_in_task,
+                    toolkit = %toolkit_for_outcome,
                     connection_id = %connection_id_for_log,
                     error = %e,
                     "[composio] background sync failed"
@@ -220,9 +217,9 @@ pub async fn composio_sync(
         }
     });
 
-    let summary = format!("composio: {toolkit_for_outcome} sync started (background)");
+    let summary = format!("composio: {toolkit} sync started (background)");
     let outcome = SyncOutcome {
-        toolkit: toolkit_for_outcome,
+        toolkit,
         connection_id: Some(connection_id.to_string()),
         reason: reason.as_str().to_string(),
         items_ingested: 0,

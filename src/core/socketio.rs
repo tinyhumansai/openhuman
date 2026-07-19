@@ -363,6 +363,11 @@ struct ChatStartPayload {
 #[derive(Debug, Deserialize)]
 struct ChatCancelPayload {
     thread_id: String,
+    /// The request this cancel targets. When the client passes the id of the
+    /// turn it started, the cancel is scoped to that turn so a late cancel for a
+    /// timed-out request can't kill the next turn on the thread (#4760).
+    #[serde(default)]
+    request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -500,7 +505,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                 );
 
                     // Trigger the web channel's chat logic.
-                    match crate::openhuman::channels::providers::web::start_chat(
+                    match crate::openhuman::web_chat::start_chat(
                         &client_id,
                         &payload.thread_id,
                         &payload.message,
@@ -509,7 +514,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                         payload.profile_id,
                         payload.locale,
                         payload.queue_mode,
-                        crate::openhuman::channels::providers::web::ChatRequestMetadata::default(),
+                        crate::openhuman::web_chat::ChatRequestMetadata::default(),
                     )
                     .await
                     {
@@ -551,9 +556,10 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                         client_id,
                         payload.thread_id
                     );
-                    let _ = crate::openhuman::channels::providers::web::cancel_chat(
+                    let _ = crate::openhuman::web_chat::cancel_chat_scoped(
                         &client_id,
                         &payload.thread_id,
+                        payload.request_id.as_deref(),
                     )
                     .await;
                 },
@@ -601,7 +607,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     // 1. Web channel events → per-client rooms.
     let io_web = io.clone();
     tokio::spawn(async move {
-        let mut rx = crate::openhuman::channels::providers::web::subscribe_web_channel_events();
+        let mut rx = crate::openhuman::web_chat::subscribe_web_channel_events();
         loop {
             let event = match rx.recv().await {
                 Ok(event) => event,
@@ -1071,6 +1077,30 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     );
                     let _ = io_memory_sync.emit("flow:run_progress", &payload);
                     let _ = io_memory_sync.emit("flow_run_progress", &payload);
+                }
+                // A saved flow's definition changed (create/update/delete/
+                // enable). Broadcast so an open Workflows list/canvas refetches
+                // — most importantly, so an agent `save_workflow` becomes
+                // visible in a canvas the user has open (audit F6). Best-effort;
+                // the UI's refetch-on-focus is the backstop.
+                crate::core::event_bus::DomainEvent::FlowChanged {
+                    flow_id,
+                    kind,
+                    actor,
+                } => {
+                    let payload = serde_json::json!({
+                        "flow_id": flow_id,
+                        "kind": kind,
+                        "actor": actor,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast flow_changed flow_id={} kind={} actor={}",
+                        flow_id,
+                        kind,
+                        actor
+                    );
+                    let _ = io_memory_sync.emit("flow:changed", &payload);
+                    let _ = io_memory_sync.emit("flow_changed", &payload);
                 }
                 // A Workflow-origin tool call parked in the `ApprovalGate`
                 // (flow-approval-surface, PR2/PR3). Broadcast — not

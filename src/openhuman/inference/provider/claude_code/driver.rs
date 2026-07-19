@@ -40,6 +40,7 @@ const DISALLOWED_CC_BUILTINS: &[&str] = &[
 
 /// Whether the user opted into FULL access for Claude Code (`bypassPermissions`
 /// + full native toolset incl. Bash/network). Default is **off** → the safer
+///
 /// `acceptEdits` posture (file edits only). This is a deliberate user choice,
 /// not the default — enabling Claude Code alone does not grant shell/network
 /// power.

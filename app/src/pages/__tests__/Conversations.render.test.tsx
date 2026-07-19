@@ -24,8 +24,10 @@ import chatRuntimeReducer, {
   bumpInferenceHeartbeatForThread,
   clearFollowupsForThread,
   enqueueFollowup,
+  markInferenceTurnStreaming,
   setInferenceStatusForThread,
   setPendingPlanReviewForThread,
+  setStreamingAssistantForThread,
   setTaskBoardForThread,
   setToolTimelineForThread,
   setTurnTimelinesForThread,
@@ -65,7 +67,7 @@ const mockUseOpenRouterFreeModels = vi.hoisted(() => vi.fn());
 // ── Module mocks ───────────────────────────────────────────────────────────
 
 vi.mock('../../services/chatService', () => ({
-  chatCancel: vi.fn(),
+  chatCancel: vi.fn().mockResolvedValue(true),
   chatClearQueue: vi.fn().mockResolvedValue(0),
   chatSend: vi.fn().mockResolvedValue(undefined),
   subscribeChatEvents: vi.fn(() => () => {}),
@@ -663,7 +665,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       store!.dispatch(
         setTurnTimelinesForThread({
           threadId: thread.id,
-          timelines: { 'req-1': [{ id: 'tc-1', name: 'read_file', round: 0, status: 'success' }] },
+          timelines: {
+            'req-1': [{ id: 'tc-1', name: 'read_file', round: 0, seq: 0, status: 'success' }],
+          },
         })
       );
     });
@@ -1219,6 +1223,224 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(chatCancel).toHaveBeenCalledWith(thread.id);
   });
 
+  // ── #4862: Stop-response + ESC-to-interrupt & re-edit ────────────────────
+
+  // Render a selected thread with an in-flight streaming turn (active + a
+  // partial assistant reply already streamed), so the in-composer Stop button
+  // is visible and ESC has a turn to interrupt.
+  async function renderStreamingConversation(
+    opts: { userPrompt?: string; streamingContent?: string } = {}
+  ) {
+    const thread = makeThread({ id: 'stream-thread', title: 'Streaming' });
+    const messages: ThreadMessage[] = opts.userPrompt
+      ? [
+          {
+            id: 'u-1',
+            sender: 'user',
+            type: 'text',
+            content: opts.userPrompt,
+            extraMetadata: {},
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ]
+      : [];
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+          // Marks the thread's turn as in-flight so the composer stays editable
+          // (`allowParallelSend`) and `selectedThreadActive` is true.
+          activeThreadIds: { [thread.id]: true },
+        },
+        socket: socketState('connected'),
+      });
+    });
+
+    await act(async () => {
+      store!.dispatch(beginInferenceTurn({ threadId: thread.id }));
+      store!.dispatch(markInferenceTurnStreaming({ threadId: thread.id }));
+      store!.dispatch(
+        setStreamingAssistantForThread({
+          threadId: thread.id,
+          streaming: {
+            requestId: 'req-stream-1',
+            content: opts.streamingContent ?? 'partial answer so far',
+            thinking: '',
+          },
+        })
+      );
+    });
+
+    return { store: store!, thread };
+  }
+
+  it('preserves the partial reply marked stopped when Stop is clicked mid-stream (#4862)', async () => {
+    const { thread } = await renderStreamingConversation({ streamingContent: 'half a thought' });
+
+    const stopButton = await screen.findByTestId('stop-generation-button');
+    await act(async () => {
+      fireEvent.click(stopButton);
+    });
+
+    expect(chatCancel).toHaveBeenCalledWith(thread.id);
+    // The partial stream is persisted as its own agent message flagged stopped
+    // so it survives the cancel instead of vanishing with the live preview.
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({
+          content: 'half a thought',
+          sender: 'agent',
+          extraMetadata: expect.objectContaining({ stopped: true }),
+        })
+      );
+    });
+  });
+
+  it('does not persist a stopped message when nothing has streamed yet (#4862)', async () => {
+    const { thread } = await renderStreamingConversation({ streamingContent: '   ' });
+
+    const stopButton = await screen.findByTestId('stop-generation-button');
+    await act(async () => {
+      fireEvent.click(stopButton);
+    });
+
+    expect(chatCancel).toHaveBeenCalledWith(thread.id);
+    // Whitespace-only partial → nothing worth preserving, so no message append.
+    expect(threadApi.appendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not persist a stopped reply when the cancel is rejected (#4862)', async () => {
+    // Socket down / RPC rejected → chatCancel resolves false. The original turn
+    // may keep running and append its own final response, so we must NOT leave a
+    // misleading partial bubble behind.
+    vi.mocked(chatCancel).mockResolvedValueOnce(false);
+    const { thread } = await renderStreamingConversation({ streamingContent: 'half a thought' });
+
+    const stopButton = await screen.findByTestId('stop-generation-button');
+    await act(async () => {
+      fireEvent.click(stopButton);
+    });
+
+    expect(chatCancel).toHaveBeenCalledWith(thread.id);
+    // Give the cancel promise a tick to resolve; no stopped message should land.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(threadApi.appendMessage).not.toHaveBeenCalled();
+  });
+
+  it('persists the stopped reply only once across repeated Stop clicks (#4862)', async () => {
+    const { thread } = await renderStreamingConversation({ streamingContent: 'half a thought' });
+
+    const stopButton = await screen.findByTestId('stop-generation-button');
+    // Two rapid Stop clicks before the cancel event clears the live stream.
+    await act(async () => {
+      fireEvent.click(stopButton);
+      fireEvent.click(stopButton);
+    });
+
+    expect(chatCancel).toHaveBeenCalledWith(thread.id);
+    // The one-shot requestId guard keeps the partial from being appended twice.
+    await waitFor(() => {
+      expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(threadApi.appendMessage).toHaveBeenCalledWith(
+      thread.id,
+      expect.objectContaining({ extraMetadata: expect.objectContaining({ stopped: true }) })
+    );
+  });
+
+  it('interrupts the stream and restores the last prompt into the composer on ESC (#4862)', async () => {
+    const { thread } = await renderStreamingConversation({
+      userPrompt: 'my original question',
+      streamingContent: 'streaming so far',
+    });
+
+    const textarea = await screen.findByPlaceholderText(/Queue a follow-up/);
+    expect(textarea).toHaveValue('');
+
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Escape' });
+    });
+
+    // The turn is cancelled and the user's prompt is re-hydrated for editing.
+    expect(chatCancel).toHaveBeenCalledWith(thread.id);
+    await waitFor(() => {
+      expect(textarea).toHaveValue('my original question');
+    });
+  });
+
+  it('does not clobber a typed follow-up when ESC is pressed with a non-empty composer (#4862)', async () => {
+    const { thread } = await renderStreamingConversation({
+      userPrompt: 'my original question',
+      streamingContent: 'streaming so far',
+    });
+
+    const textarea = await screen.findByPlaceholderText(/Queue a follow-up/);
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'a fresh follow-up' } });
+    });
+
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Escape' });
+    });
+
+    // Interrupt still fires, but the in-progress follow-up text is left intact.
+    expect(chatCancel).toHaveBeenCalledWith(thread.id);
+    expect(textarea).toHaveValue('a fresh follow-up');
+  });
+
+  it('renders a Stopped marker on a stopped partial reply (#4862)', async () => {
+    const thread = makeThread({ id: 'stopped-marker-thread', title: 'Stopped' });
+    const messages: ThreadMessage[] = [
+      {
+        id: 'u',
+        sender: 'user',
+        type: 'text',
+        content: 'go',
+        extraMetadata: {},
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'a',
+        sender: 'agent',
+        type: 'text',
+        content: 'partial reply that got cut off',
+        extraMetadata: { stopped: true },
+        createdAt: '2026-01-01T00:01:00.000Z',
+      },
+    ];
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
+
+    await act(async () => {
+      await renderConversations({
+        thread: {
+          ...selectedThreadState(thread),
+          messagesByThreadId: { [thread.id]: messages },
+          messages,
+        },
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(screen.getByTestId('stopped-marker')).toHaveTextContent('Stopped');
+  });
+
+  it('shows Send and no Stop button while the thread is idle (#4862)', async () => {
+    await renderSelectedConversation();
+
+    expect(screen.queryByTestId('stop-generation-button')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument();
+  });
+
   it('releases the pending-send lock when appendMessage rejects with a generic error', async () => {
     vi.mocked(threadApi.appendMessage).mockRejectedValueOnce(new Error('disk full'));
     const { textarea } = await renderSelectedConversation();
@@ -1347,7 +1569,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
         store!.dispatch(
           setToolTimelineForThread({
             threadId: thread.id,
-            entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, status: 'running' }],
+            entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, seq: 0, status: 'running' }],
           })
         );
       });
@@ -1483,7 +1705,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
         store!.dispatch(
           setToolTimelineForThread({
             threadId: 'some-other-thread',
-            entries: [{ id: 'other-1', name: 'web_fetch', round: 1, status: 'running' }],
+            entries: [{ id: 'other-1', name: 'web_fetch', round: 1, seq: 0, status: 'running' }],
           })
         );
       });
@@ -1871,11 +2093,12 @@ describe('Conversations — agent task insights panel anchoring (#3717 Bug 2)', 
         setToolTimelineForThread({
           threadId: thread.id,
           entries: [
-            { id: 'tl-1', name: 'web_fetch', round: 1, status: 'success' },
+            { id: 'tl-1', name: 'web_fetch', round: 1, seq: 0, status: 'success' },
             {
               id: 'sa-1',
               name: 'subagent:researcher',
               round: 1,
+              seq: 0,
               status: 'running',
               subagent: { taskId: 'task-1', agentId: 'researcher', toolCalls: [] },
             },
@@ -1967,7 +2190,7 @@ describe('Conversations — agent task insights panel anchoring (#3717 Bug 2)', 
       store!.dispatch(
         setToolTimelineForThread({
           threadId: thread.id,
-          entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, status: 'success' }],
+          entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, seq: 0, status: 'success' }],
         })
       );
     });
@@ -2023,7 +2246,7 @@ describe('Conversations — agent task insights panel anchoring (#3717 Bug 2)', 
       store!.dispatch(
         setToolTimelineForThread({
           threadId: thread.id,
-          entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, status: 'running' }],
+          entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, seq: 0, status: 'running' }],
         })
       );
     });
@@ -2144,7 +2367,7 @@ describe('Conversations — agent task insights panel anchoring (#3717 Bug 2)', 
       store!.dispatch(
         setToolTimelineForThread({
           threadId: thread.id,
-          entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, status: 'cancelled' }],
+          entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, seq: 0, status: 'cancelled' }],
         })
       );
     });
@@ -2158,6 +2381,71 @@ describe('Conversations — agent task insights panel anchoring (#3717 Bug 2)', 
       fireEvent.click(fallback);
     });
     expect(await screen.findByTestId('agent-task-insights')).toBeInTheDocument();
+  });
+
+  it('remounts the standalone insights fallback (resetting its sticky disclosure) when switching between two proactive-only threads (#4944)', async () => {
+    // Neither thread has a user message (e.g. a proactive-only run), so the
+    // panel renders through the standalone fallback slot at the bottom of the
+    // message list — not the per-message anchor keyed by `msg.id` — which is
+    // the exact slot that previously had no key of its own.
+    const threadA = makeThread({ id: 'proactive-a', title: 'Proactive A' });
+    const threadB = makeThread({ id: 'proactive-b', title: 'Proactive B' });
+    mockGetThreads.mockResolvedValue({ threads: [threadA, threadB], count: 2 });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: {
+          ...emptyThreadState,
+          threads: [threadA, threadB],
+          selectedThreadId: threadA.id,
+          messagesByThreadId: { [threadA.id]: [], [threadB.id]: [] },
+        },
+        socket: socketState('connected'),
+      });
+    });
+
+    // Thread A: a settled (non-running) timeline, so the group defaults to
+    // collapsed.
+    await act(async () => {
+      store!.dispatch(
+        setToolTimelineForThread({
+          threadId: threadA.id,
+          entries: [{ id: 'a-1', name: 'web_fetch', round: 1, seq: 0, status: 'success' }],
+        })
+      );
+    });
+
+    const panelA = await screen.findByTestId('agent-task-insights');
+    expect((panelA as HTMLDetailsElement).open).toBe(false);
+
+    // The user manually expands it — this is the sticky per-instance
+    // `userOverrideOpen` state from #4942 that must not leak across threads.
+    const summaryA = panelA.querySelector('summary');
+    expect(summaryA).not.toBeNull();
+    await act(async () => {
+      fireEvent.click(summaryA!);
+    });
+    expect((panelA as HTMLDetailsElement).open).toBe(true);
+
+    // Switch straight to a second proactive-only thread with its own settled
+    // timeline.
+    await act(async () => {
+      store!.dispatch(setSelectedThread(threadB.id));
+      store!.dispatch(
+        setToolTimelineForThread({
+          threadId: threadB.id,
+          entries: [{ id: 'b-1', name: 'send_email', round: 1, seq: 0, status: 'success' }],
+        })
+      );
+    });
+
+    const panelB = await screen.findByTestId('agent-task-insights');
+    // Keyed by `selectedThreadId ?? 'none'`: switching threads remounts the
+    // `ToolTimelineBlock` instead of reusing the same instance, so thread B's
+    // panel starts collapsed again rather than inheriting thread A's
+    // manually-opened disclosure state.
+    expect((panelB as HTMLDetailsElement).open).toBe(false);
   });
 });
 
@@ -2710,5 +2998,30 @@ describe('Conversations — message list reserves room for the floating composer
     } finally {
       globalThis.ResizeObserver = original;
     }
+  });
+});
+
+// The in-chat "Leaving your device" external-transfer disclosure card was
+// removed. This guards against it coming back: even with a live external
+// transfer flagged on the active thread, no such card renders in the chat view.
+describe('Conversations — external-transfer disclosure card removed', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+    mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  it('never renders a "Leaving your device" card', async () => {
+    const thread = makeThread({ id: 't-sel' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(screen.queryByText('Leaving your device')).toBeNull();
   });
 });

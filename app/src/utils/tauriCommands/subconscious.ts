@@ -11,8 +11,10 @@ import type { HeartbeatSettings } from './heartbeat';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-/** Which subconscious world a status row / trigger targets. */
-export type SubconsciousKind = 'memory' | 'tinyplace';
+/** Which subconscious world a status row / trigger targets. The tiny.place
+ * steering world moved server-side with the orchestration brain; only `memory`
+ * runs on the device now. */
+export type SubconsciousKind = 'memory';
 
 /** One subconscious world's health row. */
 export interface SubconsciousInstanceStatus {
@@ -69,8 +71,7 @@ export async function subconsciousStatus(): Promise<CommandResponse<Subconscious
 
 /**
  * Manually trigger a subconscious tick. `kind` selects the world: 'memory'
- * (default — today's behavior), 'tinyplace', or 'all'. A no-arg call keeps the
- * legacy memory-only behavior.
+ * (default) or 'all'. A no-arg call keeps the legacy memory-only behavior.
  */
 export async function subconsciousTrigger(
   kind?: SubconsciousKind | 'all'

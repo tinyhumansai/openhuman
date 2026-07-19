@@ -21,10 +21,10 @@ describe('subconscious client', () => {
 
   it('trigger passes the kind through as params', async () => {
     vi.mocked(callCoreRpc).mockResolvedValueOnce({ result: { triggered: true } } as never);
-    await subconsciousTrigger('tinyplace');
+    await subconsciousTrigger('all');
     expect(callCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.subconscious_trigger',
-      params: { kind: 'tinyplace' },
+      params: { kind: 'all' },
     });
   });
 

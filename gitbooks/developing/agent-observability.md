@@ -7,11 +7,10 @@ icon: eye
 
 This doc describes the artifact-capture layer that makes the desktop app
 inspectable by coding agents (Codex, Claude Code, Cursor) through the
-existing WDIO/Appium/tauri-driver harness.
+existing WDIO/Appium Chromium harness.
 
 It is intentionally narrow: one canonical onboarding + privacy flow with
 on-disk screenshots, page-source dumps, and mock backend request logs.
-See `AGENT_OBSERVABILITY_PLAN.md` at the repo root for the broader plan.
 
 ## TL;DR
 

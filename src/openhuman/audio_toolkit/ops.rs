@@ -211,7 +211,7 @@ pub fn resolve_email_capture_dir(config: &Config) -> Option<PathBuf> {
     }
     #[cfg(feature = "e2e-test-support")]
     {
-        return Some(config.workspace_dir.join(DEFAULT_CAPTURE_DIR));
+        Some(config.workspace_dir.join(DEFAULT_CAPTURE_DIR))
     }
     #[cfg(not(feature = "e2e-test-support"))]
     {

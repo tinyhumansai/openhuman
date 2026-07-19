@@ -966,7 +966,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
   }
 
   // Artifact lifecycle events (#2779). The Rust subscriber in
-  // `channels/providers/web::ArtifactSurfaceSubscriber` packs the
+  // `web_chat::ArtifactSurfaceSubscriber` packs the
   // artifact payload into the generic `args` field of the wire
   // envelope (kept the WebChannelEvent struct shape stable to avoid
   // touching ~10 existing call sites with `..Default::default()`).

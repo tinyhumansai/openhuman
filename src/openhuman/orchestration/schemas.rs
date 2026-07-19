@@ -1,9 +1,9 @@
-//! JSON-RPC read surface for the orchestration layer (stage 7).
+//! JSON-RPC read surface for the orchestration layer.
 //!
 //! Renderer-only controllers (internal registry — never advertised to agents):
-//! the `TinyPlaceOrchestrationTab` reads sessions + messages from the stage-3
-//! store's real classification here instead of client-side heuristics, sends
-//! Master steering DMs, and marks chats read. Namespace: `orchestration`; methods
+//! the `TinyPlaceOrchestrationTab` reads sessions + messages from the local
+//! render cache (kept in sync with the hosted brain by `sync`), sends Master
+//! steering DMs, and marks chats read. Namespace: `orchestration`; methods
 //! `openhuman.orchestration_*`.
 
 use serde::Serialize;
@@ -36,6 +36,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schema_for("orchestration_self_identity"),
         schema_for("orchestration_publish_identity"),
         schema_for("orchestration_relay_info"),
+        schema_for("orchestration_run"),
     ]
 }
 
@@ -80,6 +81,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema_for("orchestration_relay_info"),
             handler: handle_relay_info,
+        },
+        RegisteredController {
+            schema: schema_for("orchestration_run"),
+            handler: handle_medulla_run,
         },
     ]
 }
@@ -178,6 +183,19 @@ fn schema_for(function: &str) -> ControllerSchema {
             inputs: vec![],
             outputs: vec![json_output("result", "{ baseUrl, network }.")],
         },
+        "orchestration_run" => ControllerSchema {
+            namespace: "orchestration",
+            function: "run",
+            description: "Run the paid hosted Medulla engine with OpenHuman's local contact/session/send tools. Tool calls execute on this device and are returned through the backend continuation loop until a final reply is available.",
+            inputs: vec![
+                required_str("input", "The task or prompt for Medulla to orchestrate."),
+                optional_str("sessionId", "Optional Medulla session id to continue."),
+            ],
+            outputs: vec![json_output(
+                "result",
+                "{ reply, passCount, compressedHistory, escalations, sessionId, cycleId }.",
+            )],
+        },
         other => unreachable!("unknown orchestration schema: {other}"),
     }
 }
@@ -190,7 +208,7 @@ struct SessionSummary {
     session_id: String,
     agent_id: String,
     source: String,
-    /// The emitting harness (claude/codex/gemini) when this is an external agent
+    /// The emitting harness (claude/codex/gemini/cursor/windsurf) when this is an external agent
     /// instance; absent for the pinned master/subconscious/user-created windows.
     #[serde(skip_serializing_if = "Option::is_none")]
     harness_type: Option<String>,
@@ -245,6 +263,9 @@ struct OrchestrationStatus {
     /// Most recent orchestration error, if any (short cause string, never a body).
     #[serde(skip_serializing_if = "Option::is_none")]
     last_error: Option<String>,
+    /// Whether the hosted brain was reachable at the last health probe. Drives
+    /// the "cloud brain unreachable" offline notice in the renderer.
+    cloud_reachable: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -283,11 +304,15 @@ fn is_active(last_message_at: &str) -> bool {
 }
 
 /// The harness provider for a session, when its `source` names one. Session
-/// windows persist the emitting harness (claude/codex/gemini) in `source` (see
+/// windows persist the emitting harness (claude/codex/gemini/cursor/windsurf) in `source` (see
 /// `ingest.rs`); the sentinel windows (master/subconscious/user_created/
 /// orchestration) carry no harness and yield `None`.
 fn harness_type_for(source: &str) -> Option<String> {
-    matches!(source, "claude" | "codex" | "gemini").then(|| source.to_string())
+    matches!(
+        source,
+        "claude" | "codex" | "gemini" | "cursor" | "windsurf"
+    )
+    .then(|| source.to_string())
 }
 
 /// Coarse instance status for the roster dot. Reads the persisted v2 run-state
@@ -580,56 +605,92 @@ fn handle_send_master_message(params: Map<String, Value>) -> ControllerFuture {
         if explicit.is_none() && session_id.is_none() {
             let now = chrono::Utc::now().to_rfc3339();
             let message_id = format!("master-ask:{now}");
-            let persisted = store::with_connection(&config.workspace_dir, |conn| {
-                let seq = store::next_session_seq(conn, LOCAL_MASTER_AGENT, "master")?;
-                store::upsert_session(
-                    conn,
-                    &OrchestrationSession {
-                        session_id: "master".to_string(),
-                        agent_id: LOCAL_MASTER_AGENT.to_string(),
-                        source: "master".to_string(),
-                        label: None,
-                        workspace: None,
-                        last_seq: seq,
-                        created_at: now.clone(),
-                        last_message_at: now.clone(),
-                        ..Default::default()
-                    },
-                )?;
-                store::insert_message(
-                    conn,
-                    &OrchestrationMessage {
-                        id: message_id.clone(),
-                        agent_id: LOCAL_MASTER_AGENT.to_string(),
-                        session_id: "master".to_string(),
-                        chat_kind: ChatKind::Master,
-                        role: "user".to_string(),
-                        body: body.clone(),
-                        timestamp: now.clone(),
-                        seq,
-                        ..Default::default()
-                    },
-                )
+            // Allocate the ordinal and write both rows in ONE IMMEDIATE txn so a
+            // concurrent master writer (a rapid double-send, or this ask racing the
+            // graph's reply-persist on the same `(local, "master")` key) can't read
+            // the same `MAX(seq)` and duplicate it. A duplicate `seq` collides on the
+            // backend idempotency key `(user, counterpart, session, seq)` and the wake
+            // is silently 202-deduped with no inference. Mirrors the DM ingest path
+            // (`ingest.rs` — the sole other writer on this key also uses IMMEDIATE).
+            let persisted: Result<i64, _> = store::with_connection(&config.workspace_dir, |conn| {
+                store::in_immediate_txn(conn, |conn| {
+                    let seq = store::next_session_seq(conn, LOCAL_MASTER_AGENT, "master")?;
+                    store::upsert_session(
+                        conn,
+                        &OrchestrationSession {
+                            session_id: "master".to_string(),
+                            agent_id: LOCAL_MASTER_AGENT.to_string(),
+                            source: "master".to_string(),
+                            label: None,
+                            workspace: None,
+                            last_seq: seq,
+                            created_at: now.clone(),
+                            last_message_at: now.clone(),
+                            ..Default::default()
+                        },
+                    )?;
+                    store::insert_message(
+                        conn,
+                        &OrchestrationMessage {
+                            id: message_id.clone(),
+                            agent_id: LOCAL_MASTER_AGENT.to_string(),
+                            session_id: "master".to_string(),
+                            chat_kind: ChatKind::Master,
+                            role: "user".to_string(),
+                            body: body.clone(),
+                            timestamp: now.clone(),
+                            seq,
+                            ..Default::default()
+                        },
+                    )?;
+                    Ok(seq)
+                })
             });
-            if let Err(e) = persisted {
-                return Err(format!("master ask persist: {e}"));
-            }
-            // Fan to the renderer so the question shows immediately …
+            let seq = match persisted {
+                Ok(seq) => seq,
+                Err(e) => return Err(format!("master ask persist: {e}")),
+            };
+            // Fan to the renderer so the question shows immediately.
             super::bus::notify_orchestration_message(
                 LOCAL_MASTER_AGENT,
                 "master",
                 ChatKind::Master.as_str(),
             );
-            // … and publish the domain event so the wake subscriber schedules the
-            // reasoning graph (notify alone only reaches the socket, not the wake).
-            crate::core::event_bus::publish_global(
-                crate::core::event_bus::DomainEvent::OrchestrationSessionMessage {
-                    agent_id: LOCAL_MASTER_AGENT.to_string(),
-                    session_id: "master".to_string(),
-                    chat_kind: ChatKind::Master.as_str().to_string(),
-                },
+            // Forward the ask to the hosted brain — it wakes, reasons, and returns
+            // the reply as a `send_dm` effect on the "master" session, which the
+            // device renders back into this window (see `effect_executor`). No wake
+            // graph runs on the device.
+            let ts = super::wire::parse_ts_ms(&now).unwrap_or(0);
+            let envelope = super::wire::OrchestrationEventEnvelopeWire::build(
+                LOCAL_MASTER_AGENT,
+                "master",
+                seq,
+                "user",
+                LOCAL_MASTER_AGENT,
+                &body,
+                ts,
+                "message",
             );
-            log::debug!(target: LOG, "[orchestration_rpc] master_ask.local id={message_id}");
+            let forward_cfg = config.clone();
+            tokio::spawn(async move {
+                match super::cloud::push_event(&forward_cfg, &envelope).await {
+                    Ok(cycle_id) => {
+                        // Record this Master-chat cycle's origin so the local-exec
+                        // trust gate authorizes it (counterpart == LOCAL_MASTER_AGENT).
+                        if let Some(cid) = cycle_id {
+                            super::exec_gate::record_cycle_origin(
+                                &cid,
+                                &envelope.counterpart_agent_id,
+                                &envelope.session_id,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(target: LOG, "[orchestration_rpc] master_ask.forward_failed: {e}")
+                    }
+                }
+            });
+            log::debug!(target: LOG, "[orchestration_rpc] master_ask.forwarded id={message_id} seq={seq}");
             return to_json(serde_json::json!({ "ok": true, "messageId": message_id }));
         }
 
@@ -737,35 +798,35 @@ fn handle_mark_read(params: Map<String, Value>) -> ControllerFuture {
 fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = load_config("status").await?;
-        #[allow(clippy::type_complexity)]
-        let (steering, ingest_last, lag, last_error): (
-            Option<SteeringSummary>,
-            Option<String>,
-            i64,
-            Option<String>,
-        ) = store::with_connection(&config.workspace_dir, |conn| {
-            let cycle = store::current_cycle_counter(conn)?;
-            let steering =
-                store::current_steering_directive(conn, cycle)?.map(|d| SteeringSummary {
-                    text: d.text,
-                    created_at: d.created_at,
-                    expires_after_cycles: d.expires_after_cycles,
-                });
-            // MAX() always returns exactly one row (NULL when empty). Exclude the
-            // pinned master/subconscious windows: they're bumped by manual owner
-            // DMs (`handle_send_master_message`) and steering writes, which would
-            // otherwise mask a stalled real ingestion pipeline with fresh traffic.
-            let ingest_last: Option<String> = conn.query_row(
-                "SELECT MAX(last_message_at) FROM sessions \
-                 WHERE session_id NOT IN ('master', 'subconscious')",
-                [],
-                |r| r.get::<_, Option<String>>(0),
-            )?;
-            let lag = store::ingest_cursor_lag(conn)?;
-            let last_error = store::kv_get(conn, "orchestration:last_error")?;
-            Ok((steering, ingest_last, lag, last_error))
-        })
-        .map_err(|e| format!("status: {e:#}"))?;
+        // Steering + reachability come from the hosted health probe's kv cache
+        // (see `sync`), so this read stays synchronous and offline-safe.
+        let steering =
+            super::sync::cached_steering(&config).map(|(text, max_cycles)| SteeringSummary {
+                text,
+                // Hosted steering carries no local created_at; the renderer keys
+                // its display off `text` presence, not this field.
+                created_at: String::new(),
+                expires_after_cycles: max_cycles,
+            });
+        let cloud_reachable = super::sync::cloud_reachable(&config);
+
+        let (ingest_last, lag, last_error): (Option<String>, i64, Option<String>) =
+            store::with_connection(&config.workspace_dir, |conn| {
+                // MAX() always returns exactly one row (NULL when empty). Exclude the
+                // pinned master/subconscious windows: they're bumped by manual owner
+                // DMs (`handle_send_master_message`), which would otherwise mask a
+                // stalled real ingestion pipeline with fresh traffic.
+                let ingest_last: Option<String> = conn.query_row(
+                    "SELECT MAX(last_message_at) FROM sessions \
+                     WHERE session_id NOT IN ('master', 'subconscious')",
+                    [],
+                    |r| r.get::<_, Option<String>>(0),
+                )?;
+                let lag = store::ingest_cursor_lag(conn)?;
+                let last_error = store::kv_get(conn, "orchestration:last_error")?;
+                Ok((ingest_last, lag, last_error))
+            })
+            .map_err(|e| format!("status: {e:#}"))?;
 
         // Last subconscious tick (best-effort — subconscious store is separate).
         let last_tick_at =
@@ -781,6 +842,7 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
             ingest_last_message_at: ingest_last.filter(|s| !s.is_empty()),
             ingest_cursor_lag: lag,
             last_error,
+            cloud_reachable,
         })
     })
 }
@@ -990,6 +1052,30 @@ fn handle_relay_info(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// Direct paid Medulla entry point. The backend remains the authority for both
+/// authentication and plan enforcement; `medulla::run` also performs a local
+/// plan preflight so free users receive an immediate actionable error.
+fn handle_medulla_run(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let input = required_param(&params, "input")?.trim().to_string();
+        let session_id = params
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let config = load_config("medulla_run").await?;
+        log::debug!(
+            target: LOG,
+            "[orchestration_rpc] medulla_run.entry input_bytes={} has_session={}",
+            input.len(),
+            session_id.is_some(),
+        );
+        let result = super::medulla::run(&config, &input, session_id.as_deref()).await?;
+        to_json(result)
+    })
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 async fn load_config(action: &str) -> Result<Config, String> {
@@ -1047,7 +1133,7 @@ mod tests {
     #[test]
     fn schemas_use_orchestration_namespace() {
         let schemas = all_controller_schemas();
-        assert_eq!(schemas.len(), 10);
+        assert_eq!(schemas.len(), 11);
         assert!(schemas.iter().all(|s| s.namespace == "orchestration"));
         assert_eq!(schema_for("orchestration_attention").function, "attention");
         assert_eq!(
@@ -1075,6 +1161,10 @@ mod tests {
             schema_for("orchestration_sessions_create").function,
             "sessions_create"
         );
+        assert_eq!(schema_for("orchestration_run").function, "run");
+        assert!(all_registered_controllers()
+            .iter()
+            .any(|controller| controller.schema.function == "run"));
     }
 
     #[test]
@@ -1162,6 +1252,8 @@ mod tests {
         assert_eq!(harness_type_for("claude").as_deref(), Some("claude"));
         assert_eq!(harness_type_for("codex").as_deref(), Some("codex"));
         assert_eq!(harness_type_for("gemini").as_deref(), Some("gemini"));
+        assert_eq!(harness_type_for("cursor").as_deref(), Some("cursor"));
+        assert_eq!(harness_type_for("windsurf").as_deref(), Some("windsurf"));
         // Sentinel / origin sources are not harnesses.
         assert_eq!(harness_type_for("master"), None);
         assert_eq!(harness_type_for("user_created"), None);

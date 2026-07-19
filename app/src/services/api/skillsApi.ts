@@ -1,5 +1,6 @@
 import debug from 'debug';
 
+import { trackAnalyticsEvent } from '../analytics';
 import { callCoreRpc } from '../coreRpcClient';
 
 const log = debug('skillsApi');
@@ -478,6 +479,7 @@ export const skillsApi = {
       log: raw.log,
     };
     log('runWorkflow: response runId=%s log=%s', normalized.run_id, normalized.log);
+    trackAnalyticsEvent('automation_run_started', { automation_kind: 'skill' });
     return normalized;
   },
   /**
@@ -493,6 +495,9 @@ export const skillsApi = {
     });
     const raw = unwrapEnvelope(response);
     log('cancelRun: response cancelled=%s', raw.cancelled);
+    if (raw.cancelled) {
+      trackAnalyticsEvent('automation_run_cancelled', { automation_kind: 'skill' });
+    }
     return raw.cancelled;
   },
 

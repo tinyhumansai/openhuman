@@ -462,6 +462,255 @@ fn open_conn_configures_busy_timeout_and_wal() {
 
 /// Messages with an empty message_id or chat_id must be silently skipped,
 /// never causing a panic or spurious database error.
+/// A malformed on-disk image must be detected on the upsert write path,
+/// quarantined (never deleted), the schema rebuilt, and the *same* upsert call
+/// must then SUCCEED against the fresh DB — proving ingest self-heals instead of
+/// re-hitting the dead file on every scan tick (Sentry TAURI-RUST-KNH: 1,813
+/// events from a single host). The process-wide report latch must reset after a
+/// successful recovery so it fires at most once per corruption episode.
+#[test]
+fn upsert_recovers_from_corrupt_database() {
+    use std::sync::atomic::Ordering;
+
+    // Serialize against the other latch-touching recovery tests: the report
+    // latch + integrity-fail seam are process-wide statics.
+    let _guard = super::CORRUPT_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    let (store, tmp) = make_store();
+    let workspace = tmp.path().to_path_buf();
+    let db_path = db_path_for(&tmp);
+
+    // Reset the process-wide latch so this test observes a clean episode.
+    super::CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+
+    // Corrupt the freshly-created DB: drop any WAL side-files, then overwrite the
+    // main file with garbage so the next open reads a malformed image.
+    for suffix in ["-wal", "-shm"] {
+        let side = db_path.with_file_name(format!("whatsapp_data.db{suffix}"));
+        let _ = std::fs::remove_file(&side);
+    }
+    std::fs::write(
+        &db_path,
+        b"this is not a sqlite database, just garbage bytes",
+    )
+    .unwrap();
+
+    let mut chats = HashMap::new();
+    chats.insert("chat@c.us".to_string(), chat_meta("Alice"));
+
+    // First upsert hits the malformed image → detect → quarantine → rebuild →
+    // retry against the fresh DB, so the call SUCCEEDS.
+    let count = store
+        .upsert_chats("acct1", &chats)
+        .expect("upsert must succeed after corrupt-DB recovery");
+    assert_eq!(count, 1);
+
+    // The corrupt bytes are preserved alongside, never silently dropped.
+    let quarantined: Vec<_> = std::fs::read_dir(db_path.parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .contains("whatsapp_data.db.corrupt-")
+        })
+        .collect();
+    assert_eq!(
+        quarantined.len(),
+        1,
+        "exactly one quarantined copy of the corrupt image should exist"
+    );
+
+    // The rebuilt DB is healthy and queryable — the chat we just wrote is there.
+    let rows = store
+        .list_chats(&ListChatsRequest {
+            account_id: Some("acct1".to_string()),
+            limit: None,
+            offset: None,
+        })
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].chat_id, "chat@c.us");
+
+    // A fresh store over the same workspace also sees the rebuilt, healthy DB.
+    let reopened = WhatsAppDataStore::new(&workspace).expect("reopen store");
+    let rows2 = reopened
+        .list_chats(&ListChatsRequest {
+            account_id: Some("acct1".to_string()),
+            limit: None,
+            offset: None,
+        })
+        .unwrap();
+    assert_eq!(rows2.len(), 1);
+
+    // Recovery settled, so the report latch was reset: a genuinely-new later
+    // corruption can page once more (the report fired at most once this episode).
+    assert!(
+        !super::CORRUPT_REPORTED.load(Ordering::Relaxed),
+        "report latch must reset after a successful recovery"
+    );
+}
+
+/// Finding 1 regression: when the quarantine + rebuild leaves a DB that STILL
+/// fails its integrity check, `recover_corrupt_db` must return `Err` (not
+/// swallow it as `Ok(true)`). Consequently `report_and_recover` must NOT reset
+/// the process-wide report latch — preserving the report-once-per-episode
+/// guarantee (a spurious reset would re-arm Sentry to page on the next scan
+/// tick against a DB that never actually recovered).
+#[test]
+fn recover_corrupt_db_errors_and_keeps_latch_when_rebuild_fails_integrity() {
+    use std::sync::atomic::Ordering;
+
+    let _guard = super::CORRUPT_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    let (store, tmp) = make_store();
+    let db_path = db_path_for(&tmp);
+
+    // Force the post-rebuild integrity_check to report failure via the test seam.
+    super::FORCE_INTEGRITY_CHECK_FAIL.store(true, Ordering::Relaxed);
+
+    let corrupt = |path: &std::path::Path| {
+        for suffix in ["-wal", "-shm"] {
+            let side = path.with_file_name(format!("whatsapp_data.db{suffix}"));
+            let _ = std::fs::remove_file(&side);
+        }
+        std::fs::write(path, b"not a sqlite database, just garbage bytes").unwrap();
+    };
+
+    // (a) Direct call: recovery quarantines + rebuilds, but the forced
+    //     integrity_check failure makes it return Err instead of Ok(true).
+    corrupt(&db_path);
+    let direct = store.recover_corrupt_db();
+
+    // (b) report_and_recover path: on that recovery failure the report latch,
+    //     set by the initial report, must remain set (not reset to false).
+    corrupt(&db_path);
+    super::CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+    let err = anyhow::anyhow!(
+        "[whatsapp_data] ingest failed: upsert wa_chat 1@lid: database disk image is malformed"
+    );
+    store.report_and_recover("upsert_chats", &err);
+    let latch_after = super::CORRUPT_REPORTED.load(Ordering::Relaxed);
+
+    // Clear the seam + latch BEFORE asserting so a failing assert cannot leak
+    // the forced-fail state into other tests.
+    super::FORCE_INTEGRITY_CHECK_FAIL.store(false, Ordering::Relaxed);
+    super::CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+
+    assert!(
+        direct.is_err(),
+        "recover_corrupt_db must return Err when the rebuilt DB still fails integrity_check"
+    );
+    assert!(
+        latch_after,
+        "report latch must stay set when recovery fails (report-once-per-episode must hold)"
+    );
+}
+
+/// Finding 2 regression: a `whatsapp_data.db` that is already malformed at
+/// process startup must self-heal during store construction. Before the fix,
+/// `WhatsAppDataStore::new()` propagated the `init_schema` corruption error, the
+/// store singleton was never set, and every ingest RPC failed forever — the
+/// corruption survived restarts and re-paged Sentry on every scanner tick.
+#[test]
+fn new_recovers_from_corruption_at_startup() {
+    use std::sync::atomic::Ordering;
+
+    let _guard = super::CORRUPT_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    super::CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+
+    // Pre-create the whatsapp_data dir and plant a malformed DB file BEFORE any
+    // store exists, simulating a corrupt image left behind by a prior run.
+    let tmp = tempdir().expect("tempdir");
+    let workspace = tmp.path().to_path_buf();
+    let db_path = db_path_for(&tmp);
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &db_path,
+        b"this is not a sqlite database, just garbage bytes",
+    )
+    .unwrap();
+
+    // Construction must succeed by quarantining + rebuilding, not error out.
+    let store = WhatsAppDataStore::new(&workspace)
+        .expect("new() must self-heal a boot-time corrupt DB, not propagate the error");
+
+    // The corrupt bytes are preserved alongside, never silently dropped.
+    let quarantined = std::fs::read_dir(db_path.parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .contains("whatsapp_data.db.corrupt-")
+        })
+        .count();
+    assert_eq!(
+        quarantined, 1,
+        "boot-time corrupt image must be quarantined once"
+    );
+
+    // The rebuilt DB is fully usable — a subsequent upsert lands and reads back.
+    let mut chats = HashMap::new();
+    chats.insert("chat@c.us".to_string(), chat_meta("Alice"));
+    let count = store
+        .upsert_chats("acct1", &chats)
+        .expect("upsert must succeed against the rebuilt DB");
+    assert_eq!(count, 1);
+
+    let rows = store
+        .list_chats(&ListChatsRequest {
+            account_id: Some("acct1".to_string()),
+            limit: None,
+            offset: None,
+        })
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].chat_id, "chat@c.us");
+
+    super::CORRUPT_REPORTED.store(false, Ordering::Relaxed);
+}
+
+/// A *healthy* DB must never be quarantined even if `recover_corrupt_db` is
+/// invoked — `quick_check` passes, so good data is preserved and recovery is a
+/// no-op returning `Ok(false)`.
+#[test]
+fn recover_corrupt_db_is_noop_on_healthy_db() {
+    let (store, tmp) = make_store();
+    let db_path = db_path_for(&tmp);
+    // Seed a real row so there is genuine data that must survive.
+    let mut chats = HashMap::new();
+    chats.insert("chat@c.us".to_string(), chat_meta("Alice"));
+    store.upsert_chats("acct1", &chats).unwrap();
+
+    let recovered = store
+        .recover_corrupt_db()
+        .expect("recovery on a healthy DB must not error");
+    assert!(!recovered, "healthy DB must not be quarantined");
+
+    let quarantined = std::fs::read_dir(db_path.parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| e.file_name().to_string_lossy().contains(".corrupt-"));
+    assert!(!quarantined, "no quarantine file should be created");
+
+    // Data survives untouched.
+    let rows = store
+        .list_chats(&ListChatsRequest {
+            account_id: Some("acct1".to_string()),
+            limit: None,
+            offset: None,
+        })
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+}
+
 #[test]
 fn upsert_messages_skips_rows_with_empty_ids() {
     let (store, _tmp) = make_store();

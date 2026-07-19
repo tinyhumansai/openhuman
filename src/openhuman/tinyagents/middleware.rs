@@ -718,6 +718,65 @@ impl Middleware<()> for PromptCacheSegmentMiddleware {
     }
 }
 
+/// Tools whose results are self-describing JSON payloads that downstream
+/// extractors and the frontend canvas parse structurally (the `type` marker
+/// must survive). Compacting/summarizing them destroys the contract and
+/// serves no purpose — the model doesn't benefit from a tabulated graph and
+/// the payload is the turn's final output, not intermediate context.
+///
+/// These tools are exempt from *every* content-rewriting stage below —
+/// tokenjuice compaction (steps 1+2) **and** the per-tool char cap / shared
+/// byte-budget backstop (steps 3+4, see [`is_truncation_exempt`]). Both
+/// `flows::ops::extract_workflow_proposal` and the frontend's
+/// `parseWorkflowProposal` parse this content as a single whole-string JSON
+/// document; a byte-cap truncation at a UTF-8 boundary produces invalid JSON
+/// just as surely as tokenjuice tabulation strips the `"type"` marker — both
+/// end in a silent `proposal: None` and a blank canvas. A ≥10-node graph
+/// routinely clears the ~16 KiB shared budget, so the truncation exemption
+/// matters just as much as the compaction one.
+const COMPACTION_EXEMPT_TOOLS: &[&str] = &[
+    "propose_workflow",
+    "revise_workflow",
+    "edit_workflow",
+    "save_workflow",
+    "create_workflow",
+];
+
+/// Tools whose results the model reads to derive an exact schema (e.g.
+/// `primary_array_path` / `output_fields`) from a *real* sampled tool
+/// response, per the B12 output-probe contract (`flows::builder_tools`).
+/// TokenJuice's array-elision tabulation defeats their purpose outright — a
+/// tabulated sample hides the very array shape the model is calling the tool
+/// to observe, so it derives a wrong or nonexistent `split_out.path` from the
+/// summary instead of the real response. They're compaction-exempt
+/// ([`is_compaction_exempt`]) for that reason.
+///
+/// Unlike [`COMPACTION_EXEMPT_TOOLS`], their payload is intermediate context
+/// the model reasons over — not the turn's final machine-parsed output — and
+/// samples can be genuinely large (a full API response body). So they stay
+/// subject to the per-tool char cap / shared byte-budget backstop
+/// ([`is_truncation_exempt`] returns `false` for them): a truncated-but-not-
+/// tabulated sample is still a usable (if partial) real response, and the
+/// backstop keeps these calls from blowing the context budget.
+const SAMPLING_TOOLS: &[&str] = &["get_tool_output_sample", "get_tool_contract"];
+
+/// Steps 1 (payload summarizer) + 2 (tokenjuice compaction) exemption:
+/// proposal tools (final-output contract, see [`COMPACTION_EXEMPT_TOOLS`])
+/// plus sampling tools (tabulation would corrupt the schema they exist to
+/// reveal, see [`SAMPLING_TOOLS`]).
+fn is_compaction_exempt(name: &str) -> bool {
+    COMPACTION_EXEMPT_TOOLS.contains(&name) || SAMPLING_TOOLS.contains(&name)
+}
+
+/// Steps 3 (per-tool char cap) + 4 (shared byte-budget backstop) exemption:
+/// proposal tools only. Their JSON is parsed as a single whole-string
+/// document downstream, so any truncation — not just tokenjuice tabulation —
+/// breaks the parse. Sampling tools are deliberately *not* in this set: see
+/// [`SAMPLING_TOOLS`] for why the byte cap stays in force for them.
+fn is_truncation_exempt(name: &str) -> bool {
+    COMPACTION_EXEMPT_TOOLS.contains(&name)
+}
+
 /// `after_tool`: apply the semantic payload summarizer (when configured) and
 /// then the hard per-tool-result byte cap to each tool result's model-facing
 /// content, before it enters the transcript. The graph analogue of the byte cap
@@ -758,75 +817,120 @@ impl Middleware<()> for ToolOutputMiddleware {
         _state: &(),
         result: &mut TaToolResult,
     ) -> TaResult<()> {
+        // Proposal-/persistence-emitting workflow tools return a self-describing
+        // `{ "type": "workflow_proposal", … }` JSON payload that `flows::ops`'
+        // `extract_workflow_proposal` (and the frontend's content-based
+        // recognition) parse structurally. Sampling tools (`get_tool_contract` /
+        // `get_tool_output_sample`) return a real API response the model reads
+        // to derive an exact array path/schema. All four stages below are
+        // content-*rewriting*: tokenjuice (steps 1+2) tabulates any uniform
+        // object-array of ≥3 rows over ~512 bytes into a `[json table: …]`
+        // marker (stripping the `"type"` field on graphs with enough nodes, or
+        // eliding the array a sample exists to reveal); the char cap and shared
+        // byte-budget backstop (steps 3+4) truncate at a UTF-8 boundary, which
+        // breaks the whole-string JSON parse both proposal consumers do. See
+        // [`is_compaction_exempt`]/[`is_truncation_exempt`] for which stages
+        // each tool family skips and why.
+        let compaction_exempt = is_compaction_exempt(&result.name);
+        let truncation_exempt = is_truncation_exempt(&result.name);
+        if compaction_exempt {
+            tracing::debug!(
+                tool = %result.name,
+                bytes = result.content.len(),
+                "[tinyagents::mw] compaction-exempt: skipping payload summarizer + tokenjuice"
+            );
+        }
+        if truncation_exempt {
+            tracing::debug!(
+                tool = %result.name,
+                bytes = result.content.len(),
+                "[tinyagents::mw] truncation-exempt: skipping per-tool char cap + shared byte-budget backstop"
+            );
+        }
+
         // 1. Semantic summarization (progressive disclosure) — swap the raw
         //    payload for a compressed summary when the summarizer opts in.
         //    Failures never break the tool call (the trait swallows them).
-        if let Some(ps) = &self.payload_summarizer {
-            if let Ok(Some(payload)) = ps
-                .maybe_summarize_in_parent(ctx, &result.name, None, &result.content)
-                .await
-            {
-                tracing::info!(
-                    tool = %result.name,
-                    from_bytes = payload.original_bytes,
-                    to_bytes = payload.summary_bytes,
-                    "[tinyagents::mw] payload_summarizer compressed tool output"
-                );
-                ctx.emit(AgentEvent::Compressed {
-                    from_tokens: estimate_output_tokens(payload.original_bytes),
-                    to_tokens: estimate_output_tokens(payload.summary_bytes),
-                });
-                result.content = payload.summary;
+        if !compaction_exempt {
+            if let Some(ps) = &self.payload_summarizer {
+                if let Ok(Some(payload)) = ps
+                    .maybe_summarize_in_parent(ctx, &result.name, None, &result.content)
+                    .await
+                {
+                    tracing::info!(
+                        tool = %result.name,
+                        from_bytes = payload.original_bytes,
+                        to_bytes = payload.summary_bytes,
+                        "[tinyagents::mw] payload_summarizer compressed tool output"
+                    );
+                    ctx.emit(AgentEvent::Compressed {
+                        from_tokens: estimate_output_tokens(payload.original_bytes),
+                        to_tokens: estimate_output_tokens(payload.summary_bytes),
+                    });
+                    result.content = payload.summary;
+                }
             }
-        }
 
-        // 2. TokenJuice content-aware compaction. This mirrors the legacy
-        //    `agent_tool_exec` stage that ran after semantic summarization and
-        //    before the hard output caps.
-        let before_tokenjuice_bytes = result.content.len();
-        let compacted = crate::openhuman::tokenjuice::compact_output_with_policy(
-            std::mem::take(&mut result.content),
-            &result.name,
-            self.tokenjuice_compaction_enabled,
-            self.tokenjuice_compression,
-        )
-        .await;
-        result.content = compacted;
-        let after_tokenjuice_bytes = result.content.len();
-        if after_tokenjuice_bytes < before_tokenjuice_bytes {
-            ctx.emit(AgentEvent::Compressed {
-                from_tokens: estimate_output_tokens(before_tokenjuice_bytes),
-                to_tokens: estimate_output_tokens(after_tokenjuice_bytes),
-            });
+            // 2. TokenJuice content-aware compaction. This mirrors the legacy
+            //    `agent_tool_exec` stage that ran after semantic summarization and
+            //    before the hard output caps.
+            let before_tokenjuice_bytes = result.content.len();
+            let compacted = crate::openhuman::tokenjuice::compact_output_with_policy(
+                std::mem::take(&mut result.content),
+                &result.name,
+                self.tokenjuice_compaction_enabled,
+                self.tokenjuice_compression,
+            )
+            .await;
+            result.content = compacted;
+            let after_tokenjuice_bytes = result.content.len();
+            if after_tokenjuice_bytes < before_tokenjuice_bytes {
+                ctx.emit(AgentEvent::Compressed {
+                    from_tokens: estimate_output_tokens(before_tokenjuice_bytes),
+                    to_tokens: estimate_output_tokens(after_tokenjuice_bytes),
+                });
+            }
         }
 
         // 3. Per-tool **char** cap — a tool that declares `max_result_size_chars`
         //    caps its own output in characters, with the tool-cap marker the model
         //    was taught to read (legacy engine parity). Distinct from the generic
-        //    byte budget below: the tool cap is the tool's own contract.
+        //    byte budget below: the tool cap is the tool's own contract. Skipped
+        //    for truncation-exempt tools (see [`is_truncation_exempt`]) — the tool
+        //    cap is still *computed* below (step 4's "no cap of its own" check
+        //    reads it), just not applied to `result.content`.
         let tool_cap = self.tool_char_cap(&result.name);
-        if let Some(cap) = tool_cap {
-            let char_count = result.content.chars().count();
-            if char_count > cap {
-                let truncated: String = result.content.chars().take(cap).collect();
-                let dropped = char_count - cap;
-                tracing::debug!(
-                    tool = %result.name,
-                    cap,
-                    char_count,
-                    dropped,
-                    "[tinyagents::mw] per-tool char cap applied"
-                );
-                result.content = format!(
-                    "{truncated}\n\n[truncated by tool cap: {dropped} more chars not shown]"
-                );
+        if !truncation_exempt {
+            if let Some(cap) = tool_cap {
+                let char_count = result.content.chars().count();
+                if char_count > cap {
+                    let truncated: String = result.content.chars().take(cap).collect();
+                    let dropped = char_count - cap;
+                    tracing::debug!(
+                        tool = %result.name,
+                        cap,
+                        char_count,
+                        dropped,
+                        "[tinyagents::mw] per-tool char cap applied"
+                    );
+                    result.content = format!(
+                        "{truncated}\n\n[truncated by tool cap: {dropped} more chars not shown]"
+                    );
+                }
             }
         }
 
         // 4. Shared byte-cap backstop — truncate at a UTF-8 boundary with a marker.
         //    Only for tools with no cap of their own (a capped tool already bounded
-        //    itself above; stacking the two markers would double-truncate).
-        if tool_cap.is_none() && self.budget_bytes > 0 {
+        //    itself above; stacking the two markers would double-truncate), and
+        //    never for truncation-exempt tools. This is a per-result cap only —
+        //    `apply_per_result_persistence` takes a single `content: String` and a
+        //    fixed `self.budget_bytes`, with no shared/global accumulator across
+        //    tool calls (the aggregate-spill variant, `spill_aggregate_tool_results`,
+        //    is a separate legacy code path not wired into this middleware) — so
+        //    exempting these tools' own contribution here cannot perturb any other
+        //    tool's budget accounting.
+        if !truncation_exempt && tool_cap.is_none() && self.budget_bytes > 0 {
             let (capped, outcome) = apply_per_result_persistence(
                 std::mem::take(&mut result.content),
                 self.artifact_store.as_ref(),
@@ -925,6 +1029,26 @@ impl ApprovalSecurityMiddleware {
     }
 }
 
+/// The fail-closed denial a halted external-effect tool call resolves to.
+/// Returns `Some(result)` iff the emergency stop is engaged, otherwise `None`.
+/// Extracted from `wrap_tool` so the deny path is unit-testable without
+/// constructing a full `RunContext`/`ToolHandler` runtime.
+fn emergency_halt_denial(call_id: String, name: String) -> Option<TaToolResult> {
+    if !crate::openhuman::emergency_stop::is_engaged_global() {
+        return None;
+    }
+    let reason = "Emergency stop is engaged — this action is blocked until you resume automation."
+        .to_string();
+    Some(TaToolResult {
+        call_id,
+        name,
+        content: reason.clone(),
+        raw: None,
+        error: Some(reason),
+        elapsed_ms: 0,
+    })
+}
+
 #[async_trait]
 impl ToolMiddleware<()> for ApprovalSecurityMiddleware {
     fn name(&self) -> &str {
@@ -942,6 +1066,12 @@ impl ToolMiddleware<()> for ApprovalSecurityMiddleware {
         // approval await.
         let mut audit_id: Option<String> = None;
         if self.has_external_effect(&call.name, &call.arguments) {
+            // Emergency stop: refuse every external-effect tool while halted,
+            // before touching the approval gate. Fail-closed.
+            if let Some(denial) = emergency_halt_denial(call.id.clone(), call.name.clone()) {
+                tracing::warn!(tool = %call.name, "[tinyagents::mw] emergency stop engaged — refusing tool call");
+                return Ok(MiddlewareToolOutcome::Result(denial));
+            }
             if let Some(gate) = ApprovalGate::try_global() {
                 let summary = summarize_action(&call.name, &call.arguments);
                 let redacted = redact_args(&call.arguments);
@@ -1615,6 +1745,7 @@ impl Middleware<()> for SchemaGuardMiddleware {
             id: call.id.clone(),
             name: call.name.clone(),
             arguments: call.arguments.clone(),
+            invalid: None,
         };
         let Err(err) = schema.validate_call(&probe) else {
             return Ok(());
@@ -2246,7 +2377,7 @@ fn user_actionable_escalation(tool: &str, error: &str) -> Option<String> {
         return None;
     }
     // Keep this narrow: some scope/permission failures legitimately tell the
-    // user to reconnect in Settings, but they are not missing connections.
+    // user to reconnect in Connections, but they are not missing connections.
     let missing_connection = lower.contains("[composio:error:composio_platform]")
         || lower.contains("not connected")
         || lower.contains("isn't connected")
@@ -2259,7 +2390,7 @@ fn user_actionable_escalation(tool: &str, error: &str) -> Option<String> {
     }
     Some(format!(
         "I can't continue without your input: the `{tool}` action needs a service that isn't \
-         connected. {}\n\nConnect it (Settings \u{2192} Connections), then tell me to retry — or \
+         connected. {}\n\nConnect it (Connections), then tell me to retry — or \
          tell me how you'd like to proceed instead.",
         crate::openhuman::util::truncate_with_ellipsis(error, 400),
     ))
@@ -2272,6 +2403,31 @@ fn args_fingerprint(arguments: &serde_json::Value) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     arguments.to_string().hash(&mut hasher);
     format!("{:x}", hasher.finish())
+}
+
+/// Detect a **body-level** failure from `validate_workflow` / `dry_run_workflow`
+/// (issue: flows breaker doesn't see repeated invalid-graph loops). Both tools
+/// report an invalid graph / aborted sandbox run via `ToolResult::success` with
+/// a JSON body carrying top-level `"ok": false`
+/// (`src/openhuman/flows/builder_tools.rs`) rather than `ToolResult::error` — so
+/// `result.error` stays `None` and the no-progress breaker below never counts
+/// the repeat as a failure, letting a graph the model can't fix burn the whole
+/// iteration budget instead of tripping the same nudge/halt ladder.
+///
+/// Scoped to exactly these two tool names: a generic `"ok": false` in some other
+/// tool's JSON body may be legitimate data (not a failure signal), so this must
+/// not reinterpret arbitrary tool output. Tolerant of non-JSON or missing `ok`
+/// content — returns `false` rather than guessing.
+fn is_body_level_failure(name: &str, content: &str) -> bool {
+    if name != "validate_workflow" && name != "dry_run_workflow" {
+        return false;
+    }
+    match serde_json::from_str::<serde_json::Value>(content) {
+        Ok(serde_json::Value::Object(map)) => {
+            matches!(map.get("ok"), Some(serde_json::Value::Bool(false)))
+        }
+        _ => false,
+    }
 }
 
 #[async_trait]
@@ -2308,11 +2464,20 @@ impl Middleware<()> for RepeatedToolFailureMiddleware {
             .unwrap_or_default();
         let step = self.step.fetch_add(1, Ordering::SeqCst) + 1;
 
+        // Body-level failure signal: `validate_workflow` / `dry_run_workflow`
+        // report an invalid graph via a `success` result whose JSON body carries
+        // `"ok": false` — see `is_body_level_failure`. Only meaningful when
+        // `result.error` is `None`; when both are set, `result.error` already
+        // drives every check below, so this never double-counts one failure.
+        let body_level_failure =
+            result.error.is_none() && is_body_level_failure(&result.name, &result.content);
+
         // Combined failure text for classification: the model-facing content plus
         // the (redundant but authoritative) error field. Both are scanned for the
         // policy / terminal-inference / recoverable markers below.
         let failure_text = match result.error.as_deref() {
             Some(err) => format!("{}\n{}", result.content, err),
+            None if body_level_failure => result.content.clone(),
             None => String::new(),
         };
 
@@ -2394,10 +2559,20 @@ impl Middleware<()> for RepeatedToolFailureMiddleware {
         // handles the deterministic 3/6 + hard-reject-2 path below.
         self.reset_recoverable_streak();
 
+        // Union the body-level `ok:false` signal with the existing `error.is_some()`
+        // predicate so the crate tracker (which reads `attempt.error` as its sole
+        // success/failure signal — `None` means "progress was made, reset every
+        // counter") sees the repeat as a failure and feeds it into the same
+        // nudge/halt ladder as a real tool error.
+        let attempt_error: Option<&str> = match result.error.as_deref() {
+            Some(err) => Some(err),
+            None if body_level_failure => Some(failure_text.as_str()),
+            None => None,
+        };
         let attempt = ToolAttempt {
             tool: &result.name,
             arg_fingerprint: &arg_fp,
-            error: result.error.as_deref(),
+            error: attempt_error,
             hard_reject,
             // The unknown-tool recovery sentinel is a C3 concern; today every
             // failure feeds the generic backstop exactly as the legacy ladder did.
@@ -3598,6 +3773,317 @@ mod tests {
         );
     }
 
+    // ── ToolOutputMiddleware: COMPACTION_EXEMPT_TOOLS (workflow proposals) ───
+
+    /// A `workflow_proposal` payload with enough uniform-object rows to clear
+    /// tinyjuice's `MIN_ROWS` (3) and default ~512-byte tabulation floor —
+    /// i.e. exactly the shape that used to get its `"type"` marker stripped by
+    /// the `[json table: …]` rewrite before the middleware exemption existed.
+    fn large_workflow_proposal_json() -> String {
+        let nodes: Vec<serde_json::Value> = (0..6)
+            .map(|i| {
+                json!({
+                    "id": format!("node-{i}"),
+                    "kind": if i == 0 { "trigger" } else { "tool_call" },
+                    "name": format!("Step {i}"),
+                    "config": {
+                        "slug": format!("oh:placeholder_action_{i}"),
+                        "args": { "input": format!("value-{i}"), "note": "generic placeholder payload for size padding" }
+                    }
+                })
+            })
+            .collect();
+        serde_json::to_string(&json!({
+            "type": "workflow_proposal",
+            "flow_id": "flow-large-graph",
+            "graph": { "nodes": nodes, "edges": [] },
+        }))
+        .unwrap()
+    }
+
+    fn compaction_enabled_mw() -> ToolOutputMiddleware {
+        ToolOutputMiddleware {
+            budget_bytes: 1_000_000,
+            payload_summarizer: None,
+            artifact_store: None,
+            tokenjuice_compaction_enabled: true,
+            tokenjuice_compression: AgentTokenjuiceCompression::Full,
+            tool_policies: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn compaction_exempt_tools_contains_every_proposal_tool() {
+        for tool in [
+            "propose_workflow",
+            "revise_workflow",
+            "edit_workflow",
+            "save_workflow",
+            "create_workflow",
+        ] {
+            assert!(
+                COMPACTION_EXEMPT_TOOLS.contains(&tool),
+                "{tool} must be exempt from tokenjuice/summarizer compaction"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_output_tabulates_a_large_graph_for_a_non_exempt_tool() {
+        // Sanity baseline proving this test's payload actually exercises real
+        // tinyjuice tabulation (and isn't just below-threshold): a tool name
+        // NOT in COMPACTION_EXEMPT_TOOLS loses the `"type"` marker.
+        let mw = compaction_enabled_mw();
+        let payload = large_workflow_proposal_json();
+        let mut result = tool_result("some_other_tool", &payload);
+        mw.after_tool(&mut ctx(), &(), &mut result).await.unwrap();
+        assert_ne!(
+            result.content, payload,
+            "a non-exempt tool's large uniform-array payload should be rewritten by tokenjuice"
+        );
+        let reparsed: Result<serde_json::Value, _> = serde_json::from_str(&result.content);
+        let marker_survived = reparsed
+            .ok()
+            .and_then(|v| v.get("type").and_then(|t| t.as_str().map(str::to_string)))
+            == Some("workflow_proposal".to_string());
+        assert!(
+            !marker_survived,
+            "baseline expectation: tabulation strips the type marker for non-exempt tools"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_output_leaves_propose_workflow_byte_for_byte_intact() {
+        let mw = compaction_enabled_mw();
+        let payload = large_workflow_proposal_json();
+        let mut result = tool_result("propose_workflow", &payload);
+        mw.after_tool(&mut ctx(), &(), &mut result).await.unwrap();
+        assert_eq!(
+            result.content, payload,
+            "propose_workflow results must pass through compaction untouched"
+        );
+        let reparsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(reparsed["type"], "workflow_proposal");
+        assert_eq!(reparsed["graph"]["nodes"].as_array().unwrap().len(), 6);
+    }
+
+    #[tokio::test]
+    async fn tool_output_leaves_every_exempt_tool_name_intact() {
+        let mw = compaction_enabled_mw();
+        let payload = large_workflow_proposal_json();
+        for tool in COMPACTION_EXEMPT_TOOLS {
+            let mut result = tool_result(tool, &payload);
+            mw.after_tool(&mut ctx(), &(), &mut result).await.unwrap();
+            assert_eq!(
+                result.content, payload,
+                "{tool}'s result must pass through compaction untouched"
+            );
+        }
+    }
+
+    // ── ToolOutputMiddleware: truncation exemption (#4888 follow-up, gap 1) ──
+
+    /// A `workflow_proposal` payload with `node_count` nodes, each padded with
+    /// a 500-byte `note`, so the caller can force the serialized size past the
+    /// ~16 KiB shared byte-budget backstop (`DEFAULT_TOOL_RESULT_BUDGET_BYTES`)
+    /// — the size class a real ≥10-node graph proposal routinely reaches, and
+    /// exactly what used to get UTF-8-boundary-truncated into unparseable JSON
+    /// before the truncation exemption existed.
+    fn oversized_workflow_proposal_json(node_count: usize) -> String {
+        let nodes: Vec<serde_json::Value> = (0..node_count)
+            .map(|i| {
+                json!({
+                    "id": format!("node-{i}"),
+                    "kind": if i == 0 { "trigger" } else { "tool_call" },
+                    "name": format!("Step {i}"),
+                    "config": {
+                        "slug": format!("oh:placeholder_action_{i}"),
+                        "args": { "input": format!("value-{i}"), "note": "a".repeat(500) }
+                    }
+                })
+            })
+            .collect();
+        serde_json::to_string(&json!({
+            "type": "workflow_proposal",
+            "flow_id": "flow-oversized-graph",
+            "graph": { "nodes": nodes, "edges": [] },
+        }))
+        .unwrap()
+    }
+
+    /// Middleware config isolating the byte-cap stages (3+4): tokenjuice off,
+    /// no tool-declared char cap, the real `DEFAULT_TOOL_RESULT_BUDGET_BYTES`
+    /// (~16 KiB) as the shared backstop, and no artifact store (so an
+    /// over-budget non-exempt tool falls straight to inline truncation instead
+    /// of being persisted — deterministic to assert on).
+    fn truncation_probe_mw() -> ToolOutputMiddleware {
+        ToolOutputMiddleware {
+            budget_bytes: DEFAULT_TOOL_RESULT_BUDGET_BYTES,
+            payload_summarizer: None,
+            artifact_store: None,
+            tokenjuice_compaction_enabled: false,
+            tokenjuice_compression: AgentTokenjuiceCompression::Off,
+            tool_policies: HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_output_leaves_an_oversized_propose_workflow_byte_for_byte_intact() {
+        // Gap 1: a ≥10-node proposal routinely exceeds the ~16 KiB shared
+        // byte-budget backstop. Before the truncation exemption, step 4
+        // truncated it at a UTF-8 boundary — invalid JSON, so both
+        // `flows::ops::extract_workflow_proposal` and the frontend's
+        // `parseWorkflowProposal` silently fell back to `proposal: None` and a
+        // blank canvas. This must survive byte-for-byte regardless of size.
+        let mw = truncation_probe_mw();
+        let payload = oversized_workflow_proposal_json(30);
+        assert!(
+            payload.len() > DEFAULT_TOOL_RESULT_BUDGET_BYTES,
+            "test payload must exceed the shared byte budget to exercise step 4: {} bytes",
+            payload.len()
+        );
+        let mut result = tool_result("propose_workflow", &payload);
+        mw.after_tool(&mut ctx(), &(), &mut result).await.unwrap();
+        assert_eq!(
+            result.content, payload,
+            "an oversized propose_workflow result must not be truncated by the shared byte-budget backstop"
+        );
+        let reparsed: serde_json::Value = serde_json::from_str(&result.content)
+            .expect("must still be valid JSON after passing through after_tool");
+        assert_eq!(reparsed["type"], "workflow_proposal");
+        assert_eq!(reparsed["graph"]["nodes"].as_array().unwrap().len(), 30);
+    }
+
+    #[tokio::test]
+    async fn tool_output_truncates_the_same_oversized_payload_for_a_non_exempt_tool() {
+        // Baseline pairing with the test above: proves the identical oversized
+        // payload IS truncated (and consequently unparseable) for a tool that
+        // is NOT truncation-exempt, so the exemption test isn't vacuously true
+        // because the payload never actually crossed the budget.
+        let mw = truncation_probe_mw();
+        let payload = oversized_workflow_proposal_json(30);
+        let mut result = tool_result("some_other_tool", &payload);
+        mw.after_tool(&mut ctx(), &(), &mut result).await.unwrap();
+        assert_ne!(
+            result.content, payload,
+            "a non-exempt tool's oversized payload should be truncated by the shared byte-budget backstop"
+        );
+        assert!(
+            result.content.contains("truncated by tool_result_budget"),
+            "expected the byte-budget truncation marker: {}",
+            result.content
+        );
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&result.content).is_err(),
+            "truncated JSON should no longer parse as a whole document"
+        );
+    }
+
+    // ── ToolOutputMiddleware: sampling tools (#4888 follow-up, gap 2) ────────
+
+    /// A large uniform-array JSON payload shaped like a real sampled tool
+    /// response (no `workflow_proposal` envelope) — what `get_tool_output_sample`
+    /// / `get_tool_contract` actually return so the model can derive an exact
+    /// `primary_array_path`/`output_fields` from the real shape. `row_count`
+    /// rows of ≥3 clear tinyjuice's tabulation threshold.
+    fn large_sample_response_json(row_count: usize) -> String {
+        let rows: Vec<serde_json::Value> = (0..row_count)
+            .map(|i| {
+                json!({
+                    "id": i,
+                    "title": format!("Issue {i}"),
+                    "state": "open",
+                    "body": "padding padding padding padding padding padding",
+                })
+            })
+            .collect();
+        serde_json::to_string(&json!({ "items": rows })).unwrap()
+    }
+
+    #[tokio::test]
+    async fn get_tool_output_sample_is_compaction_exempt() {
+        // Gap 2: tokenjuice tabulation elides the very array the model calls
+        // this tool to observe, so it would derive a wrong or nonexistent
+        // `split_out.path` from the tabulated summary instead of the real
+        // response shape. The sample must reach the model untabulated.
+        let mw = compaction_enabled_mw();
+        let payload = large_sample_response_json(10);
+        let mut result = tool_result("get_tool_output_sample", &payload);
+        mw.after_tool(&mut ctx(), &(), &mut result).await.unwrap();
+        assert_eq!(
+            result.content, payload,
+            "get_tool_output_sample's response must not be tokenjuice-tabulated"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_tool_contract_is_compaction_exempt() {
+        let mw = compaction_enabled_mw();
+        let payload = large_sample_response_json(10);
+        let mut result = tool_result("get_tool_contract", &payload);
+        mw.after_tool(&mut ctx(), &(), &mut result).await.unwrap();
+        assert_eq!(
+            result.content, payload,
+            "get_tool_contract's response must not be tokenjuice-tabulated"
+        );
+    }
+
+    #[tokio::test]
+    async fn sampling_tool_output_still_hits_the_byte_budget_backstop() {
+        // Unlike the proposal tools, sampling tools are deliberately NOT
+        // truncation-exempt: a truncated-but-untabulated sample is still a
+        // usable (if partial) real response, and these calls can be genuinely
+        // large, so the shared byte-budget backstop keeps protecting the
+        // context budget for them.
+        let mw = truncation_probe_mw();
+        let payload = large_sample_response_json(400);
+        assert!(
+            payload.len() > DEFAULT_TOOL_RESULT_BUDGET_BYTES,
+            "test payload must exceed the shared byte budget: {} bytes",
+            payload.len()
+        );
+        let mut result = tool_result("get_tool_output_sample", &payload);
+        mw.after_tool(&mut ctx(), &(), &mut result).await.unwrap();
+        assert_ne!(
+            result.content, payload,
+            "get_tool_output_sample must still be subject to the shared byte-budget backstop"
+        );
+        assert!(
+            result.content.contains("truncated by tool_result_budget"),
+            "expected the byte-budget truncation marker: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn compaction_and_truncation_exempt_sets_are_distinct() {
+        // Proposal tools: exempt from both compaction and truncation.
+        for tool in COMPACTION_EXEMPT_TOOLS {
+            assert!(
+                is_compaction_exempt(tool),
+                "{tool} must be compaction-exempt"
+            );
+            assert!(
+                is_truncation_exempt(tool),
+                "{tool} must be truncation-exempt"
+            );
+        }
+        // Sampling tools: exempt from compaction only.
+        for tool in SAMPLING_TOOLS {
+            assert!(
+                is_compaction_exempt(tool),
+                "{tool} must be compaction-exempt"
+            );
+            assert!(
+                !is_truncation_exempt(tool),
+                "{tool} must remain subject to the char cap / shared byte-budget backstop"
+            );
+        }
+        // An arbitrary non-listed tool: exempt from neither.
+        assert!(!is_compaction_exempt("some_other_tool"));
+        assert!(!is_truncation_exempt("some_other_tool"));
+    }
+
     // ── CostBudgetMiddleware ────────────────────────────────────────────────
 
     #[tokio::test]
@@ -3748,11 +4234,11 @@ mod tests {
         // A not-connected blocker → a user-directed ask with a concrete next step.
         let ask = user_actionable_escalation(
             "gmail_send",
-            "Gmail is not connected. Ask the user to connect 'gmail' in Settings → Connections.",
+            "Gmail is not connected. Ask the user to connect 'gmail' in Connections.",
         )
         .expect("a missing-connection failure is user-actionable");
         assert!(ask.contains("without your input"));
-        assert!(ask.contains("Settings"));
+        assert!(ask.contains("Connections"));
         assert!(ask.to_lowercase().contains("connect"));
         assert!(ask.contains("gmail_send"));
         // The original tool text is relayed so the user sees which service.
@@ -3765,7 +4251,7 @@ mod tests {
             "gmail_send",
             "[composio:error:insufficient_scope] `gmail_send` was rejected because the connected \
              gmail account is missing required permissions (insufficient authentication scopes). \
-             Reconnect the integration in Settings → Connections → gmail and grant the scopes \
+             Reconnect the integration in Connections → gmail and grant the scopes \
              requested during OAuth."
         )
         .is_none());
@@ -3773,7 +4259,7 @@ mod tests {
             "gmail_trigger",
             "[composio:error:trigger_permission] Couldn't enable this trigger: the connected \
              gmail account doesn't have permission to manage triggers. Reconnect gmail in \
-             Settings → Connections → gmail and grant the permissions requested during OAuth, \
+             Connections → gmail and grant the permissions requested during OAuth, \
              then try again."
         )
         .is_none());
@@ -3790,7 +4276,7 @@ mod tests {
         for _ in 0..3 {
             let mut r = failing_result(
                 "slack_post",
-                "Slack is not connected — connect it in Settings → Connections.",
+                "Slack is not connected — connect it in Connections.",
             );
             mw.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
         }
@@ -3800,7 +4286,7 @@ mod tests {
             .clone()
             .expect("halt records a summary");
         assert!(
-            summary.contains("without your input") && summary.contains("Settings"),
+            summary.contains("without your input") && summary.contains("Connections"),
             "the halt should ask the user to connect the service: {summary}"
         );
         assert!(
@@ -3890,6 +4376,169 @@ mod tests {
         );
     }
 
+    // ── RepeatedToolFailureMiddleware body-level ok:false (flows breaker) ────
+
+    /// A `ToolResult::success` (no `error`) whose JSON body carries a top-level
+    /// `"ok": false` — the shape `validate_workflow` / `dry_run_workflow` return
+    /// for an invalid graph / aborted sandbox run.
+    fn body_failure_result(name: &str, extra: serde_json::Value) -> TaToolResult {
+        let mut body = json!({ "ok": false });
+        if let serde_json::Value::Object(map) = extra {
+            body.as_object_mut().unwrap().extend(map);
+        }
+        tool_result(name, &serde_json::to_string_pretty(&body).unwrap())
+    }
+
+    #[test]
+    fn is_body_level_failure_detects_validate_and_dry_run_only() {
+        assert!(is_body_level_failure(
+            "validate_workflow",
+            r#"{"ok": false, "errors": ["bad node"]}"#,
+        ));
+        assert!(is_body_level_failure(
+            "dry_run_workflow",
+            r#"{"sandbox": true, "ok": false, "error": "aborted"}"#,
+        ));
+        // ok:true never counts as a failure.
+        assert!(!is_body_level_failure(
+            "validate_workflow",
+            r#"{"ok": true}"#,
+        ));
+        // A different tool's ok:false is not reinterpreted as a failure — it may
+        // be legitimate data.
+        assert!(!is_body_level_failure(
+            "some_other_tool",
+            r#"{"ok": false}"#,
+        ));
+        // Tolerant of non-JSON / missing `ok`: never guess.
+        assert!(!is_body_level_failure("validate_workflow", "not json"));
+        assert!(!is_body_level_failure("validate_workflow", r#"{}"#));
+    }
+
+    #[tokio::test]
+    async fn repeated_validate_workflow_ok_false_trips_the_breaker() {
+        // The bug: `validate_workflow` reports an invalid graph via a `success`
+        // result body-level `"ok": false`, never `result.error` — so the breaker
+        // must synthesize a failure signal from the body or it burns the whole
+        // iteration budget on a graph it can never fix.
+        let handle = SteeringHandle::allow_all();
+        let mw = RepeatedToolFailureMiddleware::new(
+            handle.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
+        let mut halted = false;
+        // Same invalid graph re-validated repeatedly (same content each time, no
+        // `error` field): well within the varied-failure any-failure backstop
+        // (halts at 6 consecutive) even before the identical-repeat threshold.
+        for _ in 0..8 {
+            let mut r = body_failure_result(
+                "validate_workflow",
+                json!({ "errors": ["node 'x' has no outgoing edge"] }),
+            );
+            assert!(r.error.is_none(), "the tool call itself did not error");
+            mw.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+            if drain_pause_count(&handle) > 0 {
+                halted = true;
+                break;
+            }
+        }
+        assert!(
+            halted,
+            "repeated validate_workflow ok:false must trip the no-progress breaker"
+        );
+    }
+
+    #[tokio::test]
+    async fn single_or_unrelated_ok_false_does_not_falsely_trip_the_breaker() {
+        let handle = SteeringHandle::allow_all();
+        let mw = RepeatedToolFailureMiddleware::new(
+            handle.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
+        // A single validate_workflow ok:false is not a loop.
+        let mut r = body_failure_result("validate_workflow", json!({}));
+        mw.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+        assert_eq!(
+            drain_pause_count(&handle),
+            0,
+            "a single body-level failure must not halt"
+        );
+
+        // An unrelated tool's ok:false, repeated, must never be reinterpreted as
+        // a failure signal — it may be legitimate data from that tool.
+        for _ in 0..8 {
+            let mut r = body_failure_result("some_other_tool", json!({ "count": 0 }));
+            mw.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+        }
+        assert_eq!(
+            drain_pause_count(&handle),
+            0,
+            "an unrelated tool's ok:false must not trip the breaker"
+        );
+        assert!(
+            handle.drain().is_empty(),
+            "an unrelated tool's ok:false must not even nudge the run"
+        );
+    }
+
+    #[tokio::test]
+    async fn existing_error_is_some_behavior_is_unchanged_by_body_level_check() {
+        // Regression guard: a real `result.error` (no body-level ok:false at all)
+        // must still drive the breaker exactly as before — three identical
+        // failures halt, matching `repeated_tool_failure_pauses_only_after_the_threshold`.
+        let handle = SteeringHandle::allow_all();
+        let mw = RepeatedToolFailureMiddleware::new(
+            handle.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
+        for _ in 0..2 {
+            let mut r = failing_result("flaky", "boom");
+            mw.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+        }
+        assert_eq!(
+            drain_pause_count(&handle),
+            0,
+            "no halt before the threshold"
+        );
+        let mut r = failing_result("flaky", "boom");
+        mw.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+        assert_eq!(
+            drain_pause_count(&handle),
+            1,
+            "error.is_some() behavior must be unchanged by the body-level check"
+        );
+
+        // A tool result with BOTH `error` set AND a body-level ok:false must not
+        // be double-counted — it is still exactly one failed attempt per call.
+        let handle2 = SteeringHandle::allow_all();
+        let mw2 = RepeatedToolFailureMiddleware::new(
+            handle2.clone(),
+            3,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
+        for _ in 0..2 {
+            let mut r = body_failure_result("validate_workflow", json!({}));
+            r.error = Some("validation failed".to_string());
+            mw2.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+        }
+        assert_eq!(
+            drain_pause_count(&handle2),
+            0,
+            "two identical error+ok:false results are one repeat each, not two — below the halt threshold"
+        );
+        let mut r = body_failure_result("validate_workflow", json!({}));
+        r.error = Some("validation failed".to_string());
+        mw2.after_tool(&mut ctx(), &(), &mut r).await.unwrap();
+        assert_eq!(
+            drain_pause_count(&handle2),
+            1,
+            "the third identical error+ok:false result halts, same as a plain error"
+        );
+    }
+
     // ── ApprovalSecurityMiddleware ──────────────────────────────────────────
 
     #[test]
@@ -3913,6 +4562,39 @@ mod tests {
         assert!(!mw.has_external_effect("missing", &json!({})));
     }
 
+    /// Exercises the emergency-stop guard the middleware consults before the
+    /// approval gate. Constructing a full `RunContext`/`ToolHandler` to drive
+    /// `wrap_tool` end-to-end is heavy, so this asserts the exact global
+    /// predicate the guard branches on flips as the switch engages/clears.
+    #[test]
+    fn emergency_guard_blocks_when_engaged() {
+        let _g = crate::openhuman::emergency_stop::state::EMERGENCY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        use crate::openhuman::emergency_stop::state::ClearEmergencyOnDrop;
+        use crate::openhuman::emergency_stop::EmergencyStop;
+        let stop = EmergencyStop::init_global();
+        // Panic-safe: always resets the process-global on drop, even on an
+        // assertion failure below, so a leaked engaged state can't poison
+        // later tests.
+        let _reset = ClearEmergencyOnDrop;
+        stop.clear();
+
+        // Not halted → no denial, and the guard predicate is false.
+        assert!(!crate::openhuman::emergency_stop::is_engaged_global());
+        assert!(emergency_halt_denial("c1".into(), "send".into()).is_none());
+
+        // Halted → the deny result is produced with the call's id/name and an
+        // error payload (this is the exact branch `wrap_tool` returns).
+        stop.engage(Some("test".into()), "user", 0);
+        assert!(crate::openhuman::emergency_stop::is_engaged_global());
+        let denial =
+            emergency_halt_denial("c1".into(), "send".into()).expect("halted → denial produced");
+        assert_eq!(denial.call_id, "c1");
+        assert_eq!(denial.name, "send");
+        assert!(denial.error.is_some());
+    }
+
     // ── MemoryProtocolMiddleware (issue #4116) ──────────────────────────────
 
     use crate::openhuman::agent::harness::memory_protocol::MEMORY_PROTOCOL_MARKER;
@@ -3931,6 +4613,7 @@ mod tests {
             id: "c1".into(),
             name: name.into(),
             arguments: args,
+            invalid: None,
         };
         mw.before_tool(&mut ctx(), &(), &mut call).await.unwrap();
         let mut result = tool_result(name, content); // call_id "c1" matches

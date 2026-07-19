@@ -39,7 +39,6 @@ use crate::openhuman::skills::ops_create::{
 use crate::openhuman::skills::ops_types::WorkflowScope;
 use crate::openhuman::skills::registry::get_workflow;
 use crate::openhuman::skills::run_log;
-use crate::openhuman::tools::policy::DefaultToolPolicy;
 use crate::openhuman::tools::traits::Tool;
 
 // ── Mock LLM ─────────────────────────────────────────────────────────────
@@ -196,7 +195,7 @@ async fn mock_llm_orchestrator_lists_and_runs_workflows_through_the_loop() {
 
     let mut history = vec![ChatMessage::user("Triage my inbox using a workflow.")];
     let result = run_channel_turn_via_graph(
-        provider,
+        crate::openhuman::tinyagents::TurnModelSource::new(provider),
         &mut history,
         tools,
         vec![],

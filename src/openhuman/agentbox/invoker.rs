@@ -10,11 +10,9 @@ use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::core::socketio::WebChannelEvent;
-use crate::openhuman::channels::providers::web::{
-    start_chat, subscribe_web_channel_events, ChatRequestMetadata,
-};
 use crate::openhuman::memory::rpc_models::CreateConversationThreadRequest;
 use crate::openhuman::threads::ops::thread_create_new;
+use crate::openhuman::web_chat::{start_chat, subscribe_web_channel_events, ChatRequestMetadata};
 
 /// Outcome of inspecting one broadcast event against the request we're
 /// awaiting. Extracted as a pure function so the request-id filtering and

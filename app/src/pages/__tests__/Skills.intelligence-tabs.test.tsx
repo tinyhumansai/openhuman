@@ -5,11 +5,12 @@ import '../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../test/test-utils';
 import Skills from '../Skills';
 
-// The "API keys" group tabs (llm / voice / embeddings / search / composio-key)
-// render relocated settings panels inside the Connections two-pane shell. Stub
-// each so the per-tab branches in Skills are exercised without their deep trees.
-vi.mock('../../components/settings/panels/AIPanel', () => ({
-  default: () => <div data-testid="skills-ai-panel" />,
+// The "API keys" group tabs (llm / voice / embeddings / search / usage /
+// composio-key) render relocated settings panels inside the Connections
+// two-pane shell. Stub each so the per-tab branches in Skills are exercised
+// without their deep trees. The LLM tab renders the 3-chip LlmConnectionsPanel.
+vi.mock('../../components/settings/panels/LlmConnectionsPanel', () => ({
+  default: () => <div data-testid="skills-llm-panel" />,
 }));
 vi.mock('../../components/settings/panels/VoicePanel', () => ({
   default: () => <div data-testid="skills-voice-panel" />,
@@ -22,6 +23,9 @@ vi.mock('../../components/settings/panels/SearchPanel', () => ({
 }));
 vi.mock('../../components/settings/panels/ComposioPanel', () => ({
   default: () => <div data-testid="skills-composio-panel" />,
+}));
+vi.mock('../../components/settings/panels/UsagePanel', () => ({
+  default: () => <div data-testid="skills-usage-panel" />,
 }));
 
 vi.mock('../../hooks/useChannelDefinitions', () => ({
@@ -69,10 +73,11 @@ vi.mock('../../utils/tauriCommands', async () => {
 
 describe('Skills page — API keys (intelligence) tabs', () => {
   it.each([
-    ['llm', 'skills-ai-panel'],
+    ['llm', 'skills-llm-panel'],
     ['voice', 'skills-voice-panel'],
     ['embeddings', 'skills-embeddings-panel'],
     ['search', 'skills-search-panel'],
+    ['usage', 'skills-usage-panel'],
     ['composio-key', 'skills-composio-panel'],
   ])('renders the %s panel for ?tab=%s', async (tab, testId) => {
     renderWithProviders(<Skills />, { initialEntries: [`/connections?tab=${tab}`] });

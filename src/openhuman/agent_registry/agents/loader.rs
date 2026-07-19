@@ -257,18 +257,37 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::mcp_setup::prompt::build,
         graph_fn: None,
     },
+    // Connected-server execution specialist. Compiled out with the `mcp`
+    // feature, which drops the `delegate_use_mcp_server` tool from the
+    // orchestrator's synthesised belt.
+    //
+    // The orchestrator's `agent.toml` still lists `mcp_agent` in `subagents`
+    // (TOML is data — it cannot be `cfg`'d, and forking it per-feature would
+    // invite exactly the data drift this gate is meant to avoid). That
+    // dangling reference is SAFE and already handled: `collect_orchestrator_tools`
+    // logs a warn and skips subagent ids that are not in the registry, and
+    // `validate_tier_hierarchy` explicitly `continue`s past unknown ids rather
+    // than failing the boot. `orchestrator_tolerates_absent_mcp_agent` in the
+    // test module below pins that contract so a future "strict unknown
+    // subagent" change cannot silently break the slim build's boot.
+    #[cfg(feature = "mcp")]
     BuiltinAgent {
         id: "mcp_agent",
         toml: include_str!("mcp_agent/agent.toml"),
         prompt_fn: super::mcp_agent::prompt::build,
         graph_fn: None,
     },
+    // Skill agents — `#[cfg]` rather than stub: `include_str!` embeds the
+    // agent TOML from disk regardless of module gating, so the entry itself
+    // must disappear when the `skills` feature is off.
+    #[cfg(feature = "skills")]
     BuiltinAgent {
         id: "skill_setup",
         toml: include_str!("../../skill_registry/agent/skill_setup/agent.toml"),
         prompt_fn: crate::openhuman::skill_registry::agent::skill_setup::prompt::build,
         graph_fn: None,
     },
+    #[cfg(feature = "skills")]
     BuiltinAgent {
         id: "skill_executor",
         toml: include_str!("../../skill_runtime/agent/skill_executor/agent.toml"),
@@ -287,39 +306,12 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: crate::openhuman::subconscious::agent::prompt::build,
         graph_fn: None,
     },
-    BuiltinAgent {
-        id: "frontend_agent",
-        toml: include_str!("../../orchestration/frontend_agent/agent.toml"),
-        prompt_fn: crate::openhuman::orchestration::frontend_agent::prompt::build,
-        graph_fn: Some(crate::openhuman::orchestration::frontend_agent::graph::graph),
-    },
-    BuiltinAgent {
-        id: "reasoning_agent",
-        toml: include_str!("../../orchestration/reasoning_agent/agent.toml"),
-        prompt_fn: crate::openhuman::orchestration::reasoning_agent::prompt::build,
-        graph_fn: Some(crate::openhuman::orchestration::reasoning_agent::graph::graph),
-    },
-    // OpenHuman talking directly to its human in the Master chat — same tier +
-    // tiny.place tool belt as the reasoning core, human-facing prompt. Runs in the
-    // `execute` node for a local Master cycle (see orchestration::ops).
-    BuiltinAgent {
-        id: "master_agent",
-        toml: include_str!("../../orchestration/master_agent/agent.toml"),
-        prompt_fn: crate::openhuman::orchestration::master_agent::prompt::build,
-        graph_fn: Some(crate::openhuman::orchestration::reasoning_agent::graph::graph),
-    },
-    // Tool-free relay: reports an external agent's (untrusted) reply back into the
-    // Master chat as OpenHuman's own message. No tiny.place tools / sub-agents, so
-    // peer text can't prompt-inject OpenHuman into acting. Default single-turn graph.
-    BuiltinAgent {
-        id: "master_reporter",
-        toml: include_str!("../../orchestration/master_reporter/agent.toml"),
-        prompt_fn: crate::openhuman::orchestration::master_reporter::prompt::build,
-        graph_fn: None,
-    },
     // Workflow-authoring specialist (Phase 5a): builds tinyflows automation
     // graphs from natural language and returns a validated PROPOSAL — it never
     // persists or enables a flow. Deliberately narrow propose-or-read tool belt.
+    // Gated with `flows`: a slim build must not advertise an agent whose entire
+    // tool belt is absent, so the entry (and its `include_str!`) is stripped.
+    #[cfg(feature = "flows")]
     BuiltinAgent {
         id: "workflow_builder",
         toml: include_str!("../../flows/agents/workflow_builder/agent.toml"),
@@ -331,7 +323,9 @@ pub const BUILTINS: &[BuiltinAgent] = &[
     // `suggest_workflows` to record concrete, buildable automation ideas for
     // the Flows page "Suggested for you" section. It never persists or enables
     // a flow — the read-only counterpart to `workflow_builder`, which turns a
-    // picked suggestion into a real graph proposal.
+    // picked suggestion into a real graph proposal. Gated with `flows` (same
+    // reasoning as `workflow_builder` above).
+    #[cfg(feature = "flows")]
     BuiltinAgent {
         id: "flow_discovery",
         toml: include_str!("../../flows/agents/flow_discovery/agent.toml"),
@@ -781,6 +775,28 @@ mod tests {
                         "orchestrator must have read-only direct tool `{direct}`"
                     );
                 }
+                // Direct memory surface (#4762): recall/store are the product's
+                // core and must be first-class direct tools, not a sub-agent
+                // spawn — a trivial recall or a single "remember this" must not
+                // pay a blocking agentic round-trip (over-delegation, #4744) that
+                // can hang or return a 0-char result with persistence unconfirmed.
+                // Deep tree walks / reconciliation still delegate to
+                // `retrieve_memory` / `manage_profile_memory`.
+                for direct in ["memory_recall", "memory_store", "save_preference"] {
+                    assert!(
+                        tools.iter().any(|t| t == direct),
+                        "orchestrator must have direct memory tool `{direct}` (#4762)"
+                    );
+                }
+                // Memory-protocol close-out (#4116): a direct `memory_store` write
+                // obliges an `update_memory_md` index reconcile, so the tool that
+                // performs it must be in scope — otherwise the protocol's guidance
+                // is unsatisfiable and MEMORY.md (loaded here) drifts from the store.
+                assert!(
+                    tools.iter().any(|t| t == "update_memory_md"),
+                    "orchestrator must have `update_memory_md` to reconcile MEMORY.md \
+                     after a direct memory_store (#4762)"
+                );
             }
             ToolScope::Wildcard => panic!("orchestrator must have named tool allowlist"),
         }
@@ -1008,58 +1024,34 @@ mod tests {
         assert!(matches!(def.tools, ToolScope::Wildcard));
     }
 
+    // Both flows agents are `#[cfg(feature = "flows")]` entries in `BUILTINS`
+    // (#4797), so these tests only apply when the gate is on.
+    #[cfg(feature = "flows")]
     #[test]
-    fn frontend_agent_is_registered_on_chat_tier_with_decision_tools() {
-        // Quick-tier verification (stage 4): the orchestration front end must
-        // resolve via `hint:chat` (fast, remote for TTFT) and expose exactly the
-        // two domain-owned decision tools the two-pass graph routes on.
-        let def = find("frontend_agent");
-        assert!(
-            matches!(def.model, ModelSpec::Hint(ref h) if h == "chat"),
-            "frontend_agent must run on the quick chat tier, got {:?}",
-            def.model
-        );
-        assert_eq!(def.agent_tier, AgentTier::Chat);
-        match &def.tools {
-            ToolScope::Named(tools) => {
-                for required in ["defer_to_orchestrator", "reply_to_channel"] {
-                    assert!(
-                        tools.iter().any(|t| t == required),
-                        "frontend_agent must expose `{required}`"
-                    );
-                }
-                // No broad surface — it triages and phrases, it does not act.
-                for forbidden in ["shell", "file_write", "spawn_subagent"] {
-                    assert!(
-                        !tools.iter().any(|t| t == forbidden),
-                        "frontend_agent must not expose `{forbidden}`"
-                    );
-                }
-            }
-            ToolScope::Wildcard => panic!("frontend_agent must have a Named tool scope"),
-        }
-        // Leaf reflex: no onward delegation.
-        assert!(def.subagents.is_empty());
-    }
-
-    #[test]
-    fn workflow_builder_is_registered_worker_with_narrow_propose_or_read_scope() {
+    fn workflow_builder_is_registered_worker_with_bounded_authoring_scope() {
         // Phase 5a/5b: the workflow-builder must be a Worker-tier leaf whose
-        // tool scope is EXACTLY the propose-or-read + Composio discovery/connect
-        // + confirmed test-run + save-onto-existing belt — no flow creation
-        // (flows_create/set_enabled), no shell, no file writes, no channel
-        // sends, and no composio_execute. It can list toolkits/connections,
+        // tool scope is EXACTLY the bounded authoring/read + Composio
+        // discovery/connect belt. Creation is limited to `create_workflow`
+        // and `duplicate_flow`, which always produce disabled flows; the raw
+        // flows_create/update/set_enabled tools remain unavailable, as do
+        // shell, file writes, channel sends, and composio_execute. It can list
+        // toolkits/connections,
         // raise the inline connect card, `run_flow` a flow the user already
         // SAVED to test it (a real run the prompt gates behind user
         // confirmation), and `save_workflow` a built graph onto a flow the host
         // ALREADY created (the prompt bar's instant-create path) — but it can
-        // never create/enable a flow or perform an arbitrary raw integration
-        // action. One narrow, deliberate carve-out (B12): `get_tool_output_sample`
+        // never enable a flow or perform an arbitrary raw integration action.
+        // One narrow, deliberate carve-out (B12): `get_tool_output_sample`
         // DOES make a real Composio call, but only ever a Read-scope one
         // (hard-refused otherwise, regardless of the user's scope preference)
         // against an already-connected toolkit — see `builder_tools.rs`'s
         // module doc. This pins the invariant in the agent definition itself,
-        // not just the tool implementations.
+        // not just the tool implementations. It also has read-only grounding
+        // in the user's memory via `memory_recall` (direct lookups) and
+        // `memory_hybrid_search` (keyword/lexical lookups — pairs with
+        // `memory_recall` the same way the sibling `flow_discovery` agent
+        // does) — no `memory_store`, so it can look up context but never
+        // write it.
         let def = find("workflow_builder");
         assert_eq!(def.agent_tier, AgentTier::Worker);
         assert_eq!(def.delegate_name.as_deref(), Some("build_workflow"));
@@ -1076,23 +1068,47 @@ mod tests {
         );
         match &def.tools {
             ToolScope::Named(names) => {
+                // Reconciled against `agent.toml`'s current `[tools].named`
+                // after the workflow-tools expansion PR widened the belt to
+                // agent-native editing/creation/run-control (`edit_workflow`,
+                // `validate_workflow`, `create_workflow`, `duplicate_flow`,
+                // `list_node_kinds`, `get_node_kind_contract`,
+                // `get_flow_history`, `list_flow_runs`, `resume_flow_run`,
+                // `cancel_flow_run`, `list_connectable_toolkits`) — these are
+                // the agent's own scoped tool surface, not the raw `flows_*`
+                // controller RPCs banned below, so the "no flow
+                // creation/enable via the raw controller" invariant still
+                // holds via the forbidden list.
                 let expected = [
                     "propose_workflow",
                     "revise_workflow",
+                    "edit_workflow",
+                    "validate_workflow",
                     "save_workflow",
                     "list_flows",
                     "get_flow",
+                    "get_flow_history",
                     "get_flow_run",
                     "list_flow_connections",
                     "search_tool_catalog",
                     "get_tool_contract",
                     "get_tool_output_sample",
                     "list_agent_profiles",
+                    "list_connectable_toolkits",
+                    "list_node_kinds",
+                    "get_node_kind_contract",
                     "dry_run_workflow",
+                    "list_flow_runs",
+                    "resume_flow_run",
+                    "cancel_flow_run",
+                    "create_workflow",
+                    "duplicate_flow",
                     "run_flow",
                     "composio_list_toolkits",
                     "composio_list_connections",
                     "composio_connect",
+                    "memory_recall",
+                    "memory_hybrid_search",
                 ];
                 for required in expected {
                     assert!(
@@ -1103,13 +1119,12 @@ mod tests {
                 assert_eq!(
                     names.len(),
                     expected.len(),
-                    "workflow_builder scope must be EXACTLY the propose-or-read belt (got {names:?})"
+                    "workflow_builder scope must be EXACTLY the bounded authoring belt (got {names:?})"
                 );
-                // Hard exclusions: nothing that creates/enables a flow,
-                // executes raw integration actions, or touches the host.
-                // (Persistence onto an EXISTING flow is the deliberate
-                // `save_workflow` carve-out above; raw `flows_update` — which
-                // could also rename/re-gate arbitrary flows — stays out.)
+                // Hard exclusions: no unrestricted flow mutation, raw
+                // integration actions, or host access. Creation is exposed
+                // only through the bounded tools above; raw `flows_update`
+                // could rename or re-gate arbitrary flows, so it stays out.
                 for forbidden in [
                     "flows_create",
                     "flows_update",
@@ -1120,10 +1135,12 @@ mod tests {
                     "apply_patch",
                     "composio_execute",
                     "spawn_subagent",
+                    // Memory access must stay read-only: no write tool.
+                    "memory_store",
                 ] {
                     assert!(
                         !names.iter().any(|n| n == forbidden),
-                        "workflow_builder must NOT have `{forbidden}` — propose/read only"
+                        "workflow_builder must NOT have unrestricted tool `{forbidden}`"
                     );
                 }
             }
@@ -1140,6 +1157,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "flows")]
     #[test]
     fn flow_discovery_is_registered_readonly_reasoning_scout() {
         // The Flow Scout must be a read-only reasoning leaf: it reads the
@@ -1853,6 +1871,71 @@ mod tests {
         );
     }
 
+    /// The `mcp` gate's load-bearing safety contract (#4799).
+    ///
+    /// `agent.toml` is DATA — it cannot be `#[cfg]`'d, so the orchestrator goes
+    /// on listing `mcp_agent` in `subagents` even in builds where the `mcp`
+    /// feature dropped `mcp_agent` from [`BUILTINS`]. That leaves a subagent id
+    /// that resolves to nothing, and the whole gate rests on the loader
+    /// TOLERATING it rather than failing the boot.
+    ///
+    /// Two independent sites provide that tolerance today:
+    /// * `orchestrator_tools::collect_orchestrator_tools` warns + skips
+    ///   subagent ids absent from the registry;
+    /// * [`validate_tier_hierarchy`] `continue`s past unknown ids instead of
+    ///   reporting a tier error.
+    ///
+    /// This test pins the second one (the boot-blocking one) from BOTH build
+    /// configurations, so a future "unknown subagent ids are a hard error"
+    /// change fails here loudly instead of silently breaking the slim build's
+    /// boot — the failure mode would otherwise only appear in a
+    /// `--no-default-features` run, which CI's `cargo check` lane cannot catch.
+    #[test]
+    fn orchestrator_tolerates_unresolvable_subagent_id() {
+        let mut def = find("orchestrator");
+        def.subagents.push(SubagentEntry::AgentId(
+            "definitely_not_a_compiled_in_agent".into(),
+        ));
+
+        validate_tier_hierarchy(&[def]).expect(
+            "validate_tier_hierarchy must tolerate an unresolvable subagent id — the `mcp` \
+             feature gate relies on it (orchestrator's agent.toml lists `mcp_agent` even in \
+             builds that compile `mcp_agent` out)",
+        );
+    }
+
+    /// Companion to the above, asserting the real gated shape rather than a
+    /// synthetic id: with `mcp` compiled out, `mcp_agent` is genuinely absent
+    /// from the loaded set while the orchestrator still lists it — and
+    /// `load_builtins` (which runs `validate_tier_hierarchy` internally) must
+    /// still succeed, i.e. the core boots.
+    #[test]
+    #[cfg(not(feature = "mcp"))]
+    fn orchestrator_tolerates_absent_mcp_agent() {
+        let defs = load_builtins().expect(
+            "load_builtins must succeed with `mcp` compiled out — the orchestrator's dangling \
+             `mcp_agent` subagent reference must not fail the boot",
+        );
+
+        assert!(
+            !defs.iter().any(|d| d.id == "mcp_agent"),
+            "`mcp_agent` must be compiled out when the `mcp` feature is off"
+        );
+
+        let orchestrator = defs
+            .iter()
+            .find(|d| d.id == "orchestrator")
+            .expect("orchestrator must still load");
+        assert!(
+            orchestrator.subagents.iter().any(|e| matches!(
+                e,
+                SubagentEntry::AgentId(id) if id == "mcp_agent"
+            )),
+            "orchestrator.agent.toml is data and still lists `mcp_agent` — this dangling \
+             reference is exactly what the loader must tolerate"
+        );
+    }
+
     /// The orchestrator gets lightweight MCP discovery (`mcp_registry_status`,
     /// like `composio_list_connections`) but must NOT carry the per-server
     /// enumerate/execute tools — those belong to `mcp_agent`, keeping the
@@ -1883,7 +1966,11 @@ mod tests {
     /// the discover + call surface and a stable `use_mcp_server` delegate name,
     /// but must NOT hold the secret-handling install/uninstall tools (those are
     /// `mcp_setup`'s) or any shell/file/network capability.
+    ///
+    /// Gated: `find` panics on a missing id, and the `mcp` feature drops
+    /// `mcp_agent` from [`BUILTINS`] entirely.
     #[test]
+    #[cfg(feature = "mcp")]
     fn mcp_agent_drives_connected_servers_without_install_or_shell() {
         let def = find("mcp_agent");
         assert_eq!(def.agent_tier, AgentTier::Worker);
@@ -2030,20 +2117,14 @@ mod tests {
         for def in load_builtins().unwrap() {
             if matches!(
                 def.id.as_str(),
-                "orchestrator"
-                    | "planner"
-                    | "subconscious"
-                    | "frontend_agent"
-                    | "reasoning_agent"
-                    | "master_agent"
-                    | "flow_discovery"
+                "orchestrator" | "planner" | "subconscious" | "flow_discovery"
             ) {
                 continue;
             }
             assert_eq!(
                 def.agent_tier,
                 AgentTier::Worker,
-                "{} should default to worker tier (only orchestrator/planner/subconscious/frontend_agent/reasoning_agent/master_agent/flow_discovery are non-worker today)",
+                "{} should default to worker tier (only orchestrator/planner/subconscious/flow_discovery are non-worker today)",
                 def.id
             );
         }

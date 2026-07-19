@@ -25,6 +25,7 @@ import { bootAuthenticatedPage } from '../helpers/core-rpc';
 const CORE_RPC_URL = process.env.PW_CORE_RPC_URL || 'http://127.0.0.1:17788/rpc';
 const CORE_RPC_TOKEN = process.env.PW_CORE_RPC_TOKEN || 'openhuman-playwright-token';
 const BACKEND = process.env.TINYPLACE_API_BASE_URL || 'http://localhost:18080';
+const HAS_TINYPLACE_BACKEND = Boolean(process.env.TINYPLACE_API_BASE_URL);
 
 const TEST_MNEMONIC_WORDS = 12;
 // A fresh, valid BIP-39 mnemonic for Alice (the app's core identity). Generated
@@ -79,6 +80,10 @@ let bob: Awaited<ReturnType<typeof launchAgent>>;
 let aliceCryptoId: string;
 
 test.describe('tiny.place direct messaging (UI)', () => {
+  test.skip(
+    !HAS_TINYPLACE_BACKEND,
+    'requires TINYPLACE_API_BASE_URL from the dedicated tiny.place E2E runner'
+  );
   test.describe.configure({ mode: 'serial' });
 
   test.beforeAll(async () => {

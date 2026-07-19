@@ -10,8 +10,6 @@
 //! - `openhuman.slack_memory_sync_status` — list the per-connection
 //!   sync cursors + last-synced timestamps.
 
-use std::sync::Arc;
-
 use serde::{Deserialize, Serialize};
 
 use crate::openhuman::composio::client::{
@@ -19,12 +17,7 @@ use crate::openhuman::composio::client::{
 };
 use crate::openhuman::composio::types::ComposioConnectionsResponse;
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::global::client_if_ready;
-use crate::openhuman::memory_sync::composio::providers::registry::get_provider;
-use crate::openhuman::memory_sync::composio::providers::sync_state::SyncState;
-use crate::openhuman::memory_sync::composio::providers::{
-    ProviderContext, SyncOutcome, SyncReason,
-};
+use crate::openhuman::memory_sync::composio::providers::SyncOutcome;
 use crate::rpc::RpcOutcome;
 
 /// Optional connection-id override for the trigger. When absent, all
@@ -74,9 +67,6 @@ pub async fn sync_trigger_rpc(
     config: &Config,
     req: SyncTriggerRequest,
 ) -> Result<RpcOutcome<SyncTriggerResponse>, String> {
-    let provider = get_provider("slack")
-        .ok_or_else(|| "[slack_ingest] SlackProvider not registered".to_string())?;
-
     // Route through the mode-aware factory so direct-mode users
     // discover slack connections from THEIR personal Composio tenant —
     // not the tinyhumans backend tenant. Mirrors `composio::ops`
@@ -99,23 +89,28 @@ pub async fn sync_trigger_rpc(
     }
 
     let considered = candidates.len();
-    let config_arc = Arc::new(config.clone());
     let mut outcomes: Vec<SyncOutcome> = Vec::with_capacity(considered);
 
     for conn in candidates {
-        // `ProviderContext` no longer caches a pre-baked client —
-        // `ctx.execute(...)` resolves the underlying handle per call
-        // via the mode-aware factory (#1710).
-        let ctx = ProviderContext {
-            config: Arc::clone(&config_arc),
-            toolkit: conn.toolkit.clone(),
-            connection_id: Some(conn.id.clone()),
-            usage: Default::default(),
-            max_items: None,
-            sync_depth_days: None,
-        };
-        match provider.sync(&ctx, SyncReason::Manual).await {
-            Ok(o) => outcomes.push(o),
+        let started_at_ms = now_ms();
+        match crate::openhuman::tinycortex::run_composio_connection("slack", &conn.id, config).await
+        {
+            Ok(outcome) => outcomes.push(SyncOutcome {
+                toolkit: "slack".to_string(),
+                connection_id: Some(conn.id.clone()),
+                reason: "manual".to_string(),
+                items_ingested: outcome.records_ingested as usize,
+                started_at_ms,
+                finished_at_ms: now_ms(),
+                summary: outcome
+                    .note
+                    .unwrap_or_else(|| "Slack sync completed".to_string()),
+                details: serde_json::json!({
+                    "more_pending": outcome.more_pending,
+                    "actions_called": outcome.actions_called,
+                    "provider_cost_usd": outcome.provider_cost_usd,
+                }),
+            }),
             Err(err) => {
                 log::warn!(
                     "[slack_ingest] connection={} sync failed: {err:#} (continuing)",
@@ -134,6 +129,13 @@ pub async fn sync_trigger_rpc(
         },
         format!("slack_ingest: trigger considered={considered} synced={synced}"),
     ))
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 /// Request body for `slack_memory_sync_status` — no parameters.
@@ -166,9 +168,6 @@ pub async fn sync_status_rpc(
     config: &Config,
     _req: SyncStatusRequest,
 ) -> Result<RpcOutcome<SyncStatusResponse>, String> {
-    let memory =
-        client_if_ready().ok_or_else(|| "[slack_ingest] memory client not ready".to_string())?;
-
     // Route through the mode-aware factory so direct-mode users see
     // status rows for THEIR slack connections, not the tinyhumans
     // backend tenant's (#1710).
@@ -182,16 +181,17 @@ pub async fn sync_status_rpc(
         if !conn.is_active() {
             continue;
         }
-        let state = match SyncState::load(&memory, "slack", &conn.id).await {
-            Ok(s) => s,
-            Err(err) => {
-                log::warn!(
-                    "[slack_ingest] load_state connection={} failed: {err:#}",
-                    conn.id
-                );
-                continue;
-            }
-        };
+        let state =
+            match crate::openhuman::tinycortex::load_composio_sync_state("slack", &conn.id).await {
+                Ok(s) => s,
+                Err(err) => {
+                    log::warn!(
+                        "[slack_ingest] load_state connection={} failed: {err:#}",
+                        conn.id
+                    );
+                    continue;
+                }
+            };
         rows.push(ConnectionStatus {
             connection_id: conn.id.clone(),
             per_channel_cursors: state.cursor.clone().unwrap_or_else(|| "{}".to_string()),

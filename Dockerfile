@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build
 
 # Cache dependencies — copy only manifests first
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY Cargo.toml Cargo.lock rust-toolchain.toml build.rs ./
 # Vendored TinyAgents SDK (git submodule; [patch.crates-io] points here, so
 # the dep-cache build below already resolves it). CI must init the submodule
 # before docker build — see the "Init tinyagents submodule" steps in

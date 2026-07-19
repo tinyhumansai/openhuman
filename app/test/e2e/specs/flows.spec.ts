@@ -54,9 +54,10 @@ async function currentHash(): Promise<string> {
   return browser.execute(() => window.location.hash);
 }
 
-/** Open the Workflows list page and wait for it to render. */
+/** Open the Workflows list page and wait for it to render. `/flows` now lands
+ *  on the Welcome landing, so jump straight to the functional list view. */
 async function openFlowsPage(): Promise<void> {
-  await navigateViaHash('/flows');
+  await navigateViaHash('/flows?view=main');
   await waitForTestId('flows-page', 15_000);
 }
 
@@ -115,6 +116,12 @@ describe('Workflows create → run → inspect (real UI flow)', () => {
     // for a persisted, non-draft flow).
     await waitForTestId('flow-canvas-page', 15_000);
     await waitForTestId('flow-canvas-run', 15_000);
+
+    // Shared buttons expose analytics through the typed Button contract.
+    // Assert the stable, content-free identifier reaches the real DOM rather
+    // than leaking the generated flow id into the analytics dimension.
+    const runButton = await waitForTestId('flow-canvas-run', 15_000);
+    expect(await runButton.getAttribute('data-analytics-id')).toBe('flow-canvas-run');
   });
 
   it('runs the flow from the canvas without error', async function () {

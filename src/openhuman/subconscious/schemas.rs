@@ -44,7 +44,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![optional_field(
                 "kind",
                 TypeSchema::String,
-                "Which world to tick: \"memory\" (default), \"tinyplace\", or \"all\".",
+                "Which world to tick: \"memory\" (default) or \"all\".",
             )],
             outputs: vec![field("result", TypeSchema::Json, "Tick result.")],
         },
@@ -127,7 +127,8 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_trigger(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        // `kind`: "memory" (default), "tinyplace", or "all".
+        // `kind`: "memory" (default) or "all". (`tinyplace` was retired with the
+        // hosted-brain migration, #4738.)
         let raw = params
             .get("kind")
             .and_then(|v| v.as_str())
@@ -141,7 +142,7 @@ fn handle_trigger(params: Map<String, Value>) -> ControllerFuture {
                 Some(k) => vec![k],
                 None => {
                     return Err(format!(
-                        "unknown subconscious kind '{raw}' (expected memory|tinyplace|all)"
+                        "unknown subconscious kind '{raw}' (expected memory|all)"
                     ))
                 }
             }

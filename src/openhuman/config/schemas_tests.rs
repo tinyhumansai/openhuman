@@ -1,3 +1,4 @@
+use super::schema_defs::schemas;
 use super::*;
 
 #[test]

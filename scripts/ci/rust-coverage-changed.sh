@@ -35,9 +35,48 @@ llvm_cov() {
   bash scripts/ci-cancel-aware.sh cargo llvm-cov "$@"
 }
 
+integration_test_targets() {
+  find tests -maxdepth 1 -type f -name '*.rs' -print |
+    sed -e 's#^tests/##' -e 's#\.rs$##' |
+    sort
+}
+
+raw_coverage_modules() {
+  find tests/raw_coverage -maxdepth 1 -type f -name '*.rs' -print |
+    sed -e 's#^tests/raw_coverage/##' -e 's#\.rs$##' |
+    sort
+}
+
+run_integration_target() {
+  local target="$1"
+  if [ "${target}" = "raw_coverage_all" ]; then
+    # These suites used to be separate integration-test binaries. Aggregating
+    # them removes repeated full-crate links, but many still exercise process
+    # globals (env vars, event bus handlers, auth tokens, singleton stores).
+    # Run one process per generated module filter to preserve the former
+    # per-binary isolation contract while still paying only one link.
+    while IFS= read -r module; do
+      [ -n "${module}" ] || continue
+      log "running raw coverage module: ${module}"
+      llvm_cov --no-report --no-fail-fast -p openhuman --test "${target}" -- "${module}::" --test-threads=1
+    done < <(raw_coverage_modules)
+  else
+    llvm_cov --no-report --no-fail-fast -p openhuman --test "${target}"
+  fi
+}
+
 run_full() {
   log "running FULL instrumented suite (reason: $1)"
-  llvm_cov --no-fail-fast -p openhuman --lcov --output-path "${OUT}"
+  llvm_cov clean --workspace
+  llvm_cov --no-report --no-fail-fast -p openhuman --lib
+  llvm_cov --no-report --no-fail-fast -p openhuman --bins
+  while IFS= read -r target; do
+    [ -n "${target}" ] || continue
+    log "running full-suite integration target: ${target}"
+    run_integration_target "${target}"
+  done < <(integration_test_targets)
+  log "merging coverage into ${OUT}"
+  llvm_cov report --lcov --output-path "${OUT}"
   exit 0
 }
 
@@ -111,6 +150,16 @@ for f in "${files[@]}"; do
 "
       log "${f} → libtest filter '${key}' (embedded asset)"
       ;;
+    tests/raw_coverage/*.rs)
+      # The ~76 *_raw_coverage_e2e.rs suites are aggregated into the single
+      # `raw_coverage_all` target (see tests/raw_coverage_all.rs + build.rs), so
+      # a change to any of them scopes to that one target rather than the full
+      # suite. libtest filters within the aggregate binary still work, but the
+      # simplest correct scope is running the whole aggregate target.
+      test_targets_raw="${test_targets_raw}raw_coverage_all
+"
+      log "${f} → aggregated integration target '--test raw_coverage_all'"
+      ;;
     tests/*.rs)
       name="${f#tests/}"
       name="${name%.rs}"
@@ -155,7 +204,7 @@ fi
 if [ "${#test_targets[@]}" -gt 0 ]; then
   for t in "${test_targets[@]}"; do
     log "running changed integration-test target: ${t}"
-    llvm_cov --no-report --no-fail-fast -p openhuman --test "${t}"
+    run_integration_target "${t}"
   done
 fi
 

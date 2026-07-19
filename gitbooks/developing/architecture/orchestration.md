@@ -82,6 +82,14 @@ chat message. The Brain → Orchestration tab (`TinyPlaceOrchestrationTab.tsx` +
 `useOrchestrationChats.ts`) reads real store classification, live-updates, and lets
 the owner steer the front-end agent from the Master composer.
 
+The `openhuman.orchestration_run` renderer RPC is the direct request/response
+entry point for the backend's paid Medulla engine. It performs a paid-plan
+preflight, advertises OpenHuman's local contact, session-history, and
+send-to-agent tools, and executes requested calls on the device. Tool results
+are returned through `/orchestration/v1/run/continue` until Medulla produces a
+final reply. The backend repeats authentication, entitlement, and resource
+limit enforcement on every cycle.
+
 ## Running unattended (stage 8)
 
 - **No message loss**: ingest dedupes by relay `message_id` *before* decrypt (the
@@ -103,6 +111,9 @@ the owner steer the front-end agent from the Master composer.
 
 ## Configuration
 
-The `[orchestration]` config block (`src/openhuman/config/schema/orchestration.rs`):
-`enabled`, `debounce_ms`, `max_supersteps`, `message_window`,
-`context_evict_threshold` (clamped 0.8 to 0.9), `subagent_concurrency`.
+The `[orchestration]` config block (`src/openhuman/config/schema/orchestration.rs`)
+uses `enabled` as its master switch. Optional direct-cycle overrides are grouped
+under `[orchestration.medulla.prompt_overrides]`,
+`[orchestration.medulla.config]`, and `[orchestration.medulla.limits]`. Omitted
+values retain backend defaults, and the backend clamps all supplied graph and
+resource limits.

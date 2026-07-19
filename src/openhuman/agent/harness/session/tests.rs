@@ -485,7 +485,11 @@ fn skill_listener_closed_channel_nulls_rx_and_is_not_a_signal() {
     );
 }
 
+/// Exercises real SKILL.md discovery from disk, so it is meaningful only with
+/// the `skills` domain compiled in — the disabled facade's
+/// `load_workflow_metadata` always returns an empty catalog by design.
 #[test]
+#[cfg(feature = "skills")]
 fn refresh_workflows_picks_up_skill_installed_on_disk() {
     use crate::openhuman::skills::ops_types::{SKILL_MD, TRUST_MARKER};
 
@@ -551,7 +555,10 @@ fn refresh_workflows_picks_up_skill_installed_on_disk() {
     );
 }
 
+/// See [`refresh_workflows_picks_up_skill_installed_on_disk`] — same
+/// disk-discovery dependency, so same `skills` gate.
 #[test]
+#[cfg(feature = "skills")]
 fn refresh_workflows_retracts_skill_removed_from_disk() {
     use crate::openhuman::skills::ops_types::{SKILL_MD, TRUST_MARKER};
 
@@ -690,6 +697,84 @@ async fn turn_without_tools_returns_text() {
 
     let response = agent.turn("hi").await.unwrap();
     assert_eq!(response, "hello");
+}
+
+/// The public [`Agent::last_turn_usage`] accessor peeks the per-turn
+/// token/cost totals **without draining** them, so a downstream crate
+/// embedding OpenHuman as a library (e.g. the OpenCompany hosting platform's
+/// cost-metering hook) can read usage after a turn while the existing
+/// web-channel `take_last_turn_usage_totals` drain path still works.
+#[tokio::test]
+async fn last_turn_usage_is_public_and_non_draining() {
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let workspace_path = workspace.path().to_path_buf();
+
+    let provider = Box::new(MockProvider {
+        responses: Mutex::new(vec![crate::openhuman::inference::provider::ChatResponse {
+            text: Some("hello".into()),
+            tool_calls: vec![],
+            usage: Some(crate::openhuman::inference::provider::UsageInfo {
+                input_tokens: 123,
+                output_tokens: 45,
+                context_window: 8000,
+                charged_amount_usd: 0.01,
+                ..Default::default()
+            }),
+            reasoning_content: None,
+        }]),
+    });
+
+    let memory_cfg = crate::openhuman::config::MemoryConfig {
+        backend: "none".into(),
+        ..crate::openhuman::config::MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
+
+    let mut agent = Agent::builder()
+        .provider(provider)
+        .tools(vec![Box::new(MockTool)])
+        .memory(mem)
+        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .workspace_dir(workspace_path)
+        .build()
+        .unwrap();
+
+    // No turn has run yet — nothing to report.
+    assert!(agent.last_turn_usage().is_none());
+
+    let response = agent.turn("hi").await.unwrap();
+    assert_eq!(response, "hello");
+
+    // The accessor now yields totals, and the return type's fields are all
+    // publicly readable (this closure would not compile if they were not).
+    let peeked: crate::openhuman::agent::harness::LastTurnUsage = {
+        let usage = agent
+            .last_turn_usage()
+            .expect("usage should be populated after a turn");
+        crate::openhuman::agent::harness::LastTurnUsage {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cached_input_tokens: usage.cached_input_tokens,
+            cost_usd: usage.cost_usd,
+            context_window: usage.context_window,
+            subagents: usage.subagents.clone(),
+        }
+    };
+
+    // Peeking must not consume: a second read returns the same snapshot.
+    assert_eq!(agent.last_turn_usage(), Some(&peeked));
+
+    // The internal web-channel drain still sees the very same value, proving
+    // the borrow accessor left it untouched.
+    let drained = agent
+        .take_last_turn_usage_totals()
+        .expect("drain should still yield the totals the borrow peeked");
+    assert_eq!(drained, peeked);
+
+    // After the drain the peek accessor reports nothing, as expected.
+    assert!(agent.last_turn_usage().is_none());
 }
 
 #[tokio::test]
@@ -1307,5 +1392,64 @@ fn hide_tools_seeds_allowlist_when_no_filter_present() {
     assert!(
         !visible.contains("not_on_belt"),
         "an absent hidden name is a harmless no-op; visible = {visible:?}"
+    );
+}
+
+// ── Issue #4868 — `set_max_tool_iterations` post-construction override ─────
+
+/// `set_max_tool_iterations` directly overrides the runtime cap, independent
+/// of whatever the builder resolved it to.
+#[test]
+fn set_max_tool_iterations_overrides_the_builder_resolved_cap() {
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    let before = agent.agent_config().max_tool_iterations;
+
+    agent.set_max_tool_iterations(200);
+
+    assert_eq!(agent.agent_config().max_tool_iterations, 200);
+    assert_ne!(
+        200, before,
+        "sanity: the override must actually change the cap for this assertion to mean anything"
+    );
+}
+
+/// Regression for issue #4868's `skill_runtime`/`task_dispatcher` callers:
+/// both build the agent via `Agent::from_config_for_agent` (which now stamps
+/// the resolved agent definition's own `effective_max_iterations()` — 15 for
+/// `orchestrator`), then need a much larger budget (200) for a full
+/// workflow/autonomous-task run. `set_max_tool_iterations` must win over
+/// whatever the session builder resolved, so the post-construction override
+/// actually sticks instead of being silently re-clobbered.
+#[test]
+fn set_max_tool_iterations_survives_after_definition_backed_construction() {
+    use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let mut config = crate::openhuman::config::Config {
+        workspace_dir: workspace.path().to_path_buf(),
+        action_dir: workspace.path().to_path_buf(),
+        ..crate::openhuman::config::Config::default()
+    };
+    config.http_request.allowed_domains = vec!["*".to_string()];
+
+    let mut agent =
+        Agent::from_config_for_agent(&config, "orchestrator").expect("build orchestrator agent");
+    assert_eq!(
+        agent.agent_config().max_tool_iterations,
+        15,
+        "precondition: the orchestrator definition's own cap (15) is applied by the builder"
+    );
+
+    // Mirrors `skill_runtime::run_machinery`/`task_dispatcher::executor`:
+    // apply the much larger workflow/task-run budget AFTER construction.
+    const WORKFLOW_RUN_MAX_ITERATIONS: usize = 200;
+    agent.set_max_tool_iterations(WORKFLOW_RUN_MAX_ITERATIONS);
+
+    assert_eq!(
+        agent.agent_config().max_tool_iterations,
+        WORKFLOW_RUN_MAX_ITERATIONS,
+        "post-construction override must win over the definition-resolved cap"
     );
 }
