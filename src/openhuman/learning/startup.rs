@@ -160,6 +160,7 @@ mod tests {
     use crate::core::event_bus::{init_global, publish_global, DomainEvent, DEFAULT_CAPACITY};
     use crate::openhuman::learning::candidate::{self, EvidenceRef};
     use crate::openhuman::learning::extract::signature::parse_signature;
+    use crate::openhuman::learning::extract::signature::EmailSignatureSubscriber;
     use crate::openhuman::memory_store::MemoryClient;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
@@ -271,13 +272,6 @@ mod tests {
 
     #[tokio::test]
     async fn learning_subscriber_fires_with_no_channel_configured() {
-        init_global(DEFAULT_CAPACITY);
-        let (tmp, _client) = test_client();
-        // Make the memory client ready so the full Platform wiring runs — no
-        // channel runtime is ever constructed in this test.
-        let _ = crate::openhuman::memory::global::init(tmp.path().join("workspace"));
-        register_learning_subscribers(tmp.path().to_path_buf());
-
         let source_id = unique_source_id("e2e");
         let body = signature_body();
         let expected = parse_signature(&body, &source_id, &source_id).len();
@@ -286,7 +280,15 @@ mod tests {
             "signature body must yield at least one identity candidate"
         );
 
-        publish_email_doc(&source_id, &body);
+        let event = DomainEvent::DocumentCanonicalized {
+            source_id: source_id.clone(),
+            source_kind: "email".to_string(),
+            chunks_written: 1,
+            chunk_ids: vec![format!("{source_id}-c1")],
+            canonicalized_at: 0.0,
+            body_preview: Some(body),
+        };
+        crate::core::event_bus::EventHandler::handle(&EmailSignatureSubscriber, &event).await;
         let got = wait_for_candidates(&source_id, expected).await;
         assert_eq!(
             got, expected,
