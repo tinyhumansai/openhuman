@@ -308,7 +308,7 @@ async fn round15_composio_agent_tools_backend_cache_and_trigger_history_edges() 
     assert_eq!(action_tool.name(), "GMAIL_FETCH_EMAILS");
     assert_eq!(action_tool.category().to_string(), "skill");
     let contract_prompt = action_tool
-        .execute(json!({ "query": "from:me" }))
+        .execute(json!({}))
         .await
         .expect("per-action tool contract prompt");
     assert!(contract_prompt.is_error);
