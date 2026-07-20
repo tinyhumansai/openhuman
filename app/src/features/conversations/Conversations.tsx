@@ -29,6 +29,7 @@ import {
   BubbleMarkdown,
 } from '../../features/conversations/components/AgentMessageBubble';
 import { AgentProcessSourcePanel } from '../../features/conversations/components/AgentProcessSourcePanel';
+import { AgentProfileSelector } from '../../features/conversations/components/AgentProfileSelector';
 import {
   BackgroundProcessesPanel,
   selectBackgroundProcesses,
@@ -275,6 +276,8 @@ export function isImeCompositionKeyEvent(event: ImeKeyboardEventLike): boolean {
  * Exported so the mount-effect's `.catch` stays a one-liner and the message
  * shape can be unit-tested without mounting the full page.
  */
+export { sortAgentProfiles } from './components/AgentProfileSelector';
+
 export function formatThreadLoadError(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (err && typeof err === 'object' && 'message' in err) {
@@ -3218,37 +3221,12 @@ const Conversations = ({
           </div>
           {!isSidebar && (
             <div className="flex flex-shrink-0 items-center gap-2">
-              <div
-                className="flex h-7 items-center rounded-full border border-line bg-surface-subtle p-0.5"
-                role="radiogroup"
-                aria-label={t('chat.agentProfile.label')}>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={selectedAgentProfileId === 'default'}
-                  data-analytics-id="chat-header-mode-quick"
-                  onClick={() => void handleSelectAgentProfile('default')}
-                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-all ${
-                    selectedAgentProfileId === 'default'
-                      ? 'bg-surface text-content shadow-sm'
-                      : 'text-content-muted hover:text-content-secondary'
-                  }`}>
-                  {t('chat.agentProfile.quick')}
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={selectedAgentProfileId === 'reasoning'}
-                  data-analytics-id="chat-header-mode-reasoning"
-                  onClick={() => void handleSelectAgentProfile('reasoning')}
-                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-all ${
-                    selectedAgentProfileId === 'reasoning'
-                      ? 'bg-surface text-content shadow-sm'
-                      : 'text-content-muted hover:text-content-secondary'
-                  }`}>
-                  {t('chat.agentProfile.reasoning')}
-                </button>
-              </div>
+              <AgentProfileSelector
+                profiles={agentProfiles}
+                selectedProfileId={selectedAgentProfileId}
+                locale={uiLocale}
+                onSelect={handleSelectAgentProfile}
+              />
               {/* Super context is read at thread construction, so it only
                   affects NEW threads. Hide the toggle once the thread has ANY
                   activity — use the raw `messages` (not `hasVisibleMessages`,

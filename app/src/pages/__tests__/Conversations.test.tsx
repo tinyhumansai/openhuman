@@ -4,7 +4,9 @@ import {
   formatThreadLoadError,
   isComposerInteractionBlocked,
   isImeCompositionKeyEvent,
+  sortAgentProfiles,
 } from '../../features/conversations/Conversations';
+import type { AgentProfile } from '../../types/agentProfile';
 
 describe('isComposerInteractionBlocked', () => {
   it('blocks composer interaction while the selected thread is actively running', () => {
@@ -76,5 +78,93 @@ describe('formatThreadLoadError', () => {
 
   it('ignores non-string message fields and falls back to String(err)', () => {
     expect(formatThreadLoadError({ message: 42 })).toBe('[object Object]');
+  });
+});
+
+describe('sortAgentProfiles', () => {
+  it('filters out built-in profiles', () => {
+    const profiles: AgentProfile[] = [
+      { id: '1', name: 'Custom', builtIn: false, description: '', agentId: 'orchestrator' },
+      { id: 'default', name: 'Default', builtIn: true, description: '', agentId: 'orchestrator' },
+    ];
+    expect(sortAgentProfiles(profiles, 'en')).toHaveLength(1);
+  });
+
+  it('sorts by sortOrder then name', () => {
+    const profiles: AgentProfile[] = [
+      {
+        id: 'a',
+        name: 'Alpha',
+        builtIn: false,
+        sortOrder: 2,
+        description: '',
+        agentId: 'orchestrator',
+      },
+      {
+        id: 'b',
+        name: 'Beta',
+        builtIn: false,
+        sortOrder: 1,
+        description: '',
+        agentId: 'orchestrator',
+      },
+      {
+        id: 'c',
+        name: 'Charlie',
+        builtIn: false,
+        sortOrder: 1,
+        description: '',
+        agentId: 'orchestrator',
+      },
+    ];
+    const sorted = sortAgentProfiles(profiles, 'en');
+    expect(sorted[0].id).toBe('b');
+    expect(sorted[1].id).toBe('c');
+    expect(sorted[2].id).toBe('a');
+  });
+
+  it('treats missing sortOrder as 0', () => {
+    const profiles: AgentProfile[] = [
+      {
+        id: 'a',
+        name: 'Alpha',
+        builtIn: false,
+        sortOrder: null,
+        description: '',
+        agentId: 'orchestrator',
+      },
+      {
+        id: 'b',
+        name: 'Beta',
+        builtIn: false,
+        sortOrder: 1,
+        description: '',
+        agentId: 'orchestrator',
+      },
+    ];
+    const sorted = sortAgentProfiles(profiles, 'en');
+    expect(sorted[0].id).toBe('a');
+    expect(sorted[1].id).toBe('b');
+  });
+
+  it('returns empty array when all profiles are built-in', () => {
+    expect(
+      sortAgentProfiles(
+        [
+          {
+            id: 'default',
+            name: 'Default',
+            builtIn: true,
+            description: '',
+            agentId: 'orchestrator',
+          },
+        ],
+        'en'
+      )
+    ).toHaveLength(0);
+  });
+
+  it('returns empty array for empty input', () => {
+    expect(sortAgentProfiles([], 'en')).toHaveLength(0);
   });
 });
