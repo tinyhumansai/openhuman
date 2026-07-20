@@ -1881,6 +1881,9 @@ async fn composio_list_toolkits_returns_empty_in_direct_mode() {
 
 #[tokio::test]
 async fn composio_list_connections_routes_through_direct_mode() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let _guard = cache_guard();
     let tmp = tempfile::tempdir().unwrap();
     let config = direct_mode_config(&tmp);
@@ -2106,6 +2109,9 @@ async fn composio_set_api_key_validates_candidate_key_even_when_stored_key_exist
 /// integration-style test only pins the failure-mode contract.
 #[tokio::test]
 async fn composio_list_tools_in_direct_mode_does_not_fall_back_to_backend() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let tmp = tempfile::tempdir().unwrap();
     let config = direct_mode_config(&tmp);
     let result = composio_list_tools(&config, None, None).await;
@@ -2139,6 +2145,9 @@ async fn composio_list_tools_in_direct_mode_does_not_fall_back_to_backend() {
 
 #[tokio::test]
 async fn composio_authorize_routes_through_direct_mode() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     // The direct-mode `authorize` path actually calls
     // `backend.composio.dev/api/v3/connected_accounts/link` over HTTPS.
     // We can't mock that endpoint at the URL-rewriter level in this
@@ -2165,6 +2174,9 @@ async fn composio_authorize_routes_through_direct_mode() {
 
 #[tokio::test]
 async fn composio_execute_routes_through_direct_mode() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     // Same shape of assertion as
     // `composio_authorize_routes_through_direct_mode` — we can't mock
     // `backend.composio.dev` from a unit test, so we verify the factory

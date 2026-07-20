@@ -122,6 +122,24 @@ async fn evaluate_tool_visibility(slug: &str) -> ToolDecision {
     }
 }
 
+pub(super) async fn action_execution_block_message(slug: &str) -> Option<String> {
+    match evaluate_tool_visibility(slug).await {
+        ToolDecision::Allow | ToolDecision::PassthroughCheckScope { .. } => None,
+        ToolDecision::BlockedByScope { scope } => {
+            let toolkit = toolkit_from_slug(slug).unwrap_or_default();
+            let pref = load_user_scope_or_default(&toolkit).await;
+            Some(scope_error_message(slug, scope, pref))
+        }
+        ToolDecision::NotCurated => {
+            let toolkit = toolkit_from_slug(slug).unwrap_or_default();
+            Some(format!(
+                "composio_execute: action `{slug}` is not in the curated whitelist for \
+                 toolkit `{toolkit}`. Use composio_list_tools to see available actions."
+            ))
+        }
+    }
+}
+
 /// Drop tools whose toolkit is not in `connected` (case-insensitive).
 /// Returns the number of dropped tools so callers can log it.
 /// `toolkit_from_slug` already lowercases its result, so the comparison

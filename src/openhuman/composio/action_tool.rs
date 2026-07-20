@@ -192,6 +192,15 @@ impl Tool for ComposioActionTool {
             }
         }
 
+        if let Some(message) = super::tools::action_execution_block_message(&self.action_name).await
+        {
+            tracing::info!(
+                tool = %self.action_name,
+                "[composio][scopes] per-action execute blocked by user scope pref"
+            );
+            return Ok(ToolResult::error(message));
+        }
+
         // [#1710 Wave 4 / #4853] Reload the live config snapshot ONCE, up front,
         // and use it for BOTH the contract-gate lookup and dispatch. A mid-session
         // `composio.mode` / credential / workspace change must route the gate's
@@ -521,6 +530,50 @@ mod tests {
             !msg.contains("strict read-only"),
             "unset sandbox must never trigger the gate, got: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn user_scope_blocks_per_action_write_call_before_dispatch() {
+        let _memory_guard = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let memory = crate::openhuman::memory::global::init(tmp.path().join("workspace"))
+            .expect("global memory client should initialize for action scope test");
+        crate::openhuman::composio::providers::user_scopes::save(
+            &memory,
+            "testkit",
+            crate::openhuman::composio::providers::UserScopePref {
+                read: true,
+                write: false,
+                admin: false,
+            },
+        )
+        .await
+        .expect("scope pref should persist");
+
+        let t = ComposioActionTool::new(
+            fake_config(),
+            "TESTKIT_SEND_MESSAGE".to_string(),
+            "send a testkit message".to_string(),
+            None,
+        );
+        let result = t.execute(serde_json::json!({})).await.unwrap();
+        assert!(
+            result.is_error,
+            "per-action Write must error when the user's current scope pref disables write"
+        );
+        let msg = error_text(&result);
+        assert!(msg.contains("disabled"), "got: {msg}");
+        assert!(msg.contains("`write`"), "got: {msg}");
+        assert!(msg.contains("Connections"), "got: {msg}");
+        crate::openhuman::composio::providers::user_scopes::save(
+            &memory,
+            "testkit",
+            crate::openhuman::composio::providers::UserScopePref::default(),
+        )
+        .await
+        .expect("testkit scope pref should restore after action scope test");
     }
 
     // Seeds the flows/tinyflows live-catalog cache, so it only builds with the

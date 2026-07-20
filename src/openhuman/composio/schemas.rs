@@ -954,6 +954,7 @@ fn handle_set_user_scopes(params: Map<String, Value>) -> ControllerFuture {
             );
             return Err(e);
         }
+        super::ops::invalidate_connected_integrations_cache();
         tracing::debug!(
             method = "composio.set_user_scopes",
             toolkit = %toolkit,

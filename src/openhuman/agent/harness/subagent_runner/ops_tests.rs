@@ -105,6 +105,16 @@ fn stub(name: &'static str) -> Box<dyn Tool> {
     Box::new(StubTool { name })
 }
 
+fn remove_fake_app_session(config: &crate::openhuman::config::Config) {
+    let removed = crate::openhuman::credentials::AuthService::from_config(config)
+        .remove_profile(
+            crate::openhuman::credentials::APP_SESSION_PROVIDER,
+            crate::openhuman::credentials::DEFAULT_AUTH_PROFILE_NAME,
+        )
+        .expect("fake app-session token should be removable");
+    assert!(removed, "fake app-session token should exist");
+}
+
 #[test]
 fn filter_named_scope_keeps_only_named() {
     let parent: Vec<Box<dyn Tool>> = vec![stub("alpha"), stub("beta"), stub("gamma")];
@@ -204,6 +214,201 @@ use crate::openhuman::inference::provider::{
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
+
+struct WorkspaceEnvGuard {
+    previous: Option<std::ffi::OsString>,
+}
+
+impl WorkspaceEnvGuard {
+    fn set(path: &std::path::Path) -> Self {
+        let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+        std::env::set_var("OPENHUMAN_WORKSPACE", path);
+        Self { previous }
+    }
+}
+
+impl Drop for WorkspaceEnvGuard {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+            None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+        }
+    }
+}
+
+async fn save_gmail_scope_for_test(
+    memory: &crate::openhuman::memory_store::MemoryClientRef,
+    pref: crate::openhuman::composio::providers::UserScopePref,
+) {
+    crate::openhuman::composio::providers::user_scopes::save(memory, "gmail", pref)
+        .await
+        .expect("gmail scope pref should persist for isolated test");
+}
+
+#[derive(Clone)]
+struct ComposioFixture {
+    toolkits: Vec<String>,
+    connections: Vec<serde_json::Value>,
+    tools: Vec<serde_json::Value>,
+}
+
+impl ComposioFixture {
+    fn realistic() -> Self {
+        Self {
+            toolkits: vec![
+                "gmail".to_string(),
+                "notion".to_string(),
+                "github".to_string(),
+                "slack".to_string(),
+            ],
+            connections: vec![
+                serde_json::json!({
+                    "id": "conn_gmail_1",
+                    "toolkit": "gmail",
+                    "status": "ACTIVE",
+                    "createdAt": "2026-04-01T12:00:00Z",
+                }),
+                serde_json::json!({
+                    "id": "conn_notion_1",
+                    "toolkit": "notion",
+                    "status": "ACTIVE",
+                    "createdAt": "2026-04-02T08:00:00Z",
+                }),
+                serde_json::json!({
+                    "id": "conn_github_1",
+                    "toolkit": "github",
+                    "status": "ACTIVE",
+                    "createdAt": "2026-04-03T15:30:00Z",
+                }),
+            ],
+            tools: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct FakeComposioState {
+    fixture: Arc<Mutex<ComposioFixture>>,
+    requests: Arc<Mutex<Vec<(String, String, serde_json::Value)>>>,
+}
+
+struct FakeComposioBackend {
+    base_url: String,
+    state: FakeComposioState,
+}
+
+impl FakeComposioBackend {
+    fn requests(&self) -> Vec<(String, String, serde_json::Value)> {
+        self.state.requests.lock().clone()
+    }
+
+    async fn config_persisted(
+        &self,
+    ) -> (Arc<crate::openhuman::config::Config>, std::path::PathBuf) {
+        use crate::openhuman::credentials::{
+            AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
+        };
+
+        let tmp = tempfile::tempdir().expect("tempdir for fake Composio config");
+        let workspace_root = tmp.path().to_path_buf();
+        let mut config = crate::openhuman::config::Config::default();
+        config.workspace_dir = workspace_root.join("workspace");
+        config.config_path = workspace_root.join("config.toml");
+        config.api_url = Some(self.base_url.clone());
+        config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_BACKEND.to_string();
+        config.secrets.encrypt = false;
+        AuthService::from_config(&config)
+            .store_provider_token(
+                APP_SESSION_PROVIDER,
+                DEFAULT_AUTH_PROFILE_NAME,
+                "test-token",
+                std::collections::HashMap::new(),
+                true,
+            )
+            .expect("store fake app-session token");
+        config.save().await.expect("persist fake Composio config");
+        std::mem::forget(tmp);
+        (Arc::new(config), workspace_root)
+    }
+}
+
+async fn record_request(
+    requests: &Arc<Mutex<Vec<(String, String, serde_json::Value)>>>,
+    method: &str,
+    path: &str,
+    body: serde_json::Value,
+) {
+    requests
+        .lock()
+        .push((method.to_string(), path.to_string(), body));
+}
+
+async fn spawn_fake_composio_backend(fixture: ComposioFixture) -> FakeComposioBackend {
+    use axum::{routing::get, Json, Router};
+
+    let state = FakeComposioState {
+        fixture: Arc::new(Mutex::new(fixture)),
+        requests: Arc::new(Mutex::new(Vec::new())),
+    };
+
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/toolkits",
+            get({
+                let st = state.clone();
+                move || async move {
+                    record_request(&st.requests, "GET", "/toolkits", serde_json::Value::Null).await;
+                    let toolkits = st.fixture.lock().toolkits.clone();
+                    Json(serde_json::json!({
+                        "success": true,
+                        "data": { "toolkits": toolkits }
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections",
+            get({
+                let st = state.clone();
+                move || async move {
+                    record_request(&st.requests, "GET", "/connections", serde_json::Value::Null)
+                        .await;
+                    let connections = st.fixture.lock().connections.clone();
+                    Json(serde_json::json!({
+                        "success": true,
+                        "data": { "connections": connections }
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/tools",
+            get({
+                let st = state.clone();
+                move || async move {
+                    record_request(&st.requests, "GET", "/tools", serde_json::Value::Null).await;
+                    let tools = st.fixture.lock().tools.clone();
+                    Json(serde_json::json!({
+                        "success": true,
+                        "data": { "tools": tools }
+                    }))
+                }
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake Composio backend");
+    let addr = listener.local_addr().expect("fake Composio backend addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    FakeComposioBackend {
+        base_url: format!("http://127.0.0.1:{}", addr.port()),
+        state,
+    }
+}
 
 /// Mock provider whose response queue can be inspected by the test
 /// to verify the bytes that arrive at the model.
@@ -745,6 +950,243 @@ async fn typed_mode_filters_tools_by_skill_filter() {
         !system_msg.content.contains("file_read"),
         "skill_filter should have excluded file_read"
     );
+}
+
+#[tokio::test]
+async fn integrations_agent_reuses_cached_toolkit_actions_without_refetching_list_tools() {
+    let _memory_guard = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+        .lock()
+        .await;
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _cache_guard = crate::openhuman::composio::composio_cache_test_lock();
+    crate::openhuman::composio::invalidate_connected_integrations_cache();
+
+    let mut fixture = ComposioFixture::realistic();
+    fixture.tools = vec![serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": "GMAIL_SEND_EMAIL",
+            "description": "Send an email via Gmail",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "recipient_email": {"type": "string"},
+                    "subject": {"type": "string"},
+                    "body": {"type": "string"}
+                },
+                "required": ["recipient_email", "subject", "body"]
+            }
+        }
+    })];
+    let backend = spawn_fake_composio_backend(fixture).await;
+    let (config, workspace_root) = backend.config_persisted().await;
+    let _workspace = WorkspaceEnvGuard::set(&workspace_root);
+    let memory = crate::openhuman::memory::global::init(config.workspace_dir.clone())
+        .expect("global memory client should initialize for cache reuse test");
+    save_gmail_scope_for_test(
+        &memory,
+        crate::openhuman::composio::providers::UserScopePref::default(),
+    )
+    .await;
+
+    let integrations = crate::openhuman::composio::fetch_connected_integrations(&config).await;
+    let gmail = integrations
+        .iter()
+        .find(|integration| integration.toolkit == "gmail" && integration.connected)
+        .expect("fixture should expose a connected gmail integration");
+    assert!(
+        !gmail.tools.is_empty(),
+        "cached gmail integration should include action schemas"
+    );
+    remove_fake_app_session(config.as_ref());
+
+    let requests_before = backend.requests();
+    let tools_before = requests_before
+        .iter()
+        .filter(|(_, path, _)| path == "/tools")
+        .count();
+
+    let provider = ScriptedProvider::new(vec![text_response("done")]);
+    let mut parent = make_parent(provider.clone(), vec![]);
+    parent.connected_integrations = integrations;
+    let mut def = make_def_named_tools(&[]);
+    def.id = "integrations_agent".into();
+    def.tools = ToolScope::Wildcard;
+
+    let outcome = with_parent_context(parent, async {
+        run_subagent(
+            &def,
+            "send a short email to the user",
+            SubagentRunOptions {
+                toolkit_override: Some("gmail".into()),
+                ..Default::default()
+            },
+        )
+        .await
+    })
+    .await
+    .expect("integrations_agent should run using cached gmail actions");
+    assert_eq!(outcome.output, "done");
+
+    let requests_after = backend.requests();
+    let tools_after = requests_after
+        .iter()
+        .filter(|(_, path, _)| path == "/tools")
+        .count();
+    assert_eq!(
+        tools_after, tools_before,
+        "integrations_agent should reuse the parent cached action catalogue; requests: {requests_after:?}"
+    );
+
+    crate::openhuman::composio::invalidate_connected_integrations_cache();
+}
+
+#[tokio::test]
+async fn integrations_agent_refilters_cached_actions_with_current_user_scope() {
+    let _memory_guard = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+        .lock()
+        .await;
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _cache_guard = crate::openhuman::composio::composio_cache_test_lock();
+    crate::openhuman::composio::invalidate_connected_integrations_cache();
+
+    let mut fixture = ComposioFixture::realistic();
+    fixture.tools = vec![
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "GMAIL_FETCH_EMAILS",
+                "description": "Fetch emails from Gmail",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"}
+                    }
+                }
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "GMAIL_SEND_EMAIL",
+                "description": "Send an email via Gmail",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "recipient_email": {"type": "string"},
+                        "subject": {"type": "string"},
+                        "body": {"type": "string"}
+                    },
+                    "required": ["recipient_email", "subject", "body"]
+                }
+            }
+        }),
+    ];
+    let backend = spawn_fake_composio_backend(fixture).await;
+    let (config, workspace_root) = backend.config_persisted().await;
+    let _workspace = WorkspaceEnvGuard::set(&workspace_root);
+    let memory = crate::openhuman::memory::global::init(config.workspace_dir.clone())
+        .expect("global memory client should initialize for scope filtering test");
+    save_gmail_scope_for_test(
+        &memory,
+        crate::openhuman::composio::providers::UserScopePref::default(),
+    )
+    .await;
+
+    let integrations = crate::openhuman::composio::fetch_connected_integrations(&config).await;
+    let gmail = integrations
+        .iter()
+        .find(|integration| integration.toolkit == "gmail" && integration.connected)
+        .expect("fixture should expose a connected gmail integration");
+    assert!(
+        gmail
+            .tools
+            .iter()
+            .any(|tool| tool.name == "GMAIL_SEND_EMAIL"),
+        "warm cache should include write action before the user disables write scope"
+    );
+    remove_fake_app_session(config.as_ref());
+
+    crate::openhuman::composio::providers::user_scopes::save(
+        &memory,
+        "gmail",
+        crate::openhuman::composio::providers::UserScopePref {
+            read: true,
+            write: false,
+            admin: false,
+        },
+    )
+    .await
+    .expect("scope pref should persist");
+
+    let requests_before = backend.requests();
+    let tools_before = requests_before
+        .iter()
+        .filter(|(_, path, _)| path == "/tools")
+        .count();
+
+    let provider = ScriptedProvider::new(vec![text_response("done")]);
+    let mut parent = make_parent(provider.clone(), vec![]);
+    parent.connected_integrations = integrations;
+    let mut def = make_def_named_tools(&[]);
+    def.id = "integrations_agent".into();
+    def.tools = ToolScope::Wildcard;
+
+    let outcome = with_parent_context(parent, async {
+        run_subagent(
+            &def,
+            "read recent email",
+            SubagentRunOptions {
+                toolkit_override: Some("gmail".into()),
+                ..Default::default()
+            },
+        )
+        .await
+    })
+    .await
+    .expect("integrations_agent should run using scope-filtered cached gmail actions");
+    assert_eq!(outcome.output, "done");
+
+    let captured = provider.captured.lock();
+    let first_request = captured
+        .first()
+        .expect("provider should receive one integrations_agent request");
+    let system_msg = first_request
+        .messages
+        .iter()
+        .find(|message| message.role == "system")
+        .expect("system prompt should be present");
+    assert!(
+        system_msg.content.contains("GMAIL_FETCH_EMAILS"),
+        "read-scoped cached action should remain visible in the prompt; system: {}",
+        system_msg.content
+    );
+    assert!(
+        !system_msg.content.contains("GMAIL_SEND_EMAIL"),
+        "write-scoped cached action must be hidden after the current user scope disables write; system: {}",
+        system_msg.content
+    );
+
+    let requests_after = backend.requests();
+    let tools_after = requests_after
+        .iter()
+        .filter(|(_, path, _)| path == "/tools")
+        .count();
+    assert_eq!(
+        tools_after, tools_before,
+        "scope re-filtering should not re-fetch list_tools; requests: {requests_after:?}"
+    );
+
+    save_gmail_scope_for_test(
+        &memory,
+        crate::openhuman::composio::providers::UserScopePref::default(),
+    )
+    .await;
+    crate::openhuman::composio::invalidate_connected_integrations_cache();
 }
 
 #[tokio::test]

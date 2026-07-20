@@ -72,6 +72,8 @@ pub use crate::openhuman::memory_sync::composio::providers::{
 };
 pub use action_tool::ComposioActionTool;
 pub use client::ComposioClient;
+#[cfg(test)]
+pub(crate) use connected_integrations::composio_cache_test_lock;
 pub use identity::connection_identity;
 pub use ops::{
     cached_active_integrations, cached_active_integrations_including_expired, connected_set_hash,

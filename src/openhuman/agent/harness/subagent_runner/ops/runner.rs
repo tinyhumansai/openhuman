@@ -99,6 +99,34 @@ pub(super) fn tier_gate_decision(
     Ok(())
 }
 
+async fn filter_cached_toolkit_actions_with_current_scope(
+    agent_id: &str,
+    toolkit: &str,
+    actions: &[crate::openhuman::context::prompt::ConnectedIntegrationTool],
+) -> Vec<crate::openhuman::context::prompt::ConnectedIntegrationTool> {
+    let pref = crate::openhuman::composio::providers::load_user_scope_or_default(toolkit).await;
+    let before = actions.len();
+    let filtered: Vec<_> = actions
+        .iter()
+        .filter(|action| {
+            crate::openhuman::composio::providers::is_action_visible_with_pref(&action.name, &pref)
+        })
+        .cloned()
+        .collect();
+    tracing::debug!(
+        agent_id = %agent_id,
+        toolkit = %toolkit,
+        cached_actions = before,
+        visible_actions = filtered.len(),
+        hidden_actions = before.saturating_sub(filtered.len()),
+        read = pref.read,
+        write = pref.write,
+        admin = pref.admin,
+        "[subagent_runner:typed] re-filtered cached toolkit catalogue with current user scope"
+    );
+    filtered
+}
+
 /// Definition id of the pure-retrieval memory agent, reached from chat as the
 /// `retrieve_memory` delegate and from other agents as `call_memory_agent`.
 const AGENT_MEMORY_ID: &str = "agent_memory";
@@ -679,48 +707,65 @@ async fn run_typed_mode(
                 .iter()
                 .find(|ci| ci.connected && ci.toolkit.eq_ignore_ascii_case(tk))
             {
-                let fresh_actions = match &client_kind {
-                    Some(ComposioClientKind::Backend(client)) => {
-                        match crate::openhuman::composio::fetch_toolkit_actions(client, tk, None)
+                let fresh_actions = if !cached_integration.tools.is_empty() {
+                    tracing::debug!(
+                        agent_id = %definition.id,
+                        toolkit = %tk,
+                        cached_actions = cached_integration.tools.len(),
+                        "[subagent_runner:typed] using cached toolkit catalogue"
+                    );
+                    filter_cached_toolkit_actions_with_current_scope(
+                        &definition.id,
+                        tk,
+                        &cached_integration.tools,
+                    )
+                    .await
+                } else {
+                    match &client_kind {
+                        Some(ComposioClientKind::Backend(client)) => {
+                            match crate::openhuman::composio::fetch_toolkit_actions(
+                                client, tk, None,
+                            )
                             .await
-                        {
-                            Ok(actions) if !actions.is_empty() => actions,
-                            Ok(_) => {
-                                tracing::debug!(
-                                    agent_id = %definition.id,
-                                    toolkit = %tk,
-                                    "[subagent_runner:typed] fresh list_tools returned empty; falling back to cached catalogue"
-                                );
-                                cached_integration.tools.clone()
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    agent_id = %definition.id,
-                                    toolkit = %tk,
-                                    error = %e,
-                                    "[subagent_runner:typed] fresh list_tools failed; falling back to cached catalogue"
-                                );
-                                cached_integration.tools.clone()
+                            {
+                                Ok(actions) if !actions.is_empty() => actions,
+                                Ok(_) => {
+                                    tracing::debug!(
+                                        agent_id = %definition.id,
+                                        toolkit = %tk,
+                                        "[subagent_runner:typed] fresh list_tools returned empty; falling back to cached catalogue"
+                                    );
+                                    cached_integration.tools.clone()
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        agent_id = %definition.id,
+                                        toolkit = %tk,
+                                        error = %e,
+                                        "[subagent_runner:typed] fresh list_tools failed; falling back to cached catalogue"
+                                    );
+                                    cached_integration.tools.clone()
+                                }
                             }
                         }
-                    }
-                    Some(ComposioClientKind::Direct(_)) => {
-                        tracing::info!(
-                            agent_id = %definition.id,
-                            toolkit = %tk,
-                            cached_actions = cached_integration.tools.len(),
-                            "[composio-direct] subagent_runner:typed: direct mode active — using cached catalogue, skipping backend list_tools refresh"
-                        );
-                        cached_integration.tools.clone()
-                    }
-                    None => {
-                        tracing::debug!(
-                            agent_id = %definition.id,
-                            toolkit = %tk,
-                            cached_actions = cached_integration.tools.len(),
-                            "[subagent_runner:typed] composio client unavailable; using cached catalogue"
-                        );
-                        cached_integration.tools.clone()
+                        Some(ComposioClientKind::Direct(_)) => {
+                            tracing::info!(
+                                agent_id = %definition.id,
+                                toolkit = %tk,
+                                cached_actions = cached_integration.tools.len(),
+                                "[composio-direct] subagent_runner:typed: direct mode active — using cached catalogue, skipping backend list_tools refresh"
+                            );
+                            cached_integration.tools.clone()
+                        }
+                        None => {
+                            tracing::debug!(
+                                agent_id = %definition.id,
+                                toolkit = %tk,
+                                cached_actions = cached_integration.tools.len(),
+                                "[subagent_runner:typed] composio client unavailable; using cached catalogue"
+                            );
+                            cached_integration.tools.clone()
+                        }
                     }
                 };
                 let integration = crate::openhuman::context::prompt::ConnectedIntegration {
