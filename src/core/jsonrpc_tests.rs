@@ -78,6 +78,62 @@ fn domain_subscriber_plan_harness_gates_by_owning_group() {
     assert!(!plan.mcp, "harness must skip mcp_registry bus init");
 }
 
+/// #5027 — the tool-execution timeout must be seeded on the always-on core boot
+/// path (`register_domain_subscribers`, inside the ungated `INFRA: Once` block),
+/// NOT inside `channels::runtime::startup::start_channels`, which is skipped for
+/// channel-less / web-chat-only cores (and when `OPENHUMAN_DISABLE_CHANNEL_LISTENERS`
+/// is set). A minimal `DomainSet::none()` must still seed, because the INFRA block
+/// is DomainSet-independent.
+///
+/// The timeout atomic and the `INFRA: Once` are process-global, so this is the
+/// SOLE `register_domain_subscribers` seed assertion in the binary: a second caller
+/// would find `INFRA` already consumed and observe no re-seed, so a second such test
+/// would be order-dependent and flaky. Serialized via `TEST_ENV_LOCK` with
+/// `OPENHUMAN_TOOL_TIMEOUT_SECS` cleared so the operator env override cannot mask the
+/// config-derived value. Runs under a tokio runtime like the real boot paths — the
+/// INFRA block calls `subscribe_global`, which `tokio::spawn`s when the global bus is
+/// already initialized by another test in the binary.
+#[tokio::test]
+async fn tool_timeout_seeds_on_channelless_core_boot() {
+    let _lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let restore = std::env::var_os("OPENHUMAN_TOOL_TIMEOUT_SECS");
+    std::env::remove_var("OPENHUMAN_TOOL_TIMEOUT_SECS");
+
+    // Distinctive, in-range (1..=3600) value so the assertion can only pass on a
+    // real seed, never on the default. Channel-less: `channels_config` stays empty,
+    // which is exactly the config for which `start_channels` is skipped.
+    let mut config = crate::openhuman::config::Config::default();
+    config.agent.agent_timeout_secs = 1234;
+    assert!(
+        config.channels_config.active_channel.is_none(),
+        "test premise: channel-less config, so start_channels would be skipped"
+    );
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // Minimal DomainSet — INFRA (and thus the timeout seed) is DomainSet-independent,
+    // so even `none()` must seed. `embedded_core = true` skips the standalone
+    // process-exit shutdown subscriber.
+    super::register_domain_subscribers(
+        tmp.path().to_path_buf(),
+        config,
+        true,
+        crate::core::runtime::DomainSet::none(),
+    );
+
+    assert_eq!(
+        crate::openhuman::tool_timeout::tool_execution_timeout_secs(),
+        1234,
+        "channel-less core boot must seed the tool-execution timeout from [agent].agent_timeout_secs"
+    );
+
+    match restore {
+        Some(v) => std::env::set_var("OPENHUMAN_TOOL_TIMEOUT_SECS", v),
+        None => std::env::remove_var("OPENHUMAN_TOOL_TIMEOUT_SECS"),
+    }
+}
+
 struct EnvVarGuard {
     old_values: Vec<(&'static str, Option<OsString>)>,
     _lock: MutexGuard<'static, ()>,

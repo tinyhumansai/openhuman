@@ -1906,6 +1906,22 @@ fn register_domain_subscribers(
         // executes a tool.
         crate::openhuman::tokenjuice::install_from_config(&config);
 
+        // Seed the live tool-execution timeout from the persisted `[agent]` config
+        // so a user-configured value (Settings → Agent OS access → Action timeout)
+        // is in effect from the first tool call. `OPENHUMAN_TOOL_TIMEOUT_SECS`, when
+        // set, still overrides this inside `set_tool_timeout_secs`. This lives on
+        // the always-on boot path (not `channels::runtime::startup::start_channels`,
+        // which is skipped for channel-less / web-chat-only cores) so the timeout
+        // seeds for every install regardless of DomainSet — it is DomainSet-
+        // independent process-global state, not a gated subscriber (#5027).
+        let effective_timeout =
+            crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
+        log::debug!(
+            "[tool_timeout] seeded tool-execution timeout from config: configured={}s effective={}s",
+            config.agent.agent_timeout_secs,
+            effective_timeout
+        );
+
         // Seed the scheduler-gate signed-out override from the on-disk session.
         // Without this, a sidecar that boots with no stored JWT would happily
         // spin up cron / channel loops and fire LLM requests that all 401.
