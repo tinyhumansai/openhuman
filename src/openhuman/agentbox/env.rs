@@ -79,10 +79,21 @@ where
         return Err(format!("missing/blank: {}", missing.join(", ")));
     }
     Ok(GmiConfig {
-        base_url: base_url.unwrap(),
+        base_url: normalize_gmi_maas_base_url(&base_url.unwrap()),
         api_key: api_key.unwrap(),
         model: model.unwrap(),
     })
+}
+
+/// Normalize `GMI_MAAS_BASE_URL` to an OpenAI-compatible `/v1` base URL.
+///
+/// AgentBox injects a host-only URL (no `/v1`). `OpenAiModel` appends
+/// `/chat/completions` but does not add `/v1`, so marketplace inference
+/// 404s without this step. Idempotent for already-correct inputs.
+pub fn normalize_gmi_maas_base_url(url: &str) -> String {
+    let trimmed = url.trim().trim_end_matches('/');
+    let without_v1 = trimmed.strip_suffix("/v1").unwrap_or(trimmed);
+    format!("{}/v1", without_v1.trim_end_matches('/'))
 }
 
 fn nonblank<F: Fn(&str) -> Option<String>>(get: &F, key: &str) -> Option<String> {

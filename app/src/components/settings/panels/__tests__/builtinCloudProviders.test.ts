@@ -13,6 +13,7 @@ describe('builtinCloudProviders', () => {
   });
 
   it.each([
+    ['gmi', 'https://api.gmi-serving.com/v1', 'bearer'],
     ['groq', 'https://api.groq.com/openai/v1', 'bearer'],
     ['deepseek', 'https://api.deepseek.com/v1', 'bearer'],
     ['minimax', 'https://api.minimax.io/v1', 'bearer'],
