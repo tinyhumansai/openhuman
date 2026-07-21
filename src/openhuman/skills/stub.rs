@@ -82,7 +82,7 @@ pub mod registry {
 }
 
 // ---------------------------------------------------------------------------
-// bus::{ensure_triggered_workflow_subscriber, register_workflow_cleanup_subscriber}
+// bus::ensure_triggered_workflow_subscriber
 // ---------------------------------------------------------------------------
 
 pub mod bus {
@@ -90,9 +90,6 @@ pub mod bus {
     pub fn ensure_triggered_workflow_subscriber(_workspace: &std::path::Path) {
         log::debug!("[skills-stub] ensure_triggered_workflow_subscriber skipped (skills disabled)");
     }
-
-    /// No-op: no skill run directories exist to clean up.
-    pub fn register_workflow_cleanup_subscriber() {}
 }
 
 // NOTE: no `tools` module here. The `pub use skills::tools::*` glob in

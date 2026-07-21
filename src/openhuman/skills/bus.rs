@@ -255,10 +255,6 @@ pub fn ensure_triggered_workflow_subscriber(workspace: &std::path::Path) {
     });
 }
 
-/// Legacy no-op retained while call-sites migrate to
-/// [`register_triggered_workflow_subscriber`]. Safe to call multiple times.
-pub fn register_workflow_cleanup_subscriber() {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,11 +441,5 @@ mod tests {
             component: "core".into(),
         };
         assert!(idx.matching_workflows(&event).is_empty());
-    }
-
-    #[test]
-    fn register_skill_cleanup_subscriber_is_a_safe_noop() {
-        register_workflow_cleanup_subscriber();
-        register_workflow_cleanup_subscriber();
     }
 }

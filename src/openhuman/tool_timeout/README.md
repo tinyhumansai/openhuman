@@ -7,7 +7,7 @@ Process-wide wall-clock timeout policy for tool execution (the node/tool runtime
 Highest precedence first:
 
 1. `OPENHUMAN_TOOL_TIMEOUT_SECS` environment variable — operator override. When set to a valid value (`1..=3600`) it always wins; config pushes are ignored while it is present.
-2. The persisted config value (`[agent].agent_timeout_secs`), pushed in via `set_tool_timeout_secs` at startup and on every `config.update_agent_settings` RPC.
+2. The persisted config value (`[agent].agent_timeout_secs`), pushed in via `set_tool_timeout_secs` at startup (from `core::jsonrpc::register_domain_subscribers`, the always-on core boot path) and on every `config.update_agent_settings` RPC.
 3. The built-in `DEFAULT_TIMEOUT_SECS` (`120`) default.
 
 ## Responsibilities
@@ -54,7 +54,7 @@ The global timeout governs **non-scripting** tools only — a hung network/MCP c
 - `src/openhuman/tools/impl/system/{shell,node_exec,npm_exec}.rs` — scripting tools: unbounded by default, explicit `timeout_secs` via `explicit_call_timeout_*`.
 - `src/openhuman/agent/tools/delegate.rs` — bounds the delegated provider chat call with `tool_execution_timeout_secs`.
 - `src/openhuman/config/ops.rs` — `apply_agent_settings` calls `set_tool_timeout_secs` after persisting; `get_agent_settings` reports `effective_timeout_secs` / `env_override`.
-- `src/openhuman/channels/runtime/startup.rs` — seeds the runtime value from config at core boot.
+- `src/core/jsonrpc.rs` — `register_domain_subscribers` seeds the runtime value from config on the always-on core boot path (its ungated `INFRA: Once` block), so channel-less / web-chat-only cores get the configured timeout too (#5027).
 - `src/openhuman/agent/harness/harness_gap_tests.rs` — pins `parse_tool_timeout_secs` default/boundary behaviour.
 
 ## Notes / gotchas
