@@ -57,6 +57,12 @@ pub struct ServiceSet {
     pub skill_catalog_refresh: bool,
     /// Boot installed MCP servers and supervise reconnects during runtime bootstrap.
     pub mcp_boot: bool,
+    /// Composio integration sync: periodic connection sync + one-shot memory-source reconcile.
+    pub integrations: bool,
+    /// Workspace memory-source periodic sync — repos, folders, RSS, web pages.
+    pub memory_sync: bool,
+    /// Orchestration relay-mailbox drain supervisor.
+    pub orchestration: bool,
 }
 
 impl ServiceSet {
@@ -73,6 +79,9 @@ impl ServiceSet {
             harness_init: true,
             skill_catalog_refresh: true,
             mcp_boot: true,
+            integrations: true,
+            memory_sync: true,
+            orchestration: true,
         }
     }
 
@@ -90,6 +99,9 @@ impl ServiceSet {
             harness_init: false,
             skill_catalog_refresh: false,
             mcp_boot: false,
+            integrations: false,
+            memory_sync: false,
+            orchestration: false,
         }
     }
 
@@ -107,6 +119,9 @@ impl ServiceSet {
             harness_init: false,
             skill_catalog_refresh: false,
             mcp_boot: false,
+            integrations: false,
+            memory_sync: false,
+            orchestration: false,
         }
     }
 }
@@ -726,11 +741,23 @@ mod tests {
         assert!(!custom.harness_init);
         assert!(!custom.skill_catalog_refresh);
         assert!(!custom.mcp_boot);
+        assert!(!custom.integrations);
+        assert!(!custom.memory_sync);
+        assert!(!custom.orchestration);
 
         let desktop = ServiceSet::desktop();
         assert!(desktop.memory_queue);
         assert!(desktop.harness_init);
         assert!(desktop.skill_catalog_refresh);
         assert!(desktop.mcp_boot);
+        assert!(desktop.integrations);
+        assert!(desktop.memory_sync);
+        assert!(desktop.orchestration);
+
+        // headless_api() runs no bootstrap jobs either.
+        let headless = ServiceSet::headless_api();
+        assert!(!headless.integrations);
+        assert!(!headless.memory_sync);
+        assert!(!headless.orchestration);
     }
 }
