@@ -241,46 +241,58 @@ pub(crate) fn bootstrap_job_plan(services: &ServiceSet) -> BootstrapJobPlan {
 /// `memory_sync` / `orchestration` instead.
 pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
     let plan = bootstrap_job_plan(&services);
+    log::debug!("[runtime.bootstrap] starting bootstrap jobs with plan {plan:?}");
 
     if plan.memory_queue {
+        log::debug!("[runtime.bootstrap] starting memory queue workers");
         crate::openhuman::memory_queue::start(config.clone());
     } else {
-        log::debug!("[runtime] memory queue workers disabled by ServiceSet");
+        log::debug!("[runtime.bootstrap] memory queue workers disabled by ServiceSet");
     }
 
     // Integrations — Composio periodic connection sync + one-shot source
     // reconcile. Both no-op without active Composio connections.
     if plan.composio_integration_sync {
+        log::debug!("[runtime.bootstrap] starting composio integration sync + source reconcile");
         crate::openhuman::composio::start_periodic_sync();
         tokio::spawn(async {
+            log::debug!("[runtime.bootstrap] composio source reconcile started");
             crate::openhuman::memory_sources::reconcile::ensure_composio_sources().await;
+            log::debug!("[runtime.bootstrap] composio source reconcile completed");
         });
     } else {
-        log::debug!("[composio] integration sync + source reconcile disabled by ServiceSet");
+        log::debug!(
+            "[runtime.bootstrap] composio integration sync + source reconcile disabled by ServiceSet"
+        );
     }
 
     // Memory sync — workspace-kind memory sources (GitHub repos, folders, RSS,
     // web pages) get their own cadence loop; the Composio scheduler above only
     // walks Composio connections.
     if plan.workspace_memory_sync {
+        log::debug!("[runtime.bootstrap] starting workspace memory-source periodic sync");
         crate::openhuman::memory_sync::workspace::start_workspace_periodic_sync();
     } else {
-        log::debug!("[memory_sync] workspace periodic sync disabled by ServiceSet");
+        log::debug!("[runtime.bootstrap] workspace periodic sync disabled by ServiceSet");
     }
 
     // Orchestration — relay-mailbox drain supervisor.
     if plan.orchestration_drain {
+        log::debug!("[runtime.bootstrap] starting orchestration message drain supervisor");
         crate::openhuman::orchestration::start_message_drain_supervisor();
     } else {
-        log::debug!("[orchestration] message drain supervisor disabled by ServiceSet");
+        log::debug!("[runtime.bootstrap] message drain supervisor disabled by ServiceSet");
     }
 
     if plan.proactive_task_pollers {
+        log::debug!("[runtime.bootstrap] starting proactive task pollers (task sources + board)");
         crate::openhuman::task_sources::start_periodic_poll();
         crate::openhuman::agent::task_dispatcher::start_board_poller();
     } else {
-        log::debug!("[runtime] bootstrap proactive task pollers disabled by ServiceSet");
+        log::debug!("[runtime.bootstrap] proactive task pollers disabled by ServiceSet");
     }
+
+    log::debug!("[runtime.bootstrap] bootstrap job dispatch complete");
 }
 
 /// Starts one-shot boot background work selected by [`ServiceSet`].
