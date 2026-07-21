@@ -1882,6 +1882,31 @@ fn register_domain_subscribers(
             .insert(group)
     }
 
+    // Seed the live tool-execution timeout from the persisted `[agent]` config
+    // so a user-configured value (Settings → Agent OS access → Action timeout)
+    // is in effect from the first tool call. `OPENHUMAN_TOOL_TIMEOUT_SECS`, when
+    // set, still overrides this inside `set_tool_timeout_secs`. This lives on
+    // the always-on boot path (not `channels::runtime::startup::start_channels`,
+    // which is skipped for channel-less / web-chat-only cores) so the timeout
+    // seeds for every install regardless of DomainSet — it is DomainSet-
+    // independent process-global state, not a gated subscriber (#5027).
+    //
+    // Deliberately OUTSIDE the `INFRA: Once` below: `bootstrap_core_runtime`
+    // re-runs on an in-process core restart (`CoreProcessHandle::restart` →
+    // `ensure_running`, and `reset_local_data`/Clear-Local-Data) with a freshly
+    // reloaded `Config`, but `INFRA` is already consumed — so a seed gated by it
+    // would leave the process-global timeout pinned to the previous config's
+    // value until Settings is re-saved. `set_tool_timeout_secs` is idempotent
+    // (a plain atomic store honouring the env override), so re-seeding on every
+    // call is correct and cheap and re-applies the current config each boot.
+    let effective_timeout =
+        crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
+    log::debug!(
+        "[tool_timeout] seeded tool-execution timeout from config: configured={}s effective={}s",
+        config.agent.agent_timeout_secs,
+        effective_timeout
+    );
+
     // Ungated core/platform infra — health, scheduler-gate, TokenJuice
     // content-router, session-token seeding, the SessionExpired handler, and
     // service restart/shutdown. These are DomainSet-independent, so they run
@@ -1905,22 +1930,6 @@ fn register_domain_subscribers(
         // every agent's tool output, so this must be set before any agent loop
         // executes a tool.
         crate::openhuman::tokenjuice::install_from_config(&config);
-
-        // Seed the live tool-execution timeout from the persisted `[agent]` config
-        // so a user-configured value (Settings → Agent OS access → Action timeout)
-        // is in effect from the first tool call. `OPENHUMAN_TOOL_TIMEOUT_SECS`, when
-        // set, still overrides this inside `set_tool_timeout_secs`. This lives on
-        // the always-on boot path (not `channels::runtime::startup::start_channels`,
-        // which is skipped for channel-less / web-chat-only cores) so the timeout
-        // seeds for every install regardless of DomainSet — it is DomainSet-
-        // independent process-global state, not a gated subscriber (#5027).
-        let effective_timeout =
-            crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
-        log::debug!(
-            "[tool_timeout] seeded tool-execution timeout from config: configured={}s effective={}s",
-            config.agent.agent_timeout_secs,
-            effective_timeout
-        );
 
         // Seed the scheduler-gate signed-out override from the on-disk session.
         // Without this, a sidecar that boots with no stored JWT would happily
