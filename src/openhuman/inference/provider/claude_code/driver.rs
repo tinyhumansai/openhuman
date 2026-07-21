@@ -198,7 +198,24 @@ fn append_system_prompt_args(
     };
 
     let path = dir.join("append-system-prompt.txt");
-    std::fs::write(&path, prompt)?;
+    log::debug!(
+        "[claude-code][driver] append-system-prompt file write start path={} bytes={}",
+        path.display(),
+        prompt.len()
+    );
+    if let Err(error) = std::fs::write(&path, prompt) {
+        log::warn!(
+            "[claude-code][driver] append-system-prompt file write failed path={} error={}",
+            path.display(),
+            error
+        );
+        return Err(error);
+    }
+    log::debug!(
+        "[claude-code][driver] append-system-prompt file write complete path={} bytes={}",
+        path.display(),
+        prompt.len()
+    );
     Ok(vec![
         "--append-system-prompt-file".to_string(),
         path.display().to_string(),
@@ -525,6 +542,18 @@ mod tests {
 
         assert!(args.is_empty());
         assert!(!dir.path().join("append-system-prompt.txt").exists());
+    }
+
+    #[test]
+    fn system_prompt_write_error_is_propagated() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let not_a_directory = dir.path().join("file");
+        std::fs::write(&not_a_directory, "occupied").expect("write blocking file");
+
+        let error = append_system_prompt_args(&not_a_directory, Some("system prompt"))
+            .expect_err("non-directory parent must fail");
+
+        assert!(!error.to_string().is_empty());
     }
 
     #[cfg(target_os = "macos")]
