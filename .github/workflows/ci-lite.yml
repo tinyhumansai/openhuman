@@ -430,7 +430,7 @@ jobs:
         run: |
           bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
             --no-default-features --features tokenjuice-treesitter --lib -- \
-            core::all:: core::cli:: core::jsonrpc:: core::legacy_aliases:: agent_registry::agents::loader::
+            core::all:: core::cli:: core::jsonrpc:: core::legacy_aliases:: core::runtime:: agent_registry::agents::loader::
 
       - name: Guard — new feature-gated test modules must be acknowledged
         # Self-maintaining coverage: the set of source files that #[cfg]-gate a test on
@@ -448,6 +448,7 @@ jobs:
           core/jsonrpc_tests.rs
           core/legacy_aliases.rs
           core/runtime/context.rs
+          core/runtime/services.rs
           openhuman/agent/harness/builtin_definitions.rs
           openhuman/agent/harness/definition_tests.rs
           openhuman/agent/harness/session/tests.rs
