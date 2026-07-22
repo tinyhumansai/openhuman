@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using these metadata."
+title: "OpenHuman"
+type: "software"
+authors:
+  - name: "tinyhumansai"
+  - name: "OpenHuman Contributors"
+repository-code: "https://github.com/tinyhumansai/openhuman"
+url: "https://github.com/tinyhumansai/openhuman"
+abstract: "OpenHuman is an open‑source AI platform for building and orchestrating autonomous agents and workflows."
+license: "GPL-3.0"
+version: "0.63.1"
+date-released: "2026-07-21"
+keywords:
+  - "ai"
+  - "agents"
+  - "workflows"
+  - "orchestration"
+  - "openhuman"
+preferred-citation:
+  type: "software"
+  title: "OpenHuman"
+  authors:
+    - name: "tinyhumansai"
+  year: "2026"
+  url: "https://github.com/tinyhumansai/openhuman"
+  version: "0.63.1"
