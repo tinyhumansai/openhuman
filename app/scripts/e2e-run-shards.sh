@@ -18,7 +18,8 @@
 #   chat         = chat, skills, journeys
 #   integrations = providers, webhooks, notifications
 #   connectors   = connectors
-#   commerce     = payments, settings
+#   payments     = payments
+#   settings     = settings
 #
 set -uo pipefail
 
@@ -32,7 +33,8 @@ SHARDS=(
   "providers:providers,notifications"
   "webhooks:webhooks"
   "connectors:connectors"
-  "commerce:payments,settings"
+  "payments:payments"
+  "settings:settings"
 )
 
 # Allow filtering: `bash e2e-run-shards.sh foundation chat`

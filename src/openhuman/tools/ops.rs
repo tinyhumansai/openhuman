@@ -246,12 +246,17 @@ pub fn all_tools_with_runtime(
         // value ready to paste into a tool argument.
         Box::new(ResolveTimeTool::new()),
         Box::new(LaunchAppTool::new()),
+        // `ax_interact` + `automate` are the `computer`-family tools — compiled
+        // out with the `desktop-automation` feature (same idiom as the
+        // `screen_intelligence_*` block below).
+        #[cfg(feature = "desktop-automation")]
         Box::new(AxInteractTool::new(
             root_config.computer_control.ax_interact_mutations,
         )),
         // Multi-step UI automation in one call. Shares the ax_interact opt-in
         // (mutations) and sensitive-app denylist; runs a Rust perceive→act→verify
         // loop with a fast model so the chat model stays out of the click loop.
+        #[cfg(feature = "desktop-automation")]
         Box::new(AutomateTool::new(
             root_config.computer_control.ax_interact_mutations,
         )),
@@ -690,20 +695,39 @@ pub fn all_tools_with_runtime(
         // call tools default-ON; OS permission prompts (screen_permissions),
         // MCP install/uninstall (mcp_manage), and persona/workspace writers
         // (workspace_manage) ship default-OFF via `tools::user_filter`.
+        //
+        // The 15 `screen_intelligence_*` tools are compiled out with the
+        // `desktop-automation` feature — the per-element attrs inside the
+        // `vec![]` mirror the `mcp` idiom below.
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenStatusTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenCaptureImageRefTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenVisionRecentTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenVisionFlushTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenRefreshPermissionsTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenCaptureNowTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenCaptureTestTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenSessionStartTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenSessionStopTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenInputActionTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenGlobeStartTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenGlobePollTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenGlobeStopTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenRequestPermissionsTool),
+        #[cfg(feature = "desktop-automation")]
         Box::new(ScreenRequestPermissionTool),
         // MCP registry (dynamic, user-installed servers) — compiled out with
         // the `mcp` feature. Per-element attrs inside the `vec![]` mirror the
@@ -764,6 +788,7 @@ pub fn all_tools_with_runtime(
     // backed) as of the #2780-follow-up rust-engine refactor — no
     // managed Python venv, no first-call install latency. Always
     // registered.
+    #[cfg(feature = "documents")]
     tools.push(Box::new(PresentationTool::new(
         root_config.workspace_dir.clone(),
         security.clone(),
@@ -773,6 +798,7 @@ pub fn all_tools_with_runtime(
     // (docx-rs backed) — no managed runtime, no subprocess — emitting a
     // real `.docx` through the same byte-agnostic artifact pipeline as
     // the presentation tool. Always registered; same constructor shape.
+    #[cfg(feature = "documents")]
     tools.push(Box::new(DocumentTool::new(
         root_config.workspace_dir.clone(),
         security.clone(),
@@ -1010,7 +1036,10 @@ pub fn all_tools_with_runtime(
     tools.push(Box::new(ScreenshotTool::new(security.clone())));
     tools.push(Box::new(ImageInfoTool::new(security.clone())));
 
-    // Native mouse + keyboard control (disabled by default)
+    // Native mouse + keyboard control (disabled by default). The `MouseTool` /
+    // `KeyboardTool` are `computer`-family tools — compiled out with the
+    // `desktop-automation` feature.
+    #[cfg(feature = "desktop-automation")]
     if root_config.computer_control.enabled {
         tools.push(Box::new(MouseTool::new(security.clone())));
         tools.push(Box::new(KeyboardTool::new(security.clone())));
@@ -1358,7 +1387,17 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
     if name.starts_with("thread_") || name.starts_with("todo_") || THREADS_EXTRA.contains(&name) {
         return DomainGroup::Threads;
     }
-    // Everything else — shell/file/screen/config/security/agent/billing/… — is
+    // Desktop-automation family: the 15 `screen_intelligence_*` tools plus the
+    // four `computer`-family tools (`ax_interact`, `automate`, `mouse`,
+    // `keyboard`). Compiled out with the `desktop-automation` feature; tagged so
+    // the runtime `DomainSet::desktop_automation` axis gates them consistently
+    // with the autocomplete/screen_intelligence/desktop_companion controllers.
+    if name.starts_with("screen_intelligence_")
+        || matches!(name, "ax_interact" | "automate" | "mouse" | "keyboard")
+    {
+        return DomainGroup::DesktopAutomation;
+    }
+    // Everything else — shell/file/config/security/agent/billing/… — is
     // Platform: present under full(), absent under harness()/none().
     DomainGroup::Platform
 }

@@ -1,17 +1,16 @@
 /**
  * End-to-end: webhook tunnel CRUD round-trip (UI WebView → core JSON-RPC → mock backend).
  *
- * The webhook tunnel UI (Settings → Developer Options → Webhooks, plus the `/webhooks`
- * ComposeIO trigger history page) is a shipped, user-visible feature backed by the
- * `openhuman.webhooks_*` controller family registered in `src/openhuman/webhooks/schemas.rs`.
- * Prior to this spec there was no E2E coverage for the webhook path — only Rust-side unit
- * tests in `src/openhuman/webhooks/tests.rs` and the mock-backend tunnel CRUD endpoints
- * added in `scripts/mock-api-core.mjs` (`/webhooks/core*`).
+ * The `openhuman.webhooks_*` controller family remains available for backend tunnel CRUD,
+ * while the retired `/webhooks` UI route redirects to Connections. Prior to this spec
+ * there was no E2E coverage for the webhook path, only Rust-side unit tests in
+ * `src/openhuman/webhooks/tests.rs` and the mock-backend tunnel CRUD endpoints added in
+ * `scripts/mock-api-core.mjs` (`/webhooks/core*`).
  *
  * This spec validates the **authenticated** round-trip where the desktop shell's JSON-RPC
  * transport reaches the core sidecar, which in turn reaches the mock backend at
  * `/webhooks/core`. It is intentionally narrow: one coherent create → list → delete flow
- * that also surfaces the Webhooks page so the UI entry point does not silently regress.
+ * that also verifies the retired UI route keeps redirecting safely.
  *
  * Auth model: `auth_store_session` is invoked implicitly by the web-layer deep link
  * listener (`desktopDeepLinkListener.ts → storeSession`). Webhook RPCs that require a
@@ -25,7 +24,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { dumpAccessibilityTree, textExists } from '../helpers/element-helpers';
+import { textExists } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash, waitForRequest } from '../helpers/shared-flows';
 import {
@@ -182,37 +181,18 @@ describe('Webhook tunnel CRUD (UI + core RPC + mock backend)', () => {
     expect(stillPresent).toBe(false);
   });
 
-  it('Webhooks page loads (ComposeIO trigger history surface)', async () => {
-    // The webhooks/trigger-history surface was merged into the Integrations
-    // settings page under the `#webhooks` tab; the legacy /settings/webhooks-triggers
-    // slug redirects to /settings/integrations#webhooks (see Settings.tsx).
-    await navigateViaHash('/settings/integrations#webhooks');
+  it('legacy Webhooks route lands on Connections', async () => {
+    // The dedicated Webhooks UI was retired. Keep the compatibility route
+    // covered so old links land on the canonical Connections surface.
+    await navigateViaHash('/webhooks');
 
     await browser.waitUntil(
-      async () => {
-        return (
-          (await textExists('ComposeIO Triggers')) ||
-          (await textExists('ComposeIO')) ||
-          (await textExists('Archive')) ||
-          (await textExists('Refresh'))
-        );
-      },
-      { timeout: 10_000, interval: 500, timeoutMsg: 'Webhooks page markers did not appear' }
+      async () =>
+        String(await browser.execute(() => window.location.hash)).includes('/connections'),
+      { timeout: 10_000, interval: 500, timeoutMsg: 'Webhooks route did not reach Connections' }
     );
 
     const hash = await browser.execute(() => window.location.hash);
-    expect(String(hash)).toContain('/settings/integrations');
-
-    const visible =
-      (await textExists('ComposeIO Triggers')) ||
-      (await textExists('ComposeIO')) ||
-      (await textExists('Archive')) ||
-      (await textExists('Refresh'));
-    if (!visible) {
-      stepLog('Webhooks page markers missing');
-      await dumpAccessibilityTree();
-      stepLog('Mock request log', getRequestLog());
-    }
-    expect(visible).toBe(true);
+    expect(String(hash)).toContain('/connections');
   });
 });

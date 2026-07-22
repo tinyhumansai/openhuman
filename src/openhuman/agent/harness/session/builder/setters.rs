@@ -511,6 +511,7 @@ impl AgentBuilder {
             // `subagents` declaration against the global registry.
             agent_definition_id: agent_definition_name.clone(),
             session_transcript_path: None,
+            persisted_transcript_messages: Vec::new(),
             session_key: {
                 let unix_ts = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)

@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.61.7"
+version = "0.63.0"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -164,12 +164,20 @@ openhuman_core = { path = "../..", package = "openhuman", default-features = fal
     "channels",
     "media",
     "tokenjuice-treesitter",
+    "inference",
     "voice",
     "web3",
+    "documents",
     "flows",
     "meet",
     "skills",
     "mcp",
+    "crash-reporting",
+    # The desktop shell reaches the in-process core only over
+    # http://127.0.0.1:<port>/rpc, so it REQUIRES the HTTP + Socket.IO transport
+    # (#5048). Enforced by the HTTP_SERVER_COMPILED_IN compile assert in lib.rs.
+    "http-server",
+    "desktop-automation",
 ] }
 tinyjuice = { version = "0.2.1", default-features = false }
 

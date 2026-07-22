@@ -24,6 +24,23 @@
 //! on every multi-thread runtime that may host an agent turn.
 pub const AGENT_WORKER_STACK_BYTES: usize = 16 * 1024 * 1024;
 
+/// Upper bound on tokio's blocking-thread pool for the long-lived multi-thread
+/// runtimes tuned with [`AGENT_WORKER_STACK_BYTES`] (the desktop Tauri host and
+/// the `openhuman-core` JSON-RPC / `agent_cli` servers).
+///
+/// Tokio defaults `max_blocking_threads` to **512**. That is doubly wasteful on
+/// these runtimes: `thread_stack_size` sizes *blocking* threads too, not just
+/// workers, so an idle pool that grew to the cap could pin up to
+/// `512 × 16 MiB` of stack — the opposite of the embedded RAM budget in #5046.
+/// `spawn_blocking` on these paths backs SQLite, filesystem grep/glob, document
+/// parsing, and URL guarding: bounded, bursty concurrency. 64 leaves generous
+/// headroom over any realistic concurrent-blocking count while capping the idle
+/// footprint, and threads still retire after tokio's 10 s idle timeout.
+///
+/// Set `.max_blocking_threads(MAX_BLOCKING_THREADS)` alongside
+/// `.thread_stack_size(AGENT_WORKER_STACK_BYTES)` on every such runtime.
+pub const MAX_BLOCKING_THREADS: usize = 64;
+
 pub mod builder;
 pub mod context;
 pub mod services;

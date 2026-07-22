@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.61.7",
+  "version": "0.63.0",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -78,8 +78,6 @@
     "@noble/secp256k1": "^3.0.0",
     "@radix-ui/react-dialog": "^1.1.15",
     "@reduxjs/toolkit": "^2.11.2",
-    "@remotion/player": "4.0.454",
-    "@remotion/zod-types": "4.0.454",
     "@rive-app/react-webgl2": "^4.28.6",
     "@scure/base": "^2.2.0",
     "@scure/bip32": "^2.0.1",
@@ -116,7 +114,6 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "remotion": "4.0.454",
     "socket.io-client": "^4.8.3",
     "tauri-plugin-ptt-api": "workspace:*",
     "three": "^0.183.2",

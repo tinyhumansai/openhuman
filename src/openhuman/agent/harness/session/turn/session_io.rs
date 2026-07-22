@@ -546,8 +546,25 @@ impl Agent {
             task_id: None,
         };
 
-        match transcript::write_transcript(path, messages, &meta, turn_usage) {
+        // Append-only write (Phase A, transcript-derived view): diff this turn's
+        // logical messages against the previously-persisted set tracked in
+        // memory. A pure extension appends only the new tail; a context
+        // reduction appends a `compaction` record. The file is never rewritten,
+        // so pre-compaction history survives on disk for the display projection.
+        // `request_id` (web-chat only) stamps a turn boundary on each line.
+        let prev = std::mem::take(&mut self.persisted_transcript_messages);
+        let request_id = crate::openhuman::agent::turn_origin::current_request_id();
+        match transcript::append_transcript_turn(
+            path,
+            &prev,
+            messages,
+            &meta,
+            turn_usage,
+            request_id.as_deref(),
+        ) {
             Ok(()) => {
+                // Track the new persisted logical set for the next turn's diff.
+                self.persisted_transcript_messages = messages.to_vec();
                 // Best-effort, non-fatal dual-write into the TinyAgents store.
                 // Gated by the default-ON session dual-write flag
                 // (`OPENHUMAN_SESSION_DUAL_WRITE` is a kill switch). Only runs
@@ -556,8 +573,11 @@ impl Agent {
                 self.maybe_dual_write_session_store(path, messages, &meta, turn_usage);
             }
             Err(err) => {
+                // Restore the tracked state so a transient failure doesn't make
+                // the next turn mis-diff (and spuriously emit a compaction).
+                self.persisted_transcript_messages = prev;
                 log::warn!(
-                    "[transcript] failed to write transcript {}: {err}",
+                    "[transcript] failed to append transcript {}: {err}",
                     path.display()
                 );
             }

@@ -307,10 +307,17 @@ async fn round15_composio_agent_tools_backend_cache_and_trigger_history_edges() 
     );
     assert_eq!(action_tool.name(), "GMAIL_FETCH_EMAILS");
     assert_eq!(action_tool.category().to_string(), "skill");
+    let action_contract = action_tool
+        .execute(json!({ "query": "from:me" }))
+        .await
+        .expect("per-action tool contract gate");
+    assert!(action_contract.is_error);
+    assert!(action_contract.text().contains("Required arguments: query"));
+
     let action_result = action_tool
         .execute(json!({ "query": "from:me" }))
         .await
-        .expect("per-action tool execute");
+        .expect("per-action tool execute after contract gate");
     assert_eq!(action_result.text(), "Fetched 1 inbox message");
 
     let reserved = composio_authorize(&config, "gmail", Some(json!({ "toolkit": "github" })))

@@ -65,6 +65,8 @@ mod tests {
             personality_soul_md: None,
             personality_memory_md: None,
             personality_roster: vec![],
+            agents_md_global: None,
+            agents_md_local: None,
         };
         let body = build(&ctx).unwrap();
         assert!(body.contains("Task Manager Agent"));

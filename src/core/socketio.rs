@@ -1,7 +1,18 @@
 use serde::Deserialize;
 use serde::Serialize;
+// `json!` + socketioxide are used only by the socketioxide event-transport
+// bodies below, all gated with the `http-server` feature (#5048). The inert
+// event payload types further down (`WebChannelEvent`, `TurnUsagePayload`,
+// `SubagentUsagePayload`, `SubagentProgressDetail`) stay compiled in every build
+// — ~10 always-on domains (web_chat, cron, channels, agent, agentbox, …)
+// construct them — so `serde` stays ungated and only the transport surface is
+// gated (type carve-out; see AGENTS.md and this module's `pub mod` in
+// `core::mod`, which is intentionally NOT gated).
+#[cfg(feature = "http-server")]
 use serde_json::json;
+#[cfg(feature = "http-server")]
 use socketioxide::extract::{Data, SocketRef, TryData};
+#[cfg(feature = "http-server")]
 use socketioxide::SocketIo;
 
 /// Marker stored in [`SocketRef::extensions`] once a connection has presented a
@@ -11,6 +22,7 @@ use socketioxide::SocketIo;
 /// into the JSON-RPC dispatcher or the web-chat orchestrator: an unauthenticated
 /// socket that never picked up the marker is allowed to receive broadcast-style
 /// events (read-only) but cannot trigger executable work.
+#[cfg(feature = "http-server")]
 #[derive(Clone, Copy, Debug)]
 struct AuthedConnection;
 
@@ -20,6 +32,7 @@ struct AuthedConnection;
 /// headers, so the handshake `auth` map is the only header-equivalent slot
 /// available for our per-process bearer. The socket-IO Node/JS clients all
 /// surface `io(url, { auth: { token: "<hex>" } })` for this.
+#[cfg(feature = "http-server")]
 #[derive(Debug, Default, Deserialize)]
 struct HandshakeAuth {
     #[serde(default)]
@@ -47,6 +60,7 @@ struct HandshakeAuth {
 /// A missing `Origin` header is treated as a native (non-browser) client
 /// and accepted — only the cross-origin browser-page case is the targeted
 /// bad actor here.
+#[cfg(feature = "http-server")]
 pub(crate) fn origin_is_allowed(origin: Option<&str>) -> bool {
     let Some(origin) = origin else {
         return true; // native clients (CLI, Tauri shell) — no Origin header
@@ -73,6 +87,7 @@ pub(crate) fn origin_is_allowed(origin: Option<&str>) -> bool {
 }
 
 /// True when `socket` finished the handshake with a valid bearer token.
+#[cfg(feature = "http-server")]
 fn socket_is_authed(socket: &SocketRef) -> bool {
     socket.extensions.get::<AuthedConnection>().is_some()
 }
@@ -80,6 +95,7 @@ fn socket_is_authed(socket: &SocketRef) -> bool {
 /// Best-effort disconnect. Called when we discover an unauthenticated socket
 /// inside an event handler — the connect path already disconnects the bad
 /// origins / wrong tokens, so this is purely a defense-in-depth path.
+#[cfg(feature = "http-server")]
 fn drop_unauthed(socket: &SocketRef, reason: &'static str) {
     log::warn!(
         "[socketio] dropping unauthenticated socket id={} reason={}",
@@ -343,6 +359,7 @@ pub struct SubagentProgressDetail {
     pub dirty_status: Option<bool>,
 }
 
+#[cfg(feature = "http-server")]
 #[derive(Debug, Deserialize)]
 struct SocketRpcRequest {
     id: serde_json::Value,
@@ -351,6 +368,7 @@ struct SocketRpcRequest {
     params: serde_json::Value,
 }
 
+#[cfg(feature = "http-server")]
 #[derive(Debug, Deserialize)]
 struct ChatStartPayload {
     thread_id: String,
@@ -369,6 +387,7 @@ struct ChatStartPayload {
     queue_mode: Option<String>,
 }
 
+#[cfg(feature = "http-server")]
 #[derive(Debug, Deserialize)]
 struct ChatCancelPayload {
     thread_id: String,
@@ -379,6 +398,7 @@ struct ChatCancelPayload {
     request_id: Option<String>,
 }
 
+#[cfg(feature = "http-server")]
 #[derive(Debug, Deserialize)]
 struct ThreadSubscribePayload {
     thread_id: String,
@@ -391,6 +411,7 @@ struct ThreadSubscribePayload {
 /// - `rpc:request`: Invoking JSON-RPC methods over WebSocket.
 /// - `chat:start`: Initiating a new chat turn.
 /// - `chat:cancel`: Aborting an active chat turn.
+#[cfg(feature = "http-server")]
 pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
     let (layer, io) = SocketIo::new_layer();
 
@@ -612,6 +633,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
 /// 3. **Overlay Bridge**: Forwards attention bubble events to all clients.
 /// 4. **Core Notification Bridge**: Forwards core notification events to all clients.
 /// 5. **Transcription Bridge**: Forwards real-time speech-to-text results to all clients.
+#[cfg(feature = "http-server")]
 pub fn spawn_web_channel_bridge(io: SocketIo) {
     // 1. Web channel events → per-client rooms.
     let io_web = io.clone();
@@ -1087,6 +1109,25 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                     let _ = io_memory_sync.emit("flow:run_progress", &payload);
                     let _ = io_memory_sync.emit("flow_run_progress", &payload);
                 }
+                // A `flow_runs` row was just persisted, before execution begins
+                // (issue B35, runs-rail live refresh). Broadcast so an open
+                // Workflows canvas/sidebar can show "Running" immediately
+                // instead of waiting for the blocking `flows_run` RPC to
+                // resolve or the first `FlowRunProgress` step. Best-effort,
+                // same rationale as `flow:run_progress` above.
+                crate::core::event_bus::DomainEvent::FlowRunStarted { flow_id, run_id } => {
+                    let payload = serde_json::json!({
+                        "flow_id": flow_id,
+                        "run_id": run_id,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast flow_run_started flow_id={} run_id={}",
+                        flow_id,
+                        run_id
+                    );
+                    let _ = io_memory_sync.emit("flow:run_started", &payload);
+                    let _ = io_memory_sync.emit("flow_run_started", &payload);
+                }
                 // A saved flow's definition changed (create/update/delete/
                 // enable). Broadcast so an open Workflows list/canvas refetches
                 // — most importantly, so an agent `save_workflow` becomes
@@ -1443,6 +1484,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
 /// listener for telegram/discord); `last_error` carries the disconnect reason.
 /// Matches the shape consumed by the frontend
 /// `normalizeChannelConnectionUpdatePayload`.
+#[cfg(feature = "http-server")]
 pub(crate) fn channel_connection_update_payload(
     channel: &str,
     status: &str,
@@ -1467,6 +1509,7 @@ pub(crate) fn channel_connection_update_payload(
 /// so both the happy and error paths are logged with enough context
 /// (room name + client id) to diagnose missing welcome messages from
 /// logs alone.
+#[cfg(feature = "http-server")]
 fn join_room_logged(socket: &SocketRef, room: &str, client_id: &str) {
     match socket.join(room.to_string()) {
         Ok(()) => log::debug!("[socketio] joined room '{room}' for client {client_id}"),
@@ -1474,6 +1517,7 @@ fn join_room_logged(socket: &SocketRef, room: &str, client_id: &str) {
     }
 }
 
+#[cfg(feature = "http-server")]
 fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
     let name = event.event.clone();
     // Deliver to the initiating client's own room AND the per-thread room. The
@@ -1536,8 +1580,10 @@ fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
 /// is suppressed for exactly these. Enumerated explicitly rather than matched by
 /// a `*_delta` suffix, so a future *discrete* event whose name happens to end in
 /// `_delta` still gets its compat alias instead of being silently dropped.
+#[cfg(feature = "http-server")]
 const STREAMING_DELTA_EVENTS: &[&str] = &["text_delta", "thinking_delta", "tool_args_delta"];
 
+#[cfg(feature = "http-server")]
 fn event_alias(name: &str) -> Option<String> {
     // Match against the canonical underscore form after stripping a `subagent_`
     // prefix (subagent streaming mirrors the parent's deltas), so `text_delta`,
@@ -1557,6 +1603,7 @@ fn event_alias(name: &str) -> Option<String> {
     None
 }
 
+#[cfg(feature = "http-server")]
 fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value) {
     let _ = socket.emit(name, payload);
     if let Some(alias) = event_alias(name) {
@@ -1564,7 +1611,9 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
     }
 }
 
-#[cfg(test)]
+// Every test here names a gated fn (`channel_connection_update_payload`,
+// `event_alias`, `origin_is_allowed`), so the module gates in lockstep (#5048).
+#[cfg(all(test, feature = "http-server"))]
 mod tests {
     use super::{channel_connection_update_payload, event_alias, origin_is_allowed};
 

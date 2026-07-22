@@ -674,3 +674,138 @@ fn subagent_transcript_persists_interleaved_prose_and_tools() {
         "no snake_case fields on the wire"
     );
 }
+
+// ── Interrupted-partial → session transcript wiring (Task 1) ──────────
+
+use crate::openhuman::agent::harness::session::transcript::{
+    self, read_transcript, read_transcript_display, DisplayRecord, TranscriptMeta,
+};
+use crate::openhuman::inference::provider::ChatMessage;
+
+fn seed_root_transcript(workspace: &std::path::Path, thread_id: &str) -> std::path::PathBuf {
+    let stem = "100_orchestrator".to_string();
+    let path = transcript::resolve_keyed_transcript_path(workspace, &stem).expect("resolve path");
+    let meta = TranscriptMeta {
+        agent_name: "orchestrator".into(),
+        agent_id: None,
+        agent_type: Some("root".into()),
+        dispatcher: "native".into(),
+        provider: None,
+        model: None,
+        created: "2026-07-21T00:00:00Z".into(),
+        updated: "2026-07-21T00:00:00Z".into(),
+        turn_count: 1,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_input_tokens: 0,
+        charged_amount_usd: 0.0,
+        thread_id: Some(thread_id.to_string()),
+        task_id: None,
+    };
+    transcript::write_transcript(&path, &[ChatMessage::user("hello there")], &meta, None)
+        .expect("seed transcript");
+    path
+}
+
+/// When a streaming turn is interrupted and a root transcript already exists,
+/// `finish()` appends the partial streamed answer (display-only) to the file.
+#[test]
+fn finish_appends_interrupted_partial_to_existing_transcript() {
+    let dir = tempdir().expect("tempdir");
+    let thread_id = "thr_abc";
+    let path = seed_root_transcript(dir.path(), thread_id);
+
+    let store = TurnStateStore::new(dir.path().to_path_buf());
+    let mut m = TurnStateMirror::new(store, thread_id, "req-9");
+    m.observe(&AgentProgress::IterationStarted {
+        iteration: 2,
+        max_iterations: 25,
+    });
+    m.observe(&AgentProgress::ThinkingDelta {
+        delta: "hmm".into(),
+        iteration: 2,
+    });
+    m.observe(&AgentProgress::TextDelta {
+        delta: "half an ".into(),
+        iteration: 2,
+    });
+    m.observe(&AgentProgress::TextDelta {
+        delta: "answer".into(),
+        iteration: 2,
+    });
+    // No TurnCompleted — the bridge exits, marking the turn interrupted.
+    m.finish();
+
+    // Model context must NOT carry the partial.
+    let model = read_transcript(&path).expect("read model context");
+    assert!(
+        !model
+            .messages
+            .iter()
+            .any(|msg| msg.content.contains("half an answer")),
+        "interrupted partial must be excluded from the model context"
+    );
+
+    // Display projection carries the flagged partial with request_id + thinking.
+    let display = read_transcript_display(&path).expect("read display");
+    let partial = display
+        .records
+        .iter()
+        .find_map(|r| match r {
+            DisplayRecord::Message(msg) if msg.interrupted => Some(msg),
+            _ => None,
+        })
+        .expect("display must include the interrupted partial");
+    assert_eq!(partial.message.content, "half an answer");
+    assert_eq!(partial.request_id.as_deref(), Some("req-9"));
+    assert_eq!(partial.iteration, Some(2));
+    assert_eq!(partial.reasoning_content.as_deref(), Some("hmm"));
+}
+
+/// A completed turn never writes an interrupted partial.
+#[test]
+fn finish_after_completion_writes_no_partial() {
+    let dir = tempdir().expect("tempdir");
+    let thread_id = "thr_done";
+    let path = seed_root_transcript(dir.path(), thread_id);
+
+    let store = TurnStateStore::new(dir.path().to_path_buf());
+    let mut m = TurnStateMirror::new(store, thread_id, "req-done");
+    m.observe(&AgentProgress::TextDelta {
+        delta: "final answer".into(),
+        iteration: 1,
+    });
+    m.observe(&AgentProgress::TurnCompleted { iterations: 1 });
+    m.finish();
+
+    let display = read_transcript_display(&path).expect("read display");
+    assert!(
+        !display
+            .records
+            .iter()
+            .any(|r| matches!(r, DisplayRecord::Message(msg) if msg.interrupted)),
+        "a completed turn must not append an interrupted partial"
+    );
+}
+
+/// An interrupted FIRST turn (no root transcript file yet) is a no-op — the
+/// partial stays in the turn_state snapshot only, and finish() does not panic.
+#[test]
+fn finish_first_turn_without_transcript_is_noop() {
+    let dir = tempdir().expect("tempdir");
+    let store = TurnStateStore::new(dir.path().to_path_buf());
+    let mut m = TurnStateMirror::new(store, "thr_new", "req-first");
+    m.observe(&AgentProgress::TextDelta {
+        delta: "orphan partial".into(),
+        iteration: 1,
+    });
+    // Must not panic even though no session_raw transcript exists.
+    m.finish();
+    // The snapshot itself still records the interrupted turn.
+    let listed = TurnStateStore::new(dir.path().to_path_buf())
+        .get("thr_new")
+        .expect("get")
+        .expect("snapshot present");
+    assert_eq!(listed.lifecycle, TurnLifecycle::Interrupted);
+    assert_eq!(listed.streaming_text, "orphan partial");
+}

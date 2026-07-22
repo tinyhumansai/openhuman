@@ -156,7 +156,6 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     let bus = event_bus::init_global(DEFAULT_CAPACITY);
     let _tracing_handle = bus.subscribe(Arc::new(TracingSubscriber));
     crate::openhuman::health::bus::register_health_subscriber();
-    crate::openhuman::skills::bus::register_workflow_cleanup_subscriber();
     crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
         config.workspace_dir.clone(),
     );
@@ -276,17 +275,12 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         config.workspace_dir.clone(),
         config.action_dir.clone(),
     );
-    // Seed the live tool-execution timeout from the persisted `[agent]` config so
-    // a user-configured value (Settings → Agent OS access → Action timeout) is in
-    // effect from the first tool call. `OPENHUMAN_TOOL_TIMEOUT_SECS`, when set,
-    // still overrides this inside `set_tool_timeout_secs`.
-    let effective_timeout =
-        crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
-    tracing::debug!(
-        configured = config.agent.agent_timeout_secs,
-        effective = effective_timeout,
-        "[startup] seeded tool-execution timeout from config"
-    );
+    // NOTE: the live tool-execution timeout seed is done in
+    // `core::jsonrpc::register_domain_subscribers` (unconditional core boot), NOT
+    // here — `start_channels` is skipped when no channel is configured or
+    // `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` is set, which would otherwise leave
+    // channel-less / web-chat-only cores running the default timeout instead of the
+    // user-configured `[agent].agent_timeout_secs` (#5027).
     // Phase 1 of #1401: audit logger is wired with defaults so emission paths
     // are exercised at runtime. A follow-up promotes `SecurityConfig` (and
     // therefore the `audit` knob) onto the runtime `Config` schema so users

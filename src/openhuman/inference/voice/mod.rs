@@ -9,4 +9,9 @@ pub mod hallucination;
 pub mod local_speech;
 pub mod local_transcribe;
 pub mod postprocess;
+// The dictation WebSocket handler (`handle_dictation_ws`) is the module's whole
+// public surface and axum-only, and its sole caller is the gated core HTTP
+// router (`core::jsonrpc::dictation_ws_handler`). The module is therefore
+// exclusive to the `http-server` feature (#5048) — nothing else references it.
+#[cfg(feature = "http-server")]
 pub mod streaming;

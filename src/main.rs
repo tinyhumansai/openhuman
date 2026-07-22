@@ -5,9 +5,6 @@
 //! - Setting up secret scrubbing for outgoing error reports.
 //! - Dispatching command-line arguments to the core logic in `openhuman_core`.
 
-use once_cell::sync::Lazy;
-use regex::Regex;
-
 /// Main application entry point.
 ///
 /// It initializes the Sentry SDK for error monitoring, ensuring that sensitive
@@ -33,6 +30,10 @@ fn main() {
     //      the GH org-level variable can be renamed)
     //   3. Each of the same names baked at compile time via `option_env!`
     // If none resolve to a non-empty value, `sentry::init` returns a no-op guard.
+    //
+    // The whole init (guard + secret-scrubbing `before_send`) is gated on the
+    // `crash-reporting` feature; a slim build compiles it out entirely.
+    #[cfg(feature = "crash-reporting")]
     let _sentry_guard = sentry::init(sentry::ClientOptions {
         dsn: std::env::var("OPENHUMAN_CORE_SENTRY_DSN")
             .ok()
@@ -259,6 +260,7 @@ fn restore_default_sigpipe() {}
 /// `app/src/utils/config.ts`) so events from every surface group under
 /// the same release in the Sentry dashboard and benefit from the same
 /// source-map upload.
+#[cfg(feature = "crash-reporting")]
 fn build_release_tag() -> String {
     let version = env!("CARGO_PKG_VERSION");
     let sha = option_env!("OPENHUMAN_BUILD_SHA").unwrap_or("").trim();
@@ -275,6 +277,7 @@ fn build_release_tag() -> String {
 /// Honors `OPENHUMAN_APP_ENV` at runtime (`staging` / `production`) so the
 /// same binary could in principle be redeployed between environments; falls
 /// back to debug/release detection when unset.
+#[cfg(feature = "crash-reporting")]
 fn resolve_environment() -> String {
     if let Ok(value) = std::env::var("OPENHUMAN_APP_ENV") {
         let trimmed = value.trim().to_ascii_lowercase();
@@ -293,53 +296,16 @@ fn resolve_environment() -> String {
 // Secret scrubbing
 // ---------------------------------------------------------------------------
 
-/// Ordered most-specific → least-specific. Keep in sync with
-/// `src/openhuman/memory/safety/mod.rs`.
-static SECRET_PATTERNS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
-    vec![
-        // Matches "Bearer <token>" and redacts the token.
-        (Regex::new(r"(?i)(bearer\s+)\S+").unwrap(), "${1}[REDACTED]"),
-        // Matches "api-key: <key>" or "api_key=<key>" and redacts the key.
-        (
-            Regex::new(r"(?i)(api[_-]?key[=:\s]+)\S+").unwrap(),
-            "${1}[REDACTED]",
-        ),
-        // \b anchor prevents matching `cancellation_token=` etc.
-        (
-            Regex::new(r"(?i)\b(token[=:\s]+)\S+").unwrap(),
-            "${1}[REDACTED]",
-        ),
-        // Anthropic keys (sk-ant-api03-...) contain hyphens the generic
-        // sk- pattern below won't match.
-        (
-            Regex::new(r"sk-ant-[A-Za-z0-9\-_]{16,}").unwrap(),
-            "[REDACTED]",
-        ),
-        // OpenAI admin keys (sk-admin-...).
-        (
-            Regex::new(r"sk-admin-[A-Za-z0-9\-_]{12,}").unwrap(),
-            "[REDACTED]",
-        ),
-        // OpenAI project-scoped and org-scoped keys (sk-proj-... / sk-org-...).
-        (
-            Regex::new(r"sk-(?:proj|org)-[A-Za-z0-9\-_]{12,}").unwrap(),
-            "[REDACTED]",
-        ),
-        // Generic catch-all for any sk- format not covered above.
-        (Regex::new(r"sk-[a-zA-Z0-9]{20,}").unwrap(), "[REDACTED]"),
-    ]
-});
-
-/// Replaces patterns that look like secrets with `[REDACTED]`.
+/// Sentry `before_send` secret scrubbing. Delegates to the shared, always-on
+/// [`openhuman_core::core::log_redaction::scrub_secrets`] so the redaction
+/// patterns stay a single source of truth (the same pass also runs on the
+/// always-on diagnostic logs in `core::observability`).
+#[cfg(feature = "crash-reporting")]
 fn scrub_secrets(input: &str) -> String {
-    let mut result = input.to_string();
-    for (re, replacement) in SECRET_PATTERNS.iter() {
-        result = re.replace_all(&result, *replacement).into_owned();
-    }
-    result
+    openhuman_core::core::log_redaction::scrub_secrets(input)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "crash-reporting"))]
 mod tests {
     use super::*;
 

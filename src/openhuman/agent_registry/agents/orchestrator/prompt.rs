@@ -490,6 +490,8 @@ mod tests {
             personality_soul_md: None,
             personality_memory_md: None,
             personality_roster: vec![],
+            agents_md_global: None,
+            agents_md_local: None,
         }
     }
 

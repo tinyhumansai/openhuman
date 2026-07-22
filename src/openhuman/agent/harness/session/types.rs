@@ -122,9 +122,16 @@ pub struct Agent {
     /// [`AgentDefinitionRegistry`]: crate::openhuman::agent::harness::definition::AgentDefinitionRegistry
     pub(super) agent_definition_id: String,
     /// Resolved filesystem path for this session's transcript file.
-    /// Set on first write, reused for subsequent overwrites within the
+    /// Set on first write, reused for subsequent **appends** within the
     /// same session.
     pub(super) session_transcript_path: Option<PathBuf>,
+    /// The logical message set most recently persisted to
+    /// `session_transcript_path`, tracked in memory so the append-only writer
+    /// can diff each turn's messages against it (pure extension → append tail;
+    /// reduction → compaction record) without re-reading the growing file.
+    /// Empty until the first persist. Each process writes its own transcript
+    /// file, so this in-memory state is always aligned with the file it owns.
+    pub(super) persisted_transcript_messages: Vec<ChatMessage>,
     /// Unique transcript key for this session, formatted as
     /// `"{unix_ts}_{agent_id}"`. Generated once at agent-build time so
     /// every transcript write in this session uses the same filename

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   diffForwarding,
+  INTENTIONALLY_NOT_FORWARDED,
   parseCoreDefaultFeatures,
   parseShellForwardedFeatures,
   stripComments,
@@ -179,6 +180,9 @@ test('the real shell manifest forwards every real core default', () => {
   assert.ok(coreDefaults.length > 0, 'expected to parse at least one core default gate');
   assert.equal(shell.defaultFeatures, false, 'shell is expected to set default-features = false');
   for (const gate of coreDefaults) {
+    // Gates the shell intentionally does not forward (e.g. `tui` — a terminal
+    // subcommand the desktop app never runs) are exempt, matching the checker.
+    if (INTENTIONALLY_NOT_FORWARDED[gate]) continue;
     assert.ok(
       shell.features.includes(gate),
       `core default gate not forwarded to the shell: ${gate}`

@@ -64,7 +64,7 @@ export const BUILTIN_CLOUD_PROVIDERS: BuiltinCloudProvider[] = [
     endpoint: 'https://api.gmi-serving.com/v1',
     authStyle: 'bearer',
     tone: TONE.fuchsia,
-    keyPlaceholder: 'gmi-...',
+    keyPlaceholder: 'eyJ....',
   },
   {
     slug: 'fireworks',

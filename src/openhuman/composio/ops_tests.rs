@@ -2316,6 +2316,7 @@ fn extract_backend_returned_status_handles_mixed_case() {
 // `report_composio_op_error` events flood Sentry again with no test in
 // the composio crate to catch it. These guards make the link explicit.
 
+#[cfg(feature = "crash-reporting")]
 #[test]
 fn composio_domain_502_is_dropped_by_before_send() {
     let mut event = sentry::protocol::Event::default();
@@ -2330,6 +2331,7 @@ fn composio_domain_502_is_dropped_by_before_send() {
     );
 }
 
+#[cfg(feature = "crash-reporting")]
 #[test]
 fn composio_transport_timeout_is_dropped_by_before_send() {
     let mut event = sentry::protocol::Event::default();

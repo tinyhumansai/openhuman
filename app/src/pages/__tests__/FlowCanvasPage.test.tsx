@@ -25,6 +25,7 @@ const createFlow = vi.hoisted(() => vi.fn());
 const validateFlow = vi.hoisted(() => vi.fn());
 const listFlowConnections = vi.hoisted(() => vi.fn());
 const runFlow = vi.hoisted(() => vi.fn());
+const setFlowEnabled = vi.hoisted(() => vi.fn());
 vi.mock('../../services/api/flowsApi', () => ({
   getFlow,
   updateFlow,
@@ -32,6 +33,7 @@ vi.mock('../../services/api/flowsApi', () => ({
   validateFlow,
   listFlowConnections,
   runFlow,
+  setFlowEnabled,
 }));
 
 // Stub the copilot panel: it drives the real chat runtime (redux + socket),
@@ -99,10 +101,12 @@ describe('FlowCanvasPage', () => {
     validateFlow.mockReset();
     listFlowConnections.mockReset();
     runFlow.mockReset();
+    setFlowEnabled.mockReset();
     validateFlow.mockResolvedValue({ valid: true, errors: [], warnings: [] });
     listFlowConnections.mockResolvedValue([]);
     updateFlow.mockResolvedValue(makeFlow());
     createFlow.mockResolvedValue(makeFlow({ id: 'created-id', name: 'Daily digest' }));
+    setFlowEnabled.mockResolvedValue(makeFlow({ enabled: true }));
   });
 
   it('shows a loading state while the flow is being fetched', () => {
@@ -687,6 +691,7 @@ describe('FlowCanvasPage copilot proposal name adoption', () => {
     createFlow.mockReset();
     validateFlow.mockReset();
     listFlowConnections.mockReset();
+    setFlowEnabled.mockReset();
     validateFlow.mockResolvedValue({ valid: true, errors: [], warnings: [] });
     listFlowConnections.mockResolvedValue([]);
     // Accept now persists immediately (review + save in one step, see
@@ -695,6 +700,7 @@ describe('FlowCanvasPage copilot proposal name adoption', () => {
     // by an unmocked (`undefined`-resolving) `updateFlow`/`createFlow`.
     updateFlow.mockResolvedValue(makeFlow());
     createFlow.mockResolvedValue(makeFlow({ id: 'created-id' }));
+    setFlowEnabled.mockResolvedValue(makeFlow({ enabled: true }));
   });
 
   function renderEditor(id = 'test-id') {
@@ -710,12 +716,20 @@ describe('FlowCanvasPage copilot proposal name adoption', () => {
 
   // `handleAcceptProposal` is async (it awaits the persist call) — drive it
   // through `act(async () => …)` so React flushes every state update the
-  // resulting save produces before the test asserts on them.
-  function acceptProposal(proposal: WorkflowProposal = makeProposal()) {
+  // resulting save produces before the test asserts on them. `opts` mirrors
+  // the copilot panel's own "Save & enable" call (PR1) — omitted for a plain
+  // Accept & save, `{ enable: true }` for the enable path.
+  function acceptProposal(
+    proposal: WorkflowProposal = makeProposal(),
+    opts?: { enable?: boolean }
+  ) {
     return act(async () => {
-      await (copilotPanelProps.current?.onAccept as (p: WorkflowProposal) => Promise<void>)(
-        proposal
-      );
+      await (
+        copilotPanelProps.current?.onAccept as (
+          p: WorkflowProposal,
+          opts?: { enable?: boolean }
+        ) => Promise<void>
+      )(proposal, opts);
     });
   }
 
@@ -983,6 +997,175 @@ describe('FlowCanvasPage copilot proposal name adoption', () => {
     await waitFor(() => expect(screen.getAllByTestId('flow-node')).toHaveLength(2));
     await waitFor(() => expect(screen.getByTestId('flow-editor-dirty')).toBeInTheDocument());
     await waitFor(() => expect(screen.getByTestId('flow-editor-save')).not.toBeDisabled());
+  });
+
+  // PR1 — "Save & enable": `handleAcceptProposal`'s `opts.enable` follow-up.
+  describe('Save & enable (PR1)', () => {
+    it('calls setFlowEnabled(flowId, true) after a successful save on an existing flow', async () => {
+      getFlow.mockResolvedValue(makeFlow({ id: 'test-id', enabled: false }));
+      updateFlow.mockResolvedValue(makeFlow({ id: 'test-id', enabled: false }));
+      renderEditor();
+      await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+
+      await acceptProposal(makeProposal(), { enable: true });
+
+      expect(updateFlow).toHaveBeenCalledTimes(1);
+      expect(setFlowEnabled).toHaveBeenCalledTimes(1);
+      expect(setFlowEnabled).toHaveBeenCalledWith('test-id', true);
+    });
+
+    it('calls setFlowEnabled with the newly-created id on a draft', async () => {
+      createFlow.mockResolvedValue(makeFlow({ id: 'created-id', name: 'Standup reminder' }));
+      getFlow.mockResolvedValue(makeFlow({ id: 'created-id', name: 'Standup reminder' }));
+      render(
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/flows/draft',
+              state: {
+                name: 'New workflow',
+                graph: {
+                  schema_version: 1,
+                  name: 'New workflow',
+                  nodes: [
+                    {
+                      id: 't',
+                      kind: 'trigger',
+                      name: 'Start',
+                      config: {},
+                      ports: [],
+                      position: { x: 0, y: 0 },
+                    },
+                  ],
+                  edges: [],
+                },
+                requireApproval: false,
+              },
+            },
+          ]}>
+          <Routes>
+            <Route path="/flows/draft" element={<FlowCanvasDraftPage />} />
+            <Route path="/flows/:id" element={<FlowCanvasPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+
+      await acceptProposal(makeProposal(), { enable: true });
+
+      expect(createFlow).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(setFlowEnabled).toHaveBeenCalledTimes(1));
+      expect(setFlowEnabled).toHaveBeenCalledWith('created-id', true);
+    });
+
+    it('on a draft "Save & enable", runs enable BEFORE navigating, and swallows an enable failure (flow saved, armed from its own page)', async () => {
+      createFlow.mockResolvedValue(makeFlow({ id: 'created-id', name: 'Standup reminder' }));
+      getFlow.mockResolvedValue(makeFlow({ id: 'created-id', name: 'Standup reminder' }));
+      setFlowEnabled.mockRejectedValue(new Error('enable rpc failed'));
+      render(
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/flows/draft',
+              state: {
+                name: 'New workflow',
+                graph: {
+                  schema_version: 1,
+                  name: 'New workflow',
+                  nodes: [
+                    {
+                      id: 't',
+                      kind: 'trigger',
+                      name: 'Start',
+                      config: {},
+                      ports: [],
+                      position: { x: 0, y: 0 },
+                    },
+                  ],
+                  edges: [],
+                },
+                requireApproval: false,
+              },
+            },
+          ]}>
+          <Routes>
+            <Route path="/flows/draft" element={<FlowCanvasDraftPage />} />
+            <Route path="/flows/:id" element={<FlowCanvasPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+
+      let caughtErr: unknown;
+      await act(async () => {
+        try {
+          await (
+            copilotPanelProps.current?.onAccept as (
+              p: WorkflowProposal,
+              opts?: { enable?: boolean }
+            ) => Promise<void>
+          )(makeProposal(), { enable: true });
+        } catch (err) {
+          caughtErr = err;
+        }
+      });
+
+      // On a draft the create succeeds first, so the enable is attempted
+      // BEFORE the deferred navigation (the whole point of the fix — otherwise
+      // navigate would unmount this page and the enable RPC would resolve
+      // against a dead component). And because the flow IS saved, a draft
+      // enable failure must NOT rethrow: rethrowing would strand the user on
+      // the draft and a retry would create a DUPLICATE flow. Instead we
+      // navigate to the real flow and let the user arm it there. (Contrast the
+      // existing-flow rethrow test above, which keeps the proposal for retry.)
+      expect(createFlow).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(setFlowEnabled).toHaveBeenCalledWith('created-id', true));
+      expect(caughtErr).toBeUndefined();
+      // Navigation to the real flow happened afterward (its page fetches it).
+      await waitFor(() => expect(getFlow).toHaveBeenCalledWith('created-id'));
+    });
+
+    it('does NOT call setFlowEnabled for a plain Accept & save (no opts)', async () => {
+      getFlow.mockResolvedValue(makeFlow({ id: 'test-id' }));
+      renderEditor();
+      await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+
+      await acceptProposal();
+
+      expect(updateFlow).toHaveBeenCalledTimes(1);
+      expect(setFlowEnabled).not.toHaveBeenCalled();
+    });
+
+    it('rethrows an enable failure after a successful save, so the saved flow is not lost and the caller can retry', async () => {
+      getFlow.mockResolvedValue(makeFlow({ id: 'test-id' }));
+      updateFlow.mockResolvedValue(makeFlow({ id: 'test-id' }));
+      setFlowEnabled.mockRejectedValue(new Error('enable rpc failed'));
+      renderEditor();
+      await waitFor(() => expect(screen.getByTestId('flow-canvas')).toBeInTheDocument());
+
+      let caughtErr: unknown;
+      await act(async () => {
+        try {
+          await (
+            copilotPanelProps.current?.onAccept as (
+              p: WorkflowProposal,
+              opts?: { enable?: boolean }
+            ) => Promise<void>
+          )(makeProposal(), { enable: true });
+        } catch (err) {
+          caughtErr = err;
+        }
+      });
+
+      // The save itself succeeded — `updateFlow` was called and resolved —
+      // only the follow-up enable call failed. Rethrowing lets the copilot
+      // panel's own catch branch skip `clearProposal()`, keeping the card
+      // visible for retry (matching the plain-save failure contract).
+      expect(updateFlow).toHaveBeenCalledTimes(1);
+      expect(setFlowEnabled).toHaveBeenCalledTimes(1);
+      expect(caughtErr).toBeInstanceOf(Error);
+      expect((caughtErr as Error).message).toBe('enable rpc failed');
+    });
   });
 });
 

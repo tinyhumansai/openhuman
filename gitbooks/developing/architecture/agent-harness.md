@@ -123,6 +123,17 @@ A **session** is the live conversation an `Agent` instance is running. The `Agen
 
 The system prompt is **not** rebuilt on subsequent turns. Even cosmetic byte changes invalidate the KV-cache prefix and force a full re-prefill, so dynamic per-turn context (memory recall, freshly-learned snippets) is appended as user-visible message content rather than spliced into the system prompt.
 
+### AGENTS.md project instructions
+
+Alongside identity/soul/profile/memory, the system prompt pulls in **AGENTS.md** instruction files — OpenHuman's analog of Claude Code's `CLAUDE.md` / Codex's `AGENTS.md`. Two layers are loaded **once**, at system-prompt build time (never re-read per turn, so the frozen-prefix / KV-cache contract holds):
+
+* **Global** — `<workspace_dir>/AGENTS.md`, the user's OpenHuman workspace (where `SOUL.md` / `USER.md` live). Applies to every run.
+* **Project** — `<action_dir>/AGENTS.md`, the folder the agent is operating in. For sub-agent runs with a git-worktree override (`SubagentRunOptions.worktree_action_dir`), that override dir is the project layer instead.
+
+The global layer renders first, the project layer second (project instructions layered after, taking precedence on conflict), under a `## Project instructions (AGENTS.md)` heading. When the two dirs resolve to the same path the file is loaded **once** (deduped). Missing / unreadable / empty files are silently skipped, and each layer is capped at `BOOTSTRAP_MAX_CHARS` (~20 000 chars) with a `[... truncated]` marker so a large file can't crowd the prompt.
+
+The loader is `agent::prompts::agents_md` (pure functions returning pre-loaded strings, bounded at read time so a pathological multi-MB file can't exhaust memory before the render-time cap); the strings are threaded onto `PromptContext` (`agents_md_global` / `agents_md_local`) and rendered by `AgentsInstructionsSection`, which sits after the user-files section and before the tool catalogue in the default and sub-agent builders. The **primary / orchestrator** agent and the other built-in dynamic agents (`PromptSource::Dynamic`) assemble their own body via `render_*` helpers, so the same `AgentsInstructionsSection` is injected centrally by `SystemPromptBuilder::from_dynamic` — appended after the agent's own body, before the central grounding contract — rather than by each `agents/<id>/prompt.rs` builder. The feature is gated by `agent.agents_md_enabled` (default **on**); when off, no AGENTS.md content is loaded or injected.
+
 ## The tool-call loop
 
 Inside `Agent::turn`, the tool-call loop is the inner engine. Since issue #4249 it is the published **tinyagents** crate's `AgentHarness` loop, assembled per turn by `run_turn_via_tinyagents_shared` ([`src/openhuman/tinyagents/mod.rs`](../../../src/openhuman/tinyagents/mod.rs)). It runs up to `max_tool_iterations` rounds (default 10):

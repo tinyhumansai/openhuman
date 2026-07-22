@@ -504,11 +504,11 @@ End-to-end coverage of the agent harness via the web-chat RPC surface against an
 
 ### 11.2 Insights Dashboard
 
-| ID     | Feature            | Layer | Test path(s)                 | Status | Notes  |
-| ------ | ------------------ | ----- | ---------------------------- | ------ | ------ |
-| 11.2.1 | Memory View        | WD    | `insights-dashboard.spec.ts` | ✅     | Was ❌ |
-| 11.2.2 | Source Filtering   | WD    | `insights-dashboard.spec.ts` | ✅     | Was ❌ |
-| 11.2.3 | Search & Retrieval | WD    | `insights-dashboard.spec.ts` | ✅     | Was ❌ |
+| ID     | Feature               | Layer | Test path(s)                 | Status | Notes                                      |
+| ------ | --------------------- | ----- | ---------------------------- | ------ | ------------------------------------------ |
+| 11.2.1 | Memory View           | WD    | `insights-dashboard.spec.ts` | ✅     | Was ❌                                     |
+| 11.2.2 | Memory Graph Controls | WD    | `insights-dashboard.spec.ts` | ✅     | Brain Graph tab actions toolbar            |
+| 11.2.3 | Memory Graph Surface  | WD    | `insights-dashboard.spec.ts` | ✅     | Populated SVG or empty-state graph surface |
 
 ### 11.3 Hosted Orchestration
 

@@ -19,6 +19,9 @@ fn grouped_schemas_contains_migrated_namespaces() {
     assert!(grouped.contains_key("doctor"));
     assert!(grouped.contains_key("encrypt"));
     assert!(grouped.contains_key("decrypt"));
+    // `autocomplete` is gated behind `desktop-automation` (#5049); only present
+    // when that feature is enabled (it is in the default/shipped build).
+    #[cfg(feature = "desktop-automation")]
     assert!(grouped.contains_key("autocomplete"));
     assert!(grouped.contains_key("config"));
     assert!(grouped.contains_key("auth"));

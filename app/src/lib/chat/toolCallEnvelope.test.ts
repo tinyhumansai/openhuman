@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { unwrapToolCallEnvelope } from './copilotMessageSanitizer';
+import { unwrapToolCallEnvelope } from './toolCallEnvelope';
 
 describe('unwrapToolCallEnvelope', () => {
   it('returns plain text unchanged with no tool names', () => {

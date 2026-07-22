@@ -976,3 +976,367 @@ fn read_thread_usage_summary_groups_subagents_by_archetype() {
     assert_eq!(researcher.input_tokens, 500);
     assert_eq!(researcher.runs, 1);
 }
+
+// ── Phase A: append-only + compaction + display + interrupted ─────────
+
+/// A helper mirroring the in-process persist loop: track the previously
+/// persisted logical set and feed each turn through `append_transcript_turn`.
+struct AppendHarness {
+    path: std::path::PathBuf,
+    prev: Vec<ChatMessage>,
+}
+
+impl AppendHarness {
+    fn new(path: std::path::PathBuf) -> Self {
+        Self {
+            path,
+            prev: Vec::new(),
+        }
+    }
+
+    fn turn(
+        &mut self,
+        messages: &[ChatMessage],
+        meta: &TranscriptMeta,
+        usage: Option<&TurnUsage>,
+        request_id: Option<&str>,
+    ) {
+        append_transcript_turn(&self.path, &self.prev, messages, meta, usage, request_id)
+            .expect("append turn");
+        self.prev = messages.to_vec();
+    }
+}
+
+fn roles(messages: &[ChatMessage]) -> Vec<&str> {
+    messages.iter().map(|m| m.role.as_str()).collect()
+}
+
+/// Pure extension across turns: the model-context read reflects the final
+/// (growing) message set and never rewrites earlier lines.
+#[test]
+fn append_pure_extension_grows_context() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("append.jsonl");
+    let meta = sample_meta();
+    let mut h = AppendHarness::new(path.clone());
+
+    let turn1 = vec![
+        ChatMessage::system("sys"),
+        ChatMessage::user("hi"),
+        ChatMessage::assistant("hello"),
+    ];
+    h.turn(&turn1, &meta, None, None);
+
+    let mut turn2 = turn1.clone();
+    turn2.push(ChatMessage::user("again"));
+    turn2.push(ChatMessage::assistant("hello again"));
+    h.turn(&turn2, &meta, None, None);
+
+    let loaded = read_transcript(&path).unwrap();
+    assert_eq!(
+        roles(&loaded.messages),
+        vec!["system", "user", "assistant", "user", "assistant"]
+    );
+    assert_eq!(loaded.messages[4].content, "hello again");
+}
+
+/// Compaction round-trip: after a reduction, the model-context read returns the
+/// REDUCED context, while the display read returns the FULL pre-compaction
+/// history plus the compaction marker.
+#[test]
+fn compaction_round_trip_model_vs_display() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("compact.jsonl");
+    let meta = sample_meta();
+    let mut h = AppendHarness::new(path.clone());
+
+    // Three growing turns.
+    let base = vec![
+        ChatMessage::system("sys"),
+        ChatMessage::user("q1"),
+        ChatMessage::assistant("a1"),
+        ChatMessage::user("q2"),
+        ChatMessage::assistant("a2"),
+    ];
+    h.turn(&base, &meta, None, None);
+
+    // A reduction: the harness drops the earliest exchange and keeps a summary
+    // + the recent tail. This is NOT a prefix of `base`, so it must land as a
+    // compaction record.
+    let reduced = vec![
+        ChatMessage::system("sys"),
+        ChatMessage::assistant("[summary] earlier discussion about q1/q2"),
+        ChatMessage::user("q3"),
+        ChatMessage::assistant("a3"),
+    ];
+    h.turn(&reduced, &meta, None, None);
+
+    // Model-context read == the reduced set only.
+    let model = read_transcript(&path).unwrap();
+    assert_eq!(
+        model
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "sys",
+            "[summary] earlier discussion about q1/q2",
+            "q3",
+            "a3"
+        ],
+        "model context must reflect the reduced set after compaction"
+    );
+
+    // Display read == full history: the 5 pre-compaction messages, then a
+    // compaction marker carrying the 4-message replacement.
+    let display = read_transcript_display(&path).unwrap();
+    let pre: Vec<&str> = display
+        .records
+        .iter()
+        .take_while(|r| matches!(r, DisplayRecord::Message(_)))
+        .filter_map(|r| match r {
+            DisplayRecord::Message(m) => Some(m.message.content.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pre, vec!["sys", "q1", "a1", "q2", "a2"]);
+    let marker = display
+        .records
+        .iter()
+        .find_map(|r| match r {
+            DisplayRecord::Compaction(c) => Some(c),
+            _ => None,
+        })
+        .expect("display must retain the compaction marker");
+    assert_eq!(marker.replacement.len(), 4);
+    assert_eq!(
+        marker.replacement[1].message.content,
+        "[summary] earlier discussion about q1/q2"
+    );
+}
+
+/// After a compaction, a subsequent pure extension appends normally and the
+/// model-context read replays reset-then-extend to the correct final set.
+#[test]
+fn append_after_compaction_extends_reduced_set() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("compact_then_extend.jsonl");
+    let meta = sample_meta();
+    let mut h = AppendHarness::new(path.clone());
+
+    h.turn(
+        &[
+            ChatMessage::system("sys"),
+            ChatMessage::user("q1"),
+            ChatMessage::assistant("a1"),
+        ],
+        &meta,
+        None,
+        None,
+    );
+    let reduced = vec![
+        ChatMessage::system("sys"),
+        ChatMessage::assistant("[summary]"),
+    ];
+    h.turn(&reduced, &meta, None, None);
+    let mut extended = reduced.clone();
+    extended.push(ChatMessage::user("q2"));
+    extended.push(ChatMessage::assistant("a2"));
+    h.turn(&extended, &meta, None, None);
+
+    let model = read_transcript(&path).unwrap();
+    assert_eq!(
+        model
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sys", "[summary]", "q2", "a2"]
+    );
+}
+
+/// request_id turn-boundary stamping round-trips into the display projection on
+/// every appended line of a turn.
+#[test]
+fn request_id_stamped_on_every_line() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("reqid.jsonl");
+    let meta = sample_meta();
+    let mut h = AppendHarness::new(path.clone());
+
+    let turn1 = vec![ChatMessage::system("sys"), ChatMessage::user("q1")];
+    h.turn(&turn1, &meta, None, Some("req-1"));
+
+    let mut turn2 = turn1.clone();
+    turn2.push(ChatMessage::assistant("a2"));
+    h.turn(&turn2, &meta, None, Some("req-2"));
+
+    let display = read_transcript_display(&path).unwrap();
+    let msgs: Vec<&DisplayMessage> = display
+        .records
+        .iter()
+        .filter_map(|r| match r {
+            DisplayRecord::Message(m) => Some(m),
+            _ => None,
+        })
+        .collect();
+    // turn1 wrote sys + user with req-1; turn2 appended only the assistant tail
+    // with req-2.
+    assert_eq!(msgs[0].request_id.as_deref(), Some("req-1"));
+    assert_eq!(msgs[1].request_id.as_deref(), Some("req-1"));
+    assert_eq!(msgs[2].request_id.as_deref(), Some("req-2"));
+    assert_eq!(msgs[2].message.content, "a2");
+}
+
+/// An interrupted partial is appended to the file, is visible in the display
+/// read flagged `interrupted`, and is SKIPPED by the model-context read (a
+/// resumed context never carries a truncated answer).
+#[test]
+fn interrupted_partial_display_only() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("interrupted.jsonl");
+    let meta = sample_meta();
+    let mut h = AppendHarness::new(path.clone());
+    h.turn(
+        &[ChatMessage::system("sys"), ChatMessage::user("q1")],
+        &meta,
+        None,
+        Some("req-1"),
+    );
+
+    append_interrupted_partial(
+        &path,
+        "partial answer that was cut off",
+        Some("req-1"),
+        Some(3),
+        Some("thinking that was cut off"),
+    )
+    .expect("append interrupted");
+
+    // Model context: the partial is skipped.
+    let model = read_transcript(&path).unwrap();
+    assert_eq!(roles(&model.messages), vec!["system", "user"]);
+    assert!(
+        !model.messages.iter().any(|m| m.content.contains("cut off")),
+        "interrupted partial must NOT enter the model context"
+    );
+
+    // Display: the partial is present and flagged.
+    let display = read_transcript_display(&path).unwrap();
+    let partial = display
+        .records
+        .iter()
+        .find_map(|r| match r {
+            DisplayRecord::Message(m) if m.interrupted => Some(m),
+            _ => None,
+        })
+        .expect("display must include the interrupted partial");
+    assert_eq!(partial.message.content, "partial answer that was cut off");
+    assert_eq!(partial.request_id.as_deref(), Some("req-1"));
+    assert_eq!(partial.iteration, Some(3));
+    assert_eq!(
+        partial.reasoning_content.as_deref(),
+        Some("thinking that was cut off"),
+        "interrupted partial must carry its reasoning_content"
+    );
+}
+
+/// Empty partial content is a no-op — no line is written.
+#[test]
+fn interrupted_partial_empty_is_noop() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("empty_interrupt.jsonl");
+    let meta = sample_meta();
+    let mut h = AppendHarness::new(path.clone());
+    h.turn(&[ChatMessage::user("q")], &meta, None, None);
+    append_interrupted_partial(&path, "", None, None, None).expect("noop");
+    let display = read_transcript_display(&path).unwrap();
+    assert!(display
+        .records
+        .iter()
+        .all(|r| matches!(r, DisplayRecord::Message(m) if !m.interrupted)));
+}
+
+/// A legacy file — one produced by the full-rewrite `write_transcript` with no
+/// compaction records and no `version` — reads identically under both the
+/// model-context and display readers.
+#[test]
+fn legacy_file_reads_identically() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("legacy.jsonl");
+    let messages = sample_messages();
+    let meta = sample_meta();
+    // Full-rewrite writer == the legacy shape (append-only readers must tolerate
+    // it: zero compaction records, last `_meta` == the only `_meta`).
+    write_transcript(&path, &messages, &meta, None).unwrap();
+
+    let model = read_transcript(&path).unwrap();
+    assert_eq!(model.messages.len(), messages.len());
+    assert_eq!(roles(&model.messages), roles(&messages));
+
+    let display = read_transcript_display(&path).unwrap();
+    let display_roles: Vec<&str> = display
+        .records
+        .iter()
+        .filter_map(|r| match r {
+            DisplayRecord::Message(m) => Some(m.message.role.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(display_roles, roles(&messages));
+}
+
+/// A file carrying an unknown record kind (as a future core might write) is
+/// skipped by the reader rather than crashing it.
+#[test]
+fn unknown_record_kind_is_skipped_not_fatal() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("unknown_kind.jsonl");
+    let meta = sample_meta();
+    let mut h = AppendHarness::new(path.clone());
+    h.turn(
+        &[ChatMessage::system("sys"), ChatMessage::user("q1")],
+        &meta,
+        None,
+        None,
+    );
+    // Simulate a future kind by appending a foreign record line.
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(f, "{{\"kind\":\"future_thing\",\"payload\":42}}").unwrap();
+    }
+    // Append a normal turn after the unknown line to prove reading continues.
+    let mut msgs = vec![ChatMessage::system("sys"), ChatMessage::user("q1")];
+    msgs.push(ChatMessage::assistant("a1"));
+    h.prev = vec![ChatMessage::system("sys"), ChatMessage::user("q1")];
+    h.turn(&msgs, &meta, None, None);
+
+    let model = read_transcript(&path).unwrap();
+    // The unknown record is skipped; the real messages survive.
+    assert!(model.messages.iter().any(|m| m.content == "a1"));
+    assert!(!model
+        .messages
+        .iter()
+        .any(|m| m.content.contains("future_thing")));
+}
+
+/// The `_meta` version field is stamped by the append writer and absent (0) on
+/// legacy files — but both remain readable.
+#[test]
+fn meta_version_stamped_and_optional() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("version.jsonl");
+    let meta = sample_meta();
+    let mut h = AppendHarness::new(path.clone());
+    h.turn(&[ChatMessage::user("q")], &meta, None, None);
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        raw.lines().next().unwrap().contains("\"version\":1"),
+        "append writer must stamp the schema version on the meta header"
+    );
+}

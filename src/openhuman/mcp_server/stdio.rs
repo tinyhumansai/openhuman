@@ -1,9 +1,14 @@
 use anyhow::{bail, Result};
+// `SocketAddr` + the `http` transport are only reached by the `--transport http`
+// arm, which is axum-only and gated with `http-server` (#5048). The stdio arm
+// (the default, used by Claude Desktop / Cursor) works under `mcp` alone.
+#[cfg(feature = "http-server")]
 use std::net::SocketAddr;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 use crate::core::logging::CliLogDefault;
 
+#[cfg(feature = "http-server")]
 use super::http::{run_http, HttpServerConfig};
 use super::{protocol, session::McpSession};
 
@@ -84,17 +89,28 @@ pub fn run_stdio_from_cli(args: &[String]) -> Result<()> {
             rt.block_on(async { run_stdio(tokio::io::stdin(), tokio::io::stdout()).await })?;
         }
         McpTransport::Http => {
-            let bind_addr: SocketAddr = format!("{bind_host}:{port}").parse().map_err(|err| {
-                anyhow::anyhow!("invalid bind address `{bind_host}:{port}`: {err}")
-            })?;
-            log::debug!(
-                "[mcp_server] starting HTTP/SSE MCP server bind={bind_addr} auth={}",
-                auth_token.is_some()
-            );
-            rt.block_on(run_http(HttpServerConfig {
-                bind_addr,
-                auth_token,
-            }))?;
+            #[cfg(feature = "http-server")]
+            {
+                let bind_addr: SocketAddr =
+                    format!("{bind_host}:{port}").parse().map_err(|err| {
+                        anyhow::anyhow!("invalid bind address `{bind_host}:{port}`: {err}")
+                    })?;
+                log::debug!(
+                    "[mcp_server] starting HTTP/SSE MCP server bind={bind_addr} auth={}",
+                    auth_token.is_some()
+                );
+                rt.block_on(run_http(HttpServerConfig {
+                    bind_addr,
+                    auth_token,
+                }))?;
+            }
+            // Built without the axum transport (#5048): the stdio path above
+            // still works; `--transport http` reports the build fact.
+            #[cfg(not(feature = "http-server"))]
+            {
+                let _ = (&bind_host, port, &auth_token);
+                bail!("mcp --transport http unavailable: built without the http-server feature");
+            }
         }
     }
     Ok(())

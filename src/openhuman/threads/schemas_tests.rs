@@ -22,6 +22,7 @@ const ALL_FUNCTIONS: &[&str] = &[
     "task_board_get",
     "task_board_put",
     "token_usage",
+    "transcript_get",
 ];
 
 #[test]

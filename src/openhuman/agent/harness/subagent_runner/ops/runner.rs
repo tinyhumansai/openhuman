@@ -33,7 +33,7 @@ use crate::openhuman::agent::harness::{
     current_spawn_depth, with_current_sandbox_mode, with_spawn_depth, MAX_SPAWN_DEPTH,
 };
 use crate::openhuman::context::prompt::{
-    render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
+    render_subagent_system_prompt_with_format, PromptContext, PromptTool, SubagentRenderOptions,
 };
 use crate::openhuman::file_state::with_file_state_agent_id;
 use crate::openhuman::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
@@ -970,6 +970,37 @@ async fn run_typed_mode(
             ToolCallFormat::Json => XmlToolDispatcher.prompt_instructions(&empty_tools),
         }
     };
+    // Load AGENTS.md instruction layers once, at prompt-build time, when the
+    // config gate is on. The global layer comes from the workspace dir; the
+    // project layer comes from the sub-agent's `worktree_action_dir` override
+    // when present (git-worktree isolation), otherwise the global config
+    // `action_dir`. Loading here (not per turn) keeps the sub-agent system
+    // prompt byte-stable for prefix caching.
+    let agents_md = if parent.agent_config.agents_md_enabled {
+        let local_dir = options
+            .worktree_action_dir
+            .clone()
+            .or_else(|| config_loaded.as_ref().ok().map(|c| c.action_dir.clone()));
+        match local_dir {
+            Some(dir) => {
+                crate::openhuman::agent::prompts::load_agents_md_layers(&parent.workspace_dir, &dir)
+            }
+            None => {
+                // No resolvable project dir — still surface the workspace layer.
+                crate::openhuman::agent::prompts::AgentsMdContent {
+                    global: crate::openhuman::agent::prompts::load_agents_md(&parent.workspace_dir),
+                    local: None,
+                }
+            }
+        }
+    } else {
+        tracing::debug!(
+            agent_id = %definition.id,
+            "[agents_md] disabled by config; skipping AGENTS.md injection for subagent"
+        );
+        crate::openhuman::agent::prompts::AgentsMdContent::default()
+    };
+
     let prompt_ctx = PromptContext {
         workspace_dir: &parent.workspace_dir,
         model_name: &model,
@@ -989,6 +1020,8 @@ async fn run_typed_mode(
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: agents_md.global.clone(),
+        agents_md_local: agents_md.local.clone(),
     };
 
     let system_prompt = match &definition.system_prompt {
@@ -1000,7 +1033,7 @@ async fn run_typed_mode(
         }
         PromptSource::Inline(_) | PromptSource::File { .. } => {
             let archetype_prompt_body = load_prompt_source(&definition.system_prompt, &prompt_ctx)?;
-            render_subagent_system_prompt(
+            render_subagent_system_prompt_with_format(
                 &parent.workspace_dir,
                 &model,
                 &allowed_indices,
@@ -1010,6 +1043,8 @@ async fn run_typed_mode(
                 render_options,
                 parent.tool_call_format,
                 &narrowed_integrations,
+                agents_md.global.as_deref(),
+                agents_md.local.as_deref(),
             )
         }
     };

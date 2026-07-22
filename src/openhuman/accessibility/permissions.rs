@@ -148,7 +148,7 @@ pub fn detect_input_monitoring_permission() -> PermissionState {
 ///
 /// **Linux** standard desktops don't enforce per-app permissions; Flatpak/Snap
 /// sandboxes are detected separately.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(all(feature = "inference", any(target_os = "macos", target_os = "windows")))]
 pub fn detect_microphone_permission() -> PermissionState {
     use cpal::traits::HostTrait;
     let host = cpal::default_host();
@@ -168,7 +168,7 @@ pub fn detect_microphone_permission() -> PermissionState {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "inference", target_os = "linux"))]
 pub fn detect_microphone_permission() -> PermissionState {
     // Standard Linux desktops (PulseAudio/PipeWire) don't enforce app-level mic permissions.
     // Detect Flatpak sandbox — if sandboxed, probe CPAL as a permission proxy.
@@ -187,6 +187,21 @@ pub fn detect_microphone_permission() -> PermissionState {
     } else {
         PermissionState::Granted
     }
+}
+
+/// With the `inference` feature off, the `cpal` audio-device probe is compiled
+/// out along with the whisper engine, so the microphone cannot be inspected.
+/// Report `Unknown` on otherwise-supported desktop platforms rather than a
+/// misleading `Granted`/`Denied`.
+#[cfg(all(
+    not(feature = "inference"),
+    any(target_os = "macos", target_os = "windows", target_os = "linux")
+))]
+pub fn detect_microphone_permission() -> PermissionState {
+    log::debug!(
+        "[permissions] microphone probe unavailable (built without the `inference` feature)"
+    );
+    PermissionState::Unknown
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]

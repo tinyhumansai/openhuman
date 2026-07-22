@@ -12,6 +12,14 @@
 //! The RPC surface is `inference.*`; old `local_ai_*` RPC names are resolved
 //! by the legacy alias layer for backwards compatibility.
 
+/// `true` when the crate was compiled with the `inference` feature (the
+/// default), i.e. the in-process whisper.cpp STT engine and the `cpal` audio
+/// probe are linked. Lets tests and callers distinguish a slim/headless build
+/// from the desktop build without naming gated symbols. When `false`,
+/// `whisper-rs` and `cpal` are dropped from the dependency graph (verify with
+/// `cargo tree -i whisper-rs` / `cargo tree -i cpal`).
+pub const INFERENCE_COMPILED_IN: bool = cfg!(feature = "inference");
+
 pub mod device;
 pub mod http;
 pub mod local;

@@ -1481,6 +1481,81 @@ fn seed_resume_from_thread_transcript_preserves_tool_calls_and_reasoning() {
     );
 }
 
+/// Cold-boot resume over an **append-only** transcript that carries a
+/// compaction record: the resumed model context must equal the REDUCED set the
+/// compaction installed (byte-identical to what the old full-rewrite produced),
+/// not the full pre-compaction history.
+#[test]
+fn seed_resume_replays_compaction_to_reduced_context() {
+    use super::transcript::{self, TranscriptMeta};
+    use crate::openhuman::inference::provider::ChatMessage;
+
+    let ws = tempfile::TempDir::new().expect("temp workspace");
+    let wsp = ws.path().to_path_buf();
+    let thread_id = "thr_compaction_resume";
+
+    let meta = TranscriptMeta {
+        agent_name: "orchestrator_thread-compact".to_string(),
+        agent_id: Some("orchestrator".to_string()),
+        agent_type: Some("root".to_string()),
+        dispatcher: "native".to_string(),
+        provider: None,
+        model: None,
+        created: "2026-01-01T00:00:00Z".to_string(),
+        updated: "2026-01-01T00:00:00Z".to_string(),
+        turn_count: 2,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_input_tokens: 0,
+        charged_amount_usd: 0.0,
+        thread_id: Some(thread_id.to_string()),
+        task_id: None,
+    };
+    let path = transcript::resolve_keyed_transcript_path(&wsp, "1700000000_orchestrator")
+        .expect("resolve transcript path");
+
+    // Turn 1: a full exchange. Turn 2: a context reduction (not a prefix) that
+    // must land as a compaction record.
+    let full = vec![
+        ChatMessage::system("system prompt"),
+        ChatMessage::user("q1"),
+        ChatMessage::assistant("a1"),
+        ChatMessage::user("q2"),
+        ChatMessage::assistant("a2"),
+    ];
+    transcript::append_transcript_turn(&path, &[], &full, &meta, None, None)
+        .expect("append turn 1");
+    let reduced = vec![
+        ChatMessage::system("system prompt"),
+        ChatMessage::assistant("[summary] q1/q2"),
+        ChatMessage::user("q3"),
+        ChatMessage::assistant("a3"),
+    ];
+    transcript::append_transcript_turn(&path, &full, &reduced, &meta, None, None)
+        .expect("append turn 2 (compaction)");
+
+    let mut agent = build_minimal_agent_with_definition_name(Some("some_other_agent_name"));
+    agent.workspace_dir = wsp.clone();
+
+    let loaded = agent.seed_resume_from_thread_transcript(thread_id);
+    assert!(
+        loaded,
+        "cold-boot resume must load the compacted transcript"
+    );
+    let cached = agent
+        .cached_transcript_messages
+        .as_ref()
+        .expect("cached transcript populated");
+    assert_eq!(
+        cached
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["system prompt", "[summary] q1/q2", "q3", "a3"],
+        "resumed context must be the reduced set the compaction installed"
+    );
+}
+
 /// When no root transcript exists for the thread, the transcript resume is a
 /// no-op returning `false` so the caller falls back to prose-pair seeding.
 #[test]

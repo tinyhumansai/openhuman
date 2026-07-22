@@ -287,13 +287,21 @@ jobs:
           mkdir -p "$OPENHUMAN_WORKSPACE"
           bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh
 
+      - name: Pack Playwright E2E failure artifacts
+        if: failure()
+        run: |
+          mkdir -p .ci/artifacts
+          tar -czf .ci/artifacts/openhuman-playwright-failure-logs.tar.gz \
+            -C "$OPENHUMAN_WORKSPACE" .
+        env:
+          OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
+
       - name: Upload Playwright E2E failure artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: e2e-playwright-failure-logs-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/openhuman-playwright-workspace/**
+          path: .ci/artifacts/openhuman-playwright-failure-logs.tar.gz
           retention-days: 7
           if-no-files-found: ignore
 

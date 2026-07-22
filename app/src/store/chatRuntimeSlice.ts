@@ -1,7 +1,9 @@
 import { createAsyncThunk, createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import debug from 'debug';
 
+import { mapDisplayItems } from '../features/conversations/derived/mapDisplayItems';
 import { threadApi } from '../services/api/threadApi';
+import type { DerivedDisplayItem, DerivedTranscriptPage } from '../types/derivedTranscript';
 import type { ThreadMessage } from '../types/thread';
 import type {
   AgentRun,
@@ -13,6 +15,7 @@ import type {
   PersistedTurnState,
   TaskBoard,
 } from '../types/turnState';
+import { DERIVED_TRANSCRIPT_ENABLED } from '../utils/config';
 import {
   formatTimelineEntry,
   isKnownClientTool,
@@ -2400,6 +2403,173 @@ export const fetchAndHydrateTurnHistory = createAsyncThunk(
       turnStateLog('history fetch failed thread=%s err=%O', threadId, error);
       return null;
     }
+  }
+);
+
+/**
+ * Initial derived-transcript page size. Sized generously (the core clamps to
+ * 500) so a reopened thread's visible turns all carry their process trail
+ * without a second round-trip. Older turns beyond this window load lazily via
+ * {@link loadOlderDerivedTranscript}.
+ */
+const DERIVED_TRANSCRIPT_INITIAL_LIMIT = 500;
+
+const derivedLog = debug('chatRuntime.derivedTranscript');
+
+/**
+ * Read the {@link ChatRuntimeState} out of an arbitrary redux root, tolerating
+ * both the app store (`state.chatRuntime`) and a bare test store whose root IS
+ * the slice state. Used only to read live-turn request ids for the skip set.
+ */
+function readChatRuntimeState(state: unknown): ChatRuntimeState | undefined {
+  if (!state || typeof state !== 'object') return undefined;
+  const root = state as Record<string, unknown>;
+  if ('chatRuntime' in root && root.chatRuntime && typeof root.chatRuntime === 'object') {
+    return root.chatRuntime as ChatRuntimeState;
+  }
+  if ('streamingAssistantByThread' in root) {
+    return root as unknown as ChatRuntimeState;
+  }
+  return undefined;
+}
+
+/**
+ * The request ids whose derived trail must NOT be hydrated: the newest turn
+ * (rendered as the live "agent insights" anchor from `toolTimelineByThread` /
+ * the socket stream, or the `turn_state` snapshot via
+ * {@link fetchAndHydrateTurnState}) and any turn currently streaming. Mirrors
+ * `fetchAndHydrateTurnHistory`'s `history.slice(1)` newest-turn skip.
+ */
+function liveRequestIdsToSkip(
+  state: unknown,
+  threadId: string,
+  items: DerivedDisplayItem[]
+): Set<string> {
+  const skip = new Set<string>();
+  // Newest turn = first request id encountered walking newest-first.
+  for (const item of items) {
+    const rid =
+      item.kind === 'turnBoundary'
+        ? item.requestId
+        : 'requestId' in item
+          ? item.requestId
+          : undefined;
+    if (rid) {
+      skip.add(rid);
+      break;
+    }
+  }
+  const runtime = readChatRuntimeState(state);
+  const streamingRid = runtime?.streamingAssistantByThread[threadId]?.requestId;
+  if (streamingRid) skip.add(streamingRid);
+  for (const [rid, mappedThread] of Object.entries(runtime?.parallelRequestThreads ?? {})) {
+    if (mappedThread === threadId) skip.add(rid);
+  }
+  return skip;
+}
+
+/**
+ * Phase C settled-turn restore: hydrate past-turn process trails from the
+ * transcript-derived projection (`openhuman.threads_transcript_get`) instead of
+ * the legacy `turn_state_history` snapshot ring. Populates the SAME
+ * {@link ChatRuntimeState.turnTimelinesByThread} /
+ * {@link ChatRuntimeState.turnTranscriptsByThread} the legacy path did, so the
+ * renderers are reused unchanged. The live/most-recent turn is skipped so
+ * derived data never fights socket-fed live state.
+ *
+ * Automatic fallback to {@link fetchAndHydrateTurnHistory} when the flag is
+ * off, the RPC errors, or the thread has no persisted transcript (legacy
+ * thread). Failures never block navigation.
+ */
+export const fetchAndHydrateDerivedTranscript = createAsyncThunk(
+  'chatRuntime/fetchAndHydrateDerivedTranscript',
+  async (threadId: string, { dispatch, getState }) => {
+    if (!DERIVED_TRANSCRIPT_ENABLED) {
+      derivedLog('disabled thread=%s -> turn_state history', threadId);
+      await dispatch(fetchAndHydrateTurnHistory(threadId));
+      return null;
+    }
+    let page: DerivedTranscriptPage;
+    try {
+      page = await threadApi.getDerivedTranscript(threadId, {
+        limit: DERIVED_TRANSCRIPT_INITIAL_LIMIT,
+      });
+    } catch (error) {
+      derivedLog('rpc failed thread=%s err=%O -> turn_state history fallback', threadId, error);
+      await dispatch(fetchAndHydrateTurnHistory(threadId));
+      return null;
+    }
+    if (!page.hasTranscript) {
+      derivedLog('no transcript thread=%s -> turn_state history fallback (legacy)', threadId);
+      await dispatch(fetchAndHydrateTurnHistory(threadId));
+      return null;
+    }
+    const skipRequestIds = liveRequestIdsToSkip(getState(), threadId, page.items);
+    const { timelines, transcripts } = mapDisplayItems(page.items, { skipRequestIds });
+    derivedLog(
+      'hydrated thread=%s items=%d timelines=%d transcripts=%d skip=%d hasMore=%s',
+      threadId,
+      page.items.length,
+      Object.keys(timelines).length,
+      Object.keys(transcripts).length,
+      skipRequestIds.size,
+      page.hasMore
+    );
+    dispatch(setTurnTimelinesForThread({ threadId, timelines, transcripts }));
+    // TODO(pagination): when `page.hasMore`, an insights "load older" affordance
+    // should call `loadOlderDerivedTranscript` with `page.nextCursor`. No UI
+    // surfaces older past-turn trails yet, so the first (generous) page is all
+    // we hydrate today.
+    return { timelines, transcripts, nextCursor: page.nextCursor ?? null, hasMore: page.hasMore };
+  }
+);
+
+/**
+ * Load-older hook (Phase C, pagination): fetch the next (older) derived page
+ * for a thread by `cursor` and MERGE its trails into the already-hydrated
+ * {@link ChatRuntimeState.turnTimelinesByThread} / `turnTranscriptsByThread`
+ * (existing turns win — the newer page is authoritative). Wired but currently
+ * uncalled: no UI exposes a "load older insights" affordance yet.
+ */
+export const loadOlderDerivedTranscript = createAsyncThunk(
+  'chatRuntime/loadOlderDerivedTranscript',
+  async (arg: { threadId: string; cursor: string }, { dispatch, getState }) => {
+    if (!DERIVED_TRANSCRIPT_ENABLED) return null;
+    const { threadId, cursor } = arg;
+    let page: DerivedTranscriptPage;
+    try {
+      page = await threadApi.getDerivedTranscript(threadId, {
+        cursor,
+        limit: DERIVED_TRANSCRIPT_INITIAL_LIMIT,
+      });
+    } catch (error) {
+      derivedLog('load-older rpc failed thread=%s err=%O', threadId, error);
+      return null;
+    }
+    if (!page.hasTranscript) return null;
+    const skipRequestIds = liveRequestIdsToSkip(getState(), threadId, page.items);
+    const { timelines, transcripts } = mapDisplayItems(page.items, { skipRequestIds });
+    const runtime = readChatRuntimeState(getState());
+    const mergedTimelines = { ...timelines, ...(runtime?.turnTimelinesByThread[threadId] ?? {}) };
+    const mergedTranscripts = {
+      ...transcripts,
+      ...(runtime?.turnTranscriptsByThread[threadId] ?? {}),
+    };
+    derivedLog(
+      'load-older merged thread=%s added_timelines=%d added_transcripts=%d hasMore=%s',
+      threadId,
+      Object.keys(timelines).length,
+      Object.keys(transcripts).length,
+      page.hasMore
+    );
+    dispatch(
+      setTurnTimelinesForThread({
+        threadId,
+        timelines: mergedTimelines,
+        transcripts: mergedTranscripts,
+      })
+    );
+    return { nextCursor: page.nextCursor ?? null, hasMore: page.hasMore };
   }
 );
 

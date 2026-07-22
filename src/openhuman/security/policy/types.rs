@@ -184,6 +184,10 @@ pub(super) const WORKSPACE_INTERNAL_DIRS: &[&str] = &[
     "vault",
     "task_sources",
     "whatsapp_data",
+    // The redirect_links domain was removed (#5051), but an upgraded profile can
+    // still hold a legacy `redirect_links/links.db` (stored URL history) written
+    // by an older version. Keep the directory on the internal denylist so agents
+    // with workspace access cannot read or overwrite that leftover state.
     "redirect_links",
     "codegraph",
     ".openhuman",

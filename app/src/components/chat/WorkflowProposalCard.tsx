@@ -16,6 +16,50 @@ import Button from '../ui/Button';
 
 const log = debug('openhuman:chat:workflow-proposal-card');
 
+// Maps the wire `step.kind` (a `tinyflows` node type, snake_case, e.g.
+// `tool_call`) to the i18n key for its plain-language badge label. Kinds not
+// in this map (e.g. a future node type the frontend doesn't know about yet)
+// fall back to `humanizeUnknownStepKind` below rather than showing the raw
+// snake_case identifier to a non-technical user.
+const STEP_KIND_I18N_KEYS: Record<string, string> = {
+  agent: 'chat.flowProposal.stepKind.agent',
+  tool_call: 'chat.flowProposal.stepKind.toolCall',
+  http_request: 'chat.flowProposal.stepKind.httpRequest',
+  code: 'chat.flowProposal.stepKind.code',
+  condition: 'chat.flowProposal.stepKind.condition',
+  switch: 'chat.flowProposal.stepKind.switch',
+  merge: 'chat.flowProposal.stepKind.merge',
+  split_out: 'chat.flowProposal.stepKind.splitOut',
+  transform: 'chat.flowProposal.stepKind.transform',
+  output_parser: 'chat.flowProposal.stepKind.outputParser',
+  sub_workflow: 'chat.flowProposal.stepKind.subWorkflow',
+};
+
+/**
+ * Pure fallback for a `step.kind` the frontend doesn't recognize: capitalize
+ * the first letter and turn `_` into spaces (e.g. `future_thing` ->
+ * `Future thing`) so an unmapped kind still reads as plain language instead
+ * of a raw snake_case identifier.
+ */
+function humanizeUnknownStepKind(kind: string): string {
+  const spaced = kind.replace(/_/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/**
+ * Resolve the i18n key for a mapped `step.kind`, guarding against inherited
+ * Object properties. `step.kind` is arbitrary wire data, so a plain bracket
+ * index (`STEP_KIND_I18N_KEYS[step.kind]`) would resolve inherited members for
+ * values like `constructor` or `__proto__` — handing a function/object to
+ * `t()` and breaking the badge render. Only own keys count; anything else
+ * returns `undefined` so the caller falls back to `humanizeUnknownStepKind`.
+ */
+function stepKindI18nKey(kind: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(STEP_KIND_I18N_KEYS, kind)
+    ? STEP_KIND_I18N_KEYS[kind]
+    : undefined;
+}
+
 interface Props {
   threadId: string;
   proposal: WorkflowProposal;
@@ -183,23 +227,22 @@ export const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSa
             </p>
             {proposal.summary.steps.length > 0 ? (
               <ol className="mt-1 max-h-56 list-decimal overflow-y-auto pl-6 text-content-secondary">
-                {proposal.summary.steps.map((step, i) => (
-                  <li key={i} className="break-words">
-                    <span
-                      data-testid="workflow-proposal-step-kind"
-                      className="mr-1.5 inline-block rounded-full bg-ocean-100 px-1.5 py-0.5 text-[10px] font-medium text-ocean-700 dark:bg-ocean-500/15 dark:text-ocean-300">
-                      {step.kind}
-                    </span>
-                    <span>{step.name}</span>
-                    {step.config_hint ? (
+                {proposal.summary.steps.map((step, i) => {
+                  const kindI18nKey = stepKindI18nKey(step.kind);
+                  const kindLabel = kindI18nKey
+                    ? t(kindI18nKey)
+                    : humanizeUnknownStepKind(step.kind);
+                  return (
+                    <li key={i} className="break-words">
                       <span
-                        title={step.config_hint}
-                        className="ml-1.5 inline-block max-w-full truncate rounded bg-surface-subtle px-1 py-px align-middle font-mono text-[11px] text-content-muted">
-                        {step.config_hint}
+                        data-testid="workflow-proposal-step-kind"
+                        className="mr-1.5 inline-block rounded-full bg-ocean-100 px-1.5 py-0.5 text-[10px] font-medium text-ocean-700 dark:bg-ocean-500/15 dark:text-ocean-300">
+                        {kindLabel}
                       </span>
-                    ) : null}
-                  </li>
-                ))}
+                      <span>{step.name}</span>
+                    </li>
+                  );
+                })}
               </ol>
             ) : (
               <p className="mt-1 text-xs text-content-faint">{t('chat.flowProposal.noSteps')}</p>

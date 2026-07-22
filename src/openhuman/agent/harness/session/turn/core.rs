@@ -332,6 +332,67 @@ fn tool_records_from_conversation(
     records
 }
 
+/// Stamp each **failed** tool-result [`ChatMessage`] with its failure outcome
+/// before persistence, so the derived transcript view can render an error tool
+/// row instead of a false success.
+///
+/// The harness folds a tool result into a `role:"tool"` message whose native
+/// content envelope (`{"tool_call_id":…,"content":…}`) has already dropped
+/// `ToolResult::is_error`. The only structured per-call success signal is the
+/// captured [`ToolCallOutcome`] side-channel; correlate by provider call id and
+/// re-attach an additive failure marker (see
+/// `transcript::attach_tool_failure_metadata`). Non-tool messages, tool messages
+/// with no matching outcome, and successful calls are left untouched.
+fn stamp_tool_failures(
+    messages: &mut [ChatMessage],
+    tool_outcomes: &[crate::openhuman::tinyagents::ToolCallOutcome],
+) {
+    use crate::openhuman::agent::harness::session::transcript;
+    if tool_outcomes.is_empty() {
+        return;
+    }
+    for msg in messages.iter_mut() {
+        if msg.role != "tool" {
+            continue;
+        }
+        let Some(call_id) = parse_tool_call_id(&msg.content) else {
+            continue;
+        };
+        let Some(outcome) = tool_outcomes.iter().find(|o| o.call_id == call_id) else {
+            continue;
+        };
+        if outcome.success {
+            continue;
+        }
+        let detail = short_failure_detail(&outcome.content);
+        log::debug!(
+            "[transcript] stamping tool failure call_id={call_id} name={}",
+            outcome.name
+        );
+        transcript::attach_tool_failure_metadata(msg, detail.as_deref());
+    }
+}
+
+/// Extract the `tool_call_id` from a native tool-result content envelope
+/// (`{"tool_call_id":…,"content":…}`). `None` for non-envelope content (XML /
+/// P-Format dispatchers, which don't emit `role:"tool"` messages anyway).
+fn parse_tool_call_id(content: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(content).ok()?;
+    value.get("tool_call_id")?.as_str().map(str::to_string)
+}
+
+/// Reduce a tool's error output to a short, single-line reason for display.
+fn short_failure_detail(content: &str) -> Option<String> {
+    const MAX: usize = 160;
+    let line = content.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let short: String = line.chars().take(MAX).collect();
+    if short.is_empty() {
+        None
+    } else {
+        Some(short)
+    }
+}
+
 /// Rewrite the **trailing** assistant `Chat` message in `history` to `text`,
 /// keeping the persisted transcript and the next turn's KV-cache prefix
 /// consistent with a repaired required-output reply (issue #4117). Only the last
@@ -446,13 +507,21 @@ impl Agent {
             // instead. Narrow specialists (both flags off) keep the
             // full-body log so prompt-engineering iteration on
             // tools/safety sections stays easy.
-            if self.omit_profile && self.omit_memory_md {
+            //
+            // AGENTS.md instruction layers are also user/project-controlled and
+            // can land in the prompt even when PROFILE/MEMORY are both omitted
+            // (common for narrow specialists), so treat their presence as a
+            // redaction trigger too — otherwise the full-body path would print
+            // raw AGENTS.md contents verbatim.
+            let contains_agents_md =
+                rendered_prompt.contains("## Project instructions (AGENTS.md)");
+            if self.omit_profile && self.omit_memory_md && !contains_agents_md {
                 log::debug!("[agent_loop] system prompt body:\n{}", rendered_prompt);
             } else {
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 rendered_prompt.hash(&mut hasher);
                 log::debug!(
-                    "[agent_loop] system prompt body redacted (contains PROFILE/MEMORY): chars={} hash={:016x}",
+                    "[agent_loop] system prompt body redacted (contains PROFILE/MEMORY/AGENTS.md): chars={} hash={:016x}",
                     rendered_prompt.chars().count(),
                     hasher.finish()
                 );
@@ -1465,7 +1534,11 @@ impl Agent {
             },
         );
 
-        let persisted = self.tool_dispatcher.to_provider_messages(&self.history);
+        let mut persisted = self.tool_dispatcher.to_provider_messages(&self.history);
+        // Re-attach per-call failure outcomes (dropped when the engine folded
+        // each tool result into a `role:"tool"` message) so the derived
+        // transcript view renders failed tools as errors, not successes.
+        stamp_tool_failures(&mut persisted, &outcome.tool_outcomes);
         // Carry the turn's provider (event channel) + effective model and usage
         // into the persisted transcript meta. Passing `None` here dropped
         // `provider`/`model` from every transcript (they are `TranscriptMeta`

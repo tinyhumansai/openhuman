@@ -54,6 +54,13 @@ impl TurnStateStore {
         Self { workspace_dir }
     }
 
+    /// Workspace root this store persists under. Exposed so the mirror can
+    /// resolve sibling session transcripts (append the interrupted partial to
+    /// `session_raw/{root}.jsonl`) without re-plumbing the path.
+    pub fn workspace_dir(&self) -> &std::path::Path {
+        &self.workspace_dir
+    }
+
     /// Atomically write the snapshot for `state.request_id` under
     /// `state.thread_id`. On a `Completed` write, prune the thread's completed
     /// turns to the newest [`COMPLETED_RETENTION`].

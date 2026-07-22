@@ -340,6 +340,8 @@ fn prompt_context<'a>(
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: Vec::new(),
+        agents_md_global: None,
+        agents_md_local: None,
     }
 }
 

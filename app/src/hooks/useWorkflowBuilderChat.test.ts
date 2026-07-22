@@ -2,7 +2,11 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BuilderTurnResult } from '../services/api/flowsApi';
-import type { InferenceTurnLifecycle, WorkflowProposal } from '../store/chatRuntimeSlice';
+import type {
+  InferenceTurnLifecycle,
+  PendingApproval,
+  WorkflowProposal,
+} from '../store/chatRuntimeSlice';
 import type { ThreadMessage } from '../types/thread';
 import { useWorkflowBuilderChat, type WorkflowBuilderSendResult } from './useWorkflowBuilderChat';
 
@@ -22,6 +26,7 @@ const selectorState = vi.hoisted(() => ({
   toolTimelineByThread: {} as Record<string, unknown[]>,
   streamingAssistantByThread: {} as Record<string, { content: string }>,
   inferenceTurnLifecycleByThread: {} as Record<string, InferenceTurnLifecycle>,
+  pendingApprovalByThread: {} as Record<string, PendingApproval>,
 }));
 vi.mock('../store/hooks', () => ({
   useAppDispatch: () => dispatch,
@@ -33,6 +38,7 @@ vi.mock('../store/hooks', () => ({
         toolTimelineByThread: selectorState.toolTimelineByThread,
         streamingAssistantByThread: selectorState.streamingAssistantByThread,
         inferenceTurnLifecycleByThread: selectorState.inferenceTurnLifecycleByThread,
+        pendingApprovalByThread: selectorState.pendingApprovalByThread,
       },
     }),
 }));
@@ -73,6 +79,7 @@ describe('useWorkflowBuilderChat', () => {
     selectorState.toolTimelineByThread = {};
     selectorState.streamingAssistantByThread = {};
     selectorState.inferenceTurnLifecycleByThread = {};
+    selectorState.pendingApprovalByThread = {};
     dispatch.mockReset().mockImplementation((action: { type: string }) => {
       if (action.type === 'createNewThread') {
         return { unwrap: () => Promise.resolve({ id: 'builder-1' }) };
@@ -459,6 +466,38 @@ describe('useWorkflowBuilderChat', () => {
       // A retryable no-op: nothing was sent and no thread was created.
       expect(buildWorkflow).not.toHaveBeenCalled();
       await waitFor(() => expect(result.current.error).toBe('offline'));
+    });
+  });
+
+  // PR3 (flows-copilot-live-run-approval): `pendingApproval` is a thin
+  // thread-scoped selector over `pendingApprovalByThread` — the same slice
+  // `Conversations.tsx` reads for the main chat's `ApprovalRequestCard`.
+  describe('pendingApproval', () => {
+    it('is null before a thread exists', () => {
+      const { result } = renderHook(() => useWorkflowBuilderChat());
+      expect(result.current.pendingApproval).toBeNull();
+    });
+
+    it('surfaces the parked approval for the dedicated/seeded thread', () => {
+      const approval: PendingApproval = {
+        requestId: 'req-1',
+        toolName: 'run_flow',
+        message: 'Run the saved flow "Daily digest"?',
+      };
+      selectorState.pendingApprovalByThread = { 'builder-1': approval };
+      const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+      expect(result.current.pendingApproval).toEqual(approval);
+    });
+
+    it('does not surface an approval parked on a DIFFERENT thread', () => {
+      const approval: PendingApproval = {
+        requestId: 'req-1',
+        toolName: 'run_flow',
+        message: 'Run the saved flow "Daily digest"?',
+      };
+      selectorState.pendingApprovalByThread = { 'some-other-thread': approval };
+      const { result } = renderHook(() => useWorkflowBuilderChat('builder-1'));
+      expect(result.current.pendingApproval).toBeNull();
     });
   });
 

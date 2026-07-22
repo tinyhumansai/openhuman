@@ -14,9 +14,16 @@ max_result_chars = 12000
 sandbox_mode = "none"
 omit_identity = true
 omit_memory_context = true
-# Safety preamble stays OFF: this agent has zero real external effect (it only
-# proposes validated graphs and reads), so the general acting guard-rails would
-# be noise. The "propose, never persist" invariant is taught in prompt.md.
+# Safety preamble stays OFF: authoring itself (propose/revise/dry-run/reads)
+# has zero real external effect, so the general acting guard-rails would be
+# noise there — the "propose, never persist" invariant is taught in prompt.md.
+# The one real-effect surface, `run_flow` (a confirmed test-run of an already
+# saved flow), is gated by the `ApprovalGate` itself, not this preamble: on the
+# streaming copilot path (flows-copilot-live-run-approval, PR3) it parks behind
+# a real human approval card (`AgentTurnOrigin::WebChat` +
+# `APPROVAL_CHAT_CONTEXT`, same as main chat); on the headless `flows_build`
+# path it stays hidden entirely (`restrict_builder_toolset`, #4593/#4881) since
+# there is no approval surface to park against there.
 omit_safety_preamble = true
 omit_skills_catalog = true
 

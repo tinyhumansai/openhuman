@@ -134,6 +134,18 @@ pub fn current() -> Option<AgentTurnOrigin> {
     AGENT_TURN_ORIGIN.try_with(|o| o.clone()).ok()
 }
 
+/// Read the ambient web-chat `request_id` for the current turn, when one was
+/// scoped by an [`AgentTurnOrigin::WebChat`] entry point. `None` for every
+/// other origin (channel / cron / CLI / sub-agent) and outside any scope —
+/// those turns are not request-scoped, so their transcript lines carry no
+/// turn-boundary marker.
+pub fn current_request_id() -> Option<String> {
+    match current() {
+        Some(AgentTurnOrigin::WebChat { request_id, .. }) => request_id,
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

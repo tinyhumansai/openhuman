@@ -1,4 +1,7 @@
-use super::env::{agentbox_mode_enabled, collect_gmi_config, GmiConfig, AGENTBOX_MODE_ENV_VAR};
+use super::env::{
+    agentbox_mode_enabled, collect_gmi_config, normalize_gmi_maas_base_url, GmiConfig,
+    AGENTBOX_MODE_ENV_VAR,
+};
 
 #[test]
 fn collect_returns_some_when_all_three_vars_present() {
@@ -11,7 +14,7 @@ fn collect_returns_some_when_all_three_vars_present() {
     assert_eq!(
         cfg,
         Ok(GmiConfig {
-            base_url: "https://api.gmi-serving.com".into(),
+            base_url: "https://api.gmi-serving.com/v1".into(),
             api_key: "sk-test".into(),
             model: "deepseek-ai/DeepSeek-V4-Pro".into(),
         })
@@ -86,9 +89,41 @@ fn collect_trims_leading_and_trailing_whitespace() {
     assert_eq!(
         cfg,
         Ok(GmiConfig {
-            base_url: "https://api.gmi-serving.com".into(),
+            base_url: "https://api.gmi-serving.com/v1".into(),
             api_key: "sk-test".into(),
             model: "deepseek-ai/DeepSeek-V4-Pro".into(),
         })
+    );
+}
+
+#[test]
+fn normalize_gmi_maas_base_url_appends_v1() {
+    assert_eq!(
+        normalize_gmi_maas_base_url("https://api.gmi-serving.com"),
+        "https://api.gmi-serving.com/v1"
+    );
+}
+
+#[test]
+fn normalize_gmi_maas_base_url_strips_trailing_slash() {
+    assert_eq!(
+        normalize_gmi_maas_base_url("https://api.gmi-serving.com/"),
+        "https://api.gmi-serving.com/v1"
+    );
+}
+
+#[test]
+fn normalize_gmi_maas_base_url_keeps_existing_v1() {
+    assert_eq!(
+        normalize_gmi_maas_base_url("https://api.gmi-serving.com/v1"),
+        "https://api.gmi-serving.com/v1"
+    );
+}
+
+#[test]
+fn normalize_gmi_maas_base_url_strips_v1_trailing_slash() {
+    assert_eq!(
+        normalize_gmi_maas_base_url("https://api.gmi-serving.com/v1/"),
+        "https://api.gmi-serving.com/v1"
     );
 }

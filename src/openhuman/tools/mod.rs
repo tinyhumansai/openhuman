@@ -47,6 +47,7 @@ pub use crate::openhuman::people::tools::*;
 pub use crate::openhuman::referral::tools::*;
 #[cfg(feature = "flows")]
 pub use crate::openhuman::rhai_workflows::tools::*;
+#[cfg(feature = "desktop-automation")]
 pub use crate::openhuman::screen_intelligence::tools::*;
 pub use crate::openhuman::search::tools::*;
 pub use crate::openhuman::security::tools::*;

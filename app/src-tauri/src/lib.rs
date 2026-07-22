@@ -17,6 +17,21 @@ const _: () = assert!(
      Add \"voice\" to the openhuman_core `features` list in app/src-tauri/Cargo.toml."
 );
 
+// The shell talks to the in-process core only over http://127.0.0.1:<port>/rpc,
+// so the core MUST embed the HTTP + Socket.IO transport (#5048). Same failure
+// class as #4901: with `http-server` dropped the core never binds a listener
+// and every RPC is unreachable — silent and runtime-only. The marker lives in
+// the core's always-compiled facade (`core::http_server_status`) precisely so
+// this assert can observe the core's feature state (a dependent's own
+// `#[cfg(feature = ...)]` would test THIS crate's features, not the core's).
+const _: () = assert!(
+    openhuman_core::core::http_server_status::HTTP_SERVER_COMPILED_IN,
+    "openhuman_core must be built with the `http-server` feature: the desktop app reaches \
+     the core only over http://127.0.0.1:<port>/rpc, and without it the core binds no \
+     listener so every RPC is unreachable (#5048). \
+     Add \"http-server\" to the openhuman_core `features` list in app/src-tauri/Cargo.toml."
+);
+
 mod app_update;
 // Artifact export commands (#2779, #3162) — both cross-platform
 // (macOS/Windows/Linux): native Save-As dialog (rfd) + Downloads copy.
@@ -2387,6 +2402,7 @@ pub fn run() {
         let custom_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .thread_stack_size(openhuman_core::core::runtime::AGENT_WORKER_STACK_BYTES)
+            .max_blocking_threads(openhuman_core::core::runtime::MAX_BLOCKING_THREADS)
             .build()
             .expect("build custom tokio runtime for tauri async surface");
         let handle = custom_runtime.handle().clone();

@@ -7,12 +7,13 @@
  * so a run doesn't sit on "Running" until the user reloads the page.
  */
 import debug from 'debug';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import PanelPage from '../components/layout/PanelPage';
 import { CenteredLoadingState, ErrorBanner } from '../components/ui/LoadingState';
 import { useFlowRunsLiveRefresh } from '../hooks/useFlowRunsLiveRefresh';
+import { useFlowRunStarted } from '../hooks/useFlowRunStarted';
 import {
   resolveDisplayStatus,
   useRunsPendingApprovalSet,
@@ -45,11 +46,20 @@ export default function WorkflowRunsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Per-request generation counter: a `load()` started before a run-started
+  // event (see `useFlowRunStarted` below) can resolve AFTER the event-driven
+  // `refetchRuns` and, without this guard, clobber the fresh "Running" row
+  // with stale data. Only the most-recently-issued request may apply its
+  // result — shared between `load` and `refetchRuns` below.
+  const requestGenRef = useRef(0);
+
   const load = useCallback(async () => {
+    const requestGen = ++requestGenRef.current;
     setLoading(true);
     setError(null);
     try {
       const [allRuns, flows] = await Promise.all([listAllFlowRuns(), listFlows()]);
+      if (requestGen !== requestGenRef.current) return;
       const names: Record<string, string> = {};
       flows.forEach((f: Flow) => {
         names[f.id] = f.name;
@@ -57,6 +67,7 @@ export default function WorkflowRunsPage() {
       setRuns(allRuns);
       setFlowNames(names);
     } catch (err) {
+      if (requestGen !== requestGenRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
@@ -71,8 +82,12 @@ export default function WorkflowRunsPage() {
   // too), since flow names rarely change mid-run and re-fetching them on
   // every live-refresh tick would be wasted work.
   const refetchRuns = useCallback(() => {
+    const requestGen = ++requestGenRef.current;
     listAllFlowRuns()
-      .then(setRuns)
+      .then(result => {
+        if (requestGen !== requestGenRef.current) return;
+        setRuns(result);
+      })
       .catch(err => {
         // Best-effort background refresh — a transient failure here shouldn't
         // clobber the page's existing error/loading state from `load`.
@@ -81,6 +96,12 @@ export default function WorkflowRunsPage() {
   }, []);
 
   useFlowRunsLiveRefresh(runs, refetchRuns);
+  // Unconditional (unlike useFlowRunsLiveRefresh, which is gated on an
+  // already-active run) — fills the empty-list gap ("No runs yet") that hook
+  // can't reach, so the very first run across any flow shows up as "Running"
+  // instantly instead of waiting for a manual refresh (issue B35). No
+  // `flowId` filter — this is the flow-agnostic "all runs" page.
+  useFlowRunStarted(() => void refetchRuns());
   const pendingRunIds = useRunsPendingApprovalSet(runs);
 
   const statusLabel = (status: FlowRunStatus) =>

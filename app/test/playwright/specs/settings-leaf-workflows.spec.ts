@@ -165,19 +165,12 @@ test.describe('Settings leaf workflows', () => {
     });
   });
 
-  test('task sources surface the web harness guard while preserving the create form', async ({
-    page,
-  }) => {
-    const name = `Playwright Issues ${Date.now()}`;
+  test('retired task sources route lands on Connections', async ({ page }) => {
     await openSettings(page, 'pw-settings-task-sources', '/settings/task-sources');
 
-    await expect(page.getByTestId('task-sources-panel')).toBeVisible();
-    await expect(page.getByText('Not running in Tauri')).toBeVisible();
-    await page.getByLabel('Provider').selectOption('github');
-    await page.getByLabel('Name (optional)').fill(name);
-    await page.getByLabel('Repository (owner/name, optional)').fill('tinyhumansai/openhuman');
-    await page.getByLabel('Labels (comma-separated)').fill('e2e, regression');
-    await expect(page.getByRole('button', { name: 'Add source' })).toBeEnabled();
-    await expect(page.getByRole('button', { name: 'Preview' })).toBeEnabled();
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash))
+      .toContain('/connections');
+    await expect(page.getByRole('button', { name: 'Connections' }).first()).toBeVisible();
   });
 });

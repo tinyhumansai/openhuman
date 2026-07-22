@@ -1165,6 +1165,7 @@ fn thread_title_error_and_turn_state_helpers_cover_wire_shapes() {
         source_tool_name: Some("memory.search".into()),
         subagent: None,
         output: None,
+        seq: None,
     });
     let wire = serde_json::to_value(GetTurnStateResponse {
         turn_state: Some(state.clone()),
@@ -3478,6 +3479,7 @@ fn turn_state_store_persists_lists_marks_and_clears_snapshots() {
             transcript: vec![],
         }),
         output: None,
+        seq: None,
     });
     let second = TurnState::started("thread/b", "request-2", 2, "2026-05-29T12:01:00Z");
 

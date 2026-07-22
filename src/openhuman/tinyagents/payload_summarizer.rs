@@ -331,6 +331,18 @@ impl SubagentPayloadSummarizer {
             personality_soul_md: None,
             personality_memory_md: None,
             personality_roster: vec![],
+            // AGENTS.md layers are intentionally excluded from the payload
+            // summarizer. This is a narrow internal utility that condenses an
+            // oversized tool payload into a summary — it does no project work in
+            // the action directory, so standing project instructions are pure
+            // noise here and would waste the tight token budget this summary
+            // path is trying to reclaim. Unlike the user-facing agents it also
+            // builds its dynamic prompt directly (not via
+            // `SystemPromptBuilder::from_dynamic`), so it is deliberately outside
+            // the AGENTS.md injection contract that the main + sub-agent prompt
+            // paths honour.
+            agents_md_global: None,
+            agents_md_local: None,
         };
 
         let system_prompt = match &self.definition.system_prompt {

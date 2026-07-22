@@ -216,7 +216,9 @@ describe('Notifications', () => {
       return;
     }
 
-    await navigateViaHash('/notifications');
+    // The bare route intentionally shows the notifications welcome screen.
+    // Select the main view before asserting sections from the alerts UI.
+    await navigateViaHash('/notifications?view=main');
     await waitForNotificationsSections(10_000);
 
     const sectionVisible = await browser.execute(() => {

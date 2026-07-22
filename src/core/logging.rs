@@ -472,6 +472,7 @@ fn build_env_filter(verbose: bool, default_scope: CliLogDefault) -> tracing_subs
     })
 }
 
+#[cfg(feature = "crash-reporting")]
 fn sentry_tracing_layer<S>() -> impl Layer<S>
 where
     S: tracing::Subscriber + for<'a> LookupSpan<'a>,
@@ -490,6 +491,18 @@ where
             _ => sentry::integrations::tracing::EventFilter::Ignore,
         }
     })
+}
+
+/// Sentry-free build: the Sentry breadcrumb/event bridge collapses to a no-op
+/// `Identity` layer so the two `.with(sentry_tracing_layer())` call sites keep
+/// compiling unchanged (they add a layer that does nothing). Same signature as
+/// the `crash-reporting` version above.
+#[cfg(not(feature = "crash-reporting"))]
+fn sentry_tracing_layer<S>() -> impl Layer<S>
+where
+    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+{
+    tracing_subscriber::layer::Identity::new()
 }
 
 #[cfg(test)]

@@ -68,7 +68,6 @@ const DOMAIN_ALLOWLIST = new Set([
   'plan_review',
   'provider_surfaces',
   'recall_calendar',
-  'redirect_links',
   'referral',
   'session_import',
   'skill_runtime',

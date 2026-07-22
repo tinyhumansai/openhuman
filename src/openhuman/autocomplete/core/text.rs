@@ -1,6 +1,6 @@
 //! Text utilities for autocomplete suggestions.
 
-use super::types::MAX_SUGGESTION_CHARS;
+use super::super::types::MAX_SUGGESTION_CHARS;
 
 pub(super) use crate::openhuman::accessibility::truncate_tail;
 

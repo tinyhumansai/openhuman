@@ -58,6 +58,8 @@ mod tests {
             personality_soul_md: None,
             personality_memory_md: None,
             personality_roster: vec![],
+            agents_md_global: None,
+            agents_md_local: None,
         };
         let rendered = section.build(&ctx).expect("render profile section");
         assert!(rendered.starts_with("## Agent profile"));

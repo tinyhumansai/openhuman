@@ -27,7 +27,7 @@ async function resetMock(): Promise<void> {
 async function gotoRewards(page: import('@playwright/test').Page, scenario: string) {
   await resetMock();
   await setRewardsScenario(scenario);
-  await bootAuthenticatedPage(page, `pw-rewards-${scenario}`, '/rewards');
+  await bootAuthenticatedPage(page, `pw-rewards-${scenario}`, '/rewards?view=main');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
   await expect(page.getByText('Your Progress')).toBeVisible();

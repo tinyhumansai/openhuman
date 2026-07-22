@@ -24,6 +24,18 @@ vi.mock('../../services/api/flowsApi', () => ({ listFlowRuns }));
 const fetchPendingApprovals = vi.hoisted(() => vi.fn());
 vi.mock('../../services/api/approvalApi', () => ({ fetchPendingApprovals }));
 
+// Stub the run-started hook (issue B35) so tests can trigger its `onStart`
+// callback directly, without standing up a real socket subscription — its own
+// match/filter/teardown behavior is covered by useFlowRunStarted.test.ts.
+const flowRunStartedCalls = vi.hoisted(
+  () => [] as Array<{ onStart: () => void; flowId?: string | null }>
+);
+vi.mock('../../hooks/useFlowRunStarted', () => ({
+  useFlowRunStarted: (onStart: () => void, flowId?: string | null) => {
+    flowRunStartedCalls.push({ onStart, flowId });
+  },
+}));
+
 // Capture the props handed to the drawer so "Fix with agent" can be invoked
 // directly without standing up the drawer's own run-polling machinery
 // (mirrors `FlowApprovalCard.test.tsx`'s stub pattern).
@@ -100,6 +112,7 @@ describe('FlowRunsSidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     inspectorDrawerProps.current = null;
+    flowRunStartedCalls.length = 0;
     fetchPendingApprovals.mockResolvedValue([]);
   });
 
@@ -211,5 +224,40 @@ describe('FlowRunsSidebar', () => {
 
     const runRow = await screen.findByTestId('flow-runs-sidebar-run-run-1');
     await waitFor(() => expect(runRow).toHaveTextContent('Running'));
+  });
+
+  it('registers useFlowRunStarted scoped to this flow and refetches when it fires (B35)', async () => {
+    listFlowRuns.mockResolvedValue([]);
+    renderSidebar('flow-1');
+
+    await screen.findByTestId('flow-runs-sidebar-empty');
+    // The hook is called (with the same args) on every render — assert the
+    // most recent registration is scoped to this flow.
+    const latestCall = flowRunStartedCalls.at(-1);
+    expect(latestCall?.flowId).toBe('flow-1');
+    expect(listFlowRuns).toHaveBeenCalledTimes(1);
+
+    listFlowRuns.mockResolvedValue([makeRun({ status: 'running' })]);
+    act(() => {
+      latestCall?.onStart();
+    });
+
+    await waitFor(() => expect(listFlowRuns.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(await screen.findByTestId('flow-runs-sidebar-run-run-1')).toHaveTextContent('Running');
+    expect(screen.queryByTestId('flow-runs-sidebar-empty')).not.toBeInTheDocument();
+  });
+
+  it('shows runs once a run starts even though the list began empty (B35)', async () => {
+    listFlowRuns.mockResolvedValue([]);
+    renderSidebar();
+
+    expect(await screen.findByTestId('flow-runs-sidebar-empty')).toBeInTheDocument();
+
+    listFlowRuns.mockResolvedValue([makeRun({ status: 'running' })]);
+    act(() => {
+      flowRunStartedCalls.at(-1)?.onStart();
+    });
+
+    expect(await screen.findByTestId('flow-runs-sidebar-run-run-1')).toBeInTheDocument();
   });
 });

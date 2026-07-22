@@ -1,9 +1,14 @@
 use crate::openhuman::config::AutocompleteConfig;
 use serde::{Deserialize, Serialize};
 
-// Re-export platform types from the accessibility middleware.
+// Re-export platform types from the accessibility middleware. Consumed only by
+// the gated `core` engine, so gate the re-export + the const in lockstep to keep
+// the disabled build warning-clean (this file itself stays compiled for the
+// carved-out serde types below).
+#[cfg(feature = "desktop-automation")]
 pub(crate) use crate::openhuman::accessibility::FocusedTextContext;
 
+#[cfg(feature = "desktop-automation")]
 pub(crate) const MAX_SUGGESTION_CHARS: usize = 64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -77,6 +77,29 @@ pub enum PermissionKind {
     Microphone,
 }
 
+/// Status of the macOS Globe/Fn key listener helper.
+///
+/// Inert serde data — no FFI. Lives here (rather than in the FFI-bearing
+/// `globe` module) so it stays compiled when the `desktop-automation` feature
+/// is off; `globe` re-exports it so existing paths still resolve.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobeHotkeyStatus {
+    pub supported: bool,
+    pub running: bool,
+    pub input_monitoring_permission: PermissionState,
+    pub last_error: Option<String>,
+    pub events_pending: usize,
+}
+
+/// Result of polling the Globe/Fn listener: current status plus drained events.
+///
+/// Inert serde data — see [`GlobeHotkeyStatus`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobeHotkeyPollResult {
+    pub status: GlobeHotkeyStatus,
+    pub events: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

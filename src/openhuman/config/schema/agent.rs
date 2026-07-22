@@ -359,6 +359,22 @@ pub struct AgentConfig {
     /// existing agents are unaffected.
     #[serde(default)]
     pub required_output: Option<RequiredOutputContract>,
+
+    /// Whether to load `AGENTS.md` instruction files into the agent's system
+    /// prompt — OpenHuman's analog of Claude Code's `CLAUDE.md` / Codex's
+    /// `AGENTS.md`. When `true` (the default), the harness reads
+    /// `<workspace_dir>/AGENTS.md` (global) and `<action_dir>/AGENTS.md`
+    /// (project) once at system-prompt build time and injects them as
+    /// `## Project instructions (AGENTS.md)`. When `false`, no AGENTS.md content
+    /// is loaded or injected. Missing/empty files are always a silent no-op, so
+    /// leaving this on has zero effect until the user actually creates an
+    /// `AGENTS.md`.
+    #[serde(default = "default_agents_md_enabled")]
+    pub agents_md_enabled: bool,
+}
+
+fn default_agents_md_enabled() -> bool {
+    true
 }
 
 fn default_session_dual_write() -> bool {
@@ -501,6 +517,7 @@ impl Default for AgentConfig {
             session_dual_write: default_session_dual_write(),
             session_shadow_reads: default_session_shadow_reads(),
             required_output: None,
+            agents_md_enabled: default_agents_md_enabled(),
         }
     }
 }
@@ -699,5 +716,27 @@ mod memory_window_tests {
         let migrated = cfg.migrate_channel_permissions_if_legacy(Vec::<String>::new());
         assert!(!migrated);
         assert!(cfg.channel_permissions.is_empty());
+    }
+
+    #[test]
+    fn agents_md_enabled_defaults_to_true() {
+        assert!(
+            AgentConfig::default().agents_md_enabled,
+            "AGENTS.md loading must be on by default"
+        );
+    }
+
+    #[test]
+    fn agents_md_enabled_defaults_true_when_field_omitted() {
+        // A config that predates the field must deserialize with the feature on
+        // (matches the `#[serde(default = ...)]` contract).
+        let cfg: AgentConfig = serde_json::from_str("{}").unwrap();
+        assert!(cfg.agents_md_enabled);
+    }
+
+    #[test]
+    fn agents_md_enabled_roundtrips_when_disabled() {
+        let cfg: AgentConfig = serde_json::from_str(r#"{"agents_md_enabled": false}"#).unwrap();
+        assert!(!cfg.agents_md_enabled);
     }
 }

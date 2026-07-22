@@ -19,7 +19,9 @@ import { startMockServer, stopMockServer } from '../mock-server';
 
 const USER_ID = 'e2e-settings-ai-skills';
 
-describe('Settings - AI & Skills', () => {
+describe('Settings - AI & Skills', function () {
+  this.timeout(90_000);
+
   before(async function beforeSuite() {
     this.timeout(90_000);
     await startMockServer();

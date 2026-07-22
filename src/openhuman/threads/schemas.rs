@@ -39,6 +39,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("task_board_get"),
         schemas("task_board_put"),
         schemas("token_usage"),
+        schemas("transcript_get"),
     ]
 }
 
@@ -119,6 +120,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("token_usage"),
             handler: handle_token_usage,
+        },
+        RegisteredController {
+            schema: schemas("transcript_get"),
+            handler: handle_transcript_get,
         },
     ]
 }
@@ -527,6 +532,38 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "transcript_get" => ControllerSchema {
+            namespace: "threads",
+            function: "transcript_get",
+            description:
+                "Project a thread's settled transcript (derived from session_raw/*.jsonl) into typed display items, newest-first paginated.",
+            inputs: vec![
+                FieldSchema {
+                    name: "thread_id",
+                    ty: TypeSchema::String,
+                    comment: "Thread identifier.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "cursor",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Opaque pagination cursor from a prior page's nextCursor; absent starts at the newest item.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "limit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Max items to return (default 50, capped at 500).",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Envelope with the newest-first page of display items, total, and nextCursor.",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "threads",
             function: "unknown",
@@ -742,6 +779,13 @@ fn handle_token_usage(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = parse::<ops::ThreadTokenUsageRequest>(params)?;
         to_json(ops::token_usage(p).await?)
+    })
+}
+
+fn handle_transcript_get(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = parse::<ops::TranscriptGetRequest>(params)?;
+        to_json(ops::transcript_get(p).await?)
     })
 }
 

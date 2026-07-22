@@ -139,6 +139,19 @@ impl PromptSection for DynamicPromptSection {
 pub struct IdentitySection;
 pub struct ToolsSection;
 pub struct SafetySection;
+/// Injects the pre-loaded `AGENTS.md` instruction layers
+/// ([`PromptContext::agents_md_global`] + [`PromptContext::agents_md_local`])
+/// under a `## Project instructions (AGENTS.md)` heading — OpenHuman's analog
+/// of Claude Code's `CLAUDE.md` / Codex's `AGENTS.md`.
+///
+/// Global (workspace) content renders first, then the local (project) layer.
+/// Empty (and skipped) when neither layer carries content — e.g. no `AGENTS.md`
+/// exists, or the `agents_md_enabled` config gate is off (the loader hands
+/// `None` for both fields in that case). Content is pre-loaded once at
+/// system-prompt build time and capped at [`BOOTSTRAP_MAX_CHARS`] per layer, so
+/// a growing on-disk file can't push the prompt out of the cache-friendly
+/// prefix range.
+pub struct AgentsInstructionsSection;
 /// Renders the canonical grounding / anti-hallucination contract
 /// ([`GROUNDING_BODY`]). Always included; never gated.
 pub struct GroundingSection;
@@ -374,6 +387,22 @@ impl PromptSection for UserFilesSection {
                 out.push_str(&mem);
             }
         }
+        Ok(out)
+    }
+}
+
+impl PromptSection for AgentsInstructionsSection {
+    fn name(&self) -> &str {
+        "agents_md"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        let mut out = String::new();
+        super::render_helpers::write_agents_md_blocks(
+            &mut out,
+            ctx.agents_md_global.as_deref(),
+            ctx.agents_md_local.as_deref(),
+        );
         Ok(out)
     }
 }

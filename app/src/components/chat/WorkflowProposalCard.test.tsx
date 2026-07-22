@@ -56,15 +56,87 @@ describe('WorkflowProposalCard', () => {
     mockNavigate.mockReset();
   });
 
-  it('renders the name, trigger, and steps with node-kind badges', () => {
+  it('renders the name, trigger, and steps with plain-language node-kind badges', () => {
     render(<WorkflowProposalCard threadId="t1" proposal={proposal()} />);
     expect(screen.getByText('Daily standup summary')).toBeInTheDocument();
     expect(screen.getByText('schedule: 0 9 * * *')).toBeInTheDocument();
     expect(screen.getByText('Summarize')).toBeInTheDocument();
     expect(screen.getByText('Post to Slack')).toBeInTheDocument();
-    expect(screen.getByText('agent')).toBeInTheDocument();
-    expect(screen.getByText('tool_call')).toBeInTheDocument();
+    // Badges show the friendly i18n key (useT is mocked to echo the key),
+    // never the raw snake_case wire `kind`.
+    expect(screen.getByText('chat.flowProposal.stepKind.agent')).toBeInTheDocument();
+    expect(screen.getByText('chat.flowProposal.stepKind.toolCall')).toBeInTheDocument();
+    expect(screen.queryByText('agent')).not.toBeInTheDocument();
+    expect(screen.queryByText('tool_call')).not.toBeInTheDocument();
     expect(screen.getAllByTestId('workflow-proposal-step-kind')).toHaveLength(2);
+  });
+
+  it('hides config_hint from the card even when present on the step', () => {
+    render(<WorkflowProposalCard threadId="t1" proposal={proposal()} />);
+    // `proposal()` sets a config_hint on the first step; the card must not
+    // surface it (it can leak internal identifiers like tool slugs or URLs).
+    expect(screen.queryByText("Summarize yesterday's messages")).not.toBeInTheDocument();
+  });
+
+  it('falls back to a humanized label for an unrecognized step kind', () => {
+    render(
+      <WorkflowProposalCard
+        threadId="t1"
+        proposal={proposal({
+          summary: {
+            trigger: 'manual',
+            steps: [{ kind: 'future_thing', name: 'Do the new thing' }],
+          },
+        })}
+      />
+    );
+    // Not in STEP_KIND_I18N_KEYS, so it must fall back to the pure
+    // capitalize + underscores-to-spaces helper rather than the raw kind.
+    expect(screen.getByText('Future thing')).toBeInTheDocument();
+    expect(screen.queryByText('future_thing')).not.toBeInTheDocument();
+  });
+
+  // `step.kind` is arbitrary wire data. A plain bracket index would resolve
+  // inherited Object members (e.g. `constructor` -> the Object function) and
+  // hand a non-string to t(), breaking the badge render. The own-property
+  // guard must send these through the humanized fallback instead. `constructor`
+  // and `toString` have no underscores, so the humanized label is just the
+  // capitalized kind.
+  it.each(['constructor', 'toString'])(
+    'humanizes the inherited-property kind %s instead of resolving it on the prototype',
+    kind => {
+      render(
+        <WorkflowProposalCard
+          threadId="t1"
+          proposal={proposal({
+            summary: { trigger: 'manual', steps: [{ kind, name: 'Edge-case step' }] },
+          })}
+        />
+      );
+      const expected = kind.charAt(0).toUpperCase() + kind.slice(1);
+      expect(screen.getByText(expected)).toBeInTheDocument();
+      expect(screen.getByText('Edge-case step')).toBeInTheDocument();
+    }
+  );
+
+  it('renders a __proto__ step kind without leaking an inherited property', () => {
+    render(
+      <WorkflowProposalCard
+        threadId="t1"
+        proposal={proposal({
+          summary: { trigger: 'manual', steps: [{ kind: '__proto__', name: 'Proto step' }] },
+        })}
+      />
+    );
+    // The own-property guard treats __proto__ as unknown and humanizes it, so
+    // the row still renders (step name present) and the badge shows a real
+    // string. Assert the badge's exact (whitespace-normalized) content directly
+    // — not just the step name / absence of "function" — so a missing badge or
+    // an inherited-member leak like `[object Object]` would fail here too.
+    // `__proto__` humanizes (underscores -> spaces, first char already a space)
+    // to a lowercase "proto" badge.
+    expect(screen.getByText('Proto step')).toBeInTheDocument();
+    expect(screen.getByTestId('workflow-proposal-step-kind')).toHaveTextContent(/^proto$/);
   });
 
   it('has the expected root test id', () => {

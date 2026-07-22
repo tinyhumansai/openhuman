@@ -72,7 +72,11 @@ pub use crate::openhuman::inference::voice::local_speech;
 pub use crate::openhuman::inference::voice::local_transcribe;
 #[cfg(feature = "voice")]
 pub use crate::openhuman::inference::voice::postprocess;
-#[cfg(feature = "voice")]
+// `streaming` (the dictation WebSocket handler) is axum-only, so it is compiled
+// only when BOTH `voice` and `http-server` are on (#5048). With `http-server`
+// off, its sole caller (the gated core HTTP router) is absent too, so nothing
+// needs `voice::streaming`.
+#[cfg(all(feature = "voice", feature = "http-server"))]
 pub use crate::openhuman::inference::voice::streaming;
 
 #[cfg(feature = "voice")]

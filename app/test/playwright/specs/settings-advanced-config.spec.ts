@@ -59,14 +59,9 @@ test.describe('Settings - Advanced Config', () => {
   test('renders the developer options route and its advanced entries', async ({ page }) => {
     await gotoSettingsRoute(page, '/settings/developer-options');
 
-    // Panel title dropped in the PanelPage migration; the panel is confirmed by
-    // its diagnostics entries below.
-    // Developer Options is debug-only now: user-facing sections (AI, Integrations…)
-    // live on their section pages, so Developer Options surfaces diagnostics entries.
-    // The two-pane sidebar may also surface these ids, so scope to the first match.
-    await expect(page.getByTestId('settings-nav-memory-debug').first()).toBeVisible();
-    await expect(page.getByTestId('settings-nav-event-log').first()).toBeVisible();
-    await expect(page.getByTestId('settings-nav-build-info').first()).toBeVisible();
+    // Per-feature diagnostics moved into the settings sidebar; Restart Tour is
+    // the stable action specific to the slim Developer Options panel.
+    await expect(page.getByRole('button', { name: 'Restart Tour' })).toBeVisible();
   });
 
   test('persists notification routing settings through core RPC', async ({ page }) => {
@@ -96,9 +91,13 @@ test.describe('Settings - Advanced Config', () => {
   test('persists composio trigger triage settings', async ({ page }) => {
     await gotoSettingsRoute(page, '/settings/composio-triggers');
 
-    await expect(page.getByText('Integration Triggers')).toBeVisible();
+    await expect(page.getByLabel('Disable AI triage for all triggers')).toBeVisible();
     await page.locator('#disabled-toolkits').fill('gmail, slack');
-    await page.getByRole('button', { name: 'Save' }).click();
+    await page
+      .locator('#disabled-toolkits')
+      .locator('xpath=ancestor::div[.//button[normalize-space()="Save"]][1]')
+      .getByRole('button', { name: 'Save' })
+      .click();
     await expect(page.getByText('Settings saved')).toBeVisible();
 
     await expect
@@ -149,7 +148,12 @@ test.describe('Settings - Advanced Config', () => {
     await expect(page.getByText('Routing mode')).toBeVisible();
     await page.getByLabel(/Direct/).check();
     await page.locator('#composio-api-key').fill('ck_live_e2e_composio_key');
-    await page.getByRole('button', { name: 'Save' }).click();
+    await page
+      .locator('#composio-api-key')
+      .locator('xpath=ancestor::div[.//button[normalize-space()="Save"]][1]')
+      .getByRole('button', { name: 'Save' })
+      .first()
+      .click();
 
     const confirm = page.getByRole('button', { name: 'I understand, switch to Direct' });
     if (await confirm.isVisible().catch(() => false)) {

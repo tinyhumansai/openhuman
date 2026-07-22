@@ -93,7 +93,7 @@ test.describe('Notifications', () => {
       raw_payload: {},
     });
 
-    await bootAuthenticatedPage(page, 'pw-notifications-ui', '/notifications');
+    await bootAuthenticatedPage(page, 'pw-notifications-ui', '/notifications?view=main');
     await dismissWalkthroughIfPresent(page);
     await waitForNotificationsSections(page);
 
@@ -102,7 +102,7 @@ test.describe('Notifications', () => {
   });
 
   test('Notifications page shows System Events section', async ({ page }) => {
-    await bootAuthenticatedPage(page, 'pw-notifications-system', '/notifications');
+    await bootAuthenticatedPage(page, 'pw-notifications-system', '/notifications?view=main');
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
     await waitForNotificationsSections(page);

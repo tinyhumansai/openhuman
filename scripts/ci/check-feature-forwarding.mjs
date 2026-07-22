@@ -15,25 +15,12 @@ import { fileURLToPath } from 'node:url';
 import {
   diffForwarding,
   formatReport,
+  INTENTIONALLY_NOT_FORWARDED,
   parseCoreDefaultFeatures,
   parseShellForwardedFeatures,
 } from '../lib/feature-forwarding.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-
-/**
- * Gates the desktop shell intentionally does NOT forward, mapped to why.
- *
- * Empty by design: every current default-ON gate belongs in the shipped app.
- * Adding an entry is a deliberate product decision, not a way to silence this
- * check — the reason string is what a future reader (and reviewer) relies on to
- * tell "excluded on purpose" from "forgotten". That ambiguity is exactly what
- * let #4918 sit unnoticed since #4123.
- */
-const INTENTIONALLY_NOT_FORWARDED = {
-  // 'some-gate': 'Reason it must not ship in the desktop build.',
-  tui: 'Terminal UI subcommand (openhuman tui/chat); the desktop app ships its own Tauri UI and never runs the ratatui terminal front-end.',
-};
 
 function usage() {
   return 'Usage: check-feature-forwarding.mjs [core-manifest] [shell-manifest]';

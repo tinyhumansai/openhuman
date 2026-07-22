@@ -1,10 +1,9 @@
 import { expect, type Page, test } from '@playwright/test';
 
 import {
-  bootRuntimeReadyGuestPage,
+  bootAuthenticatedPage,
   callCoreRpc,
   dismissWalkthroughIfPresent,
-  signInViaCallbackToken,
   waitForAppReady,
 } from '../helpers/core-rpc';
 
@@ -53,30 +52,23 @@ async function seedConnector(status: 'ACTIVE' | 'FAILED' | 'EXPIRED' = 'ACTIVE')
 async function bootSkillsPage(page: Page, userId: string) {
   await resetMock();
   await seedConnector();
-  await bootRuntimeReadyGuestPage(page);
-  try {
-    await signInViaCallbackToken(page, userId);
-  } catch {
-    await bootRuntimeReadyGuestPage(page);
-    await signInViaCallbackToken(page, userId);
-  }
+  // Connector behavior does not exercise the auth callback. Seed the core
+  // session directly so callback timing cannot obscure connector failures.
+  await bootAuthenticatedPage(page, userId, '/connections?tab=composio');
   await page.evaluate(() => {
     try {
       localStorage.setItem('openhuman:walkthrough_completed', 'true');
       localStorage.removeItem('openhuman:walkthrough_pending');
     } catch {}
   });
-  // Phase 2: /skills → /connections
   await page.evaluate(() => {
-    window.location.hash = '/connections';
+    window.location.hash = '/connections?tab=composio';
   });
   await expect
     .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
     .toContain('/connections');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
-  // Navigate to the Composio tab
-  await page.getByTestId('two-pane-nav-composio').click();
   const heading = page.getByTestId('composio-integrations-card');
   if (!(await heading.isVisible().catch(() => false))) {
     const connectionsButton = page.getByRole('button', { name: 'Connections' });

@@ -367,7 +367,9 @@ mod tests {
     /// each new gate adds a self-contained pair (keeps the attribute-`#[cfg]`
     /// form the feature-gate smoke lane's coverage guard tracks).
     fn is_compiled_out_method(method: &str) -> bool {
-        mcp_method_compiled_out(method) || channels_method_compiled_out(method)
+        mcp_method_compiled_out(method)
+            || channels_method_compiled_out(method)
+            || desktop_automation_method_compiled_out(method)
     }
 
     #[cfg(feature = "mcp")]
@@ -397,6 +399,20 @@ mod tests {
             || method.starts_with("openhuman.webview_apis_")
             || method.starts_with("openhuman.webview_notifications_")
             || method.starts_with("openhuman.whatsapp_data_")
+    }
+
+    #[cfg(feature = "desktop-automation")]
+    fn desktop_automation_method_compiled_out(_method: &str) -> bool {
+        false
+    }
+
+    #[cfg(not(feature = "desktop-automation"))]
+    fn desktop_automation_method_compiled_out(method: &str) -> bool {
+        // `desktop-automation` OFF ⇒ the autocomplete / screen_intelligence /
+        // desktop-companion controllers are unregistered (#5049).
+        method.starts_with("openhuman.autocomplete_")
+            || method.starts_with("openhuman.screen_intelligence_")
+            || method.starts_with("openhuman.companion_")
     }
 
     #[test]

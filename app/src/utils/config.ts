@@ -102,6 +102,22 @@ export const CHAT_ATTACHMENTS_ENABLED = import.meta.env.VITE_CHAT_ATTACHMENTS !=
 export const SKILLS_GITHUB_REPO =
   import.meta.env.VITE_SKILLS_GITHUB_REPO || 'tinyhumansai/openhuman-skills';
 
+/**
+ * Transcript-derived restore path (Phase C, `docs/plans/transcript-derived-view.md`).
+ *
+ * When **on** (default), the settled-turn process trails on thread open are
+ * hydrated from the `openhuman.threads_transcript_get` projection of the
+ * append-only `session_raw/*.jsonl` source of truth, instead of the legacy
+ * `turn_state_history` snapshot ring. Live token streaming is untouched either
+ * way — in-flight turns still render from socket-fed `chatRuntimeSlice` state.
+ *
+ * Automatic fallback to the legacy `turn_state_history` hydration when the RPC
+ * errors or reports `hasTranscript: false` (legacy threads), so the old path
+ * stays fully working. Hard-disable the whole derived path for a build with
+ * `VITE_DERIVED_TRANSCRIPT=false`.
+ */
+export const DERIVED_TRANSCRIPT_ENABLED = import.meta.env.VITE_DERIVED_TRANSCRIPT !== 'false';
+
 /** Google Analytics 4 Measurement ID. Leave blank to disable GA. */
 export const GA_MEASUREMENT_ID = import.meta.env.VITE_GA_MEASUREMENT_ID as string | undefined;
 

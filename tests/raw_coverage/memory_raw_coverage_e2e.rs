@@ -623,6 +623,7 @@ fn threads_turn_state_store_skips_corrupt_entries_and_marks_interrupted() {
             transcript: vec![],
         }),
         output: None,
+        seq: None,
     });
     let second = TurnState::started("thread-b", "req-b", 2, "2026-05-29T12:01:00Z");
     store.put(&first).expect("put first");

@@ -22,7 +22,12 @@
 //! `Value` record consumed by the always-compiled `tool_registry` — is the
 //! same real type in both builds and cannot drift.
 
-#[cfg(feature = "mcp")]
+// The Streamable-HTTP + SSE transport is axum-only, so it needs BOTH `mcp` and
+// `http-server` (#5048). The stdio transport (below) works under `mcp` alone;
+// `local`/`stdio` gate their own HTTP-serve paths so `openhuman mcp` (stdio)
+// and the Claude-Code in-process MCP bridge still degrade gracefully when
+// `http-server` is off.
+#[cfg(all(feature = "mcp", feature = "http-server"))]
 mod http;
 #[cfg(feature = "mcp")]
 mod local;
@@ -43,7 +48,7 @@ mod write_dispatch;
 // so `McpToolSpec` survives the gate (see the module note above).
 mod tools;
 
-#[cfg(feature = "mcp")]
+#[cfg(all(feature = "mcp", feature = "http-server"))]
 pub use http::{run_http, run_http_reporting, HttpServerConfig};
 #[cfg(feature = "mcp")]
 pub use local::{ensure_local_http, LocalMcpEndpoint};

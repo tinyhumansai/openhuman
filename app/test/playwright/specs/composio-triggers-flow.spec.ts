@@ -1,10 +1,9 @@
 import { expect, type Page, test } from '@playwright/test';
 
 import {
-  bootRuntimeReadyGuestPage,
+  bootAuthenticatedPage,
   callCoreRpc,
   dismissWalkthroughIfPresent,
-  signInViaCallbackToken,
   waitForAppReady,
 } from '../helpers/core-rpc';
 
@@ -67,23 +66,19 @@ async function bootSkillsPage(page: Page, userId: string) {
     ]),
     composioActiveTriggers: JSON.stringify([]),
   });
-  await bootRuntimeReadyGuestPage(page);
-  await signInViaCallbackToken(page, userId);
+  await bootAuthenticatedPage(page, userId, '/connections?tab=composio');
   await page.evaluate(() => {
     try {
       localStorage.setItem('openhuman:walkthrough_completed', 'true');
       localStorage.removeItem('openhuman:walkthrough_pending');
     } catch {}
-    // Phase 2: /skills → /connections
-    window.location.hash = '/connections';
+    window.location.hash = '/connections?tab=composio';
   });
   await expect
     .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
     .toContain('/connections');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
-  // Navigate to the Composio tab
-  await page.getByTestId('two-pane-nav-composio').click();
   // Tab is "Apps"; the grid renders in the composio-integrations-card container.
   await expect(page.getByTestId('composio-integrations-card')).toBeVisible({ timeout: 20_000 });
 }

@@ -98,7 +98,7 @@ mod tests {
             assert!(status.provider_configured);
             let provider = status.provider.expect("provider populated");
             assert_eq!(provider.slug, GMI_MAAS_SLUG);
-            assert_eq!(provider.base_url, "https://api.gmi-serving.com");
+            assert_eq!(provider.base_url, "https://api.gmi-serving.com/v1");
             assert_eq!(provider.model, "deepseek-ai/DeepSeek-V4-Pro");
 
             // Defense-in-depth: the serialized status must never carry the key.

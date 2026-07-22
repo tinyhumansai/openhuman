@@ -376,6 +376,76 @@ fn media_tools_absent_when_feature_off() {
     );
 }
 
+// Compile-time `documents` feature gate (#5048). The office-document agent
+// tools (`generate_presentation`, `generate_document`) are present only when
+// the `documents` feature is compiled in — leaf gate, no stub facade, so the
+// disabled build must drop both from the tool list entirely.
+#[cfg(feature = "documents")]
+#[test]
+fn document_tools_registered_when_feature_on() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem = test_memory(&tmp);
+    let browser = BrowserConfig {
+        enabled: false,
+        ..BrowserConfig::default()
+    };
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let cfg = test_config(&tmp);
+    let tools = all_tools(
+        Arc::new(Config::default()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names = tool_names(&tools);
+    assert!(
+        names.iter().any(|n| n == "generate_presentation"),
+        "generate_presentation must register with `documents` on; got: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "generate_document"),
+        "generate_document must register with `documents` on; got: {names:?}"
+    );
+}
+
+#[cfg(not(feature = "documents"))]
+#[test]
+fn document_tools_absent_when_feature_off() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem = test_memory(&tmp);
+    let browser = BrowserConfig {
+        enabled: false,
+        ..BrowserConfig::default()
+    };
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let cfg = test_config(&tmp);
+    let tools = all_tools(
+        Arc::new(Config::default()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names = tool_names(&tools);
+    assert!(
+        !names
+            .iter()
+            .any(|n| n == "generate_presentation" || n == "generate_document"),
+        "no document tools may register when the `documents` feature is off; got: {names:?}"
+    );
+}
+
 #[test]
 fn all_tools_registers_gitbooks_when_enabled() {
     let tmp = TempDir::new().unwrap();
@@ -1054,6 +1124,9 @@ fn all_tools_excludes_computer_control_when_disabled() {
     );
 }
 
+// The `mouse` / `keyboard` computer-control tools are gated behind
+// `desktop-automation` (#5049), so this test only applies when the feature is on.
+#[cfg(feature = "desktop-automation")]
 #[test]
 fn all_tools_includes_computer_control_when_enabled() {
     let tmp = TempDir::new().unwrap();
@@ -1699,10 +1772,15 @@ async fn readonly_acting_tools_carry_policy_blocked_marker() {
             Box::new(CsvExportTool::new(sec.clone())),
             serde_json::json!({ "data": "col1\nval1", "filename": "x.csv" }),
         ),
+        // The `computer`-family tools are compiled out with the
+        // `desktop-automation` feature; gate these two cases per-element so the
+        // rest of the read-only policy assertions still run in the slim build.
+        #[cfg(feature = "desktop-automation")]
         (
             Box::new(KeyboardTool::new(sec.clone())),
             serde_json::json!({}),
         ),
+        #[cfg(feature = "desktop-automation")]
         (Box::new(MouseTool::new(sec.clone())), serde_json::json!({})),
         (
             Box::new(BrowserOpenTool::new(sec.clone(), vec![])),
@@ -2242,20 +2320,39 @@ fn money_default_off_tools_retained_when_opted_in() {
 // ── Theme: Desktop perception, MCP registry, workspace ──────────────────────
 
 const DESKTOP_TOOLS: &[&str] = &[
+    // The 15 `screen_intelligence_*` tools are compiled out with the
+    // `desktop-automation` feature, so these expectations are gated per-element
+    // (same idiom as the `mcp_registry_*` block below) rather than gating the
+    // `desktop_tools_are_registered` test away wholesale.
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_status",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_capture_image_ref",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_vision_recent",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_vision_flush",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_refresh_permissions",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_capture_now",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_capture_test",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_session_start",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_session_stop",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_input_action",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_globe_listener_start",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_globe_listener_poll",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_globe_listener_stop",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_request_permissions",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_request_permission",
     // The `mcp_registry_*` desktop surface is compiled out with the `mcp`
     // feature, so these expectations are gated per-element rather than gating
@@ -2288,7 +2385,9 @@ const DESKTOP_TOOLS: &[&str] = &[
 ];
 
 const DESKTOP_DEFAULT_OFF: &[&str] = &[
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_request_permissions",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_request_permission",
     #[cfg(feature = "mcp")]
     "mcp_registry_install",
@@ -2300,7 +2399,9 @@ const DESKTOP_DEFAULT_OFF: &[&str] = &[
 ];
 
 const DESKTOP_ALWAYS_ON: &[&str] = &[
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_status",
+    #[cfg(feature = "desktop-automation")]
     "screen_intelligence_capture_now",
     #[cfg(feature = "mcp")]
     "mcp_registry_search",
@@ -2316,6 +2417,30 @@ fn desktop_tools_are_registered() {
     let tmp = TempDir::new().unwrap();
     let names = tool_names(&expansion_tools_for(&tmp));
     assert_contains_all(&names, DESKTOP_TOOLS);
+}
+
+/// Negative half of the `desktop-automation` gate (#5049): with the cluster
+/// compiled out, no `screen_intelligence_*` tool and none of the `computer`
+/// family (`ax_interact` / `automate` / `mouse` / `keyboard`) may be advertised —
+/// they must be *absent*, not degraded to a runtime error. Pairs with
+/// `desktop_tools_are_registered` above.
+#[cfg(not(feature = "desktop-automation"))]
+#[test]
+fn screen_intelligence_tools_absent_when_feature_off() {
+    let tmp = TempDir::new().unwrap();
+    let names = tool_names(&expansion_tools_for(&tmp));
+    assert!(
+        !names.iter().any(|n| n.starts_with("screen_intelligence_")),
+        "no `screen_intelligence_*` tool may be advertised when \
+         `desktop-automation` is off; got: {names:?}"
+    );
+    for computer_tool in ["ax_interact", "automate", "mouse", "keyboard"] {
+        assert!(
+            !names.iter().any(|n| n == computer_tool),
+            "`computer` tool `{computer_tool}` must be absent when \
+             `desktop-automation` is off; got: {names:?}"
+        );
+    }
 }
 
 #[test]

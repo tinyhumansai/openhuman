@@ -291,7 +291,8 @@ jobs:
           - { name: provider-web, suites: "provider-web" }
           - { name: webhooks, suites: "webhooks" }
           - { name: connectors, suites: "connectors" }
-          - { name: commerce, suites: "payments,settings" }
+          - { name: payments, suites: "payments" }
+          - { name: settings, suites: "settings" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -765,7 +766,8 @@ jobs:
           - { name: provider-web, suites: "provider-web" }
           - { name: webhooks, suites: "webhooks" }
           - { name: connectors, suites: "connectors" }
-          - { name: commerce, suites: "payments,settings" }
+          - { name: payments, suites: "payments" }
+          - { name: settings, suites: "settings" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -976,7 +978,8 @@ jobs:
           - { name: provider-web, suites: "provider-web" }
           - { name: webhooks, suites: "webhooks" }
           - { name: connectors, suites: "connectors" }
-          - { name: commerce, suites: "payments,settings" }
+          - { name: payments, suites: "payments" }
+          - { name: settings, suites: "settings" }
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

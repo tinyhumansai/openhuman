@@ -1,10 +1,9 @@
 import { expect, type Page, test } from '@playwright/test';
 
 import {
-  bootRuntimeReadyGuestPage,
+  bootAuthenticatedPage,
   callCoreRpc,
   dismissWalkthroughIfPresent,
-  signInViaCallbackToken,
   waitForAppReady,
 } from '../helpers/core-rpc';
 
@@ -67,13 +66,14 @@ async function seedToolkits(status: 'ACTIVE' | 'FAILED' | 'EXPIRED' = 'ACTIVE'):
 async function bootSkills(page: Page, userId: string): Promise<void> {
   await resetMock();
   await seedToolkits('ACTIVE');
-  await bootRuntimeReadyGuestPage(page);
-  await signInViaCallbackToken(page, userId);
+  // These tests cover session preservation after connector failures, not the
+  // callback itself. Direct seeding removes an unrelated callback race while
+  // retaining a real session token in CoreStateProvider.
+  await bootAuthenticatedPage(page, userId, '/connections?tab=composio');
   // Phase 2: /skills → /connections, "Composio" tab renamed to "Apps"
-  await page.goto('/#/connections');
+  await page.goto('/#/connections?tab=composio');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
-  await page.getByTestId('two-pane-nav-composio').click();
   await expect(page.getByTestId('composio-integrations-card')).toBeVisible({ timeout: 20_000 });
 }
 

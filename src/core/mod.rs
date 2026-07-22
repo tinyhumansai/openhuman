@@ -14,8 +14,13 @@ pub mod cli;
 pub mod dispatch;
 pub mod event_bind_tokens;
 pub mod event_bus;
+// Ungated compile-time marker for the `http-server` gate (#5048) — the desktop
+// shell asserts `HTTP_SERVER_COMPILED_IN` so a listener-less core fails the
+// build instead of shipping silently (cf. voice #4901).
+pub mod http_server_status;
 pub mod jsonrpc;
 pub mod legacy_aliases;
+pub mod log_redaction;
 pub mod logging;
 pub mod memory_cli;
 pub mod observability;

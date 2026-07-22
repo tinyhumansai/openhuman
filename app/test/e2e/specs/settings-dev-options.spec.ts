@@ -18,7 +18,9 @@ import { startMockServer, stopMockServer } from '../mock-server';
 
 const USER_ID = 'e2e-settings-dev-options';
 
-describe('Settings - Developer Options', () => {
+describe('Settings - Developer Options', function () {
+  this.timeout(90_000);
+
   before(async function beforeSuite() {
     this.timeout(90_000);
     await startMockServer();

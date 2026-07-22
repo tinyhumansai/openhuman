@@ -771,7 +771,10 @@ async fn subagent_delegation_happy_path_inner() {
     let _lock = env_lock();
     reset_script(vec![
         // request[0]: Orchestrator calls the `research` tool (researcher's delegate_name).
-        tool_call_completion("research", json!({ "prompt": "Find the marker phrase" })),
+        tool_call_completion(
+            "research",
+            json!({ "prompt": "Find the marker phrase", "blocking": true }),
+        ),
         // request[1]: Researcher subagent inner LLM call returns its canary.
         text_completion("RESEARCHER_CANARY_42 is the marker."),
         // request[2]: Orchestrator receives the researcher result and synthesizes.
@@ -1124,7 +1127,7 @@ async fn subagent_clarification_flow_inner() {
         // request[0]: Orchestrator calls schedule_task (scheduler_agent's delegate_name).
         tool_call_completion(
             "schedule_task",
-            json!({ "prompt": "Schedule a weekly reminder" }),
+            json!({ "prompt": "Schedule a weekly reminder", "blocking": true }),
         ),
         // request[1]: scheduler_agent first iter → tries ask_user_clarification.
         //   ask_user_clarification is NOT in all_tools_with_runtime (tools/ops.rs), so
@@ -1440,7 +1443,10 @@ async fn approval_gate_approve_flow_inner() {
         // run_code (ArchetypeDelegationTool) requires "prompt" key; empty/missing → error.
         tool_call_completion(
             "run_code",
-            json!({ "prompt": "write approval-canary.txt with APPROVED_WRITE_CANARY" }),
+            json!({
+                "prompt": "write approval-canary.txt with APPROVED_WRITE_CANARY",
+                "blocking": true
+            }),
         ),
         // request[1]: code_executor calls file_write → gate parks.
         tool_call_completion(
@@ -1550,7 +1556,10 @@ async fn approval_gate_deny_flow_inner() {
     // gate and returns a text response; orchestrator synthesizes with DENIAL_ACK_CANARY.
     reset_script(vec![
         // request[0]: Orchestrator delegates to code_executor.
-        tool_call_completion("run_code", json!({ "prompt": "write denied-canary.txt" })),
+        tool_call_completion(
+            "run_code",
+            json!({ "prompt": "write denied-canary.txt", "blocking": true }),
+        ),
         // request[1]: code_executor calls file_write → gate parks, user denies.
         tool_call_completion(
             "file_write",
@@ -1669,7 +1678,10 @@ async fn subagent_with_approval_gate_inner() {
         // request[0]: Orchestrator delegates to code_executor via run_code.
         // code_executor's delegate_name = "run_code" (agent.toml:3).
         // ArchetypeDelegationTool requires "prompt" key (archetype_delegation.rs:82-89).
-        tool_call_completion("run_code", json!({ "prompt": "write the artifact" })),
+        tool_call_completion(
+            "run_code",
+            json!({ "prompt": "write the artifact", "blocking": true }),
+        ),
         // request[1]: code_executor subagent calls file_write → gate parks.
         tool_call_completion(
             "file_write",
@@ -1794,7 +1806,10 @@ async fn approval_gate_timeout_inner() {
     // receives the denial, returns text; orchestrator synthesizes with TIMEOUT_ACK_CANARY.
     reset_script(vec![
         // request[0]: Orchestrator delegates to code_executor.
-        tool_call_completion("run_code", json!({ "prompt": "write timeout-canary.txt" })),
+        tool_call_completion(
+            "run_code",
+            json!({ "prompt": "write timeout-canary.txt", "blocking": true }),
+        ),
         // request[1]: code_executor calls file_write → gate parks, TTL expires.
         tool_call_completion(
             "file_write",
@@ -2248,7 +2263,10 @@ async fn multi_hop_delegation_chain_inner() {
     reset_script(vec![
         // request[0]: Orchestrator delegates to researcher via `research`
         // (researcher's delegate_name, agent.toml:3).
-        tool_call_completion("research", json!({ "prompt": "deep question" })),
+        tool_call_completion(
+            "research",
+            json!({ "prompt": "deep question", "blocking": true }),
+        ),
         // request[1]: Researcher first inner LLM call → scripts ask_user_clarification.
         // ask_user_clarification is NOT in researcher's named tools (researcher/agent.toml:21-50),
         // so SubagentToolSource returns a blocked/error result (tool_source.rs:36).

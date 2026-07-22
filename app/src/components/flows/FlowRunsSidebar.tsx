@@ -11,10 +11,11 @@
  * appears for a persisted flow (a draft has no runs yet).
  */
 import createDebug from 'debug';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useFlowRunsLiveRefresh } from '../../hooks/useFlowRunsLiveRefresh';
+import { useFlowRunStarted } from '../../hooks/useFlowRunStarted';
 import {
   resolveDisplayStatus,
   useRunsPendingApprovalSet,
@@ -84,12 +85,23 @@ export default function FlowRunsSidebar({ flowId }: FlowRunsSidebarProps) {
     [navigate]
   );
 
+  // Per-request generation counter: a `load()` started before a run-started
+  // event (see `useFlowRunStarted` below) can resolve AFTER the event-driven
+  // refetch and, without this guard, clobber the fresh "Running" row with
+  // stale data. Only the most recently-issued request may apply its result.
+  const requestGenRef = useRef(0);
+
   const load = useCallback(async () => {
     log('loading runs for flow=%s', flowId);
+    const requestGen = ++requestGenRef.current;
     setLoading(true);
     setError(null);
     try {
       const result = await listFlowRuns(flowId);
+      if (requestGen !== requestGenRef.current) {
+        log('load: dropped stale response for flow=%s', flowId);
+        return;
+      }
       setRuns(result);
       log('loaded %d runs', result.length);
     } catch (err) {
@@ -105,6 +117,14 @@ export default function FlowRunsSidebar({ flowId }: FlowRunsSidebarProps) {
   }, [load]);
 
   useFlowRunsLiveRefresh(runs, load);
+  // Unconditional (unlike useFlowRunsLiveRefresh, which is gated on an
+  // already-active run) — fills the empty-list gap ("No runs yet") that
+  // hook can't reach, so the very first run shows up as "Running" instantly
+  // instead of waiting for a manual refresh (issue B35).
+  useFlowRunStarted(() => {
+    log('run-started: refetch flow=%s', flowId);
+    void load();
+  }, flowId);
   const pendingRunIds = useRunsPendingApprovalSet(runs);
 
   return (

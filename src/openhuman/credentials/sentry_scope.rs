@@ -30,6 +30,10 @@ pub fn bind(id: &str) {
         return;
     }
     let id = trimmed.to_string();
+    // Sentry-touching body gated on `crash-reporting`; the signature and the
+    // diagnostic log line stay compiled in both builds. `id` is still consumed
+    // by the `tracing::debug!` below, so no unused-variable guard is needed.
+    #[cfg(feature = "crash-reporting")]
     sentry::configure_scope(|scope| {
         scope.set_user(Some(sentry::User {
             id: Some(id.clone()),
@@ -43,13 +47,16 @@ pub fn bind(id: &str) {
 /// background loops that survive the teardown grace window are not
 /// mis-attributed to the previously signed-in account.
 pub fn clear() {
+    #[cfg(feature = "crash-reporting")]
     sentry::configure_scope(|scope| {
         scope.set_user(None);
     });
     tracing::debug!("[sentry] scope user cleared");
 }
 
-#[cfg(test)]
+// All four tests use `sentry::test::with_captured_events`, so the module is
+// gated on `crash-reporting` in addition to `test`.
+#[cfg(all(test, feature = "crash-reporting"))]
 mod tests {
     use super::*;
 

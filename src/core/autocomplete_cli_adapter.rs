@@ -5,6 +5,7 @@
 use anyhow::Result;
 
 use crate::core::logging::CliLogDefault;
+#[cfg(feature = "desktop-automation")]
 use crate::openhuman::autocomplete::ops::{autocomplete_start_cli, AutocompleteStartCliOptions};
 
 pub struct NamespacePreparse {
@@ -75,6 +76,7 @@ pub fn maybe_print_start_help(namespace: &str, function: &str) -> bool {
     }
 }
 
+#[cfg(feature = "desktop-automation")]
 pub fn maybe_handle_namespace_start(
     namespace: &str,
     function: &str,
@@ -94,7 +96,27 @@ pub fn maybe_handle_namespace_start(
     Ok(Some(value))
 }
 
+/// Disabled-build variant: the `autocomplete` engine is compiled out, so
+/// `autocomplete start` reports the build fact rather than silently succeeding.
+#[cfg(not(feature = "desktop-automation"))]
+pub fn maybe_handle_namespace_start(
+    namespace: &str,
+    function: &str,
+    _args: &[String],
+) -> Result<Option<serde_json::Value>> {
+    if namespace != "autocomplete" || function != "start" {
+        return Ok(None);
+    }
+    log::debug!(
+        "[autocomplete] `autocomplete start` rejected: desktop-automation disabled at compile time"
+    );
+    Err(anyhow::anyhow!(
+        "autocomplete is disabled in this build (rebuild with --features desktop-automation)"
+    ))
+}
+
 /// Parses CLI options specific to the `autocomplete start` command.
+#[cfg(feature = "desktop-automation")]
 fn parse_autocomplete_start_cli_options(args: &[String]) -> Result<AutocompleteStartCliOptions> {
     let mut debounce_ms: Option<u64> = None;
     let mut serve = false;
@@ -149,10 +171,10 @@ fn print_autocomplete_start_help() {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_autocomplete_start_cli_options;
-
+    #[cfg(feature = "desktop-automation")]
     #[test]
     fn parse_autocomplete_start_cli_options_rejects_serve_and_spawn() {
+        use super::parse_autocomplete_start_cli_options;
         let args = vec!["--serve".to_string(), "--spawn".to_string()];
         let err = parse_autocomplete_start_cli_options(&args)
             .expect_err("must reject mutually exclusive flags");

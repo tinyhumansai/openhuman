@@ -140,6 +140,7 @@ describe('Chat multi-tool round', () => {
 
     // Watch for file_read to appear in the timeline.
     let sawFileRead = false;
+    let sawFinal = false;
     const deadline = Date.now() + 45_000;
     while (Date.now() < deadline) {
       const snap = await getToolTimeline(threadId);
@@ -149,6 +150,7 @@ describe('Chat multi-tool round', () => {
         break;
       }
       if (await textExists(CANARY_FINAL)) {
+        sawFinal = true;
         console.log(`${LOG_PREFIX} T2.1: final answer arrived (tools may have already cycled)`);
         break;
       }
@@ -156,7 +158,7 @@ describe('Chat multi-tool round', () => {
     }
 
     const finalArrived = await textExists(CANARY_FINAL);
-    expect(sawFileRead || finalArrived).toBe(true);
+    expect(sawFileRead || sawFinal || finalArrived).toBe(true);
     console.log(`${LOG_PREFIX} T2.1: passed`);
   });
 

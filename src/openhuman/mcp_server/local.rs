@@ -14,9 +14,17 @@
 
 use std::net::SocketAddr;
 
+// The in-process HTTP MCP server is axum-only, so everything that starts it is
+// gated with `http-server` (#5048). `LocalMcpEndpoint` (an inert addr+token
+// record) and a disabled-error `ensure_local_http` stay compiled so the
+// always-on Claude-Code driver keeps a stable call surface — with the feature
+// off, `ensure_local_http` returns a built-without-http-server error.
+#[cfg(feature = "http-server")]
 use tokio::sync::Mutex;
+#[cfg(feature = "http-server")]
 use uuid::Uuid;
 
+#[cfg(feature = "http-server")]
 use super::http::{run_http_reporting, HttpServerConfig};
 
 /// Endpoint of the running in-process MCP server: its loopback address and the
@@ -27,6 +35,7 @@ pub struct LocalMcpEndpoint {
     pub token: String,
 }
 
+#[cfg(feature = "http-server")]
 struct RunningServer {
     endpoint: LocalMcpEndpoint,
     /// Liveness handle. If the server task has exited (bind drop, fatal error),
@@ -35,9 +44,11 @@ struct RunningServer {
     handle: tokio::task::JoinHandle<()>,
 }
 
+#[cfg(feature = "http-server")]
 static LOCAL_SERVER: Mutex<Option<RunningServer>> = Mutex::const_new(None);
 
 /// 256-bit random bearer token (two v4 UUIDs, hex). Loopback-only, per process.
+#[cfg(feature = "http-server")]
 fn mint_token() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
@@ -47,6 +58,7 @@ fn mint_token() -> String {
 /// and reused across turns; if the previous instance has exited, it is
 /// transparently restarted (and a fresh token minted) so callers never receive
 /// a stale, dead URL.
+#[cfg(feature = "http-server")]
 pub async fn ensure_local_http() -> anyhow::Result<LocalMcpEndpoint> {
     let mut guard = LOCAL_SERVER.lock().await;
 
@@ -82,7 +94,38 @@ pub async fn ensure_local_http() -> anyhow::Result<LocalMcpEndpoint> {
     Ok(endpoint)
 }
 
-#[cfg(test)]
+/// Disabled build: the in-process HTTP MCP server is axum-only and needs the
+/// `http-server` feature (#5048). Returns an error so the always-on Claude-Code
+/// driver falls back gracefully instead of pointing at a server that was never
+/// started. Keeps `ensure_local_http` resolvable under `mcp` in both builds.
+#[cfg(not(feature = "http-server"))]
+pub async fn ensure_local_http() -> anyhow::Result<LocalMcpEndpoint> {
+    Err(anyhow::anyhow!(
+        "in-process MCP HTTP server unavailable: built without the http-server feature"
+    ))
+}
+
+// The real-server tests below are `http-server`-gated; this pins the slim
+// build's disabled fallback so both feature branches are covered by the matrix.
+#[cfg(all(test, not(feature = "http-server")))]
+mod disabled_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn ensure_local_http_reports_unavailable_without_http_server() {
+        let err = ensure_local_http()
+            .await
+            .expect_err("slim build without `http-server` must not start a server");
+        assert!(
+            err.to_string().contains("http-server feature"),
+            "error must name the missing feature, got: {err}"
+        );
+    }
+}
+
+// Every test here starts the real HTTP server (`ensure_local_http`) or mints a
+// token, both gated, so the module gates in lockstep (#5048).
+#[cfg(all(test, feature = "http-server"))]
 mod tests {
     use super::*;
 

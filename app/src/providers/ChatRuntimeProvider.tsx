@@ -39,6 +39,7 @@ import {
   clearProcessingForThread,
   clearStreamingAssistantForThread,
   endInferenceTurn,
+  fetchAndHydrateDerivedTranscript,
   markInferenceTurnStreaming,
   parseToolFailure,
   recordChatTurnUsage,
@@ -76,7 +77,7 @@ import {
   setActiveThread,
   setSelectedThread,
 } from '../store/threadSlice';
-import { IS_PROD } from '../utils/config';
+import { DERIVED_TRANSCRIPT_ENABLED, IS_PROD } from '../utils/config';
 
 const logChatRuntime = debug('openhuman:chat-runtime');
 const USER_FACING_AGENT_ERROR_MESSAGE =
@@ -443,6 +444,14 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       await flushQueuedFollowups(event.thread_id);
       dispatch(endInferenceTurn({ threadId: event.thread_id }));
       dispatch(clearThreadInferenceActive(event.thread_id));
+      // Live-turn seam: the turn just settled and its line was appended to the
+      // append-only transcript. Invalidate/refresh the thread's derived
+      // settled-turn trails so the next reopen is fresh. The just-finished turn
+      // is the newest, so the derived hydration skips it — this never fights the
+      // live anchor, and it does not touch any socket delta handler.
+      if (DERIVED_TRANSCRIPT_ENABLED) {
+        void dispatch(fetchAndHydrateDerivedTranscript(event.thread_id));
+      }
     };
 
     rtLog('subscribe_chat_events', { socket: socketStatus });

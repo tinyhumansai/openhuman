@@ -21,6 +21,23 @@
 // Node. It is regex/scanner-based in the same spirit as `checklist-parser.mjs`.
 
 /**
+ * Gates the desktop shell intentionally does NOT forward, mapped to why.
+ *
+ * Adding an entry is a deliberate product decision, not a way to silence the
+ * forwarding guard — the reason string is what a future reader (and reviewer)
+ * relies on to tell "excluded on purpose" from "forgotten". That ambiguity is
+ * exactly what let #4918 sit unnoticed since #4123.
+ *
+ * Lives here (not in the checker) so both the CI checker and the self-test read
+ * the same source of truth — otherwise the self-test can demand a forward the
+ * checker legitimately exempts, which is exactly the drift #5084's `tui` gate hit.
+ */
+export const INTENTIONALLY_NOT_FORWARDED = {
+  // 'some-gate': 'Reason it must not ship in the desktop build.',
+  tui: 'Terminal UI subcommand (openhuman tui/chat); the desktop app ships its own Tauri UI and never runs the ratatui terminal front-end.',
+};
+
+/**
  * Strip TOML `#` comments while respecting quoted strings, so a `#` inside a
  * value (or an issue number in a comment) can't truncate a real line.
  */

@@ -779,7 +779,8 @@ impl ApprovalGate {
 
         if let Err(err) = store::insert_pending(&self.config, &pending, &self.session_id) {
             self.evict_waiter(&request_id);
-            self.clear_thread(&chat_thread_id);
+            self.clear_thread(&chat_thread_id, &request_id);
+            self.clear_meeting(&in_call_ctx, &request_id);
             tracing::error!(
                 error = %err,
                 tool = tool_name,
@@ -904,7 +905,7 @@ impl ApprovalGate {
                     "[approval::gate] decision received"
                 );
                 if decision.is_approve() {
-                    (GateOutcome::Allow, Some(request_id))
+                    (GateOutcome::Allow, Some(request_id.clone()))
                 } else {
                     (
                         GateOutcome::Deny {
@@ -998,7 +999,7 @@ impl ApprovalGate {
                     // on this path too — otherwise the stale thread→request
                     // mapping survives and the next yes/no on the thread could be
                     // routed to this already-finished request.
-                    (GateOutcome::Allow, Some(request_id))
+                    (GateOutcome::Allow, Some(request_id.clone()))
                 } else {
                     tracing::warn!(
                         request_id = %request_id,
@@ -1026,8 +1027,8 @@ impl ApprovalGate {
         waiter_guard.disarm();
         // The routing mappings are only needed while parked; clear them on
         // every exit (decision, channel drop, or timeout).
-        self.clear_thread(&chat_thread_id);
-        self.clear_meeting(&in_call_ctx);
+        self.clear_thread(&chat_thread_id, &request_id);
+        self.clear_meeting(&in_call_ctx, &request_id);
         outcome
     }
 
@@ -1196,17 +1197,17 @@ impl ApprovalGate {
         self.meeting_to_request.lock().get(meeting_key).cloned()
     }
 
-    /// Drop the thread → request mapping (best-effort; no-op when absent).
-    fn clear_thread(&self, thread_id: &Option<String>) {
+    /// Drop the thread → request mapping when it still belongs to this request.
+    fn clear_thread(&self, thread_id: &Option<String>, request_id: &str) {
         if let Some(t) = thread_id {
-            self.thread_to_request.lock().remove(t);
+            self.clear_thread_route_if_owned(t, request_id);
         }
     }
 
-    /// Drop the meeting → request mapping (best-effort; no-op when absent).
-    fn clear_meeting(&self, ctx: &Option<InCallApprovalContext>) {
+    /// Drop the meeting → request mapping when it still belongs to this request.
+    fn clear_meeting(&self, ctx: &Option<InCallApprovalContext>, request_id: &str) {
         if let Some(ic) = ctx {
-            self.meeting_to_request.lock().remove(&ic.meeting_key);
+            self.clear_meeting_route_if_owned(&ic.meeting_key, request_id);
         }
     }
 
@@ -1572,6 +1573,220 @@ mod tests {
             GateOutcome::Deny { reason } => assert!(reason.contains("pushover")),
             other => panic!("expected deny, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn aborting_older_chat_waiter_preserves_newer_thread_route() {
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        let old_gate = gate.clone();
+        let old_handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                web_origin(),
+                APPROVAL_CHAT_CONTEXT.scope(
+                    chat_ctx(),
+                    old_gate.intercept("composio", "old action", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let mut tries = 0;
+        let old_request_id = loop {
+            if let Some(request_id) = gate.pending_for_thread("t-test") {
+                break request_id;
+            }
+            tries += 1;
+            assert!(tries < 1_000, "old chat approval route never appeared");
+            tokio::task::yield_now().await;
+        };
+
+        let new_gate = gate.clone();
+        let new_handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                web_origin(),
+                APPROVAL_CHAT_CONTEXT.scope(
+                    chat_ctx(),
+                    new_gate.intercept("composio", "new action", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let mut tries = 0;
+        let new_request_id = loop {
+            if let Some(request_id) = gate.pending_for_thread("t-test") {
+                if request_id != old_request_id {
+                    break request_id;
+                }
+            }
+            tries += 1;
+            assert!(tries < 1_000, "new chat approval route never appeared");
+            tokio::task::yield_now().await;
+        };
+
+        old_handle.abort();
+        assert!(old_handle.await.unwrap_err().is_cancelled());
+
+        assert_eq!(
+            gate.pending_for_thread("t-test").as_deref(),
+            Some(new_request_id.as_str())
+        );
+        assert!(!gate.waiters.lock().contains_key(&old_request_id));
+        assert!(gate.waiters.lock().contains_key(&new_request_id));
+        assert_eq!(
+            store::get_decision(&gate.config, &old_request_id).unwrap(),
+            Some(ApprovalDecision::Deny)
+        );
+
+        gate.decide(&new_request_id, ApprovalDecision::ApproveOnce)
+            .unwrap();
+        assert!(matches!(new_handle.await.unwrap(), GateOutcome::Allow));
+        assert!(gate.pending_for_thread("t-test").is_none());
+    }
+
+    #[tokio::test]
+    async fn pending_store_failure_clears_in_call_meeting_route() {
+        let dir = TempDir::new().unwrap();
+        let blocked_workspace = dir.path().join("workspace-file");
+        std::fs::write(&blocked_workspace, b"not a directory").unwrap();
+        let config = Config {
+            workspace_dir: blocked_workspace,
+            ..Config::default()
+        };
+        let gate = ApprovalGate::new(
+            config,
+            format!("session-{}", uuid::Uuid::new_v4()),
+            Duration::from_secs(2),
+        );
+
+        let outcome = turn_origin::with_origin(
+            meet_origin(),
+            APPROVAL_IN_CALL_CONTEXT.scope(
+                in_call_ctx(),
+                gate.intercept("composio", "send email", serde_json::json!({})),
+            ),
+        )
+        .await;
+
+        assert!(matches!(
+            outcome,
+            GateOutcome::Deny { reason } if reason.contains("could not persist")
+        ));
+        assert!(gate.waiters.lock().is_empty());
+        assert!(gate.pending_for_meeting("meet-1").is_none());
+    }
+
+    #[tokio::test]
+    async fn externally_aborted_in_call_waiter_cleans_meeting_route() {
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        let g = gate.clone();
+        let handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                meet_origin(),
+                APPROVAL_IN_CALL_CONTEXT.scope(
+                    in_call_ctx(),
+                    g.intercept("composio", "send email", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let mut tries = 0;
+        let request_id = loop {
+            if let Some(request_id) = gate.pending_for_meeting("meet-1") {
+                break request_id;
+            }
+            tries += 1;
+            assert!(tries < 1_000, "meeting approval route never appeared");
+            tokio::task::yield_now().await;
+        };
+        assert!(gate.waiters.lock().contains_key(&request_id));
+
+        handle.abort();
+        assert!(handle.await.unwrap_err().is_cancelled());
+
+        assert!(gate.pending_for_meeting("meet-1").is_none());
+        assert!(!gate.waiters.lock().contains_key(&request_id));
+        assert!(gate.list_pending().unwrap().is_empty());
+        assert_eq!(
+            store::get_decision(&gate.config, &request_id).unwrap(),
+            Some(ApprovalDecision::Deny)
+        );
+    }
+
+    #[tokio::test]
+    async fn aborting_older_in_call_waiter_preserves_newer_meeting_route() {
+        let (gate, _dir) = test_gate();
+        let gate = Arc::new(gate);
+
+        let old_gate = gate.clone();
+        let old_handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                meet_origin(),
+                APPROVAL_IN_CALL_CONTEXT.scope(
+                    in_call_ctx(),
+                    old_gate.intercept("composio", "old action", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let mut tries = 0;
+        let old_request_id = loop {
+            if let Some(request_id) = gate.pending_for_meeting("meet-1") {
+                break request_id;
+            }
+            tries += 1;
+            assert!(tries < 1_000, "old meeting approval route never appeared");
+            tokio::task::yield_now().await;
+        };
+
+        let new_gate = gate.clone();
+        let new_handle = tokio::spawn(async move {
+            turn_origin::with_origin(
+                meet_origin(),
+                APPROVAL_IN_CALL_CONTEXT.scope(
+                    in_call_ctx(),
+                    new_gate.intercept("composio", "new action", serde_json::json!({})),
+                ),
+            )
+            .await
+        });
+
+        let mut tries = 0;
+        let new_request_id = loop {
+            if let Some(request_id) = gate.pending_for_meeting("meet-1") {
+                if request_id != old_request_id {
+                    break request_id;
+                }
+            }
+            tries += 1;
+            assert!(tries < 1_000, "new meeting approval route never appeared");
+            tokio::task::yield_now().await;
+        };
+
+        old_handle.abort();
+        assert!(old_handle.await.unwrap_err().is_cancelled());
+
+        assert_eq!(
+            gate.pending_for_meeting("meet-1").as_deref(),
+            Some(new_request_id.as_str())
+        );
+        assert!(!gate.waiters.lock().contains_key(&old_request_id));
+        assert!(gate.waiters.lock().contains_key(&new_request_id));
+        assert_eq!(
+            store::get_decision(&gate.config, &old_request_id).unwrap(),
+            Some(ApprovalDecision::Deny)
+        );
+
+        gate.decide(&new_request_id, ApprovalDecision::ApproveOnce)
+            .unwrap();
+        assert!(matches!(new_handle.await.unwrap(), GateOutcome::Allow));
+        assert!(gate.pending_for_meeting("meet-1").is_none());
     }
 
     #[tokio::test]

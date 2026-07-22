@@ -10,7 +10,9 @@ use serde_json::{json, Value};
 use tinyflows::model::{NodeKind, TriggerKind, WorkflowGraph};
 
 use crate::openhuman::agent::turn_origin::{with_origin, AgentTurnOrigin, TrustedAutomationSource};
-use crate::openhuman::approval::{FlowRunContext, APPROVAL_FLOW_RUN_CONTEXT};
+use crate::openhuman::approval::{
+    ApprovalChatContext, FlowRunContext, APPROVAL_CHAT_CONTEXT, APPROVAL_FLOW_RUN_CONTEXT,
+};
 use crate::openhuman::config::Config;
 use crate::openhuman::flows::bus;
 use crate::openhuman::flows::draft_store;
@@ -3122,6 +3124,17 @@ pub async fn flows_run(
 
     start_flow_run_row(config, &thread_id, flow_id);
 
+    tracing::debug!(
+        target: "flows",
+        flow_id = %flow_id,
+        run_id = %thread_id,
+        "[flows] flows_run: publishing FlowRunStarted"
+    );
+    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::FlowRunStarted {
+        flow_id: flow_id.to_string(),
+        run_id: thread_id.clone(),
+    });
+
     // Register this run as in-flight (issue G4) so a concurrent
     // `flows_cancel_run` can signal it to abort. The guard deregisters on any
     // exit from this fn (including the early returns below).
@@ -4266,6 +4279,54 @@ fn restrict_builder_toolset(agent: &mut crate::openhuman::agent::Agent) {
     agent.hide_tools(FLOWS_BUILD_HIDDEN_TOOLS);
 }
 
+/// Tools stripped from the `workflow_builder` belt on the STREAMING
+/// (copilot-pane) `flows_build` path — the reduced sibling of
+/// [`FLOWS_BUILD_HIDDEN_TOOLS`] used by [`restrict_builder_toolset`] on the
+/// headless path.
+///
+/// PR3 (flows-copilot-live-run-approval): when a chat thread is attached
+/// (`stream.is_some()`), `flows_build` now runs the builder under
+/// [`AgentTurnOrigin::WebChat`] with [`APPROVAL_CHAT_CONTEXT`] scoped
+/// alongside it — the exact same double-scope the main web-chat delegate uses
+/// (`web_chat::ops::run_turn_under_cancel_and_deadline`). Under that origin
+/// the [`crate::openhuman::approval::ApprovalGate`] no longer auto-allows
+/// `external_effect` tools; it PARKS them for a real human decision, routed
+/// back to this thread via the existing `approval_request` socket event and
+/// rendered with the existing `ApprovalRequestCard` in the copilot panel. So
+/// `run_flow` and `resume_flow_run` — both `external_effect() == true` — no
+/// longer need to be hidden on this path: they are reachable, but gated
+/// behind a real approval, exactly like a main-chat tool call.
+///
+/// `cancel_flow_run` stays HIDDEN on this path, though. It reports
+/// `external_effect() == false`, so `ApprovalSecurityMiddleware` would not park
+/// it behind the approval surface — and the tool cancels an arbitrary run id
+/// (e.g. one read from `list_flow_runs`) with no ownership check. An unhidden
+/// `cancel_flow_run` would therefore let a streaming copilot turn cancel ANY
+/// in-flight or approval-parked run, unapproved — far broader than the "stop a
+/// run the copilot itself started" companion use it was meant for. Until it
+/// gains an ownership/approval guard it is kept hidden here (a user can still
+/// cancel from the Runs rail). (codex review, #5090.)
+///
+/// `run_workflow` (the unrelated legacy skills-workflow runner sharing this
+/// belt) stays hidden on BOTH paths — belt-and-braces against a re-rename or
+/// the name ever leaking back onto the `workflow_builder` toolset; `hide_tools`
+/// no-ops on a name that isn't present.
+const FLOWS_BUILD_COPILOT_HIDDEN_TOOLS: &[&str] = &["run_workflow", "cancel_flow_run"];
+
+/// Strip only [`FLOWS_BUILD_COPILOT_HIDDEN_TOOLS`] from `agent`'s callable set
+/// on the streaming `flows_build` path (copilot pane with a real approval
+/// surface) — see that constant's doc for the full safety rationale.
+fn restrict_builder_toolset_for_copilot(agent: &mut crate::openhuman::agent::Agent) {
+    tracing::info!(
+        target: "flows",
+        hidden = ?FLOWS_BUILD_COPILOT_HIDDEN_TOOLS,
+        "[flows] flows_build: streaming copilot turn — run_flow/resume_flow_run stay visible \
+         (gated behind the WebChat approval surface); run_workflow + cancel_flow_run hidden \
+         (cancel_flow_run has no external_effect to park and no run-ownership guard)"
+    );
+    agent.hide_tools(FLOWS_BUILD_COPILOT_HIDDEN_TOOLS);
+}
+
 /// Runs the `workflow_builder` agent for one authoring turn and returns its
 /// proposal, invoking it as a first-class backend agent (exactly like the Flow
 /// Scout `flows_discover`) rather than routing a hand-crafted delegate prompt
@@ -4316,13 +4377,35 @@ pub async fn flows_build(
         .map_err(|e| format!("failed to build workflow_builder agent: {e:#}"))?;
     agent.set_agent_definition_name("workflow_builder".to_string());
 
-    // Strip the live-run tool(s) from the belt on this direct RPC path: under
-    // the `AgentTurnOrigin::Cli` origin below the approval gate auto-allows
-    // every external_effect tool, so `run_flow` could execute a live saved flow
-    // with no HITL confirmation (issue #4593). Restricting the visible set makes
-    // it `Deny` at the tool-call boundary; the authoring tools are untouched so
-    // the turn still runs headless without fail-closing.
-    restrict_builder_toolset(&mut agent);
+    // Restrict the visible run-advancing tools per path (PR3:
+    // flows-copilot-live-run-approval). Streaming (copilot pane, real approval
+    // surface below) only hides the always-hidden `run_workflow`; headless
+    // (CLI / tests / no chat thread) keeps the full historical hide-list
+    // (issue #4593 / #4881) since there is no routable approval surface there.
+    //
+    // The reduced (copilot) hide-list is safe ONLY when the process-global
+    // `ApprovalGate` is actually installed to park the unhidden
+    // `run_flow`/`resume_flow_run`. `flows_build` is a public RPC and the gate
+    // can be opted out (`OPENHUMAN_APPROVAL_GATE=0` on CLI/docker leaves
+    // `ApprovalGate::try_global()` == `None`; desktop always installs it) — and
+    // `ApprovalSecurityMiddleware` skips interception entirely when the gate is
+    // absent, so the WebChat origin below would NOT park and the unhidden
+    // live-run tools would execute unapproved. Fall back to the full hide-list
+    // whenever the gate is not installed, regardless of `stream`. (codex #5090)
+    let approval_gate_active = crate::openhuman::approval::ApprovalGate::try_global().is_some();
+    if stream.is_some() && approval_gate_active {
+        restrict_builder_toolset_for_copilot(&mut agent);
+    } else {
+        if stream.is_some() {
+            tracing::warn!(
+                target: "flows",
+                "[flows] flows_build: streaming turn but no ApprovalGate installed \
+                 (OPENHUMAN_APPROVAL_GATE off / headless) — keeping the full live-run \
+                 hide-list so run_flow/resume_flow_run cannot execute unapproved"
+            );
+        }
+        restrict_builder_toolset(&mut agent);
+    }
 
     // When a chat thread is attached (the copilot pane), stream the builder turn
     // into it exactly like an interactive turn — text/tool deltas and the
@@ -4332,21 +4415,65 @@ pub async fn flows_build(
         attach_flow_progress_bridge(&mut agent, target, "flows_build", config);
     }
 
-    // Run to completion under a CLI origin (internal, user-initiated — the
-    // approval gate must not fail-closed), bounded by a wall-clock timeout. When
-    // streaming, wrap the run in the thread-id scope so descendant turns tag
-    // their trace + socket events with this thread.
-    let run = with_origin(AgentTurnOrigin::Cli, agent.run_single(&prompt));
-    let run = tokio::time::timeout(std::time::Duration::from_secs(FLOW_BUILD_TIMEOUT_SECS), run);
+    // Run to completion, bounded by a wall-clock timeout. PR3
+    // (flows-copilot-live-run-approval): the origin now depends on whether a
+    // chat thread is attached.
+    //
+    // - Streaming (copilot pane): run under `AgentTurnOrigin::WebChat` with
+    //   `APPROVAL_CHAT_CONTEXT` scoped alongside it — the identical
+    //   double-scope pattern `web_chat::ops::run_turn_under_cancel_and_deadline`
+    //   uses for a real interactive chat turn. The approval gate then PARKS
+    //   (rather than auto-allows) any `external_effect` tool call instead of
+    //   failing closed, and the resulting `ApprovalRequested` event routes back
+    //   to this thread (`client_id: "system"` — every client auto-joins that
+    //   broadcast room, matching the progress bridge above) for the existing
+    //   `ApprovalRequestCard` to render. The run is additionally wrapped in the
+    //   thread-id scope so descendant turns tag their trace + socket events
+    //   with this thread.
+    // - Headless (CLI / tests / no chat thread): unchanged `AgentTurnOrigin::Cli`
+    //   — the gate auto-allows `external_effect` tools under that origin, which
+    //   is why `restrict_builder_toolset` above must keep the full hide-list on
+    //   this path; there is no routable approval surface here to park against.
     let timed = match &stream {
         Some(target) => {
+            let origin = AgentTurnOrigin::WebChat {
+                thread_id: target.thread_id.clone(),
+                client_id: "system".to_string(),
+                request_id: Some(target.request_id.clone()),
+            };
+            let chat_ctx = ApprovalChatContext {
+                thread_id: target.thread_id.clone(),
+                client_id: "system".to_string(),
+            };
+            tracing::info!(
+                target: "flows",
+                thread_id = %target.thread_id,
+                request_id = %target.request_id,
+                "[flows] flows_build: streaming copilot turn — WebChat origin + \
+                 APPROVAL_CHAT_CONTEXT scoped, live-run tools park for approval instead \
+                 of auto-allowing"
+            );
+            let run = with_origin(
+                origin,
+                APPROVAL_CHAT_CONTEXT.scope(chat_ctx, agent.run_single(&prompt)),
+            );
+            let run =
+                tokio::time::timeout(std::time::Duration::from_secs(FLOW_BUILD_TIMEOUT_SECS), run);
             crate::openhuman::inference::provider::thread_context::with_thread_id(
                 target.thread_id.clone(),
                 run,
             )
             .await
         }
-        None => run.await,
+        None => {
+            tracing::debug!(
+                target: "flows",
+                "[flows] flows_build: headless/CLI turn — Cli origin, approval gate \
+                 auto-allows external_effect tools (run-advancing tools stay hidden)"
+            );
+            let run = with_origin(AgentTurnOrigin::Cli, agent.run_single(&prompt));
+            tokio::time::timeout(std::time::Duration::from_secs(FLOW_BUILD_TIMEOUT_SECS), run).await
+        }
     };
     let (assistant_text, run_error) = match timed {
         Ok(Ok(text)) => (text, None),

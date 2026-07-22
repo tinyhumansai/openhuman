@@ -193,7 +193,7 @@ test.describe('Harness - Cron prompt-flow', () => {
 
     await sendMessage(page, 'change my morning reminder to 8am');
     await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(/changed your morning reminder to 8am/i)).toBeVisible();
+    await expect(page.getByText(/changed your morning reminder to 8am/i).first()).toBeVisible();
   });
 
   test('delete flow yields a final reply', async ({ page }) => {

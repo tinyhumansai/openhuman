@@ -14,24 +14,13 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
 
+use super::types::TranscriptionResult;
+
 /// Per-segment confidence threshold: reject segments with avg log-probability below this.
 const SEGMENT_LOGPROB_REJECT: f32 = -0.7;
 
 /// Per-segment entropy threshold: reject segments with entropy above this.
 const SEGMENT_ENTROPY_REJECT: f32 = 2.4;
-
-/// Result of a transcription call, including confidence metadata.
-#[derive(Debug, Clone)]
-pub struct TranscriptionResult {
-    /// The transcribed text (may be empty if all segments were rejected).
-    pub text: String,
-    /// Average log-probability across accepted segments (higher = more confident).
-    /// `None` if no segments were accepted.
-    pub avg_logprob: Option<f32>,
-    /// Number of segments accepted / total segments produced by Whisper.
-    pub segments_accepted: usize,
-    pub segments_total: usize,
-}
 
 const LOG_PREFIX: &str = "[whisper_engine]";
 

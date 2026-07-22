@@ -58,7 +58,11 @@ async function defaultMessagingChannelFromStore(): Promise<string | null> {
   });
 }
 
-describe('Settings - Feature Preferences', () => {
+describe('Settings - Feature Preferences', function () {
+  // WebdriverIO wraps hooks before entering their bodies, so a hook-local
+  // timeout cannot extend the wrapper's default 30-second budget.
+  this.timeout(90_000);
+
   before(async () => {
     await startMockServer();
     await waitForApp();

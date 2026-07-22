@@ -213,7 +213,12 @@ export function ThreadGoalFooterTrigger({
         className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-medium uppercase tracking-wide ${statusClasses(ctl.goal.status)}`}>
         {t(`conversations.threadGoal.status.${ctl.goal.status}`)}
       </span>
-      <MarqueeText text={ctl.goal.objective} className="max-w-[18rem] text-content-secondary" />
+      {/* Truncate long objectives instead of scrolling them. The full text is
+          reachable via the button's `title` tooltip (hover) and by clicking to
+          open the editor, so a moving label would only distract. */}
+      <span className="block min-w-0 max-w-[18rem] truncate text-content-secondary">
+        {ctl.goal.objective}
+      </span>
     </button>
   );
 }
@@ -302,44 +307,6 @@ export function ThreadGoalEditorPanel({
         className="w-full border-0 bg-transparent text-sm text-content outline-none focus:outline-none focus:ring-0 placeholder:text-stone-400"
       />
     </div>
-  );
-}
-
-/**
- * Single-line label that gently marquees (ping-pong scroll) only when the text
- * overflows its max width; otherwise it truncates. The scroll distance is
- * measured and fed to the `goal-marquee` keyframe via a CSS variable.
- */
-function MarqueeText({
-  text,
-  className = '',
-}: {
-  text: string;
-  className?: string;
-}): React.ReactElement {
-  const outerRef = useRef<HTMLSpanElement>(null);
-  const innerRef = useRef<HTMLSpanElement>(null);
-  const [shift, setShift] = useState(0);
-
-  useEffect(() => {
-    const outer = outerRef.current;
-    const inner = innerRef.current;
-    if (!outer || !inner) return;
-    const overflow = inner.scrollWidth - outer.clientWidth;
-    setShift(overflow > 4 ? overflow + 8 : 0);
-  }, [text]);
-
-  return (
-    <span ref={outerRef} className={`relative block min-w-0 overflow-hidden ${className}`}>
-      <span
-        ref={innerRef}
-        className={`block whitespace-nowrap ${shift > 0 ? 'animate-goal-marquee' : 'truncate'}`}
-        style={
-          shift > 0 ? ({ '--goal-marquee-shift': `-${shift}px` } as React.CSSProperties) : undefined
-        }>
-        {text}
-      </span>
-    </span>
   );
 }
 

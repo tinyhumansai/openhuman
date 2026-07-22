@@ -32,6 +32,7 @@ const FILE_MARKER_PREFIX: &str = "[FILE:";
 /// may run before the worker is abandoned and the file degrades to a
 /// metadata-only reference. PDFs known to choke the parser (extremely
 /// large, encrypted, malformed) must not stall a chat turn.
+#[cfg(feature = "documents")]
 const PDF_EXTRACTION_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Worst-case length budget reserved for the rendered truncation
@@ -1550,6 +1551,7 @@ fn extract_utf8_text(bytes: &[u8]) -> Result<String, String> {
 /// extracted text on success; on timeout / panic / parse error the
 /// caller degrades the file to [`FilePayload::Reference`] rather than
 /// surface the failure to the user (avoids Sentry noise on broken PDFs).
+#[cfg(feature = "documents")]
 async fn extract_pdf_text(bytes: Vec<u8>) -> Result<String, String> {
     let extraction = tokio::task::spawn_blocking(move || {
         pdf_extract::extract_text_from_mem(&bytes).map_err(|error| error.to_string())
@@ -1564,6 +1566,15 @@ async fn extract_pdf_text(bytes: Vec<u8>) -> Result<String, String> {
             PDF_EXTRACTION_TIMEOUT.as_secs()
         )),
     }
+}
+
+/// Disabled variant when the `documents` feature is off: `pdf-extract` is not
+/// compiled in, so signal failure and let the caller degrade the file to
+/// [`FilePayload::Reference`] — the same path a parse error / timeout takes.
+#[cfg(not(feature = "documents"))]
+async fn extract_pdf_text(_bytes: Vec<u8>) -> Result<String, String> {
+    log::debug!("[multimodal] pdf text extraction skipped: built without the `documents` feature");
+    Err("pdf text extraction disabled (built without the `documents` feature)".to_string())
 }
 
 /// Truncate `text` to at most `max_chars` Unicode scalar values, leaving

@@ -11,9 +11,6 @@ importers:
 
   .:
     dependencies:
-      '@rive-app/react-canvas':
-        specifier: ^4.28.6
-        version: 4.28.6(react@19.2.5)
       '@tauri-apps/api':
         specifier: 2.10.1
         version: 2.10.1
@@ -48,12 +45,6 @@ importers:
       '@reduxjs/toolkit':
         specifier: ^2.11.2
         version: 2.11.2(react-redux@9.2.0(@types/react@19.2.14)(react@19.2.5)(redux@5.0.1))(react@19.2.5)
-      '@remotion/player':
-        specifier: 4.0.454
-        version: 4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
-      '@remotion/zod-types':
-        specifier: 4.0.454
-        version: 4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(zod@4.3.6)
       '@rive-app/react-webgl2':
         specifier: ^4.28.6
         version: 4.28.6(react@19.2.5)
@@ -162,9 +153,6 @@ importers:
       remark-math:
         specifier: ^6.0.0
         version: 6.0.0
-      remotion:
-        specifier: 4.0.454
-        version: 4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       socket.io-client:
         specifier: ^4.8.3
         version: 4.8.3
@@ -1406,25 +1394,6 @@ packages:
         optional: true
       react-redux:
         optional: true
-
-  '@remotion/player@4.0.454':
-    resolution: {integrity: sha512-Q4fEWapH21uEErdOfZxagOQcxbf/JGxPwqBOrW/NG9Y5qHgMMe5tBUCnr8rEqOA4txW/S4QHnN9HGWfV2nIvTg==}
-    peerDependencies:
-      react: '>=16.8.0'
-      react-dom: '>=16.8.0'
-
-  '@remotion/zod-types@4.0.454':
-    resolution: {integrity: sha512-nNXcHF4AmgihwI7sMx50rSgFuCfNyroP0OsgN/mMkQI7Y66uPWBh4Pcytlxs039EShvsiiH621E2TKZOX8ciRA==}
-    peerDependencies:
-      zod: 4.3.6
-
-  '@rive-app/canvas@2.37.8':
-    resolution: {integrity: sha512-nffrPG+VkBKHAxZdcqYlP5M+n/mOAoagj774HH397UPTsfC27gwQURg64i6dX7WswMc5qIVX0rzCrZ86Wb2HOA==}
-
-  '@rive-app/react-canvas@4.28.6':
-    resolution: {integrity: sha512-tMEb7uDr+xuPny4HRVnkfGDHgTCkTFn15u7GHj12hC94N59g/dO15TiGr9312GVTO82FulOymOKy6sgxZyi5rw==}
-    peerDependencies:
-      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0
 
   '@rive-app/react-webgl2@4.28.6':
     resolution: {integrity: sha512-QqtlD7bm01SxMLuEHE/BfhiPoX3RZ2/B32nF0IR0IRPe2ykxMeebWPtsX50AL9EKLbOh3Fgk3PJ7smkkvQwD2w==}
@@ -5196,12 +5165,6 @@ packages:
   remark-stringify@11.0.0:
     resolution: {integrity: sha512-1OSmLd3awB/t8qdoEOMazZkNsfVTeY4fTsgzcQFdXNq8ToTN4ZGwrMnlda4K6smTFKD+GRV6O48i6Z4iKgPPpw==}
 
-  remotion@4.0.454:
-    resolution: {integrity: sha512-NGzA7HLBpzRPo1jAyLGXG7AaAdUYHJ18n06GM3nBvFkC5zVZua+2rhezxDTkMJFEMgL54cRQ2Zw/2yd3cWCRbg==}
-    peerDependencies:
-      react: '>=16.8.0'
-      react-dom: '>=16.8.0'
-
   require-directory@2.1.1:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
     engines: {node: '>=0.10.0'}
@@ -7096,27 +7059,6 @@ snapshots:
     optionalDependencies:
       react: 19.2.5
       react-redux: 9.2.0(@types/react@19.2.14)(react@19.2.5)(redux@5.0.1)
-
-  '@remotion/player@4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)':
-    dependencies:
-      react: 19.2.5
-      react-dom: 19.2.5(react@19.2.5)
-      remotion: 4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
-
-  '@remotion/zod-types@4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(zod@4.3.6)':
-    dependencies:
-      remotion: 4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
-      zod: 4.3.6
-    transitivePeerDependencies:
-      - react
-      - react-dom
-
-  '@rive-app/canvas@2.37.8': {}
-
-  '@rive-app/react-canvas@4.28.6(react@19.2.5)':
-    dependencies:
-      '@rive-app/canvas': 2.37.8
-      react: 19.2.5
 
   '@rive-app/react-webgl2@4.28.6(react@19.2.5)':
     dependencies:
@@ -11676,11 +11618,6 @@ snapshots:
       '@types/mdast': 4.0.4
       mdast-util-to-markdown: 2.1.2
       unified: 11.0.5
-
-  remotion@4.0.454(react-dom@19.2.5(react@19.2.5))(react@19.2.5):
-    dependencies:
-      react: 19.2.5
-      react-dom: 19.2.5(react@19.2.5)
 
   require-directory@2.1.1: {}
 

@@ -391,23 +391,17 @@ impl Agent {
         // (#3762). The actions stay approval-gated and bound by the
         // sensitive-app denylist; Full autonomy continues to grant this
         // independently via `app_control_enabled`.
-        let adjusted_config: Config;
-        let tool_config: &Config = if !config.computer_control.ax_interact_mutations
-            && tools::enables_app_ui_control_mutations(&enabled_tools)
-        {
-            let mut c = config.clone();
-            c.computer_control.ax_interact_mutations = true;
-            log::debug!(
-                "[session-builder] action=grant_app_ui_control_mutations source=features_toggle"
-            );
-            adjusted_config = c;
-            &adjusted_config
-        } else {
-            config
-        };
+        // Share a single `Arc<Config>` across the heavyweight per-build consumers
+        // (the tool registry, the reflection hook, the turn provider) instead of
+        // deep-cloning the large `Config` at each site (#5050, Fix 1). `Config` is
+        // immutable after construction, so one refcounted instance is behaviourally
+        // identical to N independent clones. `resolve_tool_config` handles the one
+        // consumer that needs a *different* config — the App-UI-Control toggle.
+        let base_config: Arc<Config> = Arc::new(config.clone());
+        let tool_config: Arc<Config> = resolve_tool_config(&base_config, &enabled_tools);
 
         let mut tools = tools::all_tools_with_runtime(
-            Arc::new(tool_config.clone()),
+            Arc::clone(&tool_config),
             &security,
             runtime,
             audit,
@@ -416,7 +410,7 @@ impl Agent {
             &tool_config.http_request,
             &tool_config.action_dir,
             &tool_config.agents,
-            tool_config,
+            &tool_config,
             profile_skill_allowlist.as_ref(),
             profile_mcp_allowlist.as_deref(),
         );
@@ -694,11 +688,10 @@ impl Agent {
             Vec::new();
         if config.learning.enabled {
             if config.learning.reflection_enabled {
-                // Only the reflection hook needs an owned snapshot of the
-                // full config, so create the `Arc` lazily inside this
-                // branch instead of paying for the clone whenever
-                // `learning.enabled` is true.
-                let full_config = Arc::new(config.clone());
+                // The reflection hook needs an owned `Arc<Config>`; reuse the
+                // shared base config (a refcount bump) rather than a second deep
+                // clone of the full config (#5050, Fix 1).
+                let full_config = Arc::clone(&base_config);
                 // For cloud reflection, wrap the provider in an Arc.
                 // For local, no provider needed.
                 let reflection_provider: Option<
@@ -1164,7 +1157,7 @@ impl Agent {
             effective_agent_config.max_tool_iterations = def_cap;
         }
         let mut builder = Agent::builder()
-            .crate_native_provider(provider_role, std::sync::Arc::new(config.clone()))
+            .crate_native_provider(provider_role, Arc::clone(&base_config))
             .tools(tools)
             .visible_tool_names(visible)
             .memory(memory)
@@ -1218,6 +1211,41 @@ impl Agent {
             crate::openhuman::composio::connected_set_hash(&agent.connected_integrations);
         agent.synthesized_tool_names = synthesized_tool_names;
         Ok(agent)
+    }
+}
+
+/// Resolve the `Config` the tool registry is built from (#5050, Fix 1).
+///
+/// Normally this is the shared `base_config` — returned as a refcount bump, not a
+/// deep clone. The one exception is the App-UI-Control / App-Automation features
+/// toggle (#3762): when the user enabled the `ax_interact` / `automate` tools in
+/// Settings without global Full autonomy, the tool registry (and *only* the tool
+/// registry) receives a copy of the config with `ax_interact_mutations` granted.
+/// Scoping the grant here keeps the turn provider and reflection hook on the
+/// ungranted base config, and clones at most once — only when the toggle fires.
+pub(super) fn resolve_tool_config(
+    base_config: &Arc<Config>,
+    enabled_tools: &[String],
+) -> Arc<Config> {
+    log::trace!(
+        "[session-builder] action=resolve_tool_config phase=enter enabled_tools_count={} base_ax_interact_mutations={}",
+        enabled_tools.len(),
+        base_config.computer_control.ax_interact_mutations
+    );
+    if !base_config.computer_control.ax_interact_mutations
+        && tools::enables_app_ui_control_mutations(enabled_tools)
+    {
+        let mut granted = (**base_config).clone();
+        granted.computer_control.ax_interact_mutations = true;
+        log::debug!(
+            "[session-builder] action=resolve_tool_config phase=exit outcome=granted_app_ui_control_mutations source=features_toggle"
+        );
+        Arc::new(granted)
+    } else {
+        log::debug!(
+            "[session-builder] action=resolve_tool_config phase=exit outcome=reused_base_config"
+        );
+        Arc::clone(base_config)
     }
 }
 

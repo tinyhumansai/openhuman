@@ -38,6 +38,7 @@ import {
   endInferenceTurn,
   fetchAndHydrateTurnHistory,
   fetchAndHydrateTurnState,
+  type PendingApproval,
   setWorkflowProposalForThread,
   type ToolTimelineEntry,
   type WorkflowProposal,
@@ -111,6 +112,18 @@ export interface UseWorkflowBuilderChat {
   turnActive: boolean;
   /** The latest proposal the agent returned on this thread, or `null`. */
   proposal: WorkflowProposal | null;
+  /**
+   * A parked `ApprovalGate` request for this thread (PR3:
+   * flows-copilot-live-run-approval), or `null`. The copilot's `flows_build`
+   * turn now runs `run_flow` / `resume_flow_run` under the same
+   * `AgentTurnOrigin::WebChat` + `APPROVAL_CHAT_CONTEXT` scope a real
+   * interactive chat turn uses, so a live test-run parks here instead of
+   * either auto-allowing or being hidden outright. Sourced from the SAME
+   * `pendingApprovalByThread` slice / `approval_request` socket event the
+   * main chat's `ApprovalRequestCard` reads — no new plumbing, just scoped to
+   * this hook's dedicated thread.
+   */
+  pendingApproval: PendingApproval | null;
   /**
    * `true` when the most recently settled turn paused because it hit the
    * agent's tool-call budget with no proposal yet (B34) — the caller should
@@ -214,6 +227,9 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
   const inferenceTurnLifecycleByThread = useAppSelector(
     state => state.chatRuntime.inferenceTurnLifecycleByThread
   );
+  const pendingApprovalByThread = useAppSelector(
+    state => state.chatRuntime.pendingApprovalByThread
+  );
 
   // A turn is in flight on this thread iff its lifecycle entry is `'started'`
   // or `'streaming'` — NOT `'interrupted'`, which `hydrateRuntimeFromSnapshot`
@@ -234,6 +250,15 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
   const proposal = useMemo(
     () => (threadId ? (proposalsByThread[threadId] ?? null) : null),
     [threadId, proposalsByThread]
+  );
+
+  // PR3 (flows-copilot-live-run-approval): mirrors `proposal` above — read the
+  // shared `pendingApprovalByThread` slice scoped to this hook's dedicated
+  // thread, so a parked `run_flow`/`resume_flow_run` call surfaces here the
+  // same way `Conversations.tsx` surfaces one for the main chat.
+  const pendingApproval = useMemo(
+    () => (threadId ? (pendingApprovalByThread[threadId] ?? null) : null),
+    [threadId, pendingApprovalByThread]
   );
 
   const messages = useMemo(
@@ -473,6 +498,7 @@ export function useWorkflowBuilderChat(seedThreadId?: string | null): UseWorkflo
     sending,
     turnActive,
     proposal,
+    pendingApproval,
     capped,
     messages,
     displayMessages,

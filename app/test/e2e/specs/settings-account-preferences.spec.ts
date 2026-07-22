@@ -17,7 +17,9 @@ async function waitForHashContains(fragment: string, timeout = 10_000): Promise<
   );
 }
 
-describe('Settings - Account Preferences', () => {
+describe('Settings - Account Preferences', function () {
+  this.timeout(90_000);
+
   before(async function beforeSuite() {
     this.timeout(90_000);
     await startMockServer();

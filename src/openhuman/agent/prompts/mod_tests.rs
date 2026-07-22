@@ -72,6 +72,8 @@ fn prompt_builder_assembles_sections() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
     let rendered = SystemPromptBuilder::with_defaults().build(&ctx).unwrap();
     assert!(rendered.contains("## Tools"));
@@ -102,6 +104,8 @@ fn grounding_contract_appended_to_every_build_path() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
 
     // A distinctive clause from GROUNDING_BODY — present regardless of which
@@ -194,6 +198,8 @@ fn identity_section_creates_missing_workspace_files() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
 
     let section = IdentitySection;
@@ -265,6 +271,8 @@ fn datetime_section_is_static_grounding_rule_without_volatile_timestamp() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
 
     let rendered = DateTimeSection.build(&ctx).unwrap();
@@ -337,6 +345,8 @@ fn datetime_section_appends_resolve_time_rule_only_when_tool_present() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
     let rendered_with = DateTimeSection.build(&ctx_with).unwrap();
     assert!(
@@ -383,6 +393,8 @@ fn ctx_with_identity(identity: Option<UserIdentity>) -> PromptContext<'static> {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     }
 }
 
@@ -525,6 +537,8 @@ fn tools_section_pformat_renders_signature_not_schema() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
 
     let rendered = ToolsSection.build(&ctx).unwrap();
@@ -568,6 +582,8 @@ fn tools_section_uses_pformat_signature_for_text_dispatchers() {
             personality_soul_md: None,
             personality_memory_md: None,
             personality_roster: vec![],
+            agents_md_global: None,
+            agents_md_local: None,
         };
         let rendered = ToolsSection.build(&ctx).unwrap();
         assert!(
@@ -618,6 +634,8 @@ fn user_memory_section_renders_namespaces_with_headings() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.starts_with("## User Memory\n\n"));
@@ -697,6 +715,8 @@ fn user_memory_section_returns_empty_when_no_summaries() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.is_empty());
@@ -788,6 +808,8 @@ fn render_subagent_system_prompt_honors_identity_safety_and_skills_flags() {
         },
         ToolCallFormat::Json,
         &[],
+        None,
+        None,
     );
 
     assert!(rendered.contains("## Project Context"));
@@ -815,6 +837,8 @@ fn render_subagent_system_prompt_honors_identity_safety_and_skills_flags() {
         SubagentRenderOptions::narrow(),
         ToolCallFormat::Native,
         &[],
+        None,
+        None,
     );
     assert!(native.contains("native tool-calling output"));
     assert!(!native.contains("## Safety"));
@@ -1445,6 +1469,8 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
 
     // Test a narrow-agent runtime path:
@@ -1491,6 +1517,8 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
     let narrow = builder.build(&ctx_narrow).unwrap();
     assert!(
@@ -1530,6 +1558,8 @@ fn memory_framing_ctx<'a>(
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     }
 }
 
@@ -1666,6 +1696,8 @@ fn prompt_tool_constructors_and_user_memory_skip_empty_bodies() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.contains("### user"));
@@ -1694,6 +1726,8 @@ fn ctx_with_learned(learned: LearnedContextData) -> PromptContext<'static> {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     }
 }
 
@@ -1833,6 +1867,8 @@ fn tools_section_empty_for_native() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
     let out = ToolsSection.build(&ctx).unwrap();
     assert!(
@@ -1866,6 +1902,8 @@ fn tools_section_nonempty_for_pformat() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
     let out = ToolsSection.build(&ctx).unwrap();
     assert!(
@@ -1901,6 +1939,8 @@ fn tools_section_native_with_dispatcher_instructions_returns_instructions() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
     };
     let out = ToolsSection.build(&ctx).unwrap();
     assert!(
@@ -1910,5 +1950,230 @@ fn tools_section_native_with_dispatcher_instructions_returns_instructions() {
     assert!(
         !out.contains("## Tools"),
         "Native mode must not include the tool catalogue header, got: {out:?}"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AGENTS.md project-instructions section
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build a minimal `PromptContext` carrying the given AGENTS.md layers.
+/// Everything else is inert so tests isolate the AGENTS.md behaviour.
+fn agents_md_ctx(global: Option<String>, local: Option<String>) -> PromptContext<'static> {
+    PromptContext {
+        workspace_dir: Path::new("/tmp"),
+        model_name: "test-model",
+        agent_id: "",
+        tools: &[],
+        workflows: &[],
+        dispatcher_instructions: "",
+        learned: LearnedContextData::default(),
+        visible_tool_names: &NO_FILTER,
+        tool_call_format: ToolCallFormat::PFormat,
+        connected_integrations: &[],
+        connected_identities_md: String::new(),
+        include_profile: false,
+        include_memory_md: false,
+        curated_snapshot: None,
+        user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        agents_md_global: global,
+        agents_md_local: local,
+    }
+}
+
+#[test]
+fn agents_md_section_empty_when_both_layers_absent() {
+    let ctx = agents_md_ctx(None, None);
+    let out = AgentsInstructionsSection.build(&ctx).unwrap();
+    assert!(
+        out.trim().is_empty(),
+        "section must be empty when no AGENTS.md content is present, got: {out:?}"
+    );
+}
+
+#[test]
+fn agents_md_section_renders_global_only() {
+    let ctx = agents_md_ctx(Some("workspace rule one".into()), None);
+    let out = AgentsInstructionsSection.build(&ctx).unwrap();
+    assert!(out.contains("## Project instructions (AGENTS.md)"));
+    assert!(out.contains("AGENTS.md (workspace)"));
+    assert!(out.contains("workspace rule one"));
+    assert!(
+        !out.contains("AGENTS.md (project)"),
+        "no project layer should be rendered, got: {out}"
+    );
+}
+
+#[test]
+fn agents_md_section_renders_local_only() {
+    let ctx = agents_md_ctx(None, Some("project rule two".into()));
+    let out = AgentsInstructionsSection.build(&ctx).unwrap();
+    assert!(out.contains("## Project instructions (AGENTS.md)"));
+    assert!(out.contains("AGENTS.md (project)"));
+    assert!(out.contains("project rule two"));
+}
+
+#[test]
+fn agents_md_section_layers_global_before_local() {
+    let ctx = agents_md_ctx(Some("GLOBAL_MARKER".into()), Some("LOCAL_MARKER".into()));
+    let out = AgentsInstructionsSection.build(&ctx).unwrap();
+    let g = out.find("GLOBAL_MARKER").expect("global present");
+    let l = out.find("LOCAL_MARKER").expect("local present");
+    assert!(
+        g < l,
+        "global layer must render before local layer, got: {out}"
+    );
+    // Both sub-headings present.
+    assert!(out.contains("AGENTS.md (workspace)"));
+    assert!(out.contains("AGENTS.md (project)"));
+}
+
+#[test]
+fn agents_md_section_truncates_oversized_layer_at_cap() {
+    // One char over the cap forces truncation with a marker.
+    let huge = "x".repeat(BOOTSTRAP_MAX_CHARS + 500);
+    let ctx = agents_md_ctx(Some(huge), None);
+    let out = AgentsInstructionsSection.build(&ctx).unwrap();
+    assert!(
+        out.contains("truncated"),
+        "expected a truncation marker, got tail: {}",
+        &out[out.len().saturating_sub(120)..]
+    );
+    // The rendered block must not carry the full oversized body.
+    assert!(
+        out.matches('x').count() <= BOOTSTRAP_MAX_CHARS,
+        "content must be capped at BOOTSTRAP_MAX_CHARS"
+    );
+}
+
+#[test]
+fn agents_md_section_registered_in_default_builder() {
+    let ctx = agents_md_ctx(Some("DEFAULT_BUILDER_MARKER".into()), None);
+    let rendered = SystemPromptBuilder::with_defaults().build(&ctx).unwrap();
+    assert!(
+        rendered.contains("## Project instructions (AGENTS.md)"),
+        "with_defaults() must include the AGENTS.md section"
+    );
+    assert!(rendered.contains("DEFAULT_BUILDER_MARKER"));
+    // Ordering contract: AGENTS.md after user-context, before the tool catalogue.
+    let agents_pos = rendered
+        .find("## Project instructions (AGENTS.md)")
+        .unwrap();
+    let tools_pos = rendered.find("## Tools").unwrap();
+    assert!(
+        agents_pos < tools_pos,
+        "AGENTS.md must render before the ## Tools catalogue"
+    );
+}
+
+#[test]
+fn agents_md_section_registered_in_dynamic_builder() {
+    // The primary/orchestrator + welcome + integrations_agent path:
+    // `PromptSource::Dynamic` agents assemble their own body via `render_*`
+    // helpers and never call `render_agents_md` individually, so the shared
+    // AGENTS.md section is injected centrally in `from_dynamic`. Without this
+    // the main chat agent would load AGENTS.md but silently drop it from the
+    // system prompt.
+    fn dynamic_body(_ctx: &PromptContext<'_>) -> anyhow::Result<String> {
+        Ok("DYNAMIC_AGENT_BODY".to_string())
+    }
+    let ctx = agents_md_ctx(Some("DYNAMIC_GLOBAL_MARKER".into()), None);
+    let rendered = SystemPromptBuilder::from_dynamic(dynamic_body)
+        .build(&ctx)
+        .unwrap();
+    assert!(
+        rendered.contains("DYNAMIC_AGENT_BODY"),
+        "the dynamic agent body must render"
+    );
+    assert!(
+        rendered.contains("## Project instructions (AGENTS.md)"),
+        "from_dynamic() must include the AGENTS.md section for the main/orchestrator agent"
+    );
+    assert!(rendered.contains("DYNAMIC_GLOBAL_MARKER"));
+    // Ordering contract: the agent's own body renders first, AGENTS.md follows
+    // as trailing standing guidance (before the central grounding suffix).
+    let body_pos = rendered.find("DYNAMIC_AGENT_BODY").unwrap();
+    let agents_pos = rendered
+        .find("## Project instructions (AGENTS.md)")
+        .unwrap();
+    assert!(
+        body_pos < agents_pos,
+        "AGENTS.md must render after the dynamic agent body"
+    );
+}
+
+#[test]
+fn agents_md_section_registered_in_subagent_builder() {
+    let ctx = agents_md_ctx(None, Some("SUBAGENT_BUILDER_MARKER".into()));
+    let builder = SystemPromptBuilder::for_subagent("role body".into(), true, true, true);
+    let rendered = builder.build(&ctx).unwrap();
+    assert!(
+        rendered.contains("## Project instructions (AGENTS.md)"),
+        "for_subagent() must include the AGENTS.md section"
+    );
+    assert!(rendered.contains("SUBAGENT_BUILDER_MARKER"));
+}
+
+#[test]
+fn agents_md_section_absent_from_prompt_when_gate_off_yields_none() {
+    // The config gate produces `None`/`None` (loader not called); the section
+    // must then contribute nothing to either builder — no heading leak.
+    let ctx = agents_md_ctx(None, None);
+    let rendered = SystemPromptBuilder::with_defaults().build(&ctx).unwrap();
+    assert!(
+        !rendered.contains("## Project instructions (AGENTS.md)"),
+        "gated-off (None/None) must not emit the AGENTS.md heading"
+    );
+}
+
+#[test]
+fn subagent_renderer_injects_agents_md_before_tools() {
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+    let rendered = render_subagent_system_prompt_with_format(
+        Path::new("/tmp"),
+        "reasoning-v1",
+        &[0],
+        &tools,
+        &[],
+        "You are a specialist.",
+        SubagentRenderOptions::narrow(),
+        ToolCallFormat::PFormat,
+        &[],
+        Some("WS_AGENTS_MARKER"),
+        Some("PROJ_AGENTS_MARKER"),
+    );
+    assert!(rendered.contains("## Project instructions (AGENTS.md)"));
+    assert!(rendered.contains("WS_AGENTS_MARKER"));
+    assert!(rendered.contains("PROJ_AGENTS_MARKER"));
+    let agents_pos = rendered
+        .find("## Project instructions (AGENTS.md)")
+        .expect("agents heading present");
+    let tools_pos = rendered.find("## Tools").expect("tools heading present");
+    assert!(
+        agents_pos < tools_pos,
+        "AGENTS.md must render before the tool catalogue in the subagent renderer"
+    );
+}
+
+#[test]
+fn subagent_renderer_omits_agents_md_when_none() {
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+    let rendered = render_subagent_system_prompt(
+        Path::new("/tmp"),
+        "reasoning-v1",
+        &[0],
+        &tools,
+        &[],
+        "You are a specialist.",
+        SubagentRenderOptions::narrow(),
+        ToolCallFormat::PFormat,
+        &[],
+    );
+    assert!(
+        !rendered.contains("## Project instructions (AGENTS.md)"),
+        "public wrapper passes None/None and must emit no AGENTS.md block"
     );
 }

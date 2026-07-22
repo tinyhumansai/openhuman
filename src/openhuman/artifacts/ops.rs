@@ -1,11 +1,18 @@
 use serde_json::{json, Value};
 
-use crate::openhuman::approval::{ApprovalChatContext, APPROVAL_CHAT_CONTEXT};
 use crate::openhuman::config::Config;
-use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::Tool;
-use crate::openhuman::tools::PresentationTool;
 use crate::rpc::RpcOutcome;
+
+// Imports used only by the `documents`-gated presentation regeneration helper
+// below; when the feature is off the PresentationTool is compiled out.
+#[cfg(feature = "documents")]
+use crate::openhuman::approval::{ApprovalChatContext, APPROVAL_CHAT_CONTEXT};
+#[cfg(feature = "documents")]
+use crate::openhuman::security::SecurityPolicy;
+#[cfg(feature = "documents")]
+use crate::openhuman::tools::traits::Tool;
+#[cfg(feature = "documents")]
+use crate::openhuman::tools::PresentationTool;
 
 use super::store;
 use super::types::ArtifactKind;
@@ -177,6 +184,20 @@ pub async fn ai_regenerate(
         ));
     }
 
+    regenerate_presentation(config, artifact_id, thread_id, client_id).await
+}
+
+/// Re-run the presentation producer tool against an existing artifact id.
+/// Extracted so the whole `documents`-gated tool path (PresentationTool +
+/// approval scope) compiles only when the feature is on; `ai_regenerate` stays
+/// a thin, always-compiled RPC handler.
+#[cfg(feature = "documents")]
+async fn regenerate_presentation(
+    config: &Config,
+    artifact_id: &str,
+    thread_id: &str,
+    client_id: &str,
+) -> Result<RpcOutcome<Value>, String> {
     let args = store::read_artifact_args(&config.workspace_dir, artifact_id).await?;
 
     // A fresh policy from the live config — cheap, sync, and mirrors how
@@ -221,6 +242,24 @@ pub async fn ai_regenerate(
             "[artifacts] regenerate execution error for id={artifact_id}: {err}"
         )),
     }
+}
+
+/// Disabled variant: with the `documents` feature off the PresentationTool is
+/// compiled out (and no presentation artifacts can exist), so report the build
+/// limitation rather than pretend to regenerate.
+#[cfg(not(feature = "documents"))]
+async fn regenerate_presentation(
+    _config: &Config,
+    artifact_id: &str,
+    _thread_id: &str,
+    _client_id: &str,
+) -> Result<RpcOutcome<Value>, String> {
+    log::debug!(
+        "[artifacts] presentation regeneration rejected for id={artifact_id}: built without the `documents` feature"
+    );
+    Err(format!(
+        "[artifacts] presentation regeneration is unavailable for id={artifact_id}: built without the `documents` feature"
+    ))
 }
 
 #[cfg(test)]

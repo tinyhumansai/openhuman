@@ -6,22 +6,48 @@
 //! - SSE (Server-Sent Events) for real-time event streaming.
 //! - Helper routes for health checks, schema discovery, and Telegram authentication.
 
+// Only the gated router build (`build_core_http_router`) uses the bare `Arc`;
+// the kept dispatch/bootstrap paths qualify it (`std::sync::Arc`) or import it
+// locally, so this module-level import is `http-server`-only (#5048).
+#[cfg(feature = "http-server")]
 use std::sync::Arc;
 
+// The axum server surface — router, handlers, middleware, extractors, SSE — is
+// exclusive to the `http-server` feature (#5048). Only the RPC-dispatch surface
+// (`invoke_method`, `parse_json_params`, `default_state`, the `run_server*`
+// CoreBuilder shims, `register_domain_subscribers`, `bootstrap_core_runtime`)
+// stays compiled; a slim build drives it over the CLI / native dispatch path
+// without binding a listener. `Map`/`Value` stay ungated (dispatch uses them).
+#[cfg(feature = "http-server")]
 use axum::extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade};
+#[cfg(feature = "http-server")]
 use axum::http::{header, HeaderValue, Method, StatusCode};
+#[cfg(feature = "http-server")]
 use axum::middleware::{self, Next};
+#[cfg(feature = "http-server")]
 use axum::response::sse::{Event, KeepAlive, Sse};
+#[cfg(feature = "http-server")]
 use axum::response::{IntoResponse, Response};
+#[cfg(feature = "http-server")]
 use axum::routing::{get, post};
+#[cfg(feature = "http-server")]
 use axum::{extract::Request, Json, Router};
+#[cfg(feature = "http-server")]
 use serde::Serialize;
-use serde_json::{json, Map, Value};
+#[cfg(feature = "http-server")]
+use serde_json::json;
+use serde_json::{Map, Value};
+#[cfg(feature = "http-server")]
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::core::all;
-use crate::core::types::{AppState, RpcError, RpcFailure, RpcRequest, RpcSuccess};
+use crate::core::types::AppState;
+// The JSON-RPC envelope types are only shaped into HTTP responses by the gated
+// `rpc_handler`; the kept dispatch surface returns `Result<Value, String>`.
+#[cfg(feature = "http-server")]
+use crate::core::types::{RpcError, RpcFailure, RpcRequest, RpcSuccess};
+#[cfg(feature = "http-server")]
 use crate::rpc::StructuredRpcError;
 
 /// Axum handler for JSON-RPC POST requests.
@@ -36,6 +62,7 @@ use crate::rpc::StructuredRpcError;
 ///
 /// * `state` - The application state, injected by Axum.
 /// * `req` - The parsed [`RpcRequest`].
+#[cfg(feature = "http-server")]
 pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcRequest>) -> Response {
     let id = req.id.clone();
     let method = req.method.clone();
@@ -374,6 +401,7 @@ fn is_unconfirmed_unauthorized_error(msg: &str) -> bool {
 /// session-expired predicate uses `.contains()` because session-expired markers
 /// can appear mid-message — flip these to match and the test
 /// `is_param_validation_error_does_not_match_unrelated_errors` will break.
+#[cfg(feature = "http-server")]
 fn is_param_validation_error(msg: &str) -> bool {
     msg.starts_with("unknown param '")
         || msg.starts_with("missing required param '")
@@ -397,6 +425,7 @@ fn is_param_validation_error(msg: &str) -> bool {
 /// Matched against the shared wallet constant (exact equality) so a wording
 /// change in the wallet layer fails the coupling test in `jsonrpc_tests.rs`
 /// rather than silently letting the noise back into Sentry.
+#[cfg(feature = "http-server")]
 fn is_wallet_not_configured_error(msg: &str) -> bool {
     msg == crate::openhuman::wallet::WALLET_NOT_CONFIGURED_MESSAGE
 }
@@ -472,6 +501,7 @@ pub fn default_state() -> AppState {
 // --- HTTP server (Axum) ----------------------------------------------------
 
 /// Query parameters for the Telegram authentication callback.
+#[cfg(feature = "http-server")]
 #[derive(Debug, serde::Deserialize)]
 struct TelegramAuthQuery {
     /// The one-time login token received from the Telegram bot.
@@ -479,6 +509,7 @@ struct TelegramAuthQuery {
 }
 
 /// Query parameters for the generic desktop auth callback.
+#[cfg(feature = "http-server")]
 #[derive(Debug, serde::Deserialize)]
 struct DesktopAuthQuery {
     /// One-time login token consumed through the backend.
@@ -488,6 +519,7 @@ struct DesktopAuthQuery {
 }
 
 /// Returns the HTML for a successful connection page.
+#[cfg(feature = "http-server")]
 fn success_html(message: &str) -> String {
     let escaped_message = escape_html(message);
     r#"<!DOCTYPE html>
@@ -517,6 +549,7 @@ fn success_html(message: &str) -> String {
 }
 
 /// Simple HTML escaping for error messages.
+#[cfg(feature = "http-server")]
 fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -526,6 +559,7 @@ fn escape_html(s: &str) -> String {
 }
 
 /// Returns the HTML for an error page.
+#[cfg(feature = "http-server")]
 fn error_html(message: &str) -> String {
     let escaped_message = escape_html(message);
     format!(
@@ -556,6 +590,7 @@ fn error_html(message: &str) -> String {
 }
 
 /// Query params for the MCP browser-OAuth callback (`/oauth/mcp/callback`).
+#[cfg(feature = "http-server")]
 #[derive(Debug, serde::Deserialize)]
 struct OAuthMcpCallbackQuery {
     code: Option<String>,
@@ -568,6 +603,7 @@ struct OAuthMcpCallbackQuery {
 /// server redirects the browser here with `?code=…&state=…`; we hand it to
 /// `mcp_registry::oauth::complete`, which exchanges the code for a token, stores
 /// it as the server's `Authorization` header, and reconnects.
+#[cfg(feature = "http-server")]
 async fn oauth_mcp_callback_handler(
     Query(query): Query<OAuthMcpCallbackQuery>,
 ) -> impl IntoResponse {
@@ -647,6 +683,7 @@ async fn oauth_mcp_callback_handler(
 /// The preferred Tauri loopback listener has a per-login state nonce. This
 /// legacy core fallback cannot rely on that state, so it must reject embedded
 /// resource loads (`<img>`, iframe, fetch, script) before token exchange.
+#[cfg(feature = "http-server")]
 fn desktop_callback_navigation_ok(headers: &axum::http::HeaderMap) -> Result<(), &'static str> {
     let get_str = |name: &str| -> Option<&str> {
         headers
@@ -696,6 +733,7 @@ fn desktop_callback_navigation_ok(headers: &axum::http::HeaderMap) -> Result<(),
 ///   iframe embeds from malicious pages).
 /// - `Sec-Fetch-Site: cross-site` with a `Referer`/`Origin` that is not
 ///   `https://t.me/...` (CSRF redirect from a third-party site).
+#[cfg(feature = "http-server")]
 fn telegram_callback_origin_ok(headers: &axum::http::HeaderMap) -> Result<(), &'static str> {
     let get_str = |name: &str| -> Option<&str> {
         headers
@@ -756,6 +794,7 @@ fn telegram_callback_origin_ok(headers: &axum::http::HeaderMap) -> Result<(), &'
 ///
 /// It consumes a one-time token, exchanges it for a JWT from the backend,
 /// and stores the session locally.
+#[cfg(feature = "http-server")]
 async fn telegram_auth_handler(
     headers: axum::http::HeaderMap,
     Query(query): Query<TelegramAuthQuery>,
@@ -890,6 +929,7 @@ async fn telegram_auth_handler(
 /// flows can fall back to the local core callback (`/auth`). This route is
 /// public because the callback carries its own one-time login token; raw
 /// session JWT callbacks are intentionally rejected on this public surface.
+#[cfg(feature = "http-server")]
 async fn desktop_auth_handler(
     headers: axum::http::HeaderMap,
     Query(query): Query<DesktopAuthQuery>,
@@ -1010,6 +1050,7 @@ async fn desktop_auth_handler(
 /// the FE forwards the per-process core bearer as a `?token=…` query param —
 /// validated against the same in-process RPC token via [`verify_bearer_token`]
 /// (single source of truth, no separate credential).
+#[cfg(feature = "http-server")]
 #[derive(Debug, serde::Deserialize)]
 struct DictationQuery {
     #[serde(default)]
@@ -1024,6 +1065,7 @@ struct DictationQuery {
 /// set headers), and — when an `Origin` header is present — that origin must be
 /// on the local-app allowlist, mirroring the Socket.IO handshake check. Missing
 /// or wrong credentials are rejected with 401 and the socket is never upgraded.
+#[cfg(feature = "http-server")]
 async fn dictation_ws_handler(
     headers: axum::http::HeaderMap,
     Query(query): Query<DictationQuery>,
@@ -1100,6 +1142,7 @@ async fn dictation_ws_handler(
 /// maximum image payload — 4 × 8 MiB raw ≈ 43 MiB once base64-encoded into
 /// `[IMAGE:data:…]` markers — plus message text and JSON-RPC envelope overhead.
 /// Axum's 2 MiB default would otherwise reject any image attachment (#3205).
+#[cfg(feature = "http-server")]
 const MAX_RPC_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 /// Builds the main Axum router for the core HTTP server.
@@ -1111,6 +1154,7 @@ const MAX_RPC_BODY_BYTES: usize = 64 * 1024 * 1024;
 /// 1. `cors_middleware`       — handles `OPTIONS` preflight and adds CORS headers
 /// 2. `rpc_auth_middleware`   — validates `Authorization: Bearer <token>` on protected paths
 /// 3. `http_request_log_middleware` — logs non-RPC HTTP requests with timing
+#[cfg(feature = "http-server")]
 pub fn build_core_http_router(socketio_enabled: bool) -> Router {
     let mut router = Router::new()
         .route("/", get(root_handler))
@@ -1202,6 +1246,7 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
 ///
 /// The `/rpc` path is logged inside [`rpc_handler`] instead (with the
 /// JSON-RPC method name), so we skip it here to avoid a redundant line.
+#[cfg(feature = "http-server")]
 async fn http_request_log_middleware(req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
@@ -1229,6 +1274,7 @@ async fn http_request_log_middleware(req: Request, next: Next) -> Response {
 /// Environment variable for additional comma-separated origins to allow.
 /// Intended for debug harnesses and E2E setups that don't run on loopback —
 /// e.g. `OPENHUMAN_CORE_ALLOWED_ORIGINS=https://e2e.internal,http://my-debugger:8080`.
+#[cfg(feature = "http-server")]
 const ALLOWED_ORIGINS_ENV: &str = "OPENHUMAN_CORE_ALLOWED_ORIGINS";
 
 /// Decides whether a browser `Origin` header value is allowed to make
@@ -1245,11 +1291,13 @@ const ALLOWED_ORIGINS_ENV: &str = "OPENHUMAN_CORE_ALLOWED_ORIGINS";
 /// token via leaked logs / screenshots / a compromised third-party origin
 /// loaded in a CEF child webview) must be refused — the bearer token alone
 /// is not enough authorization without an origin binding.
+#[cfg(feature = "http-server")]
 pub(super) fn is_origin_allowed(origin: &str) -> bool {
     let extra_origins = std::env::var(ALLOWED_ORIGINS_ENV).ok();
     is_origin_allowed_with_extra(origin, extra_origins.as_deref())
 }
 
+#[cfg(feature = "http-server")]
 pub(super) fn is_origin_allowed_with_extra(origin: &str, extra_origins: Option<&str>) -> bool {
     // Tauri v2 webview origins. Windows uses an HTTP(S) custom host; macOS
     // and Linux use the `tauri://` scheme. We accept both for portability.
@@ -1290,6 +1338,7 @@ pub(super) fn is_origin_allowed_with_extra(origin: &str, extra_origins: Option<&
 ///
 /// Reads the request's `Origin` header before invoking the inner handler so
 /// the same value can be echoed back (when allowed) on the response.
+#[cfg(feature = "http-server")]
 async fn cors_middleware(req: Request, next: Next) -> Response {
     let origin = req
         .headers()
@@ -1317,6 +1366,7 @@ async fn cors_middleware(req: Request, next: Next) -> Response {
 /// For Docker / cloud deployments where the server binds to `0.0.0.0`,
 /// extend the allowlist via the `OPENHUMAN_CORE_ALLOWED_ORIGINS` env var
 /// (comma-separated) rather than wildcarding `Access-Control-Allow-Origin`.
+#[cfg(feature = "http-server")]
 pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) -> Response {
     let headers = response.headers_mut();
     headers.append(header::VARY, HeaderValue::from_static("Origin"));
@@ -1354,6 +1404,7 @@ pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) ->
 /// `health::CRITICAL_COMPONENTS`); otherwise it returns 200 — with a `degraded`
 /// flag and per-component buckets in the body so readiness probes and operators
 /// can still see partial failures.
+#[cfg(feature = "http-server")]
 async fn health_handler() -> impl IntoResponse {
     let snapshot = crate::openhuman::health::snapshot();
     let verdict = crate::openhuman::health::verdict(&snapshot);
@@ -1394,6 +1445,7 @@ async fn health_handler() -> impl IntoResponse {
 }
 
 /// Handler for the schema discovery endpoint.
+#[cfg(feature = "http-server")]
 async fn schema_handler(State(_state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, Json(build_http_schema_dump())).into_response()
 }
@@ -1405,6 +1457,7 @@ async fn schema_handler(State(_state): State<AppState>) -> impl IntoResponse {
 /// Both are required — browser `EventSource` cannot attach an
 /// `Authorization` header, so the bind token is the only credential the
 /// endpoint accepts.
+#[cfg(feature = "http-server")]
 #[derive(Debug, serde::Deserialize)]
 struct EventsQuery {
     client_id: String,
@@ -1426,6 +1479,7 @@ struct EventsQuery {
 ///
 /// Both paths converge on the same broadcast stream filtered by
 /// `client_id`.
+#[cfg(feature = "http-server")]
 async fn events_handler(
     headers: axum::http::HeaderMap,
     Query(query): Query<EventsQuery>,
@@ -1503,6 +1557,7 @@ async fn events_handler(
 }
 
 /// Handler for the webhook debug events SSE endpoint.
+#[cfg(feature = "http-server")]
 async fn webhook_events_handler() -> Response {
     let stream = tokio_stream::once(Ok::<Event, std::convert::Infallible>(
         Event::default()
@@ -1518,6 +1573,7 @@ async fn webhook_events_handler() -> Response {
 ///
 /// Requires bearer auth. Streams all domain events as JSON with event type
 /// set to the domain name (agent, tool, memory, etc.).
+#[cfg(feature = "http-server")]
 async fn domain_events_handler(headers: axum::http::HeaderMap) -> Response {
     let bearer = headers
         .get(header::AUTHORIZATION)
@@ -1610,6 +1666,7 @@ async fn domain_events_handler(headers: axum::http::HeaderMap) -> Response {
 }
 
 /// Handler for the root endpoint, returning server information and available endpoints.
+#[cfg(feature = "http-server")]
 async fn root_handler() -> impl IntoResponse {
     let api_server = match crate::openhuman::config::Config::load_or_init().await {
         Ok(cfg) => crate::api::config::effective_backend_api_url(&cfg.api_url),
@@ -1640,6 +1697,7 @@ async fn root_handler() -> impl IntoResponse {
 }
 
 /// Fallback handler for unknown routes.
+#[cfg(feature = "http-server")]
 async fn not_found_handler() -> impl IntoResponse {
     (
         StatusCode::NOT_FOUND,
@@ -1652,6 +1710,7 @@ async fn not_found_handler() -> impl IntoResponse {
 }
 
 /// Resolves the port for the core server from environment variables or defaults.
+#[cfg(feature = "http-server")]
 pub(crate) fn core_port() -> u16 {
     std::env::var("OPENHUMAN_CORE_PORT")
         .ok()
@@ -1660,6 +1719,7 @@ pub(crate) fn core_port() -> u16 {
 }
 
 /// Resolves the bind address host for the core server from environment variables or defaults.
+#[cfg(feature = "http-server")]
 pub(crate) fn core_host() -> String {
     std::env::var("OPENHUMAN_CORE_HOST")
         .ok()
@@ -1881,6 +1941,31 @@ fn register_domain_subscribers(
             .expect("domain-subscriber registry lock poisoned")
             .insert(group)
     }
+
+    // Seed the live tool-execution timeout from the persisted `[agent]` config
+    // so a user-configured value (Settings → Agent OS access → Action timeout)
+    // is in effect from the first tool call. `OPENHUMAN_TOOL_TIMEOUT_SECS`, when
+    // set, still overrides this inside `set_tool_timeout_secs`. This lives on
+    // the always-on boot path (not `channels::runtime::startup::start_channels`,
+    // which is skipped for channel-less / web-chat-only cores) so the timeout
+    // seeds for every install regardless of DomainSet — it is DomainSet-
+    // independent process-global state, not a gated subscriber (#5027).
+    //
+    // Deliberately OUTSIDE the `INFRA: Once` below: `bootstrap_core_runtime`
+    // re-runs on an in-process core restart (`CoreProcessHandle::restart` →
+    // `ensure_running`, and `reset_local_data`/Clear-Local-Data) with a freshly
+    // reloaded `Config`, but `INFRA` is already consumed — so a seed gated by it
+    // would leave the process-global timeout pinned to the previous config's
+    // value until Settings is re-saved. `set_tool_timeout_secs` is idempotent
+    // (a plain atomic store honouring the env override), so re-seeding on every
+    // call is correct and cheap and re-applies the current config each boot.
+    let effective_timeout =
+        crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
+    log::debug!(
+        "[tool_timeout] seeded tool-execution timeout from config: configured={}s effective={}s",
+        config.agent.agent_timeout_secs,
+        effective_timeout
+    );
 
     // Ungated core/platform infra — health, scheduler-gate, TokenJuice
     // content-router, session-token seeding, the SessionExpired handler, and
@@ -2466,6 +2551,7 @@ pub fn start_core_runtime_services(
 }
 
 /// JSON-serializable wrapper for the entire RPC schema dump.
+#[cfg(feature = "http-server")]
 #[derive(Serialize)]
 struct HttpSchemaDump {
     /// List of all available RPC methods and their schemas.
@@ -2473,6 +2559,7 @@ struct HttpSchemaDump {
 }
 
 /// JSON-serializable schema for a single RPC method.
+#[cfg(feature = "http-server")]
 #[derive(Serialize)]
 struct HttpMethodSchema {
     /// Fully qualified JSON-RPC method name.
@@ -2492,6 +2579,7 @@ struct HttpMethodSchema {
 /// Aggregates schemas from all registered controllers into a single dump.
 ///
 /// Also includes built-in core methods like `core.ping` and `core.version`.
+#[cfg(feature = "http-server")]
 fn build_http_schema_dump() -> HttpSchemaDump {
     let mut methods: Vec<HttpMethodSchema> = all::all_http_method_schemas()
         .into_iter()
@@ -2515,6 +2603,8 @@ fn build_http_schema_dump() -> HttpSchemaDump {
 #[path = "jsonrpc_tests.rs"]
 mod tests;
 
-#[cfg(test)]
+// Every cors test names a gated CORS symbol (`is_origin_allowed`,
+// `with_cors_headers`), so the whole module gates in lockstep (#5048).
+#[cfg(all(test, feature = "http-server"))]
 #[path = "jsonrpc_cors_tests.rs"]
 mod cors_tests;

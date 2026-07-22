@@ -7,6 +7,13 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{self, Duration, Instant};
 
+use super::super::types::{
+    AutocompleteAcceptParams, AutocompleteAcceptResult, AutocompleteCurrentParams,
+    AutocompleteCurrentResult, AutocompleteDebugFocusResult, AutocompleteSetStyleParams,
+    AutocompleteSetStyleResult, AutocompleteStartParams, AutocompleteStartResult,
+    AutocompleteStatus, AutocompleteStopParams, AutocompleteStopResult, AutocompleteSuggestion,
+    FocusedTextContext,
+};
 #[cfg(target_os = "macos")]
 use super::focus::validate_focused_target;
 use super::focus::{
@@ -20,13 +27,6 @@ use super::terminal::{
     extract_terminal_input_context, is_terminal_app, looks_like_terminal_buffer,
 };
 use super::text::{is_no_text_candidate_error, sanitize_suggestion, truncate_tail};
-use super::types::{
-    AutocompleteAcceptParams, AutocompleteAcceptResult, AutocompleteCurrentParams,
-    AutocompleteCurrentResult, AutocompleteDebugFocusResult, AutocompleteSetStyleParams,
-    AutocompleteSetStyleResult, AutocompleteStartParams, AutocompleteStartResult,
-    AutocompleteStatus, AutocompleteStopParams, AutocompleteStopResult, AutocompleteSuggestion,
-    FocusedTextContext,
-};
 
 const REFRESH_TIMEOUT_SECS: u64 = 120;
 

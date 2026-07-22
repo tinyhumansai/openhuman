@@ -1,9 +1,12 @@
 import createDebug from 'debug';
 
 /**
- * copilotMessageSanitizer — defends the Flows copilot chat against rendering
- * the raw provider wire-format envelope instead of clean assistant text
- * (B25).
+ * toolCallEnvelope — defends any chat transcript against rendering the raw
+ * provider wire-format envelope instead of clean assistant text (B25).
+ *
+ * Applied by the shared `ChatThreadView` transcript renderer, so it guards
+ * BOTH the home chat and the workflow copilot (which now reuses that
+ * renderer). Originally lived under `lib/flows` for the copilot alone.
  *
  * The Rust core's `NativeToolDispatcher::to_provider_messages`
  * (`src/openhuman/agent/dispatcher.rs`) and the tinyagents bridge's
@@ -14,7 +17,7 @@ import createDebug from 'debug';
  * That envelope is meant to stay internal to the agent session; this
  * sanitizer is a shape-based (not string-match) belt-and-suspenders guard so
  * that if it ever leaks into a chat message's `content` (from any Rust-side
- * vector, present or future), the copilot still renders only the human
+ * vector, present or future), the transcript still renders only the human
  * text — never the raw JSON — mirroring the `unwrapPayloadEnvelope`
  * philosophy from PR #4822 (`app/src/lib/flows/runItems.ts`).
  */

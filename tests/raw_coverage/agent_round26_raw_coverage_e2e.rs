@@ -286,6 +286,8 @@ fn prompt_context<'a>(
             description: "Checks cold prompt paths".to_string(),
             memory_summary: Some("x".repeat(240)),
         }],
+        agents_md_global: None,
+        agents_md_local: None,
     }
 }
 
@@ -377,6 +379,8 @@ fn prompt_renderers_cover_user_memory_identity_tools_and_subagent_variants() -> 
         },
         ToolCallFormat::Json,
         &[],
+        None,
+        None,
     );
     assert!(subagent_json.contains("Round26 archetype"));
     assert!(subagent_json.contains("### PROFILE.md"));
@@ -395,6 +399,8 @@ fn prompt_renderers_cover_user_memory_identity_tools_and_subagent_variants() -> 
         SubagentRenderOptions::narrow(),
         ToolCallFormat::Native,
         &[],
+        None,
+        None,
     );
     assert!(!subagent_native.contains("## Tools"));
     assert!(subagent_native.contains("native tool-calling output"));

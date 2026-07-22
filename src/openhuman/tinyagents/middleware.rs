@@ -3754,7 +3754,7 @@ mod tests {
     /// i.e. exactly the shape that used to get its `"type"` marker stripped by
     /// the `[json table: …]` rewrite before the middleware exemption existed.
     fn large_workflow_proposal_json() -> String {
-        let nodes: Vec<serde_json::Value> = (0..6)
+        let nodes: Vec<serde_json::Value> = (0..20)
             .map(|i| {
                 json!({
                     "id": format!("node-{i}"),
@@ -3838,7 +3838,7 @@ mod tests {
         );
         let reparsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
         assert_eq!(reparsed["type"], "workflow_proposal");
-        assert_eq!(reparsed["graph"]["nodes"].as_array().unwrap().len(), 6);
+        assert_eq!(reparsed["graph"]["nodes"].as_array().unwrap().len(), 20);
     }
 
     #[tokio::test]

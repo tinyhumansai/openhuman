@@ -3899,6 +3899,20 @@ const en: TranslationMap = {
   'chat.flowProposal.error': 'Could not save the workflow. Please try again.',
   'chat.flowProposal.enableError':
     'Workflow saved, but could not enable it. Try again, or enable it from the Workflows page.',
+  // Plain-language labels for each `tinyflows` node kind, shown as the badge
+  // next to each step in the proposal card's step list. Keep names short:
+  // they render as small pill badges.
+  'chat.flowProposal.stepKind.agent': 'Agent',
+  'chat.flowProposal.stepKind.toolCall': 'Action',
+  'chat.flowProposal.stepKind.httpRequest': 'Web request',
+  'chat.flowProposal.stepKind.code': 'Run code',
+  'chat.flowProposal.stepKind.condition': 'Condition',
+  'chat.flowProposal.stepKind.switch': 'Switch',
+  'chat.flowProposal.stepKind.merge': 'Merge',
+  'chat.flowProposal.stepKind.splitOut': 'Split',
+  'chat.flowProposal.stepKind.transform': 'Transform',
+  'chat.flowProposal.stepKind.outputParser': 'Parse output',
+  'chat.flowProposal.stepKind.subWorkflow': 'Sub-workflow',
 
   // Auth mode labels
   'channels.authMode.managed_dm': 'Login with OpenHuman',
@@ -4880,7 +4894,11 @@ const en: TranslationMap = {
   'flows.copilot.noChanges': 'No node changes in this proposal.',
   'flows.copilot.accept': 'Apply to draft',
   'flows.copilot.acceptAndSave': 'Accept & save',
+  'flows.copilot.saveAndEnable': 'Save & enable',
   'flows.copilot.saving': 'Saving…',
+  'flows.copilot.enabling': 'Enabling…',
+  'flows.copilot.enableError':
+    'Saved, but could not enable the workflow. Try toggling it on from the list.',
   'flows.copilot.reject': 'Dismiss',
   'flows.copilot.previewHint': 'Reviewing a proposed draft: nothing is saved yet.',
   'flows.copilot.repairDisplay': 'A run failed. Please review it and propose a fix.',

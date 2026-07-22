@@ -113,6 +113,12 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
 /// alias) or baked into the binary at build time via `option_env!`. Absent a
 /// DSN, the command exits non-zero with a diagnostic instead of silently
 /// producing no telemetry.
+///
+/// Only compiled with the `crash-reporting` feature; the `#[cfg(not(...))]`
+/// companion below returns a disabled-build error (mirrors the `mcp` CLI
+/// precedent, where the subcommand arm + top-level help stay compiled and the
+/// handler reports the build fact rather than a bogus "unknown command").
+#[cfg(feature = "crash-reporting")]
 fn run_sentry_test_command(args: &[String]) -> Result<()> {
     let mut message: Option<String> = None;
     let mut do_panic = false;
@@ -195,6 +201,17 @@ fn run_sentry_test_command(args: &[String]) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Disabled-build stand-in for [`run_sentry_test_command`]. Same signature as
+/// the `crash-reporting` version; reports that the probe is unavailable in a
+/// build compiled without the feature rather than pretending to succeed.
+#[cfg(not(feature = "crash-reporting"))]
+fn run_sentry_test_command(_args: &[String]) -> Result<()> {
+    Err(anyhow::anyhow!(
+        "sentry-test unavailable: built without the crash-reporting feature — \
+         rebuild with `--features crash-reporting`"
+    ))
 }
 
 /// Loads key/value pairs from a `.env` file into the process environment.
@@ -311,6 +328,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
+        .max_blocking_threads(crate::core::runtime::MAX_BLOCKING_THREADS)
         .build()?;
     rt.block_on(async {
         if headless_api {
@@ -368,6 +386,7 @@ fn run_call_command(args: &[String]) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
+        .max_blocking_threads(crate::core::runtime::MAX_BLOCKING_THREADS)
         .build()?;
     let value = rt
         .block_on(async { invoke_method(default_state(), &method, params).await })
@@ -449,6 +468,7 @@ fn run_namespace_command(
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
+        .max_blocking_threads(crate::core::runtime::MAX_BLOCKING_THREADS)
         .build()?;
     let value = rt
         .block_on(async { invoke_method(default_state(), &method, Value::Object(params)).await })
