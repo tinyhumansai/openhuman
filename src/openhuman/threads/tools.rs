@@ -819,6 +819,8 @@ impl Tool for ThreadPurgeAllTool {
 mod tests {
     use super::*;
     use crate::openhuman::tools::traits::ToolScope;
+    use crate::openhuman::wallet::test_support::WorkspaceEnvGuard;
+    use tempfile::tempdir;
 
     fn cfg() -> Arc<Config> {
         Arc::new(Config::default())
@@ -919,6 +921,9 @@ mod tests {
         use crate::openhuman::agent::progress_tracing::TURN_TRACE_ID;
         use crate::openhuman::memory::CreateConversationThreadRequest;
         use crate::openhuman::threads::ops;
+
+        let workspace = tempdir().expect("workspace");
+        let _guard = WorkspaceEnvGuard::set(workspace.path());
 
         // Create a real thread so ops::message_append succeeds
         let req = CreateConversationThreadRequest {
