@@ -49,6 +49,20 @@ pub enum BackendApiError {
     /// re-wrap) — one failure reported at two layers, ~452 events / 19 users.
     #[error("no announcement available (404 on /announcements/latest)")]
     AnnouncementNotFound,
+    /// `GET /orchestration/v1/steering` returned 404. The orchestration sync
+    /// loop (`orchestration::sync::sync_reads`, every 20s) reads steering as a
+    /// best-effort status-surface summary — the caller at `sync.rs` already
+    /// tolerates the `Err` (`if let Ok(data) = pass.fetch_steering()`), so a
+    /// 404 here means "no steering available", not a code bug. The backend
+    /// read surface (`tinyhumansai/backend` `orchestration.ts`) never exposed
+    /// this route — it serves sessions/messages/state/world-diff only — so
+    /// every tick 404s. Surface a typed error so the read degrades cleanly
+    /// instead of funneling the 404 into `report_error`. Targets
+    /// `TAURI-RUST-PNK` (~1.49M events / 1268 users). A co-required backend
+    /// fix adds the missing route; this is defense-in-depth for shipped
+    /// clients (an already-deployed binary can't make the route exist).
+    #[error("steering not available (404 on /orchestration/v1/steering)")]
+    SteeringNotAvailable,
 }
 
 /// Flatten an `authed_json` error onto the JSON-RPC `String` channel.
@@ -111,6 +125,21 @@ fn parse_message_path(path: &str) -> Option<(&str, &str)> {
 fn is_announcements_latest_path(path: &str) -> bool {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     matches!(segments.as_slice(), [.., "announcements", "latest"])
+}
+
+/// `true` when `path` is `/orchestration/v1/steering`, tolerant of an arbitrary
+/// base-path prefix (e.g. `/api/orchestration/v1/steering`) — same
+/// prefix-tolerant reasoning as [`parse_message_path`] (OPENHUMAN-TAURI-R7):
+/// a `BACKEND_URL` override with a path prefix must not cause this route's 404
+/// to fall through to the generic `report_error` path. The three-segment
+/// suffix keeps it from matching the sibling reads (`…/orchestration/v1/sessions`)
+/// or a path that merely extends it (`…/orchestration/v1/steering/history`).
+/// Kept in lockstep with [`crate::openhuman::orchestration::cloud::STEERING_PATH`]
+/// by a coupling test so a rename of either side fails CI instead of silently
+/// reviving the flood.
+fn is_steering_path(path: &str) -> bool {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    matches!(segments.as_slice(), [.., "orchestration", "v1", "steering"])
 }
 
 const CLIENT_VERSION_HEADER_MAX_LEN: usize = 64;
@@ -737,6 +766,28 @@ impl BackendOAuthClient {
                         url.path(),
                     );
                     return Err(anyhow::Error::new(BackendApiError::AnnouncementNotFound));
+                }
+
+                // 404 on `/orchestration/v1/steering` means "no steering
+                // available" for this best-effort status-surface read — not a
+                // code bug. The backend read surface never exposed the route
+                // (sessions/messages/state/world-diff only), so the 20s sync
+                // loop 404s every tick. Surface a typed
+                // `BackendApiError::SteeringNotAvailable` so the caller
+                // (`orchestration::sync::sync_reads`, already `if let Ok`)
+                // degrades cleanly without funneling the 404 into
+                // `report_error`. GET+404 only — any other method/status on
+                // this path still reports. Targets `TAURI-RUST-PNK`
+                // (~1.49M events / 1268 users).
+                if method == Method::GET && is_steering_path(url.path()) {
+                    tracing::info!(
+                        domain = "backend_api",
+                        operation = "authed_json",
+                        "[backend_api] steering-not-available 404 on {} {} — surfacing typed error",
+                        method.as_str(),
+                        url.path(),
+                    );
+                    return Err(anyhow::Error::new(BackendApiError::SteeringNotAvailable));
                 }
             }
 
