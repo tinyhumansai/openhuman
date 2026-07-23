@@ -171,7 +171,11 @@ pub async fn push_world_diff_with(
 // needs to special-case dedupe.
 
 const SESSIONS_PATH: &str = "/orchestration/v1/sessions";
-const STEERING_PATH: &str = "/orchestration/v1/steering";
+/// `pub(crate)` so `api::rest`'s steering-404 suppressor can assert its
+/// `is_steering_path` matcher stays coupled to this exact path (TAURI-RUST-PNK)
+/// — a rename of either side then fails CI instead of silently reviving the
+/// Sentry flood.
+pub(crate) const STEERING_PATH: &str = "/orchestration/v1/steering";
 
 /// A session token + backend client resolved once and reused across every GET in a
 /// single sync read pass. `sync_reads` issues `fetch_sessions` + up to
