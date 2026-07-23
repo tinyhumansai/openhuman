@@ -1,5 +1,5 @@
 use super::{
-    backend_api_body_shape, flatten_authed_error, is_announcements_latest_path,
+    backend_api_body_shape, flatten_authed_error, is_announcements_latest_path, is_steering_path,
     key_bytes_from_string, parse_message_path, sanitize_client_version, BackendApiError,
     BackendOAuthClient, BACKEND_API_BODY_SHAPE_MAX_BYTES,
 };
@@ -441,6 +441,137 @@ async fn authed_json_surfaces_announcement_not_found_with_base_path_prefix() {
 }
 
 #[tokio::test]
+async fn authed_json_surfaces_steering_not_available_on_404() {
+    // TAURI-RUST-PNK: the backend read surface never exposed
+    // `/orchestration/v1/steering`, so the 20s sync loop's steering read 404s
+    // every tick (~1.49M events / 1268 users). The 404 must surface a typed
+    // `BackendApiError::SteeringNotAvailable` (so the best-effort caller
+    // degrades) instead of a generic non-2xx that funnels into `report_error`.
+    // Express returns an HTML body for an unregistered route — mirror that so
+    // the classification is proven path-keyed, not body-keyed.
+    let app = Router::new().route(
+        "/orchestration/v1/steering",
+        get(|| async {
+            (
+                axum::http::StatusCode::NOT_FOUND,
+                "<!DOCTYPE html>\n<html><body><pre>Cannot GET /orchestration/v1/steering</pre></body></html>\n",
+            )
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/orchestration/v1/steering", None)
+        .await
+        .unwrap_err();
+    let typed = err.downcast_ref::<BackendApiError>().unwrap();
+    assert!(matches!(typed, BackendApiError::SteeringNotAvailable));
+}
+
+#[tokio::test]
+async fn authed_json_surfaces_steering_not_available_with_base_path_prefix() {
+    // OPENHUMAN-TAURI-R7-style regression: a BACKEND_URL/path override that
+    // makes the resolved path `/api/orchestration/v1/steering` must still
+    // classify as SteeringNotAvailable, not fall through to a generic error.
+    let app = Router::new().route(
+        "/api/orchestration/v1/steering",
+        get(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json(
+            "mock-jwt",
+            Method::GET,
+            "/api/orchestration/v1/steering",
+            None,
+        )
+        .await
+        .unwrap_err();
+    let typed = err.downcast_ref::<BackendApiError>().unwrap();
+    assert!(matches!(typed, BackendApiError::SteeringNotAvailable));
+}
+
+#[tokio::test]
+async fn authed_json_only_classifies_get_steering_as_not_available() {
+    // Defense-in-depth: a 404 on a path that merely EXTENDS the steering route
+    // (e.g. a future `…/steering/history`) must NOT be misclassified as
+    // SteeringNotAvailable — it falls through to the generic path.
+    let app = Router::new().route(
+        "/orchestration/v1/steering/history",
+        get(|| async { (axum::http::StatusCode::NOT_FOUND, "Not Found") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json(
+            "mock-jwt",
+            Method::GET,
+            "/orchestration/v1/steering/history",
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(err.downcast_ref::<BackendApiError>().is_none());
+}
+
+#[tokio::test]
+async fn authed_json_does_not_suppress_steering_500() {
+    // The suppression is scoped to GET+404. A 5xx on the steering path is a
+    // genuine backend/infra failure and must NOT be swallowed as
+    // SteeringNotAvailable — otherwise a real outage would go dark. (A 500 is
+    // not classified as transient-infra by is_transient_http_status_code, so it
+    // reaches the generic reporting path with no typed BackendApiError.)
+    let app = Router::new().route(
+        "/orchestration/v1/steering",
+        get(|| async {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal Server Error",
+            )
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/orchestration/v1/steering", None)
+        .await
+        .unwrap_err();
+    assert!(
+        err.downcast_ref::<BackendApiError>().is_none(),
+        "500 on steering must not be classified as SteeringNotAvailable"
+    );
+}
+
+#[tokio::test]
 async fn authed_json_surfaces_unauthorized_on_401() {
     // OPENHUMAN-TAURI-4K8: 401 on any authed backend endpoint must surface a
     // typed `BackendApiError::Unauthorized` and NOT funnel into `report_error`.
@@ -826,6 +957,47 @@ fn is_announcements_latest_path_rejects_other_paths() {
     assert!(!is_announcements_latest_path("/auth/profile"));
     assert!(!is_announcements_latest_path("/"));
     assert!(!is_announcements_latest_path(""));
+}
+
+#[test]
+fn is_steering_path_matches_canonical_form() {
+    assert!(is_steering_path("/orchestration/v1/steering"));
+}
+
+#[test]
+fn is_steering_path_tolerates_base_path_prefix() {
+    // Same OPENHUMAN-TAURI-R7 reasoning: a BACKEND_URL override with a path
+    // prefix must not defeat the 404 classification.
+    assert!(is_steering_path("/api/orchestration/v1/steering"));
+    assert!(is_steering_path("/v2/api/orchestration/v1/steering"));
+}
+
+#[test]
+fn is_steering_path_trailing_slash() {
+    assert!(is_steering_path("/orchestration/v1/steering/"));
+}
+
+#[test]
+fn is_steering_path_rejects_other_paths() {
+    // Must not swallow the sibling reads or an extended path.
+    assert!(!is_steering_path("/orchestration/v1/steering/history"));
+    assert!(!is_steering_path("/orchestration/v1/sessions"));
+    assert!(!is_steering_path("/orchestration/v1/world-diff"));
+    assert!(!is_steering_path("/orchestration/v1"));
+    assert!(!is_steering_path("/steering"));
+    assert!(!is_steering_path("/"));
+    assert!(!is_steering_path(""));
+}
+
+#[test]
+fn is_steering_path_stays_coupled_to_client_constant() {
+    // Drift guard (TAURI-RUST-PNK): the suppressor's matcher and the client's
+    // request path must agree. If either the `STEERING_PATH` const in
+    // `orchestration::cloud` or `is_steering_path` here is renamed, this fails
+    // CI instead of silently reviving the 1.49M-event Sentry flood.
+    assert!(is_steering_path(
+        crate::openhuman::orchestration::cloud::STEERING_PATH
+    ));
 }
 
 // ── authed_json defense-in-depth: PATCH 404 with base-path prefix ───────────
