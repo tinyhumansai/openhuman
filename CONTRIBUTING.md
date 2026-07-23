@@ -66,8 +66,8 @@ rustup component add rustfmt clippy --toolchain 1.96.1
 
 `whisper-rs-sys` depends on `libclang`. Download the Windows x86_64 release from [github.com/llvm/llvm-project/releases](https://github.com/llvm/llvm-project/releases) (~822 MB). During install, check **"Add LLVM to system PATH for all users"**. If you see a "PATH too long" warning, skip the PATH step and set the environment variable manually:
 
-```
-LIBCLANG_PATH=C:\Program Files\LLVM\bin
+```powershell
+$env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
 ```
 
 **4. CMake**
@@ -216,7 +216,7 @@ The default development port is `1420`. Hyper-V or WSL can reserve ranges that i
 netsh interface ipv4 show excludedportrange protocol=tcp
 ```
 
-If `1420` is excluded or already in use, choose an available port outside the listed ranges. `dev:app:win` applies `OPENHUMAN_DEV_PORT` to both Vite and Tauri, so their URLs remain synchronized:
+If `1420` is excluded or already in use, choose a port `N` such that both `N` and `N + 1` are available and outside the listed ranges; use a value below `65535`. `dev:app:win` applies `OPENHUMAN_DEV_PORT` to both Vite and Tauri, so their URLs remain synchronized:
 
 ```powershell
 $env:OPENHUMAN_DEV_PORT = "14320"
