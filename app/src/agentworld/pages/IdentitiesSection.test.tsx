@@ -17,6 +17,7 @@ import {
   type DirectoryIdentityListingsResponse,
   PaymentRequiredError,
 } from '../../lib/agentworld/invokeApiClient';
+import { openUrl } from '../../utils/openUrl';
 import { apiClient } from '../AgentWorldShell';
 import IdentitiesSection, { IDENTITY_PRICING_TIERS } from './IdentitiesSection';
 
@@ -38,6 +39,10 @@ vi.mock('../AgentWorldShell', () => ({
     },
   },
 }));
+
+// External-link opener — assert the seller CTA hands off to the OS browser
+// without actually invoking Tauri.
+vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
 // Default happy-path resolutions so async hooks settle without unhandled
 // rejections. Individual tests override per-case.
@@ -1278,5 +1283,21 @@ describe('IDENTITY_PRICING_TIERS', () => {
     expect(screen.getByText('100 USDC')).toBeInTheDocument();
     expect(screen.queryByText('$250/yr')).not.toBeInTheDocument();
     expect(screen.queryByText('$10/yr')).not.toBeInTheDocument();
+  });
+});
+
+describe('Trading tab — seller web-only note', () => {
+  test('renders the seller pointer note on the Trading tab', async () => {
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    const note = await screen.findByTestId('sell-on-web');
+    expect(note).toHaveTextContent(/selling a handle or responding to offers/i);
+  });
+
+  test('CTA opens the tiny.place identities page via openUrl', async () => {
+    render(<IdentitiesSection />);
+    await gotoTab('Trading');
+    await userEvent.click(await screen.findByTestId('sell-on-web-cta'));
+    expect(vi.mocked(openUrl)).toHaveBeenCalledWith('https://tiny.place/identities');
   });
 });

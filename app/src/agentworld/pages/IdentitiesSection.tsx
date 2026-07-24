@@ -12,6 +12,11 @@
  *   Offer commitments (signed authorizations — funds move only on acceptance).
  * Money only moves after the user confirms. The read-only data views (Registry
  * listing, floor prices, recent sales) are fully functional.
+ *
+ * Seller-side actions (list a handle for sale, accept / reject an offer/bid)
+ * are intentionally NOT in-app — they are web-only on tiny.place. The backend
+ * exposes no seller routes and the vendored SDK is a buyer-side compatibility
+ * wrapper, so the Trading tab links sellers to the web app instead (#4920).
  */
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
@@ -30,11 +35,19 @@ import {
   type RegistrationChallenge,
   type RegistryWalletBalance,
 } from '../../lib/agentworld/invokeApiClient';
+import { openUrl } from '../../utils/openUrl';
 import { apiClient } from '../AgentWorldShell';
 import { decimalsForAsset, formatAssetAmount } from '../assets';
 import CommitFlow from '../components/CommitFlow';
 import X402ConfirmDialog from '../components/X402ConfirmDialog';
 import { explorerTxUrl as buyExplorerTxUrl, useX402Buy } from '../hooks/useX402Buy';
+
+// Seller-side identity actions (list a handle for sale, accept/reject an offer)
+// are web-only — the tiny.place backend exposes no seller routes and the
+// vendored SDK is a buyer-side compatibility wrapper (see #4920). We point
+// sellers at the web app instead. Hardcoded prod URL, matching the
+// `FUND_PAGE_URL` precedent in X402ConfirmDialog.tsx.
+const SELL_ON_WEB_URL = 'https://tiny.place/identities';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -992,6 +1005,24 @@ function TradingTab() {
             </table>
           )}
         </div>
+      </div>
+
+      {/* Seller-side is web-only (#4920): no in-app list-for-sale / accept-offer
+          path exists, so point sellers at the tiny.place web app. */}
+      <div
+        className="rounded-lg border border-line bg-surface-muted/40 p-3"
+        data-testid="sell-on-web">
+        <p className="text-xs text-content-muted">
+          Selling a handle or responding to offers happens on tiny.place.
+        </p>
+        <Button
+          variant="secondary"
+          size="xs"
+          className="mt-2"
+          onClick={() => void openUrl(SELL_ON_WEB_URL)}
+          data-testid="sell-on-web-cta">
+          Open tiny.place →
+        </Button>
       </div>
     </div>
   );
