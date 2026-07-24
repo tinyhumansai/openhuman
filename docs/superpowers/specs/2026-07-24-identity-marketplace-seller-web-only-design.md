@@ -73,7 +73,7 @@ This resolves #4920 not by building the full seller stack (SDK → core handler 
 
 ## Components & data flow
 
-```
+```text
 Trading tab (IdentitiesSection.tsx)
   └─ SellOnWebNote  ──click──▶  openUrl('https://tiny.place/identities')
                                    └─ tauri-plugin-opener → OS default browser
@@ -88,11 +88,17 @@ http(s) URLs and logs a low-PII telemetry breadcrumb. No new error surface is in
 
 ## Testing
 
-- **Unit (Vitest):** render `TradingTab`, assert the seller note text is present and that
-  clicking the CTA calls the mocked `openUrl` with the expected URL.
+- **Unit (Vitest):** render `TradingTab`, assert the seller note text is present, that the
+  CTA carries the `identities.sellOnWeb` analytics id, and that clicking it calls the mocked
+  `openUrl` with the expected URL.
 - No new Rust behavior → no Rust test changes.
+- **E2E: intentionally skipped.** The affordance is a static info note whose CTA hands off to
+  the OS browser via `openUrl` — there is no cross-process behavior a desktop WDIO E2E could
+  assert beyond the unit tests. Documented as an approved exception to the standard
+  unit-and-E2E expectation for this change.
 
 ## Rollback / risk
 
-Low risk: additive UI note + docstring + one i18n key set. No behavior change to existing
-buy/bid/offer flows. Revert is a clean removal of the note block and the i18n keys.
+Low risk: additive UI note + docstring. No behavior change to existing buy/bid/offer flows,
+and no i18n/locale files touched (strings are hardcoded English, matching the file). Revert
+is a clean removal of the note block plus its docstring note and the two unit tests.

@@ -1286,12 +1286,20 @@ describe('IDENTITY_PRICING_TIERS', () => {
   });
 });
 
+// Unit coverage only, by design: the affordance is a static info note whose
+// CTA hands off to the OS browser via the mocked `openUrl` — there is no
+// cross-process behavior a desktop WDIO E2E could assert that these unit tests
+// do not. E2E is intentionally skipped for this change (#4920).
 describe('Trading tab — seller web-only note', () => {
   test('renders the seller pointer note on the Trading tab', async () => {
     render(<IdentitiesSection />);
     await gotoTab('Trading');
     const note = await screen.findByTestId('sell-on-web');
     expect(note).toHaveTextContent(/selling a handle or responding to offers/i);
+    expect(screen.getByTestId('sell-on-web-cta')).toHaveAttribute(
+      'data-analytics-id',
+      'identities.sellOnWeb'
+    );
   });
 
   test('CTA opens the tiny.place identities page via openUrl', async () => {

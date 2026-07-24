@@ -6,7 +6,7 @@
 
 **Architecture:** Additive UI only. A persistent info note at the bottom of `TradingTab` opens `https://tiny.place/identities` via the existing `openUrl()` helper (mirrors the `X402ConfirmDialog` `/fund` precedent). No SDK, core, or `invokeApiClient` changes — the tiny.place backend has no seller routes. Scoping recorded in two doc comments.
 
-**Tech Stack:** React 18 + TypeScript, Vitest + Testing Library, `@tauri-apps/plugin-opener` (via `app/src/utils/openUrl.ts`), Rust doc comment.
+**Tech Stack:** React 19 + TypeScript, Vitest + Testing Library, `@tauri-apps/plugin-opener` (via `app/src/utils/openUrl.ts`), Rust doc comment.
 
 ## Global Constraints
 
@@ -92,13 +92,13 @@ const SELL_ON_WEB_URL = 'https://tiny.place/identities';
 
 - [ ] **Step 5: Insert the note JSX in `TradingTab`**
 
-In the same file, insert the following block immediately **before** line 996 (`    </div>` that closes the outer `<div className="space-y-4">`), i.e. after the Recent Sales `</div>` at line 995:
+In the same file, insert the following block immediately **before** line 996 (the `</div>` that closes the outer `<div className="space-y-4">`), i.e. after the Recent Sales `</div>` at line 995:
 
 ```tsx
       {/* Seller-side is web-only (#4920): no in-app list-for-sale / accept-offer
           path exists, so point sellers at the tiny.place web app. */}
       <div
-        className="rounded-lg border border-line bg-surface-raised/40 p-3"
+        className="rounded-lg border border-line bg-surface-muted/40 p-3"
         data-testid="sell-on-web">
         <p className="text-xs text-content-muted">
           Selling a handle or responding to offers happens on tiny.place.
@@ -107,6 +107,7 @@ In the same file, insert the following block immediately **before** line 996 (` 
           variant="secondary"
           size="xs"
           className="mt-2"
+          analyticsId="identities.sellOnWeb"
           onClick={() => void openUrl(SELL_ON_WEB_URL)}
           data-testid="sell-on-web-cta">
           Open tiny.place →
@@ -118,7 +119,7 @@ In the same file, insert the following block immediately **before** line 996 (` 
 
 In the header docstring, extend the `Write flows are live x402:` list (ends with the "Money only moves…" sentence, ~line 12-14). Add a paragraph immediately before the closing `*/` (line 15):
 
-```
+```text
  *
  * Seller-side actions (list a handle for sale, accept / reject an offer/bid)
  * are intentionally NOT in-app — they are web-only on tiny.place. The backend
@@ -130,6 +131,8 @@ In the header docstring, extend the `Write flows are live x402:` list (ends with
 
 Run: `pnpm --filter openhuman-app test -- IdentitiesSection --run`
 Expected: PASS — the new `seller web-only` tests pass and the pre-existing IdentitiesSection tests still pass.
+
+**E2E scope (approved exception):** no desktop WDIO E2E is added for this change. The affordance is a static info note whose CTA hands off to the OS browser via `openUrl` — there is no cross-process behavior an E2E could assert beyond the unit tests above. This is a documented exception to the standard unit-and-E2E expectation; the exception is also recorded in the design spec's Testing section and in a comment on the test's `describe` block.
 
 - [ ] **Step 8: Typecheck, lint, and format**
 

@@ -1019,6 +1019,7 @@ function TradingTab() {
           variant="secondary"
           size="xs"
           className="mt-2"
+          analyticsId="identities.sellOnWeb"
           onClick={() => void openUrl(SELL_ON_WEB_URL)}
           data-testid="sell-on-web-cta">
           Open tiny.place →
