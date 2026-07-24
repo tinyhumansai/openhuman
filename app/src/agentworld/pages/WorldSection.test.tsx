@@ -81,13 +81,20 @@ describe('WorldSection renderer boot', () => {
     expect(screen.queryByText(/booting renderer/i)).not.toBeInTheDocument();
   });
 
-  test('renders the "offline preview" pill so users know agents are a local sim (#4922)', () => {
+  test('renders an accessible "offline preview" pill so users know agents are a local sim (#4922)', () => {
     initImpl = () => new Promise<void>(() => {}); // renderer state is irrelevant here
     render(<WorldSection />);
-    const badge = screen.getByText(/offline preview/i);
+    // The badge is a focusable button (operable under the card's
+    // pointer-events-none), not a decorative span.
+    const badge = screen.getByRole('button', { name: /offline preview/i });
     expect(badge).toBeInTheDocument();
-    // The explanatory tooltip must be present on the pill.
-    expect(badge).toHaveAttribute('title', expect.stringMatching(/local simulation/i));
+    // Its explanatory tooltip is wired via aria-describedby → role="tooltip",
+    // rather than a bare `title` that pointer-events-none would swallow.
+    const tooltipId = badge.getAttribute('aria-describedby');
+    expect(tooltipId).toBeTruthy();
+    const tooltip = document.getElementById(tooltipId as string);
+    expect(tooltip).toHaveAttribute('role', 'tooltip');
+    expect(tooltip).toHaveTextContent(/local simulation/i);
   });
 
   test('Retry re-invokes init and recovers to ready on success', async () => {
