@@ -48,63 +48,37 @@ type AsyncState<T> =
   | { status: 'error'; message: string }
   | { status: 'ok'; data: T };
 
-const MARKETPLACE_PAGE_SIZE = 50;
 const MARKETPLACE_TARGET_ACTIVE = 50;
-const MARKETPLACE_MAX_PAGES = 5;
-const FLOOR_PAGE_SIZE = 20;
-const FLOOR_MAX_PAGES = 10;
 
 function isActiveListing(identity: IdentityListing): boolean {
   return identity.status == null || identity.status === 'active';
 }
 
+// Marketplace reads go through the REST endpoints (GET /marketplace/*), NOT the
+// GraphQL `identityListings` field. That field was removed from the tiny.place
+// backend schema, so the old `graphql.identityListings` query now 422s
+// (GRAPHQL_VALIDATION_FAILED: "Cannot query field identityListings"). The REST
+// listings/floor endpoints are the supported read path (they also back Buy/Bid).
+// See tiny.place/#232.
 async function fetchActiveMarketplaceIdentities(): Promise<IdentitiesResponse> {
-  const active: Array<IdentityListing> = [];
-  let lastResponse: IdentitiesResponse | null = null;
-
-  for (
-    let page = 0;
-    page < MARKETPLACE_MAX_PAGES && active.length < MARKETPLACE_TARGET_ACTIVE;
-    page++
-  ) {
-    const response = await apiClient.graphql.identityListings({
-      limit: MARKETPLACE_PAGE_SIZE,
-      offset: page * MARKETPLACE_PAGE_SIZE,
-    });
-    lastResponse = response;
-    const identities = response.identities ?? [];
-    active.push(...identities.filter(isActiveListing));
-    if (identities.length < MARKETPLACE_PAGE_SIZE) {
-      break;
-    }
-  }
-
+  // REST has no offset paging; request a single bounded page of active listings.
+  const response = await apiClient.marketplace.listIdentities({
+    limit: MARKETPLACE_TARGET_ACTIVE,
+    status: 'active',
+  });
+  const active = (response.identities ?? []).filter(isActiveListing);
   return {
-    ...(lastResponse ?? { identities: [] }),
+    ...response,
     identities: active.slice(0, MARKETPLACE_TARGET_ACTIVE),
     count: active.length,
   };
 }
 
 async function fetchActiveFloorPrice(length: number): Promise<IdentityFloor> {
-  for (let page = 0; page < FLOOR_MAX_PAGES; page++) {
-    const response = await apiClient.graphql.identityListings({
-      length,
-      limit: FLOOR_PAGE_SIZE,
-      offset: page * FLOOR_PAGE_SIZE,
-      sortBy: 'price_asc',
-    });
-    const identities = response.identities ?? [];
-    const listing = identities.find(isActiveListing);
-    if (listing) {
-      return { length, price: listing.price };
-    }
-    if (identities.length < FLOOR_PAGE_SIZE) {
-      break;
-    }
-  }
-
-  return { length, price: undefined };
+  // Dedicated floor endpoint — the backend computes the floor per handle length,
+  // so no client-side listing scan / sort is needed.
+  const floor = await apiClient.marketplace.identityFloor(length);
+  return { length, price: floor.price };
 }
 
 // ── Small hooks ───────────────────────────────────────────────────────────────
