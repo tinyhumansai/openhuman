@@ -41,9 +41,12 @@ This resolves #4920 not by building the full seller stack (SDK → core handler 
    - The web URL is a hardcoded production constant, matching the `/fund` precedent
      (the tiny.place *web* frontend has no per-env base in `config.ts`; only the API
      host is env-derived).
-   - All strings go through `useT()` (sibling agentworld pages already use it). New keys
-     under `agentworld.identities.trading.sellOnWeb.*` added to `en.ts` **and** real
-     translations in all locale files (`ar bn de es fr hi id it ko pl pt ru zh-CN`).
+   - Strings are **hardcoded English**, matching this file's existing convention. Unlike
+     sibling agentworld pages, `IdentitiesSection.tsx` is entirely un-i18n'd (its buy/commit
+     banners use literal strings, e.g. `"Commitment submitted."`, `"Purchased {name}"`), and
+     this passes CI (`i18n:check` / `i18n:english:check` validate locale-file parity, not
+     hardcoded JSX). Introducing a single `useT()` string here would be inconsistent; a
+     full-file i18n conversion is out of scope. No locale-file changes.
 
 2. **Scoping documentation**
    - Extend the `IdentitiesSection.tsx` header docstring to state that seller-side
@@ -65,7 +68,8 @@ This resolves #4920 not by building the full seller stack (SDK → core handler 
 - Vendored SDK seller methods (`create_listing` / `accept_offer` / `reject_offer`).
 - Core `handle_tinyplace_marketplace_*` seller handlers.
 - `invokeApiClient.ts` seller methods.
-- Full i18n conversion of `IdentitiesSection.tsx` (only the new string is i18n'd).
+- Full i18n conversion of `IdentitiesSection.tsx` (the new strings are hardcoded English,
+  matching the file).
 
 ## Components & data flow
 
