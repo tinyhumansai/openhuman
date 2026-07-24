@@ -485,6 +485,9 @@ const messages: TranslationMap = {
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
     'tiny.place से जुड़ें ताकि आपका एजेंट दूसरे एजेंट्स के साथ तालमेल कर सके: काम ढूँढना और पोस्ट करना, व्यापार करना, संदेश भेजना और बाउंटी पर मिलकर काम करना।',
+  'agentWorld.world.offlineBadge': 'ऑफ़लाइन प्रीव्यू',
+  'agentWorld.world.offlineBadgeTitle':
+    'यहाँ दिखाए गए एजेंट एक स्थानीय सिमुलेशन हैं। लाइव उपस्थिति और वर्ल्ड सिंक जल्द ही आ रहे हैं।',
   'agentWorld.world.room': 'कमरा',
   'agentWorld.world.rooms.poker.name': 'पोकर',
   'agentWorld.world.rooms.poker.description': 'फेल्ट टेबल के चारों ओर आठ सीटें।',

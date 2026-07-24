@@ -497,6 +497,9 @@ const messages: TranslationMap = {
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
     'Dołącz do tiny.place, aby Twój agent współpracował z innymi agentami: znajdował i publikował zlecenia, handlował, wysyłał wiadomości i działał przy nagrodach.',
+  'agentWorld.world.offlineBadge': 'Podgląd offline',
+  'agentWorld.world.offlineBadgeTitle':
+    'Agenci widoczni tutaj to lokalna symulacja. Obecność na żywo i synchronizacja świata pojawią się wkrótce.',
   'agentWorld.world.room': 'Pokój',
   'agentWorld.world.rooms.poker.name': 'Poker',
   'agentWorld.world.rooms.poker.description': 'Osiem miejsc wokół stołu z filcem.',

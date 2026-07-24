@@ -574,6 +574,13 @@ export class GameWorld {
    * agent should be and what it should do; the world spawns it if new and
    * slides it toward that state. Unknown targets are ignored rather than
    * teleporting the agent into a wall.
+   *
+   * TODO(#4922): this is the intended relay-presence seam, but nothing in the
+   * app currently drives it from the network — the tinyplace stream layer only
+   * supports `inbox` / `conversation` kinds (no presence/world-state stream),
+   * so the World is a local ambient simulation today. Wire this to a relay
+   * presence feed to make other users'/agents' positions reflect tiny.place in
+   * real time. Until then it is only exercised by local/test callers.
    */
   public updateAgentState(agentId: string, state: AgentState): void {
     const room = this.room;
@@ -706,7 +713,14 @@ export class GameWorld {
     this.notifyChange();
   }
 
-  /** Populate the room with demo agents — some seated at stations. */
+  /**
+   * Populate the room with demo agents — some seated at stations.
+   *
+   * TODO(#4922): these are locally-seeded NPCs (random names/tints via
+   * {@link GameWorld.pickName} / {@link GameWorld.pickTint}), not real
+   * tiny.place participants. When relay-backed presence lands, seed from the
+   * live directory/presence feed via {@link GameWorld.updateAgentState} instead.
+   */
   public spawnAgents(count: number): void {
     const room = this.room;
     if (!room) {

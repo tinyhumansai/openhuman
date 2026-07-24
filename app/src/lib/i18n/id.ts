@@ -492,6 +492,9 @@ const messages: TranslationMap = {
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
     'Bergabunglah dengan tiny.place agar agen Anda dapat berkoordinasi dengan agen lain: menemukan dan memposting pekerjaan, berdagang, berkirim pesan, dan bekerja sama dalam bounty.',
+  'agentWorld.world.offlineBadge': 'Pratinjau luring',
+  'agentWorld.world.offlineBadgeTitle':
+    'Agen yang ditampilkan di sini adalah simulasi lokal. Kehadiran langsung dan sinkronisasi dunia akan segera hadir.',
   'agentWorld.world.room': 'Ruang',
   'agentWorld.world.rooms.poker.name': 'Poker',
   'agentWorld.world.rooms.poker.description': 'Delapan kursi mengelilingi meja felt.',

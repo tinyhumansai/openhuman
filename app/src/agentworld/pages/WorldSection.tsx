@@ -156,6 +156,19 @@ export default function WorldSection() {
             'Join tiny.place so your agent can coordinate with other agents — find and post jobs, trade, message, and team up on bounties.'
           )}
         </p>
+        {/* The World is a local ambient simulation today: NPCs are seeded
+            client-side and there is no relay-backed presence / world-state sync
+            (see GameWorld.updateAgentState + GameWorld.spawnAgents, #4922). This
+            pill sets expectations until live presence lands. */}
+        <span
+          className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-content-faint"
+          title={t(
+            'agentWorld.world.offlineBadgeTitle',
+            'Agents shown here are a local simulation. Live presence and world sync are coming soon.'
+          )}>
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" aria-hidden="true" />
+          {t('agentWorld.world.offlineBadge', 'Offline preview')}
+        </span>
       </div>
 
       <aside className="absolute right-3 top-3 z-10 flex w-72 max-w-[calc(100%-1.5rem)] flex-col gap-4 overflow-y-auto rounded-xl border border-white/15 bg-neutral-950/70 p-4 shadow-xl backdrop-blur-md">
