@@ -606,3 +606,56 @@ mod publish_directory_card_tests {
         );
     }
 }
+
+// ── v2 marketplace listings mapping (tiny.place/#232) ─────────────────────────
+//
+// The v2 backend serves identity listings at `GET /marketplace/identities`
+// returning `{ "listings": [...], "count": N }`. The core handler forwards only
+// `limit` and remaps `listings` → `identities` for the renderer. These pin that
+// contract without needing a live backend.
+#[cfg(test)]
+mod marketplace_listings {
+    use crate::openhuman::tinyplace::manifest::{
+        marketplace_listings_query, marketplace_listings_to_identities,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn query_forwards_limit_only() {
+        assert_eq!(
+            marketplace_listings_query(Some(50)),
+            vec![("limit".to_string(), "50".to_string())]
+        );
+    }
+
+    #[test]
+    fn query_is_empty_without_limit() {
+        assert!(marketplace_listings_query(None).is_empty());
+    }
+
+    #[test]
+    fn remaps_listings_key_to_identities() {
+        let v2 = json!({
+            "listings": [
+                { "listingId": "l1", "name": "@alpha", "seller": "seller-x" },
+                { "listingId": "l2", "name": "@beta" }
+            ],
+            "count": 2
+        });
+        assert_eq!(
+            marketplace_listings_to_identities(&v2),
+            json!({ "identities": [
+                { "listingId": "l1", "name": "@alpha", "seller": "seller-x" },
+                { "listingId": "l2", "name": "@beta" }
+            ] })
+        );
+    }
+
+    #[test]
+    fn missing_listings_yields_empty_identities() {
+        assert_eq!(
+            marketplace_listings_to_identities(&json!({ "count": 0 })),
+            json!({ "identities": [] })
+        );
+    }
+}

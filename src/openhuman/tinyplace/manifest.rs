@@ -474,18 +474,50 @@ pub(crate) fn handle_tinyplace_marketplace_list_identities(
 ) -> ControllerFuture {
     Box::pin(async move {
         let limit = params.get("limit").and_then(Value::as_i64);
-        let status = get_opt_str(&params, "status").map(str::to_string);
-        log::debug!("{LOG_PREFIX} marketplace_list_identities limit={limit:?} status={status:?}");
+        log::debug!("{LOG_PREFIX} marketplace_list_identities limit={limit:?}");
         let client = global_state().client().await?;
-        // IdentitiesResponse only derives Deserialize; serialize the inner vec.
-        let result = client
-            .marketplace
-            .list_identities(limit, status.as_deref())
+        // The tiny.place v2 backend moved identity listings from the retired v1
+        // path `GET /marketplace/identity-listings` (now 404 Route Not Found) to
+        // `GET /marketplace/identities`, and renamed the response envelope key
+        // from `identities` to `listings`. The vendored SDK's `list_identities`
+        // still targets the v1 path/shape, so call the v2 route directly via the
+        // raw HTTP client and normalize the key back to `identities` for the
+        // renderer. (`status` has no v2 equivalent — the endpoint browses active
+        // listings and the UI also filters client-side.) See tiny.place/#232.
+        let response: Value = client
+            .http()
+            .get(
+                "/marketplace/identities",
+                &marketplace_listings_query(limit),
+            )
             .await
             .map_err(map_err)?;
-        let identities = to_value(result.identities)?;
-        Ok(serde_json::json!({ "identities": identities }))
+        Ok(marketplace_listings_to_identities(&response))
     })
+}
+
+/// Query string for the tiny.place v2 `GET /marketplace/identities` browse
+/// endpoint. Only `limit` is forwarded; the v2 endpoint browses active listings
+/// and has no `status` parameter.
+pub(crate) fn marketplace_listings_query(limit: Option<i64>) -> Vec<(String, String)> {
+    let mut query = Vec::new();
+    if let Some(limit) = limit {
+        query.push(("limit".to_string(), limit.to_string()));
+    }
+    query
+}
+
+/// Normalize the tiny.place v2 `GET /marketplace/identities` response envelope
+/// (`{ "listings": [...] }`) into the renderer-facing `{ "identities": [...] }`.
+/// The v1 path this replaced returned the array under `identities`; v2 renamed
+/// the key to `listings`. Missing/'null' `listings` normalizes to an empty
+/// array. See tiny.place/#232.
+pub(crate) fn marketplace_listings_to_identities(response: &Value) -> Value {
+    let identities = response
+        .get("listings")
+        .cloned()
+        .unwrap_or_else(|| Value::Array(Vec::new()));
+    serde_json::json!({ "identities": identities })
 }
 
 pub(crate) fn handle_tinyplace_marketplace_list_offers(
