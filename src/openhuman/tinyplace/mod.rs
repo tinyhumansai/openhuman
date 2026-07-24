@@ -24,6 +24,14 @@
 //! access. The seed is derived via the same SLIP-0010 path used for all Solana
 //! signing (`m/44'/501'/0'/0'`); the wallet key becomes the tiny.place identity.
 //! The seed is never logged, persisted, or returned across any IPC boundary.
+//!
+//! ## Marketplace scope (buyer-side only)
+//!
+//! The identity marketplace handlers here are **buyer-side only**: buy a
+//! listing, bid, and make an offer. Seller-side actions — listing a handle for
+//! sale and accepting / rejecting offers — are **web-only on tiny.place** (the
+//! backend exposes no seller routes). The desktop Trading tab links sellers to
+//! the web app instead. See #4920.
 
 pub(crate) mod agent;
 mod agent_tools;
