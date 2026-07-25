@@ -383,7 +383,17 @@ impl Memory for UnifiedMemory {
         category: Option<&MemoryCategory>,
         session_id: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
-        let ns = UnifiedMemory::sanitize_namespace(normalize_namespace(namespace));
+        // Must match the write path's order (`upsert_document` in
+        // documents.rs): redact PII first, sanitize second. Sanitizing first
+        // mangles the punctuation a PII pattern relies on before redaction
+        // ever runs, so the computed namespace silently diverges from the
+        // stored one and documents under it never show up in `list()`.
+        let ns = UnifiedMemory::sanitize_namespace(
+            &crate::openhuman::memory_store::safety::pii::redact_pii(normalize_namespace(
+                namespace,
+            ))
+            .value,
+        );
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT document_id, key, content, category, session_id, updated_at, taint
@@ -562,6 +572,36 @@ mod tests {
         assert_eq!(entries[0].category, MemoryCategory::Daily);
         assert_eq!(entries[0].session_id.as_deref(), Some("session-b"));
         assert!(!entries[0].timestamp.starts_with("idx-"));
+    }
+
+    /// Regression test: `store`/`upsert_document` redact PII from the
+    /// namespace before sanitizing it (e.g. a CPF-shaped namespace like
+    /// `"user/111.444.777-35"` gets its dots replaced only after the CPF
+    /// pattern is redacted). `list()` must derive the same final namespace
+    /// from the same raw input, or documents stored under a PII-shaped
+    /// namespace silently never show up in `list()`.
+    #[tokio::test]
+    async fn list_finds_entries_stored_under_pii_like_namespace() {
+        let (_tmp, mem) = fresh_mem();
+        let raw_namespace = "user/111.444.777-35";
+        mem.store(
+            raw_namespace,
+            "profile",
+            "profile body",
+            MemoryCategory::Core,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let entries = mem.list(Some(raw_namespace), None, None).await.unwrap();
+        assert_eq!(
+            entries.len(),
+            1,
+            "entry stored under a PII-like namespace must be listable via the same raw \
+             namespace, got: {entries:?}"
+        );
+        assert_eq!(entries[0].key, "profile");
     }
 
     #[tokio::test]

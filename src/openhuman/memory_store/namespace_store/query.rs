@@ -9,6 +9,7 @@
 use rusqlite::params;
 use std::collections::{HashMap, HashSet};
 
+use crate::openhuman::memory_store::safety;
 use crate::openhuman::memory_store::types::{
     GraphRelationRecord, MemoryItemKind, NamespaceMemoryHit, NamespaceQueryResult,
     NamespaceRetrievalContext, RetrievalScoreBreakdown,
@@ -151,7 +152,14 @@ impl UnifiedMemory {
         limit: u32,
         exclude_session_id: Option<&str>,
     ) -> Result<Vec<NamespaceMemoryHit>, String> {
-        let ns = Self::sanitize_namespace(namespace);
+        // Must match the write path's exact order (`upsert_document` /
+        // `upsert_document_metadata_only` in documents.rs): redact PII first,
+        // sanitize second. Sanitizing first (the previous bug) replaces the
+        // punctuation a PII pattern relies on (e.g. the dots in a CPF) before
+        // redaction ever runs, so the computed lookup namespace silently
+        // diverges from the stored one and every document under it becomes
+        // unreachable via recall/search (#5164 follow-up).
+        let ns = Self::sanitize_namespace(&safety::pii::redact_pii(namespace).value);
         let exclude_session_id = exclude_session_id
             .map(str::trim)
             .filter(|id| !id.is_empty());

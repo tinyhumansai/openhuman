@@ -87,6 +87,51 @@ async fn query_namespace_uses_graph_signal_for_document_ranking() {
     assert!(results[0].score > 0.5);
 }
 
+/// Regression test: `upsert_document`/`upsert_document_metadata_only` (in
+/// `documents.rs`) redact PII from the namespace *before* sanitizing it —
+/// e.g. `"user/111.444.777-35"` (a CPF-shaped namespace) is redacted to
+/// something like `"user/[REDACTED_PII_CPF]"` and only then punctuation-
+/// sanitized. The recall/query path must derive the exact same stored
+/// namespace from the same raw input, or documents written under a
+/// PII-shaped namespace become permanently unreachable via search despite
+/// having been written successfully.
+#[tokio::test]
+async fn query_namespace_hits_finds_document_stored_under_pii_like_namespace() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    let raw_namespace = "user/111.444.777-35";
+    memory
+        .upsert_document(NamespaceDocumentInput {
+            namespace: raw_namespace.to_string(),
+            key: "profile".to_string(),
+            title: "Profile".to_string(),
+            content: "Customer profile notes about onboarding status.".to_string(),
+            source_type: "doc".to_string(),
+            priority: "medium".to_string(),
+            tags: vec![],
+            metadata: json!({}),
+            category: "core".to_string(),
+            session_id: None,
+            document_id: None,
+            taint: crate::openhuman::memory::MemoryTaint::Internal,
+        })
+        .await
+        .unwrap();
+
+    let hits = memory
+        .query_namespace_hits(raw_namespace, "onboarding status", 5)
+        .await
+        .unwrap();
+    assert_eq!(
+        hits.len(),
+        1,
+        "document written under a PII-like namespace must be reachable via query_namespace_hits \
+         using the same raw namespace, got hits: {hits:?}"
+    );
+    assert_eq!(hits[0].key, "profile");
+}
+
 #[tokio::test]
 async fn query_scores_relation_entities_found_in_document_content() {
     let tmp = TempDir::new().unwrap();
