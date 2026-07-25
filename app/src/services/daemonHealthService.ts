@@ -7,9 +7,11 @@
  * snapshot into `app_state_snapshot`, and `CoreStateProvider` feeds each
  * snapshot's `health` payload here via {@link ingestHealthSnapshot}. That
  * collapses the former separate `health_snapshot` poll into the one app-state
- * poll. This service now owns only the parse + store update + the
- * disconnect-timeout watchdog (no data yet after {@link HEALTH_TIMEOUT_MS} →
- * mark the daemon disconnected).
+ * poll. This service now owns the parse + store update + the disconnect-
+ * timeout watchdog (no data yet after {@link HEALTH_TIMEOUT_MS} → mark the
+ * daemon disconnected) — and, on desktop, a one-shot automatic core restart
+ * when that watchdog fires, so a core that dies mid-session recovers on its
+ * own instead of leaving the user staring at a disconnected status forever.
  */
 import {
   type ComponentHealth,
@@ -18,9 +20,14 @@ import {
   updateHealthSnapshot,
 } from '../features/daemon/store';
 import { getCoreStateSnapshot } from '../lib/coreState/store';
+import { isTauri } from '../utils/tauriCommands/common';
+import { restartCoreProcess } from './coreProcessControl';
 
 export class DaemonHealthService {
   private healthTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  // Guards against overlapping auto-restart attempts if the watchdog fires
+  // again before a prior restart finishes; cleared once that attempt settles.
+  private autoRecoveryInFlight = false;
   // Health now arrives folded into `app_state_snapshot`, which is allowed to run
   // for up to `SNAPSHOT_TIMEOUT_MS` (90s) — first-launch snapshots legitimately
   // take 30–40s. The disconnect watchdog must therefore tolerate one worst-case
@@ -169,7 +176,33 @@ export class DaemonHealthService {
       console.warn('[DaemonHealth] Health timeout reached - setting status to disconnected');
       setDaemonStatus(userId, 'disconnected');
       this.healthTimeoutId = null;
+      void this.attemptAutoRecovery();
     }, this.HEALTH_TIMEOUT_MS);
+  }
+
+  /**
+   * One-shot, desktop-only self-heal for a core that goes quiet mid-session
+   * (crashed, killed, wedged) — the counterpart to BootCheckGate's own
+   * auto-recovery, which only ever runs at startup. Web builds talk to a
+   * core they don't own the lifecycle of, so there is nothing local to
+   * restart there. Not re-entrant: if a restart is already in flight when
+   * the watchdog fires again, this is a no-op rather than a pile-up of
+   * concurrent `restart_core_process` calls.
+   */
+  private async attemptAutoRecovery(): Promise<void> {
+    if (!isTauri() || this.autoRecoveryInFlight) {
+      return;
+    }
+    this.autoRecoveryInFlight = true;
+    console.warn('[DaemonHealth] core disconnected — attempting automatic restart');
+    try {
+      await restartCoreProcess();
+      console.debug('[DaemonHealth] automatic core restart invoked successfully');
+    } catch (error) {
+      console.error('[DaemonHealth] automatic core restart failed:', error);
+    } finally {
+      this.autoRecoveryInFlight = false;
+    }
   }
 
   /**

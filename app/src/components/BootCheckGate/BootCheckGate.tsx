@@ -565,6 +565,64 @@ function ResultScreen({
 }
 
 // ---------------------------------------------------------------------------
+// Desktop generic error screen — one message, one Retry button, nothing
+// else. By the time this renders, the auto-recovery effect above has
+// already tried the same fix a button would have triggered; showing more
+// controls here would just be the runtime picker in disguise.
+// ---------------------------------------------------------------------------
+
+function describeGenericFailure(
+  result: BootCheckResult,
+  t: (key: string, fallback?: string) => string
+): string {
+  if (result.kind === 'match') return '';
+  switch (result.kind) {
+    case 'unreachable':
+      if (result.portConflict) {
+        return result.foreignOwner
+          ? t('bootCheck.portConflictOwner')
+              .replace('{name}', result.foreignOwner.name)
+              .replace('{pid}', String(result.foreignOwner.pid))
+              .trim()
+          : t('bootCheck.portConflictBody');
+      }
+      return result.reason || t('bootCheck.cannotReachDesc');
+    case 'daemonDetected':
+      return t('bootCheck.legacyDescription');
+    case 'outdatedLocal':
+      return t('bootCheck.localNeedsRestartDesc');
+    case 'outdatedCloud':
+      return t('bootCheck.cloudNeedsUpdateDesc');
+    case 'noVersionMethod':
+      return t('bootCheck.versionCheckFailedDesc');
+    default:
+      return t('bootCheck.cannotReachDesc');
+  }
+}
+
+interface GenericErrorScreenProps {
+  result: BootCheckResult;
+  onRetry: () => void;
+  retrying: boolean;
+}
+
+function GenericErrorScreen({ result, onRetry, retrying }: GenericErrorScreenProps) {
+  const { t } = useT();
+  if (result.kind === 'match') return null;
+  return (
+    <Panel>
+      <h2 className="text-xl font-semibold text-content">{t('bootCheck.cannotReach')}</h2>
+      <p className="mt-2 text-sm text-content-secondary">{describeGenericFailure(result, t)}</p>
+      <div className="mt-5 flex justify-end">
+        <Button onClick={onRetry} disabled={retrying} data-testid="generic-retry-btn">
+          {retrying ? t('bootCheck.working') : t('common.retry')}
+        </Button>
+      </div>
+    </Panel>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main gate
 // ---------------------------------------------------------------------------
 
@@ -577,8 +635,15 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
   const dispatch = useAppDispatch();
   const coreMode = useAppSelector(state => state.coreMode.mode);
 
+  // Desktop only ever runs the embedded local core — there is no picker to
+  // show. Web builds can't spawn a local process, so a reachable core's
+  // URL + token remains genuinely required server configuration there (out
+  // of scope for "invisible runtime" — it isn't the runtime, it's where to
+  // find one). The initial phase reflects that split so desktop never even
+  // flashes the picker for one render.
+  const isDesktop = isTauri();
   const [phase, setPhase] = useState<Phase>(() =>
-    coreMode.kind === 'unset' ? 'picker' : 'checking'
+    !isDesktop && coreMode.kind === 'unset' ? 'picker' : 'checking'
   );
   const [result, setResult] = useState<BootCheckResult | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
@@ -586,6 +651,12 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
 
   // Prevent concurrent or stale runs.
   const runningRef = useRef(false);
+  // Auto-select-mode runs once; auto-recovery attempts are capped so a
+  // persistently broken core still surfaces the generic error screen instead
+  // of retrying forever.
+  const autoModeAppliedRef = useRef(false);
+  const autoRecoveryAttemptsRef = useRef(0);
+  const AUTO_RECOVERY_MAX_ATTEMPTS = 2;
 
   // Production transport lives in services/bootCheckService so direct
   // Tauri/RPC imports stay localized there.
@@ -633,6 +704,26 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
       void runCheck(coreMode);
     }
   }, [coreMode, phase, runCheck]);
+
+  // ------------------------------------------------------------------
+  // Desktop: silently commit to local mode instead of ever showing a
+  // picker. Mirrors the same fallback `oauthAuthReadiness.ts` already uses
+  // for OAuth readiness — this just makes the gate itself agree from the
+  // first render instead of racing that fallback.
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (!isDesktop || coreMode.kind !== 'unset' || autoModeAppliedRef.current) {
+      return;
+    }
+    autoModeAppliedRef.current = true;
+    log('[boot-check] gate — desktop: auto-selecting local core mode (no picker shown)');
+    storeRpcUrl('');
+    clearStoredCoreToken();
+    storeCoreMode('local');
+    clearCoreRpcUrlCache();
+    clearCoreRpcTokenCache();
+    dispatch(setCoreMode({ kind: 'local' }));
+  }, [isDesktop, coreMode.kind, dispatch]);
 
   // ------------------------------------------------------------------
   // Picker confirm — dispatches setCoreMode and kicks off check.
@@ -758,6 +849,48 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
   }, [result, actionBusy, coreMode, runCheck]);
 
   // ------------------------------------------------------------------
+  // Desktop: automatically run the same remediation `handleAction` performs
+  // on a button click — daemon cleanup, core restart, port-conflict
+  // recovery — without waiting for the user to press anything. A foreign
+  // (non-OpenHuman) process holding the port is the one case this never
+  // auto-resolves: killing an unrelated process without consent is exactly
+  // the kind of destructive action a human must approve, so that still
+  // waits for an explicit click even on desktop (surfaced within the
+  // generic error screen below). Capped at AUTO_RECOVERY_MAX_ATTEMPTS so a
+  // core that can never come up still resolves to a single visible error
+  // instead of retrying silently forever.
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (!isDesktop || phase !== 'result' || !result || result.kind === 'match') {
+      return;
+    }
+    const isForeignPortConflict = result.kind === 'unreachable' && Boolean(result.foreignOwner);
+    if (isForeignPortConflict) return;
+    if (autoRecoveryAttemptsRef.current >= AUTO_RECOVERY_MAX_ATTEMPTS) return;
+    autoRecoveryAttemptsRef.current += 1;
+    log(
+      '[boot-check] gate — desktop: auto-recovery attempt %d/%d for result=%s',
+      autoRecoveryAttemptsRef.current,
+      AUTO_RECOVERY_MAX_ATTEMPTS,
+      result.kind
+    );
+    void handleAction();
+    // handleAction is intentionally excluded: it changes identity on every
+    // result update (its own deps include `result`), which would re-run this
+    // effect before the attempt counter above ever gets a chance to cap it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDesktop, phase, result]);
+
+  // ------------------------------------------------------------------
+  // Manual retry from the desktop generic error screen — resets the
+  // auto-recovery budget so a fresh cycle gets its own attempts.
+  // ------------------------------------------------------------------
+  const handleManualRetry = useCallback(() => {
+    autoRecoveryAttemptsRef.current = 0;
+    handleRetry();
+  }, [handleRetry]);
+
+  // ------------------------------------------------------------------
   // Force-quit the foreign process holding the port (explicit user consent
   // for the surfaced pid), then re-run the boot check.
   // ------------------------------------------------------------------
@@ -795,8 +928,10 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
   // Render
   // ------------------------------------------------------------------
 
-  // Unset — show picker (even if Redux persisted something; phase reflects truth).
-  if (phase === 'picker' || coreMode.kind === 'unset') {
+  // Unset — show picker. Desktop never reaches this (auto-selected above);
+  // web still needs a real URL + token since there is no local process to
+  // spawn.
+  if (!isDesktop && (phase === 'picker' || coreMode.kind === 'unset')) {
     return (
       <>
         <ModePicker onConfirm={handlePickerConfirm} />
@@ -804,8 +939,9 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
     );
   }
 
-  // Check in flight.
-  if (phase === 'checking') {
+  // Check in flight (also covers the brief tick before desktop's
+  // auto-select effect has dispatched a mode).
+  if (phase === 'checking' || coreMode.kind === 'unset') {
     return <CheckingScreen />;
   }
 
@@ -814,7 +950,20 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
     return <>{children}</>;
   }
 
-  // Non-match result.
+  // Non-match result. Desktop collapses every kind into one generic error
+  // with a single Retry button — auto-recovery above already ran its
+  // attempts by the time this renders. Web keeps the detailed, per-kind
+  // screens (a real choice — which mode, which URL — still exists there).
+  if (isDesktop) {
+    return (
+      <GenericErrorScreen
+        result={result ?? { kind: 'unreachable', reason: 'Unknown error' }}
+        onRetry={handleManualRetry}
+        retrying={actionBusy}
+      />
+    );
+  }
+
   return (
     <>
       <ResultScreen

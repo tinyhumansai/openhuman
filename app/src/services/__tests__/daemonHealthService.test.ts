@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setDaemonStatus, updateHealthSnapshot } from '../../features/daemon/store';
+import { isTauri } from '../../utils/tauriCommands/common';
+import { restartCoreProcess } from '../coreProcessControl';
 import { DaemonHealthService } from '../daemonHealthService';
 
 vi.mock('../../features/daemon/store', () => ({
@@ -12,8 +14,16 @@ vi.mock('../../lib/coreState/store', () => ({
   getCoreStateSnapshot: () => ({ snapshot: { sessionToken: null } }),
 }));
 
+vi.mock('../../utils/tauriCommands/common', () => ({ isTauri: vi.fn(() => false) }));
+
+vi.mock('../coreProcessControl', () => ({
+  restartCoreProcess: vi.fn().mockResolvedValue(undefined),
+}));
+
 const mockedUpdate = vi.mocked(updateHealthSnapshot);
 const mockedSetStatus = vi.mocked(setDaemonStatus);
+const mockedIsTauri = vi.mocked(isTauri);
+const mockedRestartCoreProcess = vi.mocked(restartCoreProcess);
 
 const healthPayload = (overrides: Record<string, unknown> = {}) => ({
   pid: 123,
@@ -28,6 +38,8 @@ describe('DaemonHealthService.ingestHealthSnapshot', () => {
     vi.useFakeTimers();
     mockedUpdate.mockReset();
     mockedSetStatus.mockReset();
+    mockedIsTauri.mockReset().mockReturnValue(false);
+    mockedRestartCoreProcess.mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -122,6 +134,82 @@ describe('DaemonHealthService.ingestHealthSnapshot', () => {
     // Then go quiet past the window → disconnected.
     vi.advanceTimersByTime(120000);
     expect(mockedSetStatus).toHaveBeenCalledWith(expect.any(String), 'disconnected');
+
+    service.cleanup();
+  });
+});
+
+describe('DaemonHealthService — automatic core restart on disconnect', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockedUpdate.mockReset();
+    mockedSetStatus.mockReset();
+    mockedIsTauri.mockReset().mockReturnValue(true);
+    mockedRestartCoreProcess.mockReset().mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('attempts an automatic restart when the watchdog marks the core disconnected on desktop', async () => {
+    const service = new DaemonHealthService();
+    service.ingestHealthSnapshot(healthPayload());
+
+    await vi.advanceTimersByTimeAsync(120000);
+
+    expect(mockedSetStatus).toHaveBeenCalledWith(expect.any(String), 'disconnected');
+    expect(mockedRestartCoreProcess).toHaveBeenCalledTimes(1);
+
+    service.cleanup();
+  });
+
+  it('never attempts a restart on a non-Tauri (web) build', async () => {
+    mockedIsTauri.mockReturnValue(false);
+    const service = new DaemonHealthService();
+    service.ingestHealthSnapshot(healthPayload());
+
+    await vi.advanceTimersByTimeAsync(120000);
+
+    expect(mockedSetStatus).toHaveBeenCalledWith(expect.any(String), 'disconnected');
+    expect(mockedRestartCoreProcess).not.toHaveBeenCalled();
+
+    service.cleanup();
+  });
+
+  it('does not stack a second restart attempt while one is still in flight', async () => {
+    let resolveRestart!: () => void;
+    mockedRestartCoreProcess.mockImplementationOnce(
+      () =>
+        new Promise<void>(resolve => {
+          resolveRestart = resolve;
+        })
+    );
+
+    const service = new DaemonHealthService();
+    service.ingestHealthSnapshot(healthPayload());
+
+    // First disconnect fires the restart, which never resolves within this
+    // window. A second full watchdog window (re-armed by the disconnected
+    // ingest below) must not pile another restart on top of the stuck one.
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(mockedRestartCoreProcess).toHaveBeenCalledTimes(1);
+
+    service.ingestHealthSnapshot(null);
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(mockedRestartCoreProcess).toHaveBeenCalledTimes(1);
+
+    resolveRestart();
+    service.cleanup();
+  });
+
+  it('logs the failure instead of throwing when the automatic restart itself fails', async () => {
+    mockedRestartCoreProcess.mockRejectedValueOnce(new Error('core is gone'));
+    const service = new DaemonHealthService();
+    service.ingestHealthSnapshot(healthPayload());
+
+    await expect(vi.advanceTimersByTimeAsync(120000)).resolves.not.toThrow();
+    expect(mockedRestartCoreProcess).toHaveBeenCalledTimes(1);
 
     service.cleanup();
   });

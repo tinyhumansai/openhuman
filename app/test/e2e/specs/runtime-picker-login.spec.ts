@@ -1,39 +1,37 @@
 // @ts-nocheck
 /**
- * E2E test: Runtime picker → provider login → onboarding/home → logout.
+ * E2E test: invisible desktop runtime → provider login → onboarding/home → logout.
  *
  * Exercises the *first-launch login funnel* end-to-end against the shared
  * mock backend, running on the unified Appium chromium-driver session (CEF
  * over CDP) — the same harness CI uses for Linux in `e2e/docker-compose.yml`.
  *
- *   Phase 1 — Runtime picker (BootCheckGate ModePicker):
- *     1. Reset to Welcome (no auth), then click "Select a Runtime" so
- *        Welcome dispatches `resetCoreMode()` and the BootCheckGate
- *        re-renders the picker.
- *     2. Verify both runtime options ("Run Locally", "Run on the Cloud")
- *        plus the picker heading are present.
- *     3. Cloud branch:
- *          - URL/token inputs appear when cloud is selected.
- *          - Empty URL on Continue → inline URL error.
- *          - Empty token → inline token error.
- *          - Unreachable host on "Test Connection" → unreachable status pill
- *            (no auth backend at 127.0.0.1:1 / picks a closed port).
- *     4. Switch back to Local, click Continue. BootCheckGate runs `runBootCheck`
- *        against the embedded local core (which is already up — the e2e build
- *        seeds `VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE=local`) and we land back
- *        on Welcome with the OAuth provider row visible.
+ * The desktop app has exactly one runtime — the embedded local core —  and
+ * BootCheckGate now commits to it silently instead of ever showing a picker
+ * (see BootCheckGate.tsx). This spec used to drive that picker directly
+ * (cloud URL/token validation, mode switching); that UI no longer exists on
+ * desktop, so Phase 1 here now only asserts its absence. The equivalent
+ * cloud-URL/token validation coverage lives in the web build's own boot-check
+ * picker tests (BootCheckGate.test.tsx's "web (isTauri=false)" describe),
+ * since a real remote-URL/token choice still exists there.
+ *
+ *   Phase 1 — No runtime picker:
+ *     1. Reset to Welcome (no auth) and confirm no "Select a Runtime" button
+ *        or picker heading is ever shown — the app already committed to the
+ *        local core before Welcome rendered.
  *
  *   Phase 2 — Provider login (deep-link bypass simulates the OAuth round-trip):
- *     5. Welcome shows OAuth provider buttons. We don't click them (that opens
+ *     2. Welcome shows OAuth provider buttons. We don't click them (that opens
  *        the system browser), instead we simulate the post-OAuth deep link
  *        callback — exactly the same code path the real providers exercise
  *        when the backend redirects back to `openhuman://auth?token=...&key=auth`.
- *     6. Walk onboarding (if shown) until we reach Home.
- *     7. Verify mock backend recorded the auth/me profile fetch.
+ *     3. Walk onboarding (if shown) until we reach Home.
+ *     4. Verify mock backend recorded the auth/me profile fetch.
  *
  *   Phase 3 — Logout:
- *     8. Logout from Settings.
- *     9. Confirm we're back on Welcome (logged-out state visible).
+ *     5. Logout from Settings.
+ *     6. Confirm we're back on Welcome (logged-out state visible), still with
+ *        no runtime picker in sight.
  *
  * The mock server (scripts/mock-api-*) handles auth + profile + onboarding.
  * Deep links go through `window.__simulateDeepLink` so the spec is safe on
@@ -50,12 +48,10 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
-import { supportsExecuteScript } from '../helpers/platform';
 import { resetApp } from '../helpers/reset-app';
 import {
   logoutViaSettings,
   waitForHomePage,
-  waitForLoggedOutState,
   waitForRequest,
   walkOnboarding,
 } from '../helpers/shared-flows';
@@ -70,68 +66,15 @@ import {
 
 const LOG = '[RuntimePicker]';
 
-/**
- * Click the smallest clickable element whose textContent contains `text`.
- *
- * Picker option tiles have a title + description nested in a single button so
- * the button's textContent is `<title><description>` — strict equality misses.
- * We score by descendant count to prefer the most-specific match (e.g. the
- * Continue button text "Continue" matches several ancestors; we want the
- * <button> itself, not <body>).
- */
-async function clickByTextDom(text: string): Promise<boolean> {
-  if (!supportsExecuteScript()) return false;
-  return browser.execute(t => {
-    const all = Array.from(document.querySelectorAll<HTMLElement>('button, [role="button"], a'));
-    const matches = all.filter(el => (el.textContent ?? '').includes(t));
-    if (matches.length === 0) return false;
-    matches.sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length);
-    const clickable = matches[0];
-    ['mousedown', 'mouseup', 'click'].forEach(type => {
-      clickable.dispatchEvent(
-        new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0 })
-      );
-    });
-    return true;
-  }, text);
+/** Neither the Welcome escape hatch nor the BootCheckGate picker heading exist on desktop. */
+async function assertNoRuntimePicker(): Promise<void> {
+  expect(await textExists('Select a Runtime')).toBe(false);
+  expect(await textExists('Connect to Your Runtime')).toBe(false);
+  expect(await textExists('Run Locally (Recommended)')).toBe(false);
+  expect(await textExists('Run on the Cloud (Complex)')).toBe(false);
 }
 
-/** Set value of a controlled input by selector + dispatch React change. */
-async function fillInput(selector: string, value: string): Promise<boolean> {
-  if (!supportsExecuteScript()) return false;
-  return browser.execute(
-    ({ sel, val }) => {
-      const input = document.querySelector(sel) as HTMLInputElement | null;
-      if (!input) return false;
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype,
-        'value'
-      )?.set;
-      setter?.call(input, val);
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    },
-    { sel: selector, val: value }
-  );
-}
-
-/** Open the BootCheckGate ModePicker by clicking Welcome's "Select a Runtime". */
-async function openRuntimePicker(): Promise<boolean> {
-  // The button text comes from `welcome.selectRuntime` = "Select a Runtime".
-  // We can't disambiguate from the picker heading by text alone, so we trigger
-  // through Welcome's button and then assert *picker-only* markers (the option
-  // tiles) to confirm we landed on the picker phase.
-  const clicked = await clickByTextDom('Select a Runtime');
-  if (!clicked) return false;
-  await browser.pause(1_000);
-  return Boolean(
-    (await waitForText('Run Locally (Recommended)', 8_000).catch(() => false)) ||
-    (await textExists('Run on the Cloud (Complex)'))
-  );
-}
-
-describe('Runtime picker → login → onboarding → home → logout', () => {
+describe('Invisible desktop runtime → login → onboarding → home → logout', () => {
   before(async function beforeSuite() {
     // resetApp + app-ready can take longer than the default 30s per-hook budget.
     this.timeout(90_000);
@@ -153,10 +96,10 @@ describe('Runtime picker → login → onboarding → home → logout', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 1: Runtime picker
+  // Phase 1: no runtime picker anywhere in the normal flow
   // -------------------------------------------------------------------------
 
-  it('app is running and shows Welcome with OAuth providers', async function () {
+  it('app is running and shows Welcome with OAuth providers — no runtime picker', async function () {
     this.timeout(90_000);
     expect(await hasAppChrome()).toBe(true);
     await waitForWindowVisible(20_000);
@@ -164,126 +107,14 @@ describe('Runtime picker → login → onboarding → home → logout', () => {
     await waitForAppReady(15_000);
 
     // Welcome.tsx: "Welcome to OpenHuman" title + at least one provider button.
-    expect(await waitForText('Welcome to OpenHuman', 15_000)).toBeTruthy();
-    expect(await textExists('Select a Runtime')).toBe(true);
-  });
-
-  it('clicking "Select a Runtime" opens the runtime picker with both options', async () => {
-    const opened = await openRuntimePicker();
-    if (!opened) {
+    const welcomeShown = await waitForText('Welcome to OpenHuman', 15_000);
+    if (!welcomeShown) {
       const tree = await dumpAccessibilityTree();
-      console.log(`${LOG} Picker did not open. Tree:\n`, tree.slice(0, 4000));
+      console.log(`${LOG} Welcome not shown. Tree:\n`, tree.slice(0, 4000));
     }
-    expect(opened).toBe(true);
+    expect(welcomeShown).toBeTruthy();
 
-    expect(await textExists('Run Locally (Recommended)')).toBe(true);
-    expect(await textExists('Run on the Cloud (Complex)')).toBe(true);
-  });
-
-  it('cloud option reveals URL + token inputs and validates them', async () => {
-    // Click the cloud tile.
-    const clickedCloud = await clickByTextDom('Run on the Cloud (Complex)');
-    expect(clickedCloud).toBe(true);
-    await browser.pause(500);
-
-    // URL field shows up.
-    expect(await textExists('Runtime URL')).toBe(true);
-    expect(await textExists('Auth Token')).toBe(true);
-
-    // Continue with empty URL → URL error inline.
-    const continueClicked = await clickByTextDom('Continue');
-    expect(continueClicked).toBe(true);
-    await browser.pause(500);
-    expect(await textExists('Please enter a runtime URL.')).toBe(true);
-
-    // Fill URL but leave token empty → token error.
-    const urlOk = await fillInput('input[type="url"]', 'http://127.0.0.1:1/rpc');
-    expect(urlOk).toBe(true);
-    await clickByTextDom('Continue');
-    await browser.pause(500);
-    expect(await textExists("We'll need an auth token to connect.")).toBe(true);
-  });
-
-  it('"Test Connection" against an unreachable host shows the unreachable pill', async function () {
-    this.timeout(60_000);
-    // The ModePicker can re-render back to the runtime *choice cards* between
-    // the sequential `it`s in this suite, dropping the cloud URL/token form the
-    // previous test revealed. Make this test self-contained: if the Auth Token
-    // field isn't showing, re-select Cloud and re-enter the (deliberately
-    // closed-port) URL before filling the token.
-    if (!(await textExists('Auth Token'))) {
-      await clickByTextDom('Run on the Cloud (Complex)');
-      await browser.pause(500);
-    }
-    await fillInput('input[type="url"]', 'http://127.0.0.1:1/rpc');
-    // Token already required; supply something + a deliberately closed port.
-    // The bearer-token field is a `type="text"` input (password-manager-ignored),
-    // not `type="password"`, so match it by its placeholder.
-    const tokenOk = await fillInput(
-      'input[placeholder="The bearer token from your remote runtime"]',
-      'bad-token-e2e'
-    );
-    expect(tokenOk).toBe(true);
-
-    const clicked = await clickByTextDom('Test Connection');
-    expect(clicked).toBe(true);
-
-    // Either "auth failed" (if something happens to respond) or unreachable.
-    // Both prove the test path actually fired. Poll up to 45s — under CI load
-    // chromium-driver/the core's reqwest client can sit on the TCP connect
-    // timeout to the deliberately-closed port well past 20s before the
-    // unreachable pill renders (stays within this.timeout(60_000)).
-    const deadline = Date.now() + 45_000;
-    let saw = false;
-    while (Date.now() < deadline) {
-      if (
-        (await textExists("Couldn't reach it:")) ||
-        (await textExists("That token didn't work. Double-check it and try again."))
-      ) {
-        saw = true;
-        break;
-      }
-      await browser.pause(500);
-    }
-    if (!saw) {
-      const tree = await dumpAccessibilityTree();
-      console.log(`${LOG} No test-connection result. Tree:\n`, tree.slice(0, 4000));
-    }
-    expect(saw).toBe(true);
-  });
-
-  it('switching back to Local and clicking Continue closes the picker', async function () {
-    // Polling up to 25s for picker to close + 15s for logged-out state.
-    this.timeout(60_000);
-    expect(await clickByTextDom('Run Locally (Recommended)')).toBe(true);
-    await browser.pause(500);
-    expect(await clickByTextDom('Continue')).toBe(true);
-
-    // BootCheckGate flips to 'checking' then 'match' against the in-process
-    // local core. Eventually we either land on Welcome (still logged out) or
-    // — if onboarding state leaked — on the onboarding overlay. Either is a
-    // valid post-picker state; we only care that the picker is gone.
-    const deadline = Date.now() + 25_000;
-    let pickerGone = false;
-    while (Date.now() < deadline) {
-      const stillThere =
-        (await textExists('Run Locally (Recommended)')) ||
-        (await textExists('Run on the Cloud (Complex)'));
-      if (!stillThere) {
-        pickerGone = true;
-        break;
-      }
-      await browser.pause(500);
-    }
-    if (!pickerGone) {
-      const tree = await dumpAccessibilityTree();
-      console.log(`${LOG} Picker did not dismiss. Tree:\n`, tree.slice(0, 4000));
-    }
-    expect(pickerGone).toBe(true);
-
-    // We should be back on Welcome (logged-out marker).
-    const back = await waitForLoggedOutState(15_000);
-    expect(back).not.toBeNull();
+    await assertNoRuntimePicker();
   });
 
   // -------------------------------------------------------------------------
@@ -355,17 +186,18 @@ describe('Runtime picker → login → onboarding → home → logout', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 3: Logout returns to Welcome
+  // Phase 3: Logout returns to Welcome, still with no runtime picker
   // -------------------------------------------------------------------------
 
-  it('logout from Settings returns the user to Welcome', async function () {
+  it('logout from Settings returns the user to Welcome with no runtime picker', async function () {
     // Logout navigation + confirmation + wait for Welcome can take > 30s.
     this.timeout(60_000);
     await logoutViaSettings(LOG);
 
     // logoutViaSettings already asserts the logged-out marker; double-check
-    // the Welcome OAuth row reappeared so we know the route reset cleanly.
+    // the Welcome OAuth row reappeared so we know the route reset cleanly,
+    // and that returning to Welcome still never surfaces a runtime picker.
     expect(await waitForText('Welcome to OpenHuman', 15_000)).toBeTruthy();
-    expect(await textExists('Select a Runtime')).toBe(true);
+    await assertNoRuntimePicker();
   });
 });
