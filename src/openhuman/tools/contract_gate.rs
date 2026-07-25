@@ -19,7 +19,7 @@
 //! it on the per-action surface where the model never sees the full schema.
 //!
 //! Scope: this pass gates the per-action Composio surface
-//! ([`super::action_tool::ComposioActionTool`]). Generalising the same gate to
+//! ([`crate::openhuman::composio::action_tool::ComposioActionTool`]). Generalising the same gate to
 //! the `composio_execute` dispatcher, the MCP bridges, and the Workflow
 //! dispatchers — plus resetting the per-turn state on context compaction — is
 //! tracked as follow-up (a shared `ToolMiddleware` at the turn-harness seam is
@@ -36,7 +36,7 @@ use crate::openhuman::integrations::composio::providers::toolkit_from_slug;
 /// Record of which action contracts have already been surfaced to the model,
 /// so the gate blocks a given action at most once per gate instance.
 ///
-/// One [`ContractGate`] is held per [`super::action_tool::ComposioActionTool`]
+/// One [`ContractGate`] is held per [`crate::openhuman::composio::action_tool::ComposioActionTool`]
 /// instance; those tools are constructed fresh per `integrations_agent` spawn
 /// and live for that spawn's tool loop. That loop is a single agent turn in the
 /// common case, so "seen" behaves as per-turn state without any task-local
