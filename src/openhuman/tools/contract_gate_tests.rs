@@ -1,13 +1,32 @@
-//! Unit tests for the Composio contract gate (#4853).
+//! Unit tests for the contract gate (#4853).
 //!
-//! These exercise the gate purely against the process-level live-catalog cache
-//! (seeded via [`seed_live_catalog_cache`]), so no Composio client is built and
-//! no network call is made. Each test uses a unique toolkit slug so the shared
-//! `LIVE_CATALOG_CACHE` can't cross-contaminate between tests.
+//! Hermetic by construction, per target kind: the Composio tests run against the
+//! process-level live-catalog cache (seeded via [`seed_live_catalog_cache`], each
+//! with a unique toolkit slug so the shared `LIVE_CATALOG_CACHE` can't
+//! cross-contaminate); the MCP tests resolve against a synthetic connected-tools
+//! snapshot; the workflow tests read a workflow seeded into a temp workspace. No
+//! client is built and no network call is made anywhere here.
 
-use super::{consult, ContractGate, GateDecision};
+use super::{consult, ContractGate, GateDecision, GateTarget, GatedContract};
 use crate::openhuman::config::Config;
 use crate::openhuman::integrations::composio::catalog::{seed_live_catalog_cache, ToolContract};
+
+/// Consult the gate for a Composio action slug — the shape every test in the
+/// Composio block below uses.
+async fn consult_composio(
+    gate: &ContractGate,
+    config: &Config,
+    slug: &str,
+    args: &serde_json::Value,
+) -> GateDecision {
+    consult(
+        gate,
+        Some(config),
+        &GateTarget::Composio(slug.to_string()),
+        args,
+    )
+    .await
+}
 
 /// Build a full contract for `slug` in `toolkit` with a REQUIRED `query` input
 /// field and a description that spells out the quoting rule — the exact detail
@@ -83,7 +102,7 @@ async fn first_call_surfaces_full_contract_then_retry_proceeds() {
 
     // First call with args that MISS the required `query`: the gate
     // short-circuits execution and hands back the full contract.
-    match consult(&gate, &config, slug, &guessing_args()).await {
+    match consult_composio(&gate, &config, slug, &guessing_args()).await {
         GateDecision::Surface(message) => {
             assert!(message.contains(slug), "contract names the action slug");
             assert!(
@@ -105,7 +124,7 @@ async fn first_call_surfaces_full_contract_then_retry_proceeds() {
     // The retry — now with the contract in context — proceeds to execution.
     assert!(
         matches!(
-            consult(&gate, &config, slug, &guessing_args()).await,
+            consult_composio(&gate, &config, slug, &guessing_args()).await,
             GateDecision::Proceed
         ),
         "retry must proceed once the contract has been surfaced this turn"
@@ -128,7 +147,7 @@ async fn known_toolkit_but_unknown_action_proceeds_without_blocking() {
 
     assert!(
         matches!(
-            consult(&gate, &config, "PARTIALKIT_FETCH_EMAILS", &guessing_args()).await,
+            consult_composio(&gate, &config, "PARTIALKIT_FETCH_EMAILS", &guessing_args()).await,
             GateDecision::Proceed
         ),
         "an action missing from the live catalog must not be gated"
@@ -151,19 +170,19 @@ async fn distinct_actions_are_gated_independently() {
     // Each action (args miss the required `query`) surfaces its own contract
     // exactly once, independently.
     assert!(matches!(
-        consult(&gate, &config, fetch, &guessing_args()).await,
+        consult_composio(&gate, &config, fetch, &guessing_args()).await,
         GateDecision::Surface(_)
     ));
     assert!(matches!(
-        consult(&gate, &config, send, &guessing_args()).await,
+        consult_composio(&gate, &config, send, &guessing_args()).await,
         GateDecision::Surface(_)
     ));
     assert!(matches!(
-        consult(&gate, &config, fetch, &guessing_args()).await,
+        consult_composio(&gate, &config, fetch, &guessing_args()).await,
         GateDecision::Proceed
     ));
     assert!(matches!(
-        consult(&gate, &config, send, &guessing_args()).await,
+        consult_composio(&gate, &config, send, &guessing_args()).await,
         GateDecision::Proceed
     ));
 }
@@ -186,7 +205,7 @@ async fn first_call_with_satisfying_args_proceeds_without_surfacing() {
     let valid = serde_json::json!({ "label_ids": ["INBOX"], "max_results": 1, "verbose": true });
     assert!(
         matches!(
-            consult(&gate, &config, slug, &valid).await,
+            consult_composio(&gate, &config, slug, &valid).await,
             GateDecision::Proceed
         ),
         "a first call whose args already satisfy the contract must execute, not surface"
@@ -207,7 +226,7 @@ async fn satisfied_required_arg_executes_immediately() {
     let valid = serde_json::json!({ "query": "subject:\"quarterly report\"" });
     assert!(
         matches!(
-            consult(&gate, &config, slug, &valid).await,
+            consult_composio(&gate, &config, slug, &valid).await,
             GateDecision::Proceed
         ),
         "a satisfied required arg must proceed on the first call"
@@ -236,7 +255,7 @@ async fn synthetic_connection_id_does_not_bounce_a_valid_call() {
     });
     assert!(
         matches!(
-            consult(&gate, &config, slug, &valid).await,
+            consult_composio(&gate, &config, slug, &valid).await,
             GateDecision::Proceed
         ),
         "a valid call carrying the synthetic connection_id must execute, not surface"
@@ -256,7 +275,7 @@ async fn missing_required_arg_surfaces() {
     let missing = serde_json::json!({ "verbose": true });
     assert!(
         matches!(
-            consult(&gate, &config, slug, &missing).await,
+            consult_composio(&gate, &config, slug, &missing).await,
             GateDecision::Surface(_)
         ),
         "a missing required arg must surface the contract"
@@ -283,7 +302,7 @@ async fn unknown_or_mistyped_args_surface() {
     let invented = serde_json::json!({ "invented_field": 1 });
     assert!(
         matches!(
-            consult(&gate, &config, unknown_slug, &invented).await,
+            consult_composio(&gate, &config, unknown_slug, &invented).await,
             GateDecision::Surface(_)
         ),
         "an unknown/hallucinated key must surface the contract"
@@ -293,7 +312,7 @@ async fn unknown_or_mistyped_args_surface() {
     let mistyped = serde_json::json!({ "max_results": [1, 2, 3] });
     assert!(
         matches!(
-            consult(&gate, &config, mistyped_slug, &mistyped).await,
+            consult_composio(&gate, &config, mistyped_slug, &mistyped).await,
             GateDecision::Surface(_)
         ),
         "a wrong-typed arg must surface the contract"
@@ -324,7 +343,7 @@ async fn fresh_gates_eventually_auto_proceed() {
     // Gates 1-3 each surface the contract (fresh instance, first-time consult).
     for i in 1..=3 {
         let gate = ContractGate::new();
-        let decision = consult(&gate, &config, slug, &guessing_args()).await;
+        let decision = consult_composio(&gate, &config, slug, &guessing_args()).await;
         assert!(
             matches!(decision, GateDecision::Surface(_)),
             "fresh gate {i} must surface the contract (count {i})"
@@ -334,9 +353,284 @@ async fn fresh_gates_eventually_auto_proceed() {
     // Gate 4: auto-proceeds because 3+ fresh instances have already surfaced
     // this contract without any of them executing.
     let gate4 = ContractGate::new();
-    let decision = consult(&gate4, &config, slug, &guessing_args()).await;
+    let decision = consult_composio(&gate4, &config, slug, &guessing_args()).await;
     assert!(
         matches!(decision, GateDecision::Proceed),
         "gate 4 must auto-proceed after 3+ fresh instances surfaced the same slug"
     );
+}
+
+// ── target identity (kind-agnostic, compiled in every configuration) ────────
+
+/// The seen-set and the process-wide consult counter are keyed by
+/// [`GateTarget::key`], so a workflow, an MCP tool, and a Composio action that
+/// happen to share a name must never credit each other's gate.
+#[test]
+fn target_keys_are_namespaced_per_kind() {
+    let composio = GateTarget::Composio("shared".to_string());
+    let mcp = GateTarget::McpRegistry {
+        server: "srv".to_string(),
+        tool: "shared".to_string(),
+    };
+    let workflow = GateTarget::Workflow("shared".to_string());
+
+    let keys = [composio.key(), mcp.key(), workflow.key()];
+    assert_eq!(
+        keys.iter().collect::<std::collections::HashSet<_>>().len(),
+        3,
+        "each kind must own its key namespace, got: {keys:?}"
+    );
+
+    // A Composio slug is case-folded (the model's casing varies, the action
+    // does not); the other kinds address exact ids and must not be folded.
+    assert_eq!(
+        GateTarget::Composio("gmail_fetch".to_string()).key(),
+        GateTarget::Composio("GMAIL_FETCH".to_string()).key()
+    );
+    assert_ne!(
+        GateTarget::Workflow("Triage".to_string()).key(),
+        GateTarget::Workflow("triage".to_string()).key()
+    );
+}
+
+/// A surfaced contract must name the exact call to re-issue. A model told to
+/// "call the action again" after a blocked `run_workflow` has no idea which
+/// tool that means.
+#[test]
+fn surfaced_contract_names_the_call_to_re_issue() {
+    let contract = GatedContract {
+        description: Some("Summarise the inbox.".to_string()),
+        required_args: vec!["mailbox".to_string()],
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": { "mailbox": { "type": "string" } },
+            "required": ["mailbox"]
+        })),
+    };
+
+    let workflow = super::format_contract(&GateTarget::Workflow("triage".to_string()), &contract);
+    assert!(workflow.contains("workflow `triage`"), "got: {workflow}");
+    assert!(workflow.contains("`run_workflow`"), "got: {workflow}");
+    assert!(workflow.contains("Required arguments: mailbox"));
+
+    let mcp = super::format_contract(
+        &GateTarget::McpRegistry {
+            server: "srv".to_string(),
+            tool: "search".to_string(),
+        },
+        &contract,
+    );
+    assert!(
+        mcp.contains("MCP tool `search` on server `srv`"),
+        "got: {mcp}"
+    );
+    assert!(mcp.contains("`mcp_registry_tool_call`"), "got: {mcp}");
+}
+
+/// `connection_id` is injected by OpenHuman onto Composio calls and is absent
+/// from the provider's published schema, so it must not read as an invented
+/// key — but that exemption is Composio's alone. Nothing injects extra keys
+/// onto an MCP or workflow call, so an unknown key there is a real guess.
+#[test]
+fn the_injected_arg_exemption_is_scoped_to_composio() {
+    let contract = GatedContract {
+        description: None,
+        required_args: Vec::new(),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": { "query": { "type": "string" } }
+        })),
+    };
+    let args = serde_json::json!({ "query": "hi", "connection_id": "ca_1" });
+
+    assert!(super::args_satisfy_contract(
+        &args,
+        &contract,
+        GateTarget::Composio("X_Y".to_string()).injected_arg_keys()
+    ));
+    assert!(
+        !super::args_satisfy_contract(
+            &args,
+            &contract,
+            GateTarget::Workflow("w".to_string()).injected_arg_keys()
+        ),
+        "a workflow has no injected keys, so `connection_id` is an unknown arg"
+    );
+}
+
+// ── MCP registry surface ────────────────────────────────────────────────────
+
+/// The remote server publishes a JSON Schema; the gate must read its `required`
+/// array as the required-arg list so a call missing one is surfaced rather than
+/// dispatched into a server-side validation error.
+#[cfg(feature = "mcp")]
+#[test]
+fn an_mcp_contract_is_resolved_from_the_advertised_schema() {
+    use crate::openhuman::mcp::registry::types::McpTool;
+
+    let connected = vec![(
+        "srv".to_string(),
+        "srv".to_string(),
+        McpTool {
+            name: "search".to_string(),
+            description: Some("Search the corpus.".to_string()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "q": { "type": "string" }, "limit": { "type": "integer" } },
+                "required": ["q"]
+            }),
+        },
+    )];
+
+    let contract = super::resolve_mcp_contract(connected.clone(), "srv", "search")
+        .expect("the advertised tool resolves");
+    assert_eq!(contract.required_args, vec!["q".to_string()]);
+    assert_eq!(contract.description.as_deref(), Some("Search the corpus."));
+
+    let injected = GateTarget::McpRegistry {
+        server: "srv".to_string(),
+        tool: "search".to_string(),
+    };
+    // Missing the required `q` → the model guessed → surface.
+    assert!(!super::args_satisfy_contract(
+        &serde_json::json!({ "limit": 5 }),
+        &contract,
+        injected.injected_arg_keys()
+    ));
+    // Conforming args → execute directly, no bounce.
+    assert!(super::args_satisfy_contract(
+        &serde_json::json!({ "q": "rust", "limit": 5 }),
+        &contract,
+        injected.injected_arg_keys()
+    ));
+
+    // A tool on another server, or an unknown tool, resolves to nothing — the
+    // gate then proceeds instead of blocking on a contract it cannot show.
+    assert!(super::resolve_mcp_contract(connected.clone(), "other", "search").is_none());
+    assert!(super::resolve_mcp_contract(connected, "srv", "nope").is_none());
+}
+
+// ── Workflow surface ────────────────────────────────────────────────────────
+
+/// Seed a trusted project-scope workflow with one required and one optional
+/// input, and return a `Config` whose workspace is that temp dir. Inputs are
+/// declared in `skill.toml` (the SKILL.md body is the system prompt), matching
+/// how `load_workflows` reads a workflow directory.
+#[cfg(feature = "skills")]
+fn seed_workflow(ws: &std::path::Path, id: &str) -> Config {
+    let skill_dir = ws.join(".openhuman").join("skills").join(id);
+    std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+    std::fs::write(ws.join(".openhuman").join("trust"), "").expect("trust the workspace");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        format!("---\nname: {id}\ndescription: Summarise the inbox.\n---\n\nSummarise.\n"),
+    )
+    .expect("write SKILL.md");
+    std::fs::write(
+        skill_dir.join("skill.toml"),
+        format!(
+            "id = \"{id}\"\nwhen_to_use = \"Use to triage a mailbox.\"\n\n\
+             [[inputs]]\nname = \"mailbox\"\ndescription = \"Which mailbox to triage.\"\n\
+             required = true\ntype = \"string\"\n\n\
+             [[inputs]]\nname = \"limit\"\ndescription = \"How many threads.\"\n\
+             required = false\ntype = \"integer\"\n"
+        ),
+    )
+    .expect("write skill.toml");
+
+    let mut config = Config::default();
+    config.workspace_dir = ws.to_path_buf();
+    config
+}
+
+/// A `run_workflow` that omits a required input must be handed the workflow's
+/// declared `[[inputs]]` contract — the same treatment a Composio action gets —
+/// and the retry that supplies it must execute.
+#[cfg(feature = "skills")]
+#[tokio::test]
+async fn a_workflow_run_missing_a_required_input_surfaces_the_contract() {
+    let ws = tempfile::tempdir().expect("tempdir");
+    let config = seed_workflow(ws.path(), "triage-inbox");
+    let target = GateTarget::Workflow("triage-inbox".to_string());
+    let gate = ContractGate::new();
+
+    match consult(&gate, Some(&config), &target, &serde_json::json!({})).await {
+        GateDecision::Surface(message) => {
+            assert!(
+                message.contains("workflow `triage-inbox`"),
+                "contract names the workflow, got: {message}"
+            );
+            assert!(
+                message.contains("mailbox"),
+                "contract carries the declared inputs, got: {message}"
+            );
+            assert!(
+                message.contains("Required arguments: mailbox"),
+                "contract lists the required inputs, got: {message}"
+            );
+            assert!(
+                message.contains("`run_workflow`"),
+                "contract names the call to re-issue, got: {message}"
+            );
+        }
+        GateDecision::Proceed => panic!("a run missing a required input must be surfaced"),
+    }
+
+    // Same gate instance, retry with the input supplied: already seen → run.
+    assert!(
+        matches!(
+            consult(
+                &gate,
+                Some(&config),
+                &target,
+                &serde_json::json!({ "mailbox": "INBOX" })
+            )
+            .await,
+            GateDecision::Proceed
+        ),
+        "the retry must execute"
+    );
+}
+
+/// Validate-then-pass on the workflow surface: a first call that already covers
+/// every required input runs immediately. Bouncing it would cost a turn and
+/// teach the model nothing.
+#[cfg(feature = "skills")]
+#[tokio::test]
+async fn a_workflow_run_with_satisfying_inputs_proceeds_without_surfacing() {
+    let ws = tempfile::tempdir().expect("tempdir");
+    let config = seed_workflow(ws.path(), "triage-direct");
+    let gate = ContractGate::new();
+
+    assert!(
+        matches!(
+            consult(
+                &gate,
+                Some(&config),
+                &GateTarget::Workflow("triage-direct".to_string()),
+                &serde_json::json!({ "mailbox": "INBOX", "limit": 5 })
+            )
+            .await,
+            GateDecision::Proceed
+        ),
+        "conforming inputs must dispatch on the first call"
+    );
+}
+
+/// Without a config the gate has no workspace to resolve a workflow against.
+/// It must degrade to "proceed", never block a run it cannot explain.
+#[cfg(feature = "skills")]
+#[tokio::test]
+async fn a_workflow_run_without_a_config_proceeds() {
+    let gate = ContractGate::new();
+    assert!(matches!(
+        consult(
+            &gate,
+            None,
+            &GateTarget::Workflow("anything".to_string()),
+            &serde_json::json!({})
+        )
+        .await,
+        GateDecision::Proceed
+    ));
 }
