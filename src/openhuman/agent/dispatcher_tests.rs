@@ -549,3 +549,48 @@ fn to_provider_messages_drops_pair_with_extra_unsolicited_results() {
         "extra unsolicited tool_call_ids must invalidate the pair, kept: {roles:?}"
     );
 }
+
+// ── contract-gate delivery framing (issue #4853) ─────────────────────────────
+
+/// **KNOWN FAILING — documents a real gap, do not delete to make CI green.**
+///
+/// The contract gate credits a delivered contract as "the model can see this"
+/// by finding its `[contract-gate:…]` marker at **byte 0** of a tool message
+/// and re-hashing the payload that follows. `to_provider_messages` breaks both
+/// halves of that: it wraps every result in `<tool_result id="…">` and prefixes
+/// the batch with a `[Tool results]` banner, emitted as a **user** message.
+///
+/// So on the session and sub-agent paths — which build their history through
+/// this renderer (`session/turn/core.rs:1199`, `subagent_runner/ops/graph.rs:388`)
+/// — presence is never credited. The gate still works (the per-instance
+/// seen-set and the auto-proceed net bound it, so there is no loop and no
+/// regression), but the compaction-safety it grew is inert there: a contract
+/// summarised out of context is not re-delivered, because it was never counted
+/// as present in the first place.
+///
+/// The fix is to carry a `trusted_verbatim` flag on the result and emit a
+/// flagged delivery as its own unframed turn. That flag has to survive
+/// `tinyagents::harness::message::ToolMessage`, which today carries only
+/// `tool_call_id` + `content` — so it needs an upstream crate change first.
+/// This test is the marker for that work: it turns green when the flag lands.
+#[test]
+fn a_contract_delivery_reaches_the_model_unframed() {
+    use crate::openhuman::agent::messages::ToolResultMessage;
+
+    let delivery = "[contract-gate:composio:GMAIL_FETCH_EMAILS]\n\nthe full contract";
+    let history = vec![ConversationMessage::ToolResults(vec![ToolResultMessage {
+        tool_call_id: "call-1".into(),
+        content: delivery.into(),
+    }])];
+
+    let rendered = XmlToolDispatcher.to_provider_messages(&history);
+
+    assert!(
+        rendered
+            .iter()
+            .any(|m| m.content.starts_with("[contract-gate:")),
+        "a gate delivery must reach the model with its marker at byte 0, but the \
+         renderer framed it as: {:?}",
+        rendered.iter().map(|m| &m.content).collect::<Vec<_>>()
+    );
+}
