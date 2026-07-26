@@ -8,16 +8,25 @@ interface WhatsAppMemorySectionProps {
   pollIntervalMs?: number;
 }
 
+// `whatsappListChats` is capped at this page size (no offset/count endpoint
+// exists). When a fetch returns exactly this many rows the true total may be
+// larger, so the count must be presented as a floor ("200+"), never as an
+// exact total — otherwise a user with more chats than this sees the badge
+// silently frozen at this number forever.
+const CHAT_LIST_LIMIT = 200;
+
 export function WhatsAppMemorySection({ pollIntervalMs = 30000 }: WhatsAppMemorySectionProps) {
   const { t } = useT();
   const [chatCount, setChatCount] = useState<number | null>(null);
+  const [chatCountTruncated, setChatCountTruncated] = useState(false);
   const [lastSyncTs, setLastSyncTs] = useState<number | null>(null);
   const [syncing, setSyncing] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const chats = await whatsappListChats({ limit: 200 });
+      const chats = await whatsappListChats({ limit: CHAT_LIST_LIMIT });
       setChatCount(chats.length);
+      setChatCountTruncated(chats.length >= CHAT_LIST_LIMIT);
       const latest = chats.reduce((max, c) => Math.max(max, c.updated_at), 0);
       setLastSyncTs(latest > 0 ? latest : null);
     } catch {
@@ -55,7 +64,7 @@ export function WhatsAppMemorySection({ pollIntervalMs = 30000 }: WhatsAppMemory
           <WhatsAppIcon />
           <span className="text-sm font-semibold text-content">{t('whatsapp.title')}</span>
           <span className="text-xs text-content-muted">
-            {chatCount.toLocaleString()}{' '}
+            {chatCountTruncated ? `${CHAT_LIST_LIMIT}+` : chatCount.toLocaleString()}{' '}
             {chatCount !== 1 ? t('whatsapp.chatsSynced') : t('whatsapp.chatSynced')}
             {lastSyncTs !== null && <> · {relativeTime(lastSyncTs, t)}</>}
           </span>

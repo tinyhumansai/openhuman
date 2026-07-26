@@ -61,6 +61,25 @@ describe('<WhatsAppMemorySection />', () => {
     expect(screen.getByText(/2 chats synced/)).toBeTruthy();
   });
 
+  it('shows "200+" instead of an exact count when the chat list hits the request limit', async () => {
+    mockWhatsappListChats.mockResolvedValueOnce(
+      Array.from({ length: 200 }, (_, i) => makeChat({ chat_id: `c${i}` }))
+    );
+    render(<WhatsAppMemorySection pollIntervalMs={0} />);
+    await waitFor(() => screen.getByTestId('whatsapp-memory-section'));
+    expect(screen.getByText(/^200\+ chats synced/)).toBeTruthy();
+  });
+
+  it('shows an exact count when the chat list is under the request limit', async () => {
+    mockWhatsappListChats.mockResolvedValueOnce(
+      Array.from({ length: 199 }, (_, i) => makeChat({ chat_id: `c${i}` }))
+    );
+    render(<WhatsAppMemorySection pollIntervalMs={0} />);
+    await waitFor(() => screen.getByTestId('whatsapp-memory-section'));
+    expect(screen.getByText(/^199 chats synced/)).toBeTruthy();
+    expect(screen.queryByText(/200\+/)).toBeNull();
+  });
+
   it('renders singular "chat" for exactly 1 chat', async () => {
     mockWhatsappListChats.mockResolvedValueOnce([makeChat()]);
     render(<WhatsAppMemorySection pollIntervalMs={0} />);
