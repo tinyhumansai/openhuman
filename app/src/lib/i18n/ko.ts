@@ -7186,6 +7186,11 @@ const messages: TranslationMap = {
   'mcp.custom.editAria': '{name} 편집',
   'mcp.custom.remove': '삭제',
   'mcp.custom.removeAria': '{name} 삭제',
+  'mcp.custom.removeConfirm.title': '{name}을(를) 삭제할까요?',
+  'mcp.custom.removeConfirm.body':
+    '서버와 여기에 입력한 모든 자격 증명이 영구히 삭제됩니다. 되돌릴 수 없습니다.',
+  'mcp.custom.removeConfirm.cancel': '취소',
+  'mcp.custom.removeConfirm.confirm': '삭제',
   'mcp.custom.transport.local': '로컬',
   'mcp.custom.transport.remote': '원격',
   'mcp.custom.form.addTitle': '커스텀 서버 추가',

@@ -7266,6 +7266,11 @@ const messages: TranslationMap = {
   'mcp.custom.editAria': '{name} সম্পাদনা করুন',
   'mcp.custom.remove': 'সরান',
   'mcp.custom.removeAria': '{name} সরান',
+  'mcp.custom.removeConfirm.title': '{name} সরাবেন?',
+  'mcp.custom.removeConfirm.body':
+    'এটি সার্ভার এবং আপনার দেওয়া সব ক্রেডেনশিয়াল স্থায়ীভাবে মুছে দেবে। এটি ফেরানো যাবে না।',
+  'mcp.custom.removeConfirm.cancel': 'বাতিল',
+  'mcp.custom.removeConfirm.confirm': 'সরান',
   'mcp.custom.transport.local': 'লোকাল',
   'mcp.custom.transport.remote': 'রিমোট',
   'mcp.custom.form.addTitle': 'কাস্টম সার্ভার যোগ করুন',

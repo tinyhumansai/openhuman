@@ -7304,6 +7304,11 @@ const messages: TranslationMap = {
   'mcp.custom.editAria': 'Ubah {name}',
   'mcp.custom.remove': 'Hapus',
   'mcp.custom.removeAria': 'Hapus {name}',
+  'mcp.custom.removeConfirm.title': 'Hapus {name}?',
+  'mcp.custom.removeConfirm.body':
+    'Ini menghapus server beserta semua kredensial yang Anda masukkan secara permanen. Tindakan ini tidak dapat dibatalkan.',
+  'mcp.custom.removeConfirm.cancel': 'Batal',
+  'mcp.custom.removeConfirm.confirm': 'Hapus',
   'mcp.custom.transport.local': 'Lokal',
   'mcp.custom.transport.remote': 'Jarak jauh',
   'mcp.custom.form.addTitle': 'Tambahkan server kustom',

@@ -299,6 +299,12 @@ const ConnectAuthModal = ({ server, onClose, onConnected }: ConnectAuthModalProp
           const mine = statuses.find(s => s.server_id === server.server_id);
           if (mine?.status === 'connected') {
             const result = await mcpClientsApi.connect(server.server_id);
+            // Cancel can land during this connect round-trip, which is the one
+            // await in the loop long enough for the user to reach the button.
+            // `cancelOAuthWait` has already closed the modal by then, so
+            // completing here would reconnect the server in the parent's state
+            // behind the user's back and call `onClose` a second time.
+            if (oauthCancelled.current) return;
             onConnected(result.tools ?? []);
             onClose();
             return;

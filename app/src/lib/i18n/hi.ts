@@ -7265,6 +7265,11 @@ const messages: TranslationMap = {
   'mcp.custom.editAria': '{name} संपादित करें',
   'mcp.custom.remove': 'हटाएं',
   'mcp.custom.removeAria': '{name} हटाएं',
+  'mcp.custom.removeConfirm.title': '{name} को हटाएँ?',
+  'mcp.custom.removeConfirm.body':
+    'इससे सर्वर और उसके लिए दर्ज किए गए सभी क्रेडेंशियल हमेशा के लिए मिट जाएँगे. इसे वापस नहीं लाया जा सकता.',
+  'mcp.custom.removeConfirm.cancel': 'रद्द करें',
+  'mcp.custom.removeConfirm.confirm': 'हटाएँ',
   'mcp.custom.transport.local': 'लोकल',
   'mcp.custom.transport.remote': 'रिमोट',
   'mcp.custom.form.addTitle': 'कस्टम सर्वर जोड़ें',

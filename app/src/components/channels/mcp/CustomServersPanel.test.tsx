@@ -122,17 +122,47 @@ describe('CustomServersPanel', () => {
     expect(onSelectServer).toHaveBeenCalledWith('srv-1');
   });
 
-  it('removes a server and refreshes', async () => {
+  it('removes a server and refreshes, once confirmed', async () => {
     const { onChanged } = renderPanel([server()]);
     fireEvent.click(screen.getByRole('button', { name: 'Remove My Server' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(mockUninstall).toHaveBeenCalledWith('srv-1'));
     expect(onChanged).toHaveBeenCalled();
+  });
+
+  // Removal permanently drops the server's stored env values and OAuth bundle —
+  // secrets the user typed by hand and cannot recover — so a single misclick on
+  // a row button must not be enough to destroy them.
+  it('asks before removing rather than deleting on the first click', () => {
+    renderPanel([server()]);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove My Server' }));
+    expect(mockUninstall).not.toHaveBeenCalled();
+    const dialog = screen.getByTestId('mcp-custom-remove-confirm');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveTextContent('Remove My Server?');
+  });
+
+  it('leaves the server installed when the confirmation is cancelled', () => {
+    renderPanel([server()]);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove My Server' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByTestId('mcp-custom-remove-confirm')).toBeNull();
+    expect(mockUninstall).not.toHaveBeenCalled();
+  });
+
+  it('dismisses the confirmation on Escape without removing', () => {
+    renderPanel([server()]);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove My Server' }));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByTestId('mcp-custom-remove-confirm')).toBeNull();
+    expect(mockUninstall).not.toHaveBeenCalled();
   });
 
   it('surfaces a remove failure instead of silently doing nothing', async () => {
     mockUninstall.mockRejectedValue(new Error('server is busy'));
     renderPanel([server()]);
     fireEvent.click(screen.getByRole('button', { name: 'Remove My Server' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('server is busy');
   });
 

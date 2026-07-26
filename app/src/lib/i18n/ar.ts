@@ -7105,6 +7105,11 @@ const messages: TranslationMap = {
   'mcp.custom.editAria': 'تحرير {name}',
   'mcp.custom.remove': 'إزالة',
   'mcp.custom.removeAria': 'إزالة {name}',
+  'mcp.custom.removeConfirm.title': 'إزالة {name}؟',
+  'mcp.custom.removeConfirm.body':
+    'سيؤدي هذا إلى حذف الخادم وجميع بيانات الاعتماد التي أدخلتها نهائيًا. لا يمكن التراجع عن ذلك.',
+  'mcp.custom.removeConfirm.cancel': 'إلغاء',
+  'mcp.custom.removeConfirm.confirm': 'إزالة',
   'mcp.custom.transport.local': 'محلي',
   'mcp.custom.transport.remote': 'بعيد',
   'mcp.custom.form.addTitle': 'إضافة خادم مخصص',

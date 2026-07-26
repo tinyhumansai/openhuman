@@ -280,6 +280,48 @@ describe('ConnectAuthModal', () => {
     expect(onConnected).not.toHaveBeenCalled();
   });
 
+  it('does not connect behind the user when Cancel lands during the final connect', async () => {
+    // Regression: the poll's other awaits each re-check the cancel flag, but the
+    // `connect` call in the connected branch did not. That RPC is the one await
+    // long enough for the user to reach Cancel, so a cancel there still fired
+    // `onConnected` on a parent that had already dismissed the modal — silently
+    // reconnecting the server the user just backed out of.
+    mockDetectAuth.mockResolvedValue({ kind: 'oauth', grant_types: ['authorization_code'] });
+    mockOauthBegin.mockResolvedValue('https://auth.example/authorize');
+    mockOpenUrl.mockResolvedValue(undefined);
+    // The browser leg finished, so the very first poll takes the connected branch.
+    mockStatus.mockResolvedValue([{ server_id: 'srv-1', status: 'connected', tool_count: 2 }]);
+    // Hold `connect` open so Cancel can land while it is in flight.
+    let resolveConnect: (v: { tools: unknown[] }) => void = () => {};
+    mockConnect.mockReturnValue(
+      new Promise<{ tools: unknown[] }>(resolve => {
+        resolveConnect = resolve;
+      })
+    );
+    const onClose = vi.fn();
+    const onConnected = vi.fn();
+    render(<ConnectAuthModal server={BASE_SERVER} onClose={onClose} onConnected={onConnected} />);
+
+    const signIn = await screen.findByRole('button', { name: 'Sign in with browser' });
+    await act(async () => {
+      fireEvent.click(signIn);
+    });
+    await waitFor(() => expect(mockConnect).toHaveBeenCalledWith('srv-1'));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: en['common.cancel'] }));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    // The in-flight connect now resolves. The user already cancelled, so it must
+    // not report a connection or close a second time.
+    await act(async () => {
+      resolveConnect({ tools: [] });
+    });
+    expect(onConnected).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('closes via the Cancel button', async () => {
     const onClose = vi.fn();
     render(<ConnectAuthModal server={BASE_SERVER} onClose={onClose} onConnected={() => {}} />);

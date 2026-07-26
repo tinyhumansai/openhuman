@@ -7418,6 +7418,11 @@ const messages: TranslationMap = {
   'mcp.custom.editAria': 'Editar {name}',
   'mcp.custom.remove': 'Quitar',
   'mcp.custom.removeAria': 'Quitar {name}',
+  'mcp.custom.removeConfirm.title': '¿Quitar {name}?',
+  'mcp.custom.removeConfirm.body':
+    'Esto elimina de forma permanente el servidor y todas las credenciales que introdujiste. No se puede deshacer.',
+  'mcp.custom.removeConfirm.cancel': 'Cancelar',
+  'mcp.custom.removeConfirm.confirm': 'Quitar',
   'mcp.custom.transport.local': 'Local',
   'mcp.custom.transport.remote': 'Remoto',
   'mcp.custom.form.addTitle': 'Añadir un servidor personalizado',

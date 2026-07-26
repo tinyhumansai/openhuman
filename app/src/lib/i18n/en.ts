@@ -7591,6 +7591,11 @@ const en: TranslationMap = {
   'mcp.custom.editAria': 'Edit {name}',
   'mcp.custom.remove': 'Remove',
   'mcp.custom.removeAria': 'Remove {name}',
+  'mcp.custom.removeConfirm.title': 'Remove {name}?',
+  'mcp.custom.removeConfirm.body':
+    'This permanently deletes the server and every credential you entered for it. It cannot be undone.',
+  'mcp.custom.removeConfirm.cancel': 'Cancel',
+  'mcp.custom.removeConfirm.confirm': 'Remove',
   'mcp.custom.transport.local': 'Local',
   'mcp.custom.transport.remote': 'Remote',
   'mcp.custom.form.addTitle': 'Add a custom server',
