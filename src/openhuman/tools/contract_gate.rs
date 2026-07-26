@@ -65,6 +65,25 @@
 //! packs several comma-separated slugs when one message describes several
 //! targets, keeping the single-marker-at-the-start layout intact.
 //!
+//! ## Why this cannot become a re-delivery loop
+//!
+//! A presence check that answers "absent" costs a re-delivery, so the mechanism
+//! is only safe if it is guaranteed to eventually answer "present". Two
+//! properties give that, and both are load-bearing:
+//!
+//! 1. **A hash miss skips that message; it never rejects the target**
+//!    ([`credit_marker`]). The scan accumulates over the whole transcript, so a
+//!    lookalike — a tool echoing the syntax, a stale copy since rewritten —
+//!    contributes nothing rather than vetoing a genuine copy elsewhere.
+//! 2. **Delivery overwrites the recorded hash** ([`record_delivered`]). Every
+//!    delivery records the hash of the exact bytes it emits, so the newest
+//!    delivery is always creditable — the next rescan finds it intact and the
+//!    retry runs.
+//!
+//! Together: whatever the transcript already holds, the delivery the gate just
+//! made will be credited on the next model call, so a target can be re-delivered
+//! at most once per compaction rather than on every call.
+//!
 //! Lives under `openhuman/tools/` rather than in any one domain because it is
 //! consulted from `composio/`, `mcp_registry/`, and `agent/tools/` alike.
 
@@ -134,7 +153,26 @@ pub struct ContractGate {
 static DELIVERED: LazyLock<Mutex<HashMap<String, u64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Record `hash` as the creditable payload for `slug_list`.
+/// Record `hash` as the creditable payload for `slug_list`, **overwriting** any
+/// hash previously recorded for it.
+///
+/// The overwrite is deliberate, and it is the second half of the loop-breaking
+/// argument (the first being that a hash miss never rejects a target — see
+/// [`credit_marker`]). Every delivery records the hash of the exact bytes it is
+/// about to emit, so **the most recent delivery is always creditable**: the next
+/// [`refresh_present`] finds it intact in the transcript, credits the slug, and
+/// the retry runs. Termination therefore does not depend on any earlier copy
+/// surviving.
+///
+/// Keeping the first hash instead would be the bug: if the contract text ever
+/// differed between deliveries — the provider republished the schema, or a
+/// discovery listing recorded a different rendering first — the newly delivered
+/// payload would hash to a value that was never recorded, so it could never be
+/// credited, and the gate would re-deliver it on every single call forever.
+///
+/// The cost of overwriting is that an older copy still sitting in the transcript
+/// stops matching. That is harmless: it only forfeits crediting from a stale
+/// copy, and the fresh delivery right next to it credits instead.
 fn record_delivered(slug_list: String, hash: u64) {
     if let Ok(mut delivered) = DELIVERED.lock() {
         delivered.insert(slug_list, hash);

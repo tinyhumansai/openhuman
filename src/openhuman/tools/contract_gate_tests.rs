@@ -738,3 +738,37 @@ fn a_marker_that_does_not_lead_the_message_is_ignored() {
         "a marker not at byte 0 must not credit"
     );
 }
+
+/// Delivery overwrites the recorded hash, and that is what makes the mechanism
+/// terminate. If the recorded hash were kept from the FIRST delivery, a second
+/// delivery whose contract text differs — the provider republished the schema,
+/// or a discovery listing recorded a different rendering first — would hash to a
+/// value never recorded, could never be credited, and the gate would re-deliver
+/// it on every single call forever.
+#[test]
+fn a_re_delivery_is_immediately_creditable_even_when_the_contract_changed() {
+    let key = "composio:REDELIVERKIT_FETCH".to_string();
+    let (first, _) = super::seed_delivery(&key, "the original contract body");
+    assert!(super::credited_slugs([first.clone()]).contains(&key));
+
+    // The contract text changed and is delivered again.
+    let (second, _) = super::seed_delivery(&key, "a revised contract body");
+    assert_ne!(first, second, "the two deliveries differ");
+
+    assert!(
+        super::credited_slugs([second.clone()]).contains(&key),
+        "the newest delivery must be creditable at once — otherwise the gate \
+         re-delivers forever"
+    );
+    assert!(
+        !super::credited_slugs([first]).contains(&key),
+        "the superseded copy stops matching, which is the accepted cost"
+    );
+
+    // And with both still in the transcript, the fresh one carries it.
+    assert!(super::credited_slugs([
+        "[contract-gate:composio:REDELIVERKIT_FETCH]\n\nstale".to_string(),
+        second,
+    ])
+    .contains(&key));
+}
