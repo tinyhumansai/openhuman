@@ -634,3 +634,107 @@ async fn a_workflow_run_without_a_config_proceeds() {
         GateDecision::Proceed
     ));
 }
+
+// ── transcript presence ─────────────────────────────────────────────────────
+
+/// A delivered contract is creditable only while its payload survives
+/// byte-for-byte. Reformatting it — a summarizer, a size cap, the sub-agent
+/// handoff's whitespace collapse — must drop it back to absent so the gate
+/// re-delivers, rather than let the model call a tool whose schema it can no
+/// longer read.
+#[test]
+fn a_rewritten_payload_stops_counting_as_present() {
+    let key = "composio:PRESENCEKIT_FETCH".to_string();
+    let (delivered, _) = super::seed_delivery(&key, "the full contract body");
+
+    assert!(
+        super::credited_slugs([delivered.clone()]).contains(&key),
+        "the delivery as-sent must credit its slug"
+    );
+
+    // Same marker, payload whitespace-collapsed the way the handoff cleaner
+    // rewrites it. The hash no longer matches, so it must not credit.
+    let mangled = delivered.replace("\n\n", " ");
+    assert!(
+        !super::credited_slugs([mangled]).contains(&key),
+        "a rewritten payload must not be credited"
+    );
+}
+
+/// A message that merely *looks* like a delivery must not be able to veto a
+/// genuine one. If the scan treated the first hash miss as "this target is
+/// absent" and stopped, one lookalike anywhere in the transcript would make the
+/// contract permanently un-creditable and the gate would re-deliver it on every
+/// single call — an infinite retry loop.
+#[test]
+fn a_lookalike_marker_cannot_suppress_a_genuine_delivery() {
+    let key = "composio:LOOKALIKEKIT_FETCH".to_string();
+    let (delivered, slug_list) = super::seed_delivery(&key, "the full contract body");
+
+    // Same slug list, wrong payload: a tool echoing the marker syntax, or a
+    // stale copy from an earlier delivery.
+    let lookalike = format!("[contract-gate:{slug_list}]\n\nnot the contract that was delivered");
+    assert!(
+        !super::credited_slugs([lookalike.clone()]).contains(&key),
+        "the lookalike alone must not credit"
+    );
+
+    // Scanned together, in either order, the genuine copy still credits.
+    for (label, texts) in [
+        (
+            "lookalike first",
+            vec![lookalike.clone(), delivered.clone()],
+        ),
+        ("genuine first", vec![delivered.clone(), lookalike.clone()]),
+    ] {
+        assert!(
+            super::credited_slugs(texts).contains(&key),
+            "{label}: a genuine delivery must still credit past a lookalike"
+        );
+    }
+}
+
+/// One marker can carry several slugs (a full-schema discovery listing that
+/// described many targets), and crediting it must credit every one of them —
+/// that is what lets a `describe_workflow` / `*_list_tools` before the real call
+/// skip a redundant re-delivery.
+#[test]
+fn a_multi_slug_marker_credits_every_slug_it_names() {
+    let body = "two full contracts";
+    let marked = super::prefix_with_present_marker(
+        [
+            "workflow:beta".to_string(),
+            "workflow:alpha".to_string(),
+            // Duplicated + empty entries must not corrupt the list.
+            "workflow:alpha".to_string(),
+            String::new(),
+        ],
+        body,
+    );
+
+    // Slugs are sorted and de-duplicated, and the marker still leads the message
+    // so the fixed-prefix scan finds it at byte 0.
+    assert!(
+        marked.starts_with("[contract-gate:workflow:alpha,workflow:beta]"),
+        "got: {marked}"
+    );
+    assert!(marked.contains(body), "the body still follows the marker");
+
+    let credited = super::credited_slugs([marked]);
+    assert!(credited.contains("workflow:alpha"));
+    assert!(credited.contains("workflow:beta"));
+}
+
+/// Presence is decided by a fixed-prefix compare at byte 0, so a marker the
+/// model quotes mid-sentence cannot claim a contract is in context.
+#[test]
+fn a_marker_that_does_not_lead_the_message_is_ignored() {
+    let key = "composio:PREFIXKIT_FETCH".to_string();
+    let (delivered, _) = super::seed_delivery(&key, "the full contract body");
+
+    let quoted = format!("Here is what I saw earlier: {delivered}");
+    assert!(
+        !super::credited_slugs([quoted]).contains(&key),
+        "a marker not at byte 0 must not credit"
+    );
+}

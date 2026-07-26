@@ -200,6 +200,10 @@ flate2 = "1"
 # against a broken shim on PATH hanging the bootstrap forever.
 wait-timeout = "0.2"
 uuid = { version = "1", features = ["v4"] }
+# Fast, stable, non-cryptographic fingerprint of a delivered tool contract's
+# payload, so the contract gate can tell a byte-identical transcript copy from
+# one a summarizer / size cap / whitespace cleaner rewrote (#4853).
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 anyhow = "1.0"
 async-trait = "0.1"
 chacha20poly1305 = "0.10"

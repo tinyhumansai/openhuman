@@ -33,6 +33,23 @@ macro_rules! emit {
     }};
 }
 
+/// Gate presence keys for every tool named in a `mcp_registry_list_tools`
+/// payload, so the marker credits exactly what a later `mcp_registry_tool_call`
+/// gates on.
+fn mcp_list_tools_keys(server: &str, value: &serde_json::Value) -> Vec<String> {
+    value
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(|t| t.get("name").and_then(Value::as_str))
+                .map(|name| contract_gate::mcp_key(server, name))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn req_str(args: &serde_json::Value, key: &str) -> anyhow::Result<String> {
     args.get(key)
         .and_then(Value::as_str)
@@ -217,10 +234,20 @@ impl Tool for McpRegistryListToolsTool {
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let sid = req_str(&args, "server_id")?;
-        emit!(
-            ops::mcp_clients_list_tools(sid).await,
-            "mcp_registry_list_tools"
-        )
+        let outcome = ops::mcp_clients_list_tools(sid.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("mcp_registry_list_tools: {}", e))?;
+        let body = serde_json::to_string(&outcome.value)?;
+        // This listing carries each tool's FULL input schema — the same contract
+        // the gate would deliver — so pre-credit every (server, tool) it
+        // described: a `mcp_registry_tool_call` right after pays no redundant
+        // re-delivery. One marker leads the message, so the gate's fixed-prefix
+        // scan still finds it at byte 0 (issue #4853).
+        let body = contract_gate::prefix_with_present_marker(
+            mcp_list_tools_keys(&sid, &outcome.value),
+            &body,
+        );
+        Ok(ToolResult::success(body))
     }
     fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
         true

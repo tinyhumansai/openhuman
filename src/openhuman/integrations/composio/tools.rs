@@ -1230,9 +1230,26 @@ impl Tool for ComposioListToolsTool {
                     }
                 }
 
-                let mut result = ToolResult::success(
-                    serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
-                );
+                let json = serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into());
+                // Pre-credit the contract gate ONLY when the model will actually
+                // read the full JSON schemas (i.e. NOT the thin markdown path):
+                // then a `composio_execute` for any listed slug skips a redundant
+                // contract re-delivery. Under `prefer_markdown` the model reads
+                // the compact rendering (schemas dropped), which is exactly the
+                // thin listing the gate guards against — crediting it would mark
+                // a contract the model never saw as present. Marker leads for the
+                // fixed-prefix scan (issue #4853).
+                let content = if options.prefer_markdown {
+                    json
+                } else {
+                    contract_gate::prefix_with_present_marker(
+                        resp.tools
+                            .iter()
+                            .map(|t| contract_gate::composio_key(&t.function.name)),
+                        &json,
+                    )
+                };
+                let mut result = ToolResult::success(content);
                 if options.prefer_markdown {
                     result.markdown_formatted = Some(render_tools_markdown(&resp));
                 }

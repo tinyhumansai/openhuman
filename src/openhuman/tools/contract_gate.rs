@@ -30,18 +30,46 @@
 //! - **Validate-then-pass** (#5119): a first call whose args already conform to
 //!   the resolved contract executes directly — the model did not need the
 //!   schema, so bouncing it would be pure overhead.
-//! - **Auto-proceed safety net** (#5119): a process-wide counter breaks the
+//! - **Auto-proceed safety net** (#5119): a per-turn counter breaks the
 //!   re-delegation loop where each fresh sub-agent spawn builds a fresh gate.
 //!
 //! Both apply uniformly to every target kind, so a workflow or MCP call is
 //! gated on exactly the terms a Composio action already is.
 //!
+//! ## Presence is read from the transcript, and survives any rewrite
+//!
+//! "Already surfaced" is only useful while the contract is still in front of the
+//! model. Summarisation, microcompact tool-body blanking, hard trimming, and
+//! result-size caps can all drop or rewrite a delivered contract mid-turn; a
+//! gate that kept counting it as seen would let the model call the tool with a
+//! schema it can no longer read — the exact failure this gate exists to prevent.
+//!
+//! So presence is **derived from the transcript**, not tracked as tool state.
+//! Each delivered contract leads with a `[contract-gate:<slug list>]` marker and
+//! its payload's hash is recorded in [`DELIVERED`]. Before every model call
+//! [`refresh_present`] rescans the tool messages, re-hashes each marker's
+//! payload, and credits the slugs **only on an exact match**. That is correct
+//! across every context-management path by construction:
+//!
+//! - a contract still present byte-for-byte (including in a resumed sub-agent's
+//!   history) hashes equal → present, no redundant re-delivery;
+//! - one summarised, blanked, truncated, or whitespace-collapsed no longer
+//!   hashes equal → absent → re-delivered once.
+//!
+//! Recognition is a **fixed-prefix compare at byte 0**, never a substring
+//! search: the marker leads the message, so the rescan is one `strip_prefix` per
+//! tool message rather than a scan of the whole transcript, and a model echoing
+//! the marker mid-text cannot spoof presence. Only tool-role messages are
+//! scanned. The marker itself carries slugs only — short and whitespace-free, so
+//! it survives the reformatters that the payload hash is there to detect — and
+//! packs several comma-separated slugs when one message describes several
+//! targets, keeping the single-marker-at-the-start layout intact.
+//!
 //! Lives under `openhuman/tools/` rather than in any one domain because it is
 //! consulted from `composio/`, `mcp_registry/`, and `agent/tools/` alike.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
-use std::sync::OnceLock;
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use crate::openhuman::config::Config;
 // Each target kind's contract source lives behind that domain's Cargo feature
@@ -52,50 +80,171 @@ use crate::openhuman::config::Config;
 use crate::openhuman::integrations::composio::catalog::fetch_live_toolkit_catalog;
 use crate::openhuman::integrations::composio::providers::toolkit_from_slug;
 
-/// Record of which target contracts have already been surfaced to the model,
-/// so the gate blocks a given target at most once per gate instance.
+/// Record of which target contracts this gate instance has already surfaced.
 ///
 /// One [`ContractGate`] is held per gated tool instance — a
 /// [`crate::openhuman::integrations::composio::action_tool::ComposioActionTool`], the
 /// `composio_execute` dispatcher, `mcp_registry_tool_call`, or `run_workflow`.
 /// Those tools are constructed fresh per agent spawn and live for that spawn's
-/// tool loop. That loop is a single agent turn in the common case, so "seen"
-/// behaves as per-turn state without any task-local plumbing — but a long-lived
-/// spawn can span multiple turns, and this gate does NOT reset when the
-/// surfaced schema drops out of context via compaction (tracked as follow-up).
-/// Interior-mutable so the gate can record state through the tool's `&self`
-/// `execute`.
+/// tool loop.
 ///
-/// Entries are keyed by [`GateTarget::key`], so the same gate instance can
-/// track several targets (the dispatchers see many) without cross-kind
-/// collisions.
+/// This set does **not** decide presence — [`refresh_present`] does, from the
+/// transcript. It only bounds this instance: having surfaced a contract once,
+/// the gate does not surface it again even if the model never got it into
+/// context, so a single instance can never loop. Entries are keyed by
+/// [`GateTarget::key`], so one instance can track several targets (the
+/// dispatchers see many) without cross-kind collisions. Interior-mutable so the
+/// gate can record through the tool's `&self` `execute`.
 ///
 /// ## Auto-proceed safety net (#5119)
 ///
 /// When the main agent re-delegates to a fresh `integrations_agent` sub-agent,
 /// each spawn creates a new tool with a fresh `ContractGate`. Without a
-/// process-wide cross-instance consult counter, every fresh gate would surface
-/// the same contract and the action would never execute — causing an infinite
-/// loop ("same tool call 3× in a row" guard).
+/// cross-instance consult counter, every fresh gate would surface the same
+/// contract and the action would never execute — causing an infinite loop
+/// ("same tool call 3× in a row" guard).
 ///
-/// A global [`OnceLock`] map tracks how many *unique gate instances* have
-/// consulted each slug for the "first time". After 3+ fresh instances have all
+/// [`TurnState::first_consults`] tracks how many *unique gate instances* have
+/// consulted each key for the "first time". After 3+ fresh instances have all
 /// surfaced the same contract, the next instance auto-proceeds: the model has
 /// clearly been given the schema and needs execution, not another schema dump.
 ///
 /// The threshold is generous (3+ instances = at least 3 surfaced contracts in
 /// different sub-agent iterations) so that the normal surface-once-then-execute
-/// path within a single spawn is never disrupted.
+/// path within a single spawn is never disrupted. The counter is **per turn**,
+/// not per process: a loop is an in-flight condition, so carrying its count into
+/// later turns would permanently suppress the gate for that target — the model
+/// would then guess arguments against a schema it never saw.
 #[derive(Default)]
 pub struct ContractGate {
     seen: Mutex<HashSet<String>>,
 }
 
-/// Process-wide consult counter: tracks how many unique [`ContractGate`]
-/// instances have consulted each slug for the first time. Used by the
-/// auto-proceed safety net (#5119) to detect the re-delegation pattern where
-/// fresh tools keep surfacing the same contract without ever executing.
-static GLOBAL_FIRST_CONSULT_COUNT: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+/// Process-global map from a marker's exact slug list (as built by
+/// [`normalize_slug_list`]) to the XXH3-64 hash of the **payload** that followed
+/// the marker at delivery (everything after the marker's `]`).
+///
+/// Presence is decided in [`refresh_present`] by re-hashing a transcript
+/// marker's payload and matching it here — so the transcript marker itself
+/// carries only slugs (short, whitespace-free), while a payload later
+/// reformatted downstream no longer matches and the contract is re-delivered
+/// (fail-safe). Global rather than per-run so a contract delivered in one run
+/// stays creditable in a later run or a resume; it only ever credits a marker
+/// whose payload is present *and* byte-identical in that run's own transcript.
+static DELIVERED: LazyLock<Mutex<HashMap<String, u64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Record `hash` as the creditable payload for `slug_list`.
+fn record_delivered(slug_list: String, hash: u64) {
+    if let Ok(mut delivered) = DELIVERED.lock() {
+        delivered.insert(slug_list, hash);
+    }
+}
+
+/// Per-turn gate state, scoped as a task-local by [`with_turn`] around the
+/// top-level turn so every tool `execute()` on that task — including every
+/// nested sub-agent's — reads the same instance.
+#[derive(Default)]
+struct TurnState {
+    /// Target key → how many distinct [`ContractGate`] instances surfaced it
+    /// this turn. Drives the auto-proceed safety net (#5119).
+    first_consults: Mutex<HashMap<String, u32>>,
+}
+
+tokio::task_local! {
+    /// The current turn's auto-proceed accounting. Absent outside a turn (a
+    /// direct CLI/RPC tool invocation, a unit test), where the process-wide
+    /// fallback stands in.
+    static TURN_STATE: Arc<TurnState>;
+
+    /// The current run's transcript-derived presence set, rebuilt by
+    /// [`refresh_present`] before every model call. Scoped per RUN — a
+    /// sub-agent has its own transcript, so it must not read its parent's.
+    static RUN_PRESENCE: Arc<Mutex<HashSet<String>>>;
+}
+
+/// Stand-in state for calls that reach a gated tool outside any turn — a direct
+/// CLI/RPC tool invocation, or a unit test. Keeps the gate functional there
+/// without pretending the process has turn boundaries it does not.
+fn fallback_turn_state() -> &'static Arc<TurnState> {
+    static FALLBACK: OnceLock<Arc<TurnState>> = OnceLock::new();
+    FALLBACK.get_or_init(|| Arc::new(TurnState::default()))
+}
+
+/// Run `f` with fresh per-turn auto-proceed accounting.
+///
+/// Wrap the **top-level** turn only. Nested sub-agent runs must NOT re-scope: a
+/// fresh count per spawn is exactly the condition the safety net exists to
+/// detect, so re-scoping there would defeat it. Task-locals nest, so a child
+/// that skips this call transparently reads its parent's state.
+pub async fn with_turn<F: std::future::Future>(f: F) -> F::Output {
+    TURN_STATE.scope(Arc::new(TurnState::default()), f).await
+}
+
+/// Run `f` with a fresh per-run presence set. Wrap **every** run, sub-agents
+/// included: presence describes one transcript, and a sub-agent's is its own.
+pub async fn with_run_presence<F: std::future::Future>(f: F) -> F::Output {
+    RUN_PRESENCE
+        .scope(Arc::new(Mutex::new(HashSet::new())), f)
+        .await
+}
+
+/// Rebuild this run's presence set from the transcript's tool messages.
+///
+/// Call from `before_model`, passing the text of every **tool-role** message —
+/// role filtering is the caller's job because only that role is trustworthy: a
+/// model echoing the marker in its own prose must not be able to claim presence.
+///
+/// Each text is matched with a fixed-prefix compare at byte 0 (see the module
+/// doc), and its payload re-hashed against [`DELIVERED`]; only an exact match
+/// credits the marker's slugs.
+///
+/// **Every message is scanned and the credits accumulate — a mismatch is never
+/// a verdict on the target.** A message that merely looks like a marker, or a
+/// stale delivery whose payload was rewritten, contributes nothing and moves on;
+/// a genuine copy later in the transcript still credits. Short-circuiting on the
+/// first hash miss would let one lookalike make the contract permanently
+/// un-creditable, and the gate would re-deliver it on every call forever.
+///
+/// Outside a run scope this is a no-op: there is no presence set to fill, and
+/// the gate falls back to its per-instance bound.
+pub fn refresh_present(tool_message_texts: impl IntoIterator<Item = String>) {
+    let mut present = HashSet::new();
+    if let Ok(delivered) = DELIVERED.lock() {
+        for text in tool_message_texts {
+            credit_marker(&text, &delivered, &mut present);
+        }
+    }
+    let credited = present.len();
+    let stored = RUN_PRESENCE
+        .try_with(|set| {
+            if let Ok(mut guard) = set.lock() {
+                *guard = present;
+            }
+        })
+        .is_ok();
+    tracing::trace!(
+        target: "contract_gate",
+        credited,
+        stored,
+        "[contract-gate] presence rebuilt from the transcript"
+    );
+}
+
+/// Whether `key`'s contract is verifiably in this run's transcript. `false`
+/// outside a run scope — the gate then falls back to its per-instance bound.
+fn is_present(key: &str) -> bool {
+    RUN_PRESENCE
+        .try_with(|set| set.lock().map(|guard| guard.contains(key)).unwrap_or(false))
+        .unwrap_or(false)
+}
+
+/// The state backing this task's turn, or the process-wide fallback.
+fn turn_state() -> Arc<TurnState> {
+    TURN_STATE
+        .try_with(Arc::clone)
+        .unwrap_or_else(|_| Arc::clone(fallback_turn_state()))
+}
 
 /// After this many unique fresh gate instances have all surfaced the same
 /// contract as "first time", the next instance auto-proceeds. Set conservatively
@@ -115,8 +264,8 @@ impl ContractGate {
     ///
     /// On the first consult of `slug` by THIS gate instance:
     /// 1. The slug is recorded in the instance-local seen-set.
-    /// 2. The global first-time consult counter for this slug is incremented.
-    /// 3. If the global counter exceeds [`AUTO_PROCEED_THRESHOLD`], the gate
+    /// 2. The turn's first-time consult counter for this slug is incremented.
+    /// 3. If that counter exceeds [`AUTO_PROCEED_THRESHOLD`], the gate
     ///    returns [`GateConsultOutcome::AutoProceed`] — too many fresh instances
     ///    have seen this contract without executing it.
     /// 4. Otherwise, returns [`GateConsultOutcome::FirstTime`] so the caller
@@ -149,10 +298,11 @@ impl ContractGate {
             return GateConsultOutcome::Proceed;
         }
 
-        // 2. Increment the global first-time consult counter.
+        // 2. Increment this turn's first-time consult counter.
         let global_count = {
-            let mut map = GLOBAL_FIRST_CONSULT_COUNT
-                .get_or_init(|| Mutex::new(HashMap::new()))
+            let state = turn_state();
+            let mut map = state
+                .first_consults
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let entry = map.entry(norm).or_insert(0);
@@ -317,6 +467,14 @@ pub enum GateDecision {
 /// miss) — returns [`GateDecision::Proceed`]: the gate never blocks a call more
 /// than once and never blocks when it cannot help.
 ///
+/// ## Presence short-circuit
+///
+/// Before any of that, a target whose contract [`refresh_present`] verified is
+/// still in this run's transcript proceeds immediately — including from a fresh
+/// gate instance in a re-delegated sub-agent, which is why this check comes
+/// first. Conversely a contract the transcript has since lost (summarised,
+/// blanked, trimmed, or rewritten) stops being present and is re-delivered.
+///
 /// ## Auto-proceed safety net (#5119)
 ///
 /// When the main agent re-delegates to a fresh `integrations_agent` sub-agent,
@@ -324,7 +482,7 @@ pub enum GateDecision {
 /// Every fresh gate sees each target for the "first time" and surfaces the
 /// full contract — so the call never executes, looping forever.
 ///
-/// A process-wide consult counter tracks how many fresh gate instances have
+/// A per-turn consult counter tracks how many fresh gate instances have
 /// consulted each target. After [`AUTO_PROCEED_THRESHOLD`] (3+) fresh instances
 /// have surfaced the same contract, the gate auto-proceeds: the model has
 /// been given the schema across multiple iterations without advancing, and
@@ -336,7 +494,21 @@ pub async fn consult(
     args: &serde_json::Value,
 ) -> GateDecision {
     let key = target.key();
-    // Consult the gate (instance-local seen-set + global auto-proceed check).
+
+    // The contract is verifiably in this run's transcript → the model can read
+    // it → run the tool. Checked before the instance-local bookkeeping so a
+    // fresh gate in a re-delegated sub-agent doesn't re-surface what the model
+    // is already looking at.
+    if is_present(&key) {
+        tracing::debug!(
+            target: "contract_gate",
+            key = %key,
+            "[contract-gate] contract present in the transcript; proceeding"
+        );
+        return GateDecision::Proceed;
+    }
+
+    // Consult the gate (instance-local seen-set + per-turn auto-proceed check).
     // The lock is released before any await, so concurrent sibling calls and
     // the retry proceed without contention.
     match gate.gate_consult(&key) {
@@ -384,7 +556,13 @@ pub async fn consult(
             required_arg_count = contract.required_args.len(),
             "[contract-gate] surfacing full contract before first execute"
         );
-        return GateDecision::Surface(format_contract(target, &contract));
+        // Lead the delivery with the marker and record its payload hash, so the
+        // next `refresh_present` credits this target only while the contract is
+        // still in the transcript byte-for-byte.
+        let slug_list = normalize_slug_list([key.clone()]);
+        let (body, hash) = deliver_body(&slug_list, &format_contract(target, &contract));
+        record_delivered(slug_list, hash);
+        return GateDecision::Surface(body);
     }
 
     tracing::debug!(
@@ -393,6 +571,228 @@ pub async fn consult(
         "[contract-gate] no contract available; proceeding without gating"
     );
     GateDecision::Proceed
+}
+
+// ── transcript marker ───────────────────────────────────────────────────────
+
+/// Fixed opening of the transcript marker a contract-carrying tool message leads
+/// with, placed at the START so a later model call recognises it with a
+/// fixed-length prefix compare (no full-message scan). Closed by `]`, enclosing
+/// only the marker's **slug list** — `<slug>[,<slug>…]`. There is no digest in
+/// the marker itself; the payload hash lives in [`DELIVERED`], keyed by this
+/// exact slug list. A gate delivery carries one slug; a full-schema discovery
+/// tool packs several.
+const MARKER_OPEN: &str = "[contract-gate:";
+
+/// Separator between the slugs packed into one marker's slug list. A gate slug
+/// never contains it — slugs are `composio:<SLUG>` / `mcp:<server>:<tool>` /
+/// `workflow:<id>`, drawn from validated slugs, registry names, and directory
+/// ids — and [`normalize_slug_list`] drops any slug that would (defence in
+/// depth) so one pathological name can't corrupt the parse of the others.
+const MARKER_SEP: char = ',';
+
+/// Banner inserted right after the marker in every delivered contract. A weak
+/// model reads the contract — the tool's *input schema* — as if it were the
+/// tool's *output*, concludes "the call ran and returned nothing", and gives up
+/// instead of retrying. State plainly that the tool did NOT run and a retry is
+/// mandatory. The marker still leads the message, so the fixed-length prefix
+/// scan is unaffected.
+const RETRY_BANNER: &str = "This tool was NOT executed and returned NO result. You are seeing its \
+     input contract because the tool must be read before it can run. This is not a failure, an \
+     error, or an empty result — nothing has been searched, fetched, or run yet. To actually run \
+     it, re-issue the SAME tool call now with arguments matching the schema below. Do NOT report \
+     \"no results\" or stop: the call has not happened.";
+
+/// XXH3-64 hash of a marker's **payload** (the bytes after the marker's `]`).
+/// Recorded in [`DELIVERED`] at delivery and recomputed on rescan: a fast,
+/// stable (cross-process reproducible) fingerprint that detects any downstream
+/// reformat — summarizer, size cap, or the sub-agent handoff's
+/// whitespace-collapse — of the delivered contract. Non-cryptographic: it guards
+/// accidental mutation, not a forged collision.
+fn payload_hash(payload: &str) -> u64 {
+    xxhash_rust::xxh3::xxh3_64(payload.as_bytes())
+}
+
+/// Canonical slug-list string used **both** as a transcript marker's body and as
+/// the [`DELIVERED`] key, so a marker and its recorded hash always agree. Slugs
+/// are de-duplicated and **sorted** (order-independent), and any slug carrying
+/// [`MARKER_SEP`] or `]` is dropped so one pathological name can't corrupt the
+/// parse. Returns empty when nothing is creditable.
+fn normalize_slug_list(slugs: impl IntoIterator<Item = String>) -> String {
+    let mut v: Vec<String> = slugs
+        .into_iter()
+        .filter(|s| !s.is_empty() && !s.contains(MARKER_SEP) && !s.contains(']'))
+        .collect();
+    v.sort();
+    v.dedup();
+    v.join(",")
+}
+
+/// The transcript marker for a [`normalize_slug_list`] string:
+/// `[contract-gate:<slug list>]` — slugs only, no digest.
+fn contract_marker(slug_list: &str) -> String {
+    format!("{MARKER_OPEN}{slug_list}]")
+}
+
+/// The tool-error body a delivered contract carries, **plus the payload hash**
+/// the caller records in [`DELIVERED`] under `slug_list`. Layout: the marker
+/// FIRST (so the rescan recognises it with a fixed-length prefix compare), then
+/// the payload — [`RETRY_BANNER`] then the contract text. The hash covers that
+/// exact payload, so a later rescan credits the slug only while the payload
+/// survives byte-for-byte.
+fn deliver_body(slug_list: &str, contract: &str) -> (String, u64) {
+    let payload = format!("\n\n{RETRY_BANNER}\n\n{contract}");
+    let hash = payload_hash(&payload);
+    (format!("{}{payload}", contract_marker(slug_list)), hash)
+}
+
+/// True when `content` is a contract-gate delivery **this process actually
+/// made** — it leads with [`MARKER_OPEN`] and its payload still hashes to the
+/// value recorded at delivery.
+///
+/// The hash check is what makes this safe to act on. A bare "starts with the
+/// marker" test would also match a tool result that happens to echo the syntax,
+/// and every caller below grants an exemption on the strength of this answer.
+///
+/// Two callers:
+/// - the content-rewriting `after_tool` hooks, which must leave a delivery
+///   byte-for-byte or its payload hash stops matching and the contract can never
+///   be credited as present;
+/// - the repeated-tool-failure breaker, for which a delivery is an error but not
+///   a failure (it hands the model the contract and expects a retry). A
+///   *NotFound* message carries no marker, so a model looping on a bogus slug
+///   still trips the breaker.
+pub(crate) fn is_contract_delivery(content: &str) -> bool {
+    let mut present = HashSet::new();
+    if let Ok(delivered) = DELIVERED.lock() {
+        credit_marker(content, &delivered, &mut present);
+    }
+    !present.is_empty()
+}
+
+/// If `text` leads with a `[contract-gate:<slug list>]` marker whose payload
+/// (everything after the marker's `]`) still hashes to the value recorded in
+/// `delivered` for that exact slug list, credit every slug in the list into
+/// `present`.
+///
+/// Recognition is a fixed-length prefix compare (marker at the START), so a
+/// model echoing the marker mid-text can't spoof presence, and there is one
+/// marker per message.
+///
+/// The hash match is the integrity gate: a delivered contract summarised,
+/// truncated by a result-size cap, or whitespace-collapsed by the sub-agent
+/// handoff cleaner no longer hashes to the recorded value, so it is not credited
+/// and the gate re-delivers rather than treating a mutated (possibly partial)
+/// body as present.
+///
+/// **A hash miss skips this message; it never rejects the target.** A message
+/// that only looks like a marker — a tool echoing the syntax, a stale delivery
+/// whose payload was since rewritten — must not be able to veto a genuine copy
+/// elsewhere in the transcript. [`refresh_present`] therefore accumulates across
+/// every tool message and a miss contributes nothing, so one intact delivery
+/// anywhere is enough to let the call through. Treating a miss as "absent" and
+/// stopping would let a single lookalike wedge the gate into re-delivering
+/// forever.
+fn credit_marker(text: &str, delivered: &HashMap<String, u64>, present: &mut HashSet<String>) {
+    let Some(rest) = text.strip_prefix(MARKER_OPEN) else {
+        return;
+    };
+    let Some(close) = rest.find(']') else {
+        return;
+    };
+    let slug_list = &rest[..close];
+    let payload = &rest[close + 1..];
+    if delivered.get(slug_list) != Some(&payload_hash(payload)) {
+        return;
+    }
+    for slug in slug_list.split(MARKER_SEP) {
+        let slug = slug.trim();
+        if !slug.is_empty() {
+            present.insert(slug.to_string());
+        }
+    }
+}
+
+/// Prepend a **full-schema** discovery tool's presence marker to its output
+/// `body`, returning the marker-led message the gate later credits — or `body`
+/// unchanged when nothing is creditable — and record the payload hash in
+/// [`DELIVERED`] under the marker's slug list.
+///
+/// So a later [`refresh_present`] credits every slug once the model has read the
+/// full listing: a `describe_workflow` / `mcp_registry_list_tools` / full
+/// `composio_list_tools` before the real call pays no redundant re-delivery.
+/// Several slugs pack into the one marker, keeping the
+/// single-marker-at-the-start layout the prefix scan depends on.
+///
+/// This function OWNS the marker↔body concatenation so the recorded hash covers
+/// the exact bytes that follow the marker: the payload is `"\n\n" + body`, and
+/// the returned string is `marker + payload`.
+///
+/// Only a rendering that puts the **full** contract in the model's context may
+/// call this; a thin listing must not, or the gate would mark a contract the
+/// model has never seen as present and stop gating it. The slugs come from
+/// [`composio_key`] / [`mcp_key`] / [`workflow_key`] so they match exactly what
+/// the gate later checks presence against.
+pub(crate) fn prefix_with_present_marker(
+    slugs: impl IntoIterator<Item = String>,
+    body: &str,
+) -> String {
+    let slug_list = normalize_slug_list(slugs);
+    if slug_list.is_empty() {
+        return body.to_string();
+    }
+    let payload = format!("\n\n{body}");
+    record_delivered(slug_list.clone(), payload_hash(&payload));
+    format!("{}{payload}", contract_marker(&slug_list))
+}
+
+/// Which slugs `tool_message_texts` credit — the pure core of
+/// [`refresh_present`], without the task-local write, so the scan's rules
+/// (fixed-prefix recognition, hash integrity, accumulate-never-reject) are
+/// testable directly.
+#[cfg(test)]
+fn credited_slugs(tool_message_texts: impl IntoIterator<Item = String>) -> HashSet<String> {
+    let mut present = HashSet::new();
+    if let Ok(delivered) = DELIVERED.lock() {
+        for text in tool_message_texts {
+            credit_marker(&text, &delivered, &mut present);
+        }
+    }
+    present
+}
+
+/// Deliver `contract` for a single `key` exactly as [`consult`] would — marker,
+/// banner, recorded payload hash — and return `(message, slug_list)`.
+#[cfg(test)]
+fn seed_delivery(key: &str, contract: &str) -> (String, String) {
+    let slug_list = normalize_slug_list([key.to_string()]);
+    let (body, hash) = deliver_body(&slug_list, contract);
+    record_delivered(slug_list.clone(), hash);
+    (body, slug_list)
+}
+
+/// Presence key for a Composio action slug — matches [`GateTarget::Composio`]'s
+/// key so a `composio_list_tools` carrying the full schema credits the slug the
+/// later `composio_execute` (or per-action tool) gates on.
+pub(crate) fn composio_key(slug: &str) -> String {
+    GateTarget::Composio(slug.to_string()).key()
+}
+
+/// Presence key for an MCP-registry `(server, tool)` — matches
+/// [`GateTarget::McpRegistry`]'s key so `mcp_registry_list_tools` credits the
+/// tool the later `mcp_registry_tool_call` gates on.
+pub(crate) fn mcp_key(server: &str, tool: &str) -> String {
+    GateTarget::McpRegistry {
+        server: server.to_string(),
+        tool: tool.to_string(),
+    }
+    .key()
+}
+
+/// Presence key for a workflow id — matches [`GateTarget::Workflow`]'s key so
+/// `describe_workflow` credits the id the later `run_workflow` gates on.
+pub(crate) fn workflow_key(id: &str) -> String {
+    GateTarget::Workflow(id.to_string()).key()
 }
 
 /// Whether the model's supplied `args` already conform to `contract` — the test
