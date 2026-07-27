@@ -159,7 +159,7 @@ impl UnifiedMemory {
         // redaction ever runs, so the computed lookup namespace silently
         // diverges from the stored one and every document under it becomes
         // unreachable via recall/search (#5164 follow-up).
-        let ns = Self::sanitize_namespace(&safety::pii::redact_pii(namespace).value);
+        let ns = Self::normalize_lookup_namespace(namespace);
         let exclude_session_id = exclude_session_id
             .map(str::trim)
             .filter(|id| !id.is_empty());
@@ -433,8 +433,8 @@ impl UnifiedMemory {
         query: &str,
         limit: u32,
     ) -> Result<NamespaceRetrievalContext, String> {
-        let ns = Self::sanitize_namespace(namespace);
-        let hits = self.query_namespace_hits(&ns, query, limit).await?;
+        let ns = Self::normalize_lookup_namespace(namespace);
+        let hits = self.query_namespace_hits(namespace, query, limit).await?;
         Ok(NamespaceRetrievalContext {
             namespace: ns,
             query: Some(query.to_string()),
@@ -450,7 +450,7 @@ impl UnifiedMemory {
         namespace: &str,
         limit: u32,
     ) -> Result<Vec<NamespaceMemoryHit>, String> {
-        let ns = Self::sanitize_namespace(namespace);
+        let ns = Self::normalize_lookup_namespace(namespace);
         let docs = self.load_documents_for_scope(&ns).await?;
         let kvs = self.kv_records_for_scope(&ns).await?;
         let graph_relations = self
@@ -577,14 +577,18 @@ impl UnifiedMemory {
         namespace: &str,
         limit: u32,
     ) -> Result<NamespaceRetrievalContext, String> {
-        let ns = Self::sanitize_namespace(namespace);
-        let hits = self.recall_namespace_memories(&ns, limit).await?;
+        let ns = Self::normalize_lookup_namespace(namespace);
+        let hits = self.recall_namespace_memories(namespace, limit).await?;
         Ok(NamespaceRetrievalContext {
             namespace: ns,
             query: None,
             context_text: Self::format_context_text(&hits, None),
             hits,
         })
+    }
+
+    fn normalize_lookup_namespace(namespace: &str) -> String {
+        Self::sanitize_namespace(&safety::pii::redact_pii(namespace).value)
     }
 
     async fn load_chunks_for_scope(&self, namespace: &str) -> Result<Vec<StoredChunk>, String> {

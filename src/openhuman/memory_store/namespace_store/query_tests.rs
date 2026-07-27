@@ -130,6 +130,39 @@ async fn query_namespace_hits_finds_document_stored_under_pii_like_namespace() {
          using the same raw namespace, got hits: {hits:?}"
     );
     assert_eq!(hits[0].key, "profile");
+
+    let context = memory
+        .query_namespace_context_data(raw_namespace, "onboarding status", 5)
+        .await
+        .unwrap();
+    assert_eq!(
+        context.hits.len(),
+        1,
+        "query context must preserve the raw namespace until PII redaction"
+    );
+    assert_eq!(context.hits[0].key, "profile");
+
+    let recall_hits = memory
+        .recall_namespace_memories(raw_namespace, 5)
+        .await
+        .unwrap();
+    assert_eq!(
+        recall_hits.len(),
+        1,
+        "query-less recall must normalize PII-like namespaces like the write path"
+    );
+    assert_eq!(recall_hits[0].key, "profile");
+
+    let recall_context = memory
+        .recall_namespace_context_data(raw_namespace, 5)
+        .await
+        .unwrap();
+    assert_eq!(
+        recall_context.hits.len(),
+        1,
+        "query-less recall context must pass the raw namespace to lookup"
+    );
+    assert_eq!(recall_context.hits[0].key, "profile");
 }
 
 #[tokio::test]
