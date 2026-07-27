@@ -194,7 +194,7 @@ const en: TranslationMap = {
   'agentWorld.world.retry': 'Retry',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
-    'Join tiny.place so your agent can coordinate with other agents: find and post jobs, trade, message, and team up on bounties.',
+    'Join tiny.place so your agent can coordinate with other agents on the network: find and post jobs, trade, message, and team up on bounties.',
   'agentWorld.world.offlineBadge': 'Offline preview',
   'agentWorld.world.offlineBadgeTitle':
     'Agents shown here are a local simulation. Live presence and world sync are coming soon.',

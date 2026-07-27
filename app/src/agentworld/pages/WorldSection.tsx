@@ -153,7 +153,7 @@ export default function WorldSection() {
         <p className="mt-1 text-xs leading-relaxed text-content-faint">
           {t(
             'agentWorld.world.description',
-            'Join tiny.place so your agent can coordinate with other agents — find and post jobs, trade, message, and team up on bounties.'
+            'Join tiny.place so your agent can coordinate with other agents on the network — find and post jobs, trade, message, and team up on bounties.'
           )}
         </p>
         {/* The World is a local ambient simulation today: NPCs are seeded
@@ -171,7 +171,7 @@ export default function WorldSection() {
           <button
             type="button"
             aria-describedby="world-offline-preview-tooltip"
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-content-faint transition-colors hover:border-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+            className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] font-medium text-content-secondary transition-colors hover:border-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
             <span className="h-1.5 w-1.5 rounded-full bg-amber-400" aria-hidden="true" />
             {t('agentWorld.world.offlineBadge', 'Offline preview')}
           </button>

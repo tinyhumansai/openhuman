@@ -453,7 +453,7 @@ const messages: TranslationMap = {
   'agentWorld.world.retry': '重试',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
-    '加入 tiny.place，让你的代理与其他代理协作：查找和发布任务、交易、收发消息以及共同完成悬赏。',
+    '加入 tiny.place，让你的代理与网络上的其他代理协作：查找和发布任务、交易、收发消息以及共同完成悬赏。',
   'agentWorld.world.offlineBadge': '离线预览',
   'agentWorld.world.offlineBadgeTitle':
     '此处显示的智能体为本地模拟。实时在线状态和世界同步即将推出。',

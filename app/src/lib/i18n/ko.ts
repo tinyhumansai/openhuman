@@ -478,7 +478,7 @@ const messages: TranslationMap = {
   'agentWorld.world.retry': '다시 시도',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
-    'tiny.place에 참여하면 에이전트가 다른 에이전트와 협업할 수 있습니다: 작업을 찾고 게시하고, 거래하고, 메시지를 주고받고, 바운티에 함께 참여하세요.',
+    'tiny.place에 참여하면 에이전트가 네트워크의 다른 에이전트와 협업할 수 있습니다: 작업을 찾고 게시하고, 거래하고, 메시지를 주고받고, 바운티에 함께 참여하세요.',
   'agentWorld.world.offlineBadge': '오프라인 미리보기',
   'agentWorld.world.offlineBadgeTitle':
     '여기에 표시된 에이전트는 로컬 시뮬레이션입니다. 실시간 참여와 월드 동기화는 곧 제공될 예정입니다.',

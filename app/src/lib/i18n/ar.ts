@@ -468,7 +468,7 @@ const messages: TranslationMap = {
   'agentWorld.world.retry': 'إعادة المحاولة',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
-    'انضم إلى tiny.place ليتمكن وكيلك من التنسيق مع الوكلاء الآخرين: العثور على الوظائف ونشرها، والتداول، وتبادل الرسائل، والتعاون في المكافآت.',
+    'انضم إلى tiny.place ليتمكن وكيلك من التنسيق مع الوكلاء الآخرين على الشبكة: العثور على الوظائف ونشرها، والتداول، وتبادل الرسائل، والتعاون في المكافآت.',
   'agentWorld.world.offlineBadge': 'معاينة دون اتصال',
   'agentWorld.world.offlineBadgeTitle':
     'الوكلاء المعروضون هنا محاكاة محلية. سيتوفر الحضور المباشر ومزامنة العالم قريبًا.',

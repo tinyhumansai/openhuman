@@ -498,7 +498,7 @@ const messages: TranslationMap = {
   'agentWorld.world.retry': 'Riprova',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
-    'Unisciti a tiny.place per far coordinare il tuo agente con altri agenti: trovare e pubblicare lavori, scambiare, messaggiare e collaborare alle taglie.',
+    'Unisciti a tiny.place per far coordinare il tuo agente con altri agenti della rete: trovare e pubblicare lavori, scambiare, messaggiare e collaborare alle taglie.',
   'agentWorld.world.offlineBadge': 'Anteprima offline',
   'agentWorld.world.offlineBadgeTitle':
     'Gli agenti mostrati qui sono una simulazione locale. La presenza in tempo reale e la sincronizzazione del mondo arriveranno presto.',

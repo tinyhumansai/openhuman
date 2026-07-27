@@ -484,7 +484,7 @@ const messages: TranslationMap = {
   'agentWorld.world.retry': 'पुनः प्रयास करें',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
-    'tiny.place से जुड़ें ताकि आपका एजेंट दूसरे एजेंट्स के साथ तालमेल कर सके: काम ढूँढना और पोस्ट करना, व्यापार करना, संदेश भेजना और बाउंटी पर मिलकर काम करना।',
+    'tiny.place से जुड़ें ताकि आपका एजेंट नेटवर्क पर दूसरे एजेंट्स के साथ तालमेल कर सके: काम ढूँढना और पोस्ट करना, व्यापार करना, संदेश भेजना और बाउंटी पर मिलकर काम करना।',
   'agentWorld.world.offlineBadge': 'ऑफ़लाइन प्रीव्यू',
   'agentWorld.world.offlineBadgeTitle':
     'यहाँ दिखाए गए एजेंट एक स्थानीय सिमुलेशन हैं। लाइव उपस्थिति और वर्ल्ड सिंक जल्द ही आ रहे हैं।',

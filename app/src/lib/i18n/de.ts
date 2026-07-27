@@ -509,7 +509,7 @@ const messages: TranslationMap = {
   'agentWorld.world.retry': 'Wiederholen',
   'agentWorld.world.title': 'Tiny Place',
   'agentWorld.world.description':
-    'Tritt tiny.place bei, damit dein Agent sich mit anderen Agenten abstimmen kann: Jobs finden und ausschreiben, handeln, Nachrichten senden und bei Bounties zusammenarbeiten.',
+    'Tritt tiny.place bei, damit dein Agent sich mit anderen Agenten im Netzwerk abstimmen kann: Jobs finden und ausschreiben, handeln, Nachrichten senden und bei Bounties zusammenarbeiten.',
   'agentWorld.world.offlineBadge': 'Offline-Vorschau',
   'agentWorld.world.offlineBadgeTitle':
     'Die hier gezeigten Agenten sind eine lokale Simulation. Live-Präsenz und Welt-Synchronisierung folgen bald.',

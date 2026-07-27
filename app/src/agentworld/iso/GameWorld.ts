@@ -2,9 +2,10 @@
  * The top-level world controller.
  *
  * `GameWorld` owns the PixiJS application (WebGPU-preferred), the active room,
- * every agent, and the render loop. It exposes the authoritative entry point
- * {@link GameWorld.updateAgentState} for external/AI control, plus click-to-move
- * for human debugging. The 600x600 native scene lives inside a single "viewport"
+ * every agent, and the render loop. It exposes the reconciliation seam
+ * {@link GameWorld.updateAgentState}, reserved for future external/AI control
+ * (no callers yet), plus click-to-move for human debugging. The 600x600 native
+ * scene lives inside a single "viewport"
  * container that is scaled to fill its parent, so the world stays crisp pixel
  * art at any size.
  */
@@ -580,7 +581,8 @@ export class GameWorld {
    * supports `inbox` / `conversation` kinds (no presence/world-state stream),
    * so the World is a local ambient simulation today. Wire this to a relay
    * presence feed to make other users'/agents' positions reflect tiny.place in
-   * real time. Until then it is only exercised by local/test callers.
+   * real time. Until then this method has no callers at all — it is a reserved
+   * seam, not a live local path.
    */
   public updateAgentState(agentId: string, state: AgentState): void {
     const room = this.room;
