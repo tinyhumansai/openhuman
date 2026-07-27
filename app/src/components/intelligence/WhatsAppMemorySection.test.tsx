@@ -67,6 +67,7 @@ describe('<WhatsAppMemorySection />', () => {
     );
     render(<WhatsAppMemorySection pollIntervalMs={0} />);
     await waitFor(() => screen.getByTestId('whatsapp-memory-section'));
+    expect(mockWhatsappListChats).toHaveBeenCalledWith({ limit: 200 });
     expect(screen.getByText(/^200\+ chats synced/)).toBeTruthy();
   });
 
@@ -76,6 +77,7 @@ describe('<WhatsAppMemorySection />', () => {
     );
     render(<WhatsAppMemorySection pollIntervalMs={0} />);
     await waitFor(() => screen.getByTestId('whatsapp-memory-section'));
+    expect(mockWhatsappListChats).toHaveBeenCalledWith({ limit: 200 });
     expect(screen.getByText(/^199 chats synced/)).toBeTruthy();
     expect(screen.queryByText(/200\+/)).toBeNull();
   });
