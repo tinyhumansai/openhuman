@@ -977,14 +977,12 @@ function TradingTab() {
           className="mt-2"
           analyticsId="identities.sellOnWeb"
           onClick={() => {
-            // Static destination URL only — no handle/PII. openUrl keeps its own
-            // https `window.open` fallback; we just observe the outcome.
+            // Log the entry point (static destination URL only — no handle/PII).
+            // openUrl owns the outcome diagnostics: it logs a low-PII telemetry
+            // breadcrumb and keeps its https `window.open` fallback, so we don't
+            // re-observe success/error here.
             debug('[tinyplace][ui] sell-on-web: opening %s', SELL_ON_WEB_URL);
-            void openUrl(SELL_ON_WEB_URL)
-              .then(() => debug('[tinyplace][ui] sell-on-web: openUrl resolved'))
-              .catch((err: unknown) =>
-                debug('[tinyplace][ui] sell-on-web: openUrl rejected: %s', String(err))
-              );
+            void openUrl(SELL_ON_WEB_URL);
           }}
           data-testid="sell-on-web-cta">
           Open tiny.place →
