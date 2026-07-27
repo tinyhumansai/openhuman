@@ -24,11 +24,20 @@
 //! - The crate chunk-DB init is additionally forced via
 //!   `tinycortex::memory::chunks::with_connection` so the substrate schema is
 //!   deterministic regardless of which subsystems the op flow happened to touch.
-//! - `vectors` / `store_meta` / `kv_*` are created by other crate subsystems on
-//!   their own first touch (the chunk/embed pipeline) rather than by the minimal
-//!   doc-put + recall flow; they are reported in the run's schema dump and left
-//!   to a follow-up that widens the flow, so this harness stays green and useful
-//!   today without a fragile dependence on ingest internals.
+//! - The crate KV tier (`kv_global` / `kv_namespace`, crate `store/kv.rs`)
+//!   attaches to the host `UnifiedMemory` connection via
+//!   `KvStore::from_shared_connection` and is materialised by the minimal flow
+//!   itself. It is pinned here as [`CRATE_KV_TABLES`] — a store cutover that
+//!   renamed or dropped it would silently strand a user's stored KV preferences.
+//! - The standalone `VectorStore` tables (`vectors` / `store_meta`, crate
+//!   `store/vectors/store.rs`) are deliberately **not** pinned: nothing on the
+//!   host's live path opens that store — `VectorStore::open` has no non-test
+//!   caller in either the crate or the host, and the live embedding path instead
+//!   uses `mem_tree_chunk_embeddings` (crate substrate) plus the host
+//!   `vector_chunks` tier — so those tables never appear in a real workspace.
+//!   Pinning them would assert schema the shipped product never creates. Add
+//!   them here only if the host ever wires the standalone vector store onto a
+//!   workspace.
 //!
 //! Run with: `cargo test --test memory_golden_parity_e2e`
 
@@ -118,6 +127,14 @@ const HOST_UNIFIED_TABLES: &[&str] = &[
     "vector_chunks",
     "user_profile",
 ];
+
+/// The crate KV tier (`kv_global` + `kv_namespace`, crate `store/kv.rs`). These
+/// are crate-owned tables that ride the host `UnifiedMemory` connection via
+/// `KvStore::from_shared_connection`, so they live in the shared workspace
+/// alongside the host doc tier. A W3+ cutover that reshaped or dropped them
+/// would strand a user's persisted KV preferences — pin them here so it fails
+/// in this harness first.
+const CRATE_KV_TABLES: &[&str] = &["kv_global", "kv_namespace"];
 
 // ── Schema scan helpers (path-agnostic, read-only) ───────────────────────────
 
@@ -254,6 +271,16 @@ async fn golden_workspace_composes_substrate_and_unified_tiers() {
     assert!(
         missing_unified.is_empty(),
         "host UnifiedMemory tables missing from the workspace: {missing_unified:?}; found: {tables:?}"
+    );
+
+    let missing_kv: Vec<&str> = CRATE_KV_TABLES
+        .iter()
+        .copied()
+        .filter(|t| !tables.contains(*t))
+        .collect();
+    assert!(
+        missing_kv.is_empty(),
+        "crate KV-tier tables missing from the workspace: {missing_kv:?}; found: {tables:?}"
     );
 
     // Coexistence: both tiers are present in the same workspace (P12).
