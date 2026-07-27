@@ -19,6 +19,7 @@
  * handles, via marketplace_list_offers). The Trading tab links sellers to the
  * web app for the write actions it cannot perform (#4920).
  */
+import debugFactory from 'debug';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import ChipTabs from '../../components/layout/ChipTabs';
@@ -42,6 +43,8 @@ import { decimalsForAsset, formatAssetAmount } from '../assets';
 import CommitFlow from '../components/CommitFlow';
 import X402ConfirmDialog from '../components/X402ConfirmDialog';
 import { explorerTxUrl as buyExplorerTxUrl, useX402Buy } from '../hooks/useX402Buy';
+
+const debug = debugFactory('agentworld:identities');
 
 // Seller-side identity *writes* (list a handle for sale, accept/reject an offer)
 // are web-only — the tiny.place backend exposes no seller write routes (see
@@ -973,7 +976,16 @@ function TradingTab() {
           size="xs"
           className="mt-2"
           analyticsId="identities.sellOnWeb"
-          onClick={() => void openUrl(SELL_ON_WEB_URL)}
+          onClick={() => {
+            // Static destination URL only — no handle/PII. openUrl keeps its own
+            // https `window.open` fallback; we just observe the outcome.
+            debug('[tinyplace][ui] sell-on-web: opening %s', SELL_ON_WEB_URL);
+            void openUrl(SELL_ON_WEB_URL)
+              .then(() => debug('[tinyplace][ui] sell-on-web: openUrl resolved'))
+              .catch((err: unknown) =>
+                debug('[tinyplace][ui] sell-on-web: openUrl rejected: %s', String(err))
+              );
+          }}
           data-testid="sell-on-web-cta">
           Open tiny.place →
         </Button>

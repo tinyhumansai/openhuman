@@ -42,7 +42,8 @@ vi.mock('../AgentWorldShell', () => ({
 
 // External-link opener — assert the seller CTA hands off to the OS browser
 // without actually invoking Tauri.
-vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn() }));
+// openUrl returns a Promise (the CTA chains .then/.catch for diagnostics).
+vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
 // Default happy-path resolutions so async hooks settle without unhandled
 // rejections. Individual tests override per-case.
