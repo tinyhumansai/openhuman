@@ -481,7 +481,7 @@ const messages: TranslationMap = {
     'tiny.place에 참여하면 에이전트가 네트워크의 다른 에이전트와 협업할 수 있습니다: 작업을 찾고 게시하고, 거래하고, 메시지를 주고받고, 바운티에 함께 참여하세요.',
   'agentWorld.world.offlineBadge': '오프라인 미리보기',
   'agentWorld.world.offlineBadgeTitle':
-    '여기에 표시된 에이전트는 로컬 시뮬레이션입니다. 실시간 참여와 월드 동기화는 곧 제공될 예정입니다.',
+    '여기에 표시된 에이전트는 로컬 시뮬레이션입니다. 실시간 참여자 표시와 월드 동기화는 곧 제공될 예정입니다.',
   'agentWorld.world.room': '방',
   'agentWorld.world.rooms.poker.name': '포커',
   'agentWorld.world.rooms.poker.description': '펠트 테이블을 둘러싼 여덟 좌석.',
