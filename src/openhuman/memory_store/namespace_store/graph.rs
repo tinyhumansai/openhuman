@@ -203,7 +203,7 @@ impl UnifiedMemory {
         predicate: Option<&str>,
     ) -> Result<Vec<GraphRelationRecord>, String> {
         let conn = self.conn.lock();
-        let ns = Self::sanitize_namespace(namespace);
+        let ns = Self::normalize_lookup_namespace(namespace);
         let subject = subject.map(Self::normalize_graph_entity);
         let predicate = predicate.map(Self::normalize_graph_predicate);
         let mut stmt = conn
@@ -227,7 +227,7 @@ impl UnifiedMemory {
         {
             let attrs_raw: String = row.get(3).map_err(|e| e.to_string())?;
             out.push(Self::graph_relation_from_parts(
-                Some(Self::sanitize_namespace(namespace)),
+                Some(ns.clone()),
                 row.get(0).map_err(|e| e.to_string())?,
                 row.get(1).map_err(|e| e.to_string())?,
                 row.get(2).map_err(|e| e.to_string())?,
@@ -339,7 +339,12 @@ impl UnifiedMemory {
                     "SELECT attrs_json
                      FROM graph_namespace
                      WHERE namespace = ?1 AND subject = ?2 AND predicate = ?3 AND object = ?4",
-                    params![Self::sanitize_namespace(ns), subject, predicate, object],
+                    params![
+                        Self::normalize_lookup_namespace(ns),
+                        subject,
+                        predicate,
+                        object
+                    ],
                     |row| row.get(0),
                 )
                 .optional()
@@ -367,7 +372,7 @@ impl UnifiedMemory {
                      ON CONFLICT(namespace, subject, predicate, object)
                      DO UPDATE SET attrs_json = excluded.attrs_json, updated_at = excluded.updated_at",
                     params![
-                        Self::sanitize_namespace(ns),
+                        Self::normalize_lookup_namespace(ns),
                         subject,
                         predicate,
                         object,

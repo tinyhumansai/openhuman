@@ -101,7 +101,7 @@ async fn query_namespace_hits_finds_document_stored_under_pii_like_namespace() {
     let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
 
     let raw_namespace = "user/111.444.777-35";
-    memory
+    let document_id = memory
         .upsert_document(NamespaceDocumentInput {
             namespace: raw_namespace.to_string(),
             key: "profile".to_string(),
@@ -118,6 +118,16 @@ async fn query_namespace_hits_finds_document_stored_under_pii_like_namespace() {
         })
         .await
         .unwrap();
+    memory
+        .graph_upsert_namespace(
+            raw_namespace,
+            "Customer",
+            "has_status",
+            "Onboarded",
+            &json!({"document_id": document_id}),
+        )
+        .await
+        .unwrap();
 
     let hits = memory
         .query_namespace_hits(raw_namespace, "onboarding status", 5)
@@ -130,6 +140,10 @@ async fn query_namespace_hits_finds_document_stored_under_pii_like_namespace() {
          using the same raw namespace, got hits: {hits:?}"
     );
     assert_eq!(hits[0].key, "profile");
+    assert!(
+        !hits[0].supporting_relations.is_empty(),
+        "graph relations must use the same PII-safe namespace normalization"
+    );
 
     let context = memory
         .query_namespace_context_data(raw_namespace, "onboarding status", 5)

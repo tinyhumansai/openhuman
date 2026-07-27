@@ -587,8 +587,15 @@ impl UnifiedMemory {
         })
     }
 
-    fn normalize_lookup_namespace(namespace: &str) -> String {
-        Self::sanitize_namespace(&safety::pii::redact_pii(namespace).value)
+    pub(crate) fn normalize_lookup_namespace(namespace: &str) -> String {
+        let redacted = safety::pii::redact_pii(namespace).value;
+        let normalized = Self::sanitize_namespace(&redacted);
+        tracing::debug!(
+            namespace_was_redacted = redacted.as_str() != namespace,
+            normalized_namespace_len = normalized.len(),
+            "[memory_namespace_lookup] normalized lookup scope"
+        );
+        normalized
     }
 
     async fn load_chunks_for_scope(&self, namespace: &str) -> Result<Vec<StoredChunk>, String> {
