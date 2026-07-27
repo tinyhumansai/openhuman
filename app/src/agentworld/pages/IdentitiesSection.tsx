@@ -13,6 +13,7 @@
  * Money only moves after the user confirms. The read-only data views (Registry
  * listing, floor prices, recent sales) are fully functional.
  */
+import debugFactory from 'debug';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import ChipTabs from '../../components/layout/ChipTabs';
@@ -50,6 +51,8 @@ type AsyncState<T> =
 
 const MARKETPLACE_TARGET_ACTIVE = 50;
 
+const debug = debugFactory('agentworld:identities');
+
 function isActiveListing(identity: IdentityListing): boolean {
   return identity.status == null || identity.status === 'active';
 }
@@ -62,11 +65,16 @@ function isActiveListing(identity: IdentityListing): boolean {
 // See tiny.place/#232.
 async function fetchActiveMarketplaceIdentities(): Promise<IdentitiesResponse> {
   // REST has no offset paging; request a single bounded page of active listings.
+  debug('[tinyplace][ui] listings: fetching (limit=%d)', MARKETPLACE_TARGET_ACTIVE);
   const response = await apiClient.marketplace.listIdentities({
     limit: MARKETPLACE_TARGET_ACTIVE,
     status: 'active',
   });
-  const active = (response.identities ?? []).filter(isActiveListing);
+  const returned = response.identities ?? [];
+  const active = returned.filter(isActiveListing);
+  // Log counts so an empty marketplace (ok, returned=0) is distinguishable in the
+  // logs from a REST outage (a rejection, logged in the hook's catch).
+  debug('[tinyplace][ui] listings: ok — %d active of %d returned', active.length, returned.length);
   return {
     ...response,
     identities: active.slice(0, MARKETPLACE_TARGET_ACTIVE),
@@ -77,7 +85,9 @@ async function fetchActiveMarketplaceIdentities(): Promise<IdentitiesResponse> {
 async function fetchActiveFloorPrice(length: number): Promise<IdentityFloor> {
   // Dedicated floor endpoint — the backend computes the floor per handle length,
   // so no client-side listing scan / sort is needed.
+  debug('[tinyplace][ui] floor: fetching length=%d', length);
   const floor = await apiClient.marketplace.identityFloor(length);
+  debug('[tinyplace][ui] floor: ok length=%d price=%s', length, floor.price ? 'present' : 'none');
   return { length, price: floor.price };
 }
 
@@ -129,6 +139,9 @@ function useMarketplaceIdentities(): AsyncState<IdentitiesResponse> {
         if (err instanceof PaymentRequiredError) {
           setState({ status: 'payment_required', challenge: err.challenge });
         } else {
+          // A rejection here is a REST failure/outage — distinct from the ok-but-
+          // empty case logged in fetchActiveMarketplaceIdentities.
+          debug('[tinyplace][ui] listings: fetch failed: %s', String(err));
           setState({ status: 'error', message: String(err) });
         }
       });
@@ -176,6 +189,7 @@ function useFloorPrice(length: number): AsyncState<IdentityFloor> {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
+        debug('[tinyplace][ui] floor: fetch failed length=%d: %s', length, String(err));
         setState({ status: 'error', message: String(err) });
       });
     return () => {
