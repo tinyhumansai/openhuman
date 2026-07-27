@@ -253,9 +253,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 tempfile = "3"
 cpal = { version = "0.15", optional = true }
 hound = { version = "3.5", optional = true }
-enigo = "0.3"
-arboard = "3"
-rdev = "0.5"
+enigo = { version = "0.3", optional = true }
+arboard = { version = "3", optional = true }
+rdev = { version = "0.5", optional = true }
 fs2 = "0.4"
 # Cross-platform battery probe for the scheduler gate. Maintained fork of
 # the abandoned `battery` crate; same `use battery::*;` API surface. Used
@@ -434,12 +434,20 @@ documents = ["dep:pdf-extract", "dep:ppt-rs", "dep:docx-rs"]
 # server, always-on listening, and podcast audio generation/email delivery.
 # Default-ON — the desktop app always ships with voice. Slim / headless builds
 # opt out via `--no-default-features --features "<explicit list without voice>"`,
-# which also drops the exclusive `hound` (WAV I/O) + `lettre` (podcast email)
+# which also drops the exclusive `hound` (WAV I/O), `lettre` (podcast email),
+# `arboard`/`enigo` (clipboard-paste insertion), and `rdev` (global hotkeys)
 # dependencies. Composes with the runtime `DomainSet::voice` flag (#4796): the
 # feature narrows the compile-time surface, `DomainSet` gates it at runtime.
 # Requires `inference` (the whisper engine + the cpal capture stack), so
 # enabling `voice` turns `inference` on transitively.
-voice = ["inference", "dep:hound", "dep:lettre"]
+voice = [
+    "inference",
+    "dep:arboard",
+    "dep:enigo",
+    "dep:hound",
+    "dep:lettre",
+    "dep:rdev",
+]
 # Web3 domains: openhuman::wallet + openhuman::web3 + openhuman::x402 — the
 # crypto wallet (multi-chain sign/broadcast), the high-level swap/bridge/dapp
 # surface, and the x402 machine-payment protocol. Default-ON — the desktop app
