@@ -205,6 +205,30 @@ fn list_flow_connections_json_surfaces_platform_user_id() {
     assert!(json["platform_user_id"].is_null());
 }
 
+#[tokio::test]
+async fn list_connectable_toolkits_includes_builtin_browser_entry() {
+    // Stage C3: the workflow_builder agent must be able to discover `browser`
+    // as an available (built-in, not Composio) toolkit alongside the
+    // Composio-backed ones from `agent_ready_toolkits()`.
+    let tmp = TempDir::new().unwrap();
+    let tool = ListConnectableToolkitsTool::new(test_config(&tmp));
+    assert_eq!(tool.permission_level(), PermissionLevel::None);
+    assert!(!tool.external_effect());
+
+    let result = tool.execute(json!({})).await.unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    let toolkits = parsed["toolkits"].as_array().unwrap();
+    let browser = toolkits
+        .iter()
+        .find(|t| t["toolkit"] == "browser")
+        .expect("browser entry must be present");
+    assert_eq!(browser["type"], "builtin");
+    // Fresh test config: the companion relay is disabled by default, so no
+    // extension can be connected.
+    assert_eq!(browser["connected"], false);
+}
+
 // ── search_tool_catalog / get_tool_contract ─────────────────────────────────
 // The live-catalog cache is process-global (`LIVE_CATALOG_CACHE`) — every
 // test below seeds the exact toolkit(s)/contract(s) it needs via

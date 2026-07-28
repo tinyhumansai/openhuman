@@ -217,6 +217,43 @@ pub fn spawn_channels_service() {
     log::debug!("[channels] channels feature disabled at compile time — not spawning listeners");
 }
 
+/// Browser Companion relay (TinyFlows Chrome extension WebSocket server).
+///
+/// Entirely gated behind the `flows` Cargo feature (the `browser_companion`
+/// domain is itself `#[cfg(feature = "flows")]`, so this function only
+/// exists to be called when the feature is on — the call site in
+/// [`crate::core::runtime::builder::CoreBuilder::start_selected_services`]
+/// carries the matching `#[cfg]`). Runtime-gated in turn by
+/// `config.browser_companion.enabled` inside `start_companion_server`
+/// itself, mirroring `spawn_cron_service`'s config-gate pattern.
+#[cfg(feature = "flows")]
+pub fn spawn_companion_relay_service() {
+    tokio::spawn(async {
+        log::debug!("[browser_companion] spawn_companion_relay_service: loading config");
+        match crate::openhuman::config::Config::load_or_init().await {
+            Ok(config) => {
+                if !config.browser_companion.enabled {
+                    log::debug!(
+                        "[browser_companion] spawn_companion_relay_service: disabled via config; skipping"
+                    );
+                    return;
+                }
+                log::info!("[browser_companion] spawn_companion_relay_service: starting relay");
+                if let Err(error) =
+                    crate::openhuman::browser_companion::start_companion_server(&config).await
+                {
+                    log::error!(
+                        "[browser_companion] spawn_companion_relay_service: start_companion_server failed: {error}"
+                    );
+                }
+            }
+            Err(err) => {
+                log::warn!("[core] config load failed, skipping browser_companion relay: {err}");
+            }
+        }
+    });
+}
+
 /// Which bootstrap jobs a given [`ServiceSet`] enables — the single source of
 /// truth for the flag→job mapping.
 ///

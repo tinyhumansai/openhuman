@@ -13,6 +13,7 @@ pub mod subconscious;
 pub use subconscious::{MedullaLocalConfig, SubconsciousConfig, SubconsciousEngine};
 mod agent;
 mod autonomy;
+mod browser_companion;
 mod capability_providers;
 mod channels;
 mod context;
@@ -58,6 +59,7 @@ pub use agent::{
     OrchestratorModelConfig, RequiredOutputContract, TeamModelConfig,
 };
 pub use autonomy::AutonomyConfig;
+pub use browser_companion::BrowserCompanionConfig;
 pub use capability_providers::{CapabilityProviderConfig, CapabilityProviderTrustState};
 pub use channels::{
     AuditConfig, ChannelsConfig, DingTalkConfig, DiscordConfig, EmailConfig, IMessageConfig,

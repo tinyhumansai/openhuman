@@ -788,6 +788,18 @@ pub(crate) async fn build_builder_proposal(
             payload["inference_message"] = json!(message);
         }
     }
+    // Browser Companion advisory (Stage C3, mirrors B45's `inference_status` /
+    // `inference_message` exactly): only present when the graph has at least
+    // one `tool_call { slug: "browser" }` node; a graph with no browser step
+    // omits both fields entirely. Authoring always succeeds regardless of
+    // `browser_status` — see `evaluate_browser_readiness`'s doc; the hard gate
+    // is run time only (`validate_browser_readiness` in `run_flow_body`).
+    if let Some(evaluation) = evaluate_browser_readiness(config, graph) {
+        payload["browser_status"] = json!(evaluation.status);
+        if let Some(message) = evaluation.message {
+            payload["browser_message"] = json!(message);
+        }
+    }
     if let Some(instruction) = instruction {
         payload["instruction"] = json!(instruction);
     }
@@ -2300,6 +2312,160 @@ pub(crate) async fn validate_inference_readiness(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Browser Companion readiness gate (Stage C3 — mirrors the B45
+// inference-readiness pattern immediately above)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// A `tool_call { config.slug: "browser" }` node routes to the Chrome
+// companion (`src/openhuman/browser_companion/`) instead of Composio. Same
+// two-layer posture as B45:
+//
+// - **Author time** (`build_builder_proposal`) — ADVISORY ONLY, via
+//   `evaluate_browser_readiness`: `browser_status`/`browser_message` ride
+//   along on the proposal payload so the UI can nudge "install/pair the
+//   extension" without ever blocking authoring.
+// - **Run time** (`run_flow_body`) — HARD gate, via
+//   `validate_browser_readiness`: a real run (never `dry_run_workflow`)
+//   requires the companion running, an extension connected, AND a
+//   `browser_tab_id` for THIS run before the engine executes.
+
+/// The 16 browser actions `tinyflows::browser::BrowserAction` accepts
+/// (`#[serde(tag = "action", rename_all = "snake_case")]`) — kept as a plain
+/// list here (rather than parsing through the real enum) so this author-time
+/// check has no dependency on `tinyflows::browser`'s exact deserialization
+/// error shape, only on the wire vocabulary.
+pub(crate) const BROWSER_ACTIONS: [&str; 16] = [
+    "open",
+    "snapshot",
+    "click",
+    "fill",
+    "type",
+    "get_text",
+    "get_title",
+    "get_url",
+    "screenshot",
+    "wait",
+    "press",
+    "hover",
+    "scroll",
+    "is_visible",
+    "close",
+    "find",
+];
+
+/// Whether `graph` has at least one `tool_call` node whose `config.slug` is
+/// the built-in Chrome-automation slug `"browser"` (not a Composio action).
+pub(crate) fn graph_has_browser_node(graph: &WorkflowGraph) -> bool {
+    graph.nodes.iter().any(|node| {
+        node.kind == NodeKind::ToolCall
+            && node.config.get("slug").and_then(Value::as_str) == Some("browser")
+    })
+}
+
+/// Outcome of [`evaluate_browser_readiness`] for a graph that has at least
+/// one `tool_call { slug: "browser" }` node.
+struct BrowserReadinessEvaluation {
+    /// `"ready"` or `"not_ready"` — the fixed vocabulary shared with the
+    /// proposal payload's `browser_status` field.
+    status: &'static str,
+    /// User-actionable prose; `None` only when `status == "ready"`.
+    message: Option<String>,
+}
+
+/// Evaluate Browser Companion author-time readiness for `graph`. Returns
+/// `None` when the graph has no `tool_call { slug: "browser" }` node at all
+/// — a graph with no browser step never pays this check's cost, and the
+/// proposal payload omits both `browser_status`/`browser_message` entirely
+/// rather than claiming a meaningless "ready" (same contract as
+/// [`evaluate_inference_readiness`]).
+///
+/// Unlike inference readiness this needs no network probe — companion
+/// running / extension-connected are both in-process state
+/// ([`crate::openhuman::browser_companion::companion_status`]) — so this
+/// is synchronous. The per-run tab selection (`browser_tab_id`) is NOT
+/// evaluated here: a tab is chosen per-run, not per-authored-graph, so it is
+/// only checked by [`validate_browser_readiness`] at run time.
+fn evaluate_browser_readiness(
+    config: &Config,
+    graph: &WorkflowGraph,
+) -> Option<BrowserReadinessEvaluation> {
+    if !graph_has_browser_node(graph) {
+        return None;
+    }
+    let status = crate::openhuman::browser_companion::companion_status(config);
+    if !status.running {
+        return Some(BrowserReadinessEvaluation {
+            status: "not_ready",
+            message: Some(
+                "This flow uses the Chrome browser companion, which isn't running. Enable it in \
+                 Settings > Browser Companion."
+                    .to_string(),
+            ),
+        });
+    }
+    if !status.extension_connected {
+        return Some(BrowserReadinessEvaluation {
+            status: "not_ready",
+            message: Some(
+                "This flow uses the Chrome browser companion, but no Chrome extension is \
+                 connected yet. Install & pair the Chrome extension in Settings > Browser \
+                 Companion, then share a tab."
+                    .to_string(),
+            ),
+        });
+    }
+    Some(BrowserReadinessEvaluation {
+        status: "ready",
+        message: None,
+    })
+}
+
+/// The Browser Companion run-time HARD gate: empty when `graph` has no
+/// `tool_call { slug: "browser" }` node, or when it does and the companion is
+/// running, an extension is connected, AND `browser_tab_id` names the tab for
+/// this run. Otherwise one specific, actionable error per missing
+/// precondition — mirrors [`validate_inference_readiness`]'s shape exactly so
+/// `run_flow_body` can gate on it identically.
+///
+/// **No longer a builder gate.** Same posture as B45: a graph is never
+/// rejected at author time for browser-companion readiness (see
+/// [`evaluate_browser_readiness`]'s advisory-only use in
+/// `build_builder_proposal`) — only a REAL run (never `dry_run_workflow`)
+/// hard-fails here, before the tinyflows engine executes.
+pub(crate) fn validate_browser_readiness(
+    config: &Config,
+    graph: &WorkflowGraph,
+    browser_tab_id: Option<u64>,
+) -> Vec<String> {
+    if !graph_has_browser_node(graph) {
+        return Vec::new();
+    }
+    let status = crate::openhuman::browser_companion::companion_status(config);
+    if !status.running {
+        return vec![
+            "This flow uses the Chrome browser companion, which is not running. Enable it in \
+             Settings > Browser Companion."
+                .to_string(),
+        ];
+    }
+    if !status.extension_connected {
+        return vec![
+            "This flow uses the Chrome browser companion, but no Chrome extension is currently \
+             connected. Install & pair the extension in Settings > Browser Companion."
+                .to_string(),
+        ];
+    }
+    if browser_tab_id.is_none() {
+        return vec![
+            "This flow uses the Chrome browser companion, but no browser tab was selected for \
+             this run. Share a tab with the companion and pass its tab id when running this flow."
+                .to_string(),
+        ];
+    }
+    Vec::new()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool-contract enforcement gate (systemic tool-contract fix, Part 2)
 // ─────────────────────────────────────────────────────────────────────────────
 //
@@ -2366,6 +2532,49 @@ pub(crate) async fn validate_tool_contracts(config: &Config, graph: &WorkflowGra
         let Some(slug) = node.config.get("slug").and_then(Value::as_str) else {
             continue;
         };
+        // Built-in Chrome-automation slug (Browser Companion, Stage C3) — NOT
+        // a Composio action, so it never hits the live catalog below. Its
+        // contract is `config.args.action` being one of the 16 supported
+        // browser actions, checked statically here instead.
+        if slug == "browser" {
+            let action = node
+                .config
+                .get("args")
+                .and_then(|a| a.get("action"))
+                .and_then(Value::as_str);
+            match action {
+                Some(a) if BROWSER_ACTIONS.contains(&a) => {}
+                Some(a) => {
+                    tracing::warn!(
+                        target: "flows",
+                        node = %node.id,
+                        action = %a,
+                        "[flows] tool-contract check: browser action is not one of the supported \
+                         actions — rejecting"
+                    );
+                    errors.push(format!(
+                        "Node '{}': tool_call `browser` action `{a}` is not one of the supported \
+                         browser actions ({}).",
+                        node.id,
+                        BROWSER_ACTIONS.join(", ")
+                    ));
+                }
+                None => {
+                    tracing::warn!(
+                        target: "flows",
+                        node = %node.id,
+                        "[flows] tool-contract check: browser tool_call missing config.args.action \
+                         — rejecting"
+                    );
+                    errors.push(format!(
+                        "Node '{}': tool_call `browser` requires `config.args.action`, one of: {}.",
+                        node.id,
+                        BROWSER_ACTIONS.join(", ")
+                    ));
+                }
+            }
+            continue;
+        }
         // `=`-derived slugs resolve from upstream/trigger data at runtime —
         // nothing to check statically. Native `oh:` tools have no Composio
         // contract.
@@ -2619,6 +2828,13 @@ fn validate_connection_refs_against(
         let Some(slug) = node.config.get("slug").and_then(Value::as_str) else {
             continue;
         };
+        // Built-in Chrome-automation slug (Browser Companion, Stage C3) —
+        // carries no `connection_ref` at all (it authorizes against a
+        // per-run shared tab instead, checked by `validate_browser_readiness`
+        // at run time), so it has nothing for this gate to check.
+        if slug == "browser" {
+            continue;
+        }
         // `=`-derived slugs resolve at runtime; native `oh:` tools have no
         // Composio connection to name.
         if slug.starts_with('=') || slug.starts_with("oh:") {
@@ -4308,6 +4524,33 @@ pub async fn flows_run(
     input: Value,
     trigger: FlowRunTrigger,
 ) -> Result<RpcOutcome<Value>, String> {
+    flows_run_with_browser_tab(config, flow_id, input, trigger, None).await
+}
+
+/// Same as [`flows_run`], plus an optional `browser_tab_id`: the browser tab
+/// (explicitly shared with the Browser Companion — see
+/// `src/openhuman/browser_companion/`) this run's `tool_call { slug: "browser" }`
+/// node(s), if any, are authorized against. `None` when the graph has no
+/// browser node, or when the caller doesn't select one (in which case a
+/// browser-node graph fails the run-time hard gate in [`run_flow_body`] with
+/// a "no browser tab was selected" error rather than silently running
+/// unrouted).
+///
+/// Split out as its own function (rather than adding the parameter directly
+/// to [`flows_run`]) so every existing call site of the public,
+/// long-standing `flows_run` signature — the automatic trigger dispatch in
+/// `flows::bus`, the agent `run_flow` tool's `flows_run_detached`, and the
+/// large existing `ops_tests.rs` suite — is unaffected. Today only the
+/// `flows.run` RPC handler (`schemas::handle_run`) threads a real
+/// `browser_tab_id` through, parsed from the RPC's own `browser_tab_id` input
+/// field.
+pub async fn flows_run_with_browser_tab(
+    config: &Config,
+    flow_id: &str,
+    input: Value,
+    trigger: FlowRunTrigger,
+    browser_tab_id: Option<u64>,
+) -> Result<RpcOutcome<Value>, String> {
     // Prep synchronously (validate + compile-check + mint the run id), insert
     // the initial `running` row, and announce it, then hand off to the shared
     // run body. Both the synchronous "Run" RPC path (this fn) and the detached
@@ -4333,6 +4576,7 @@ pub async fn flows_run(
         no_actionable_nodes,
         cancel_token,
         run_guard,
+        browser_tab_id,
     )
     .await
 }
@@ -4388,6 +4632,10 @@ pub async fn flows_run_detached(
     let flow_id_owned = flow_id.to_string();
     let body_thread_id = thread_id.clone();
     tokio::spawn(async move {
+        // Agent-initiated runs don't (yet) select a browser tab — a graph
+        // with a `tool_call { slug: "browser" }` node fails the run-time hard
+        // gate below with a "no browser tab was selected" error rather than
+        // running unrouted. See `flows_run_with_browser_tab`'s doc.
         if let Err(e) = run_flow_body(
             config_arc,
             flow,
@@ -4398,6 +4646,7 @@ pub async fn flows_run_detached(
             no_actionable_nodes,
             cancel_token,
             run_guard,
+            None,
         )
         .await
         {
@@ -4592,6 +4841,34 @@ impl Drop for RunRowFinalizer {
     }
 }
 
+/// RAII guard (Stage C3) that releases a Browser Companion run→tab binding
+/// ([`crate::openhuman::browser_companion::unbind_run`]) on `Drop` —
+/// covering every exit path of `run_flow_body` (success, error, timeout,
+/// cancellation mid-`tokio::select!`) without an explicit unbind call
+/// sprinkled at each return, mirroring how [`RunRowFinalizer`] guarantees a
+/// terminal write on drop. `None` is a no-op guard: nothing was bound (no
+/// browser node in this run's graph, or the companion/tab weren't ready —
+/// the run-time hard gate would already have failed the run in that case).
+struct BrowserRunUnbindGuard(Option<String>);
+
+impl BrowserRunUnbindGuard {
+    fn none() -> Self {
+        Self(None)
+    }
+
+    fn bound(thread_id: &str) -> Self {
+        Self(Some(thread_id.to_string()))
+    }
+}
+
+impl Drop for BrowserRunUnbindGuard {
+    fn drop(&mut self) {
+        if let Some(thread_id) = &self.0 {
+            crate::openhuman::browser_companion::unbind_run(thread_id);
+        }
+    }
+}
+
 /// Executes an already-prepared, already-`running`-row-inserted flow run to a
 /// terminal state, finalizing the `flow_runs` row on every exit path.
 ///
@@ -4613,6 +4890,7 @@ impl Drop for RunRowFinalizer {
 /// status. Registering before the `run_id` is observable makes the cancel
 /// always take the signalled branch instead. `_run_guard` is held for the whole
 /// body and deregisters on any exit, including the early returns below.
+#[allow(clippy::too_many_arguments)]
 async fn run_flow_body(
     config_arc: Arc<Config>,
     flow: Flow,
@@ -4623,6 +4901,7 @@ async fn run_flow_body(
     no_actionable_nodes: bool,
     cancel_token: tokio_util::sync::CancellationToken,
     _run_guard: run_registry::RunGuard,
+    browser_tab_id: Option<u64>,
 ) -> Result<RpcOutcome<Value>, String> {
     let config: &Config = config_arc.as_ref();
     let flow_id: &str = flow_id.as_str();
@@ -4675,6 +4954,42 @@ async fn run_flow_body(
         return Err(msg);
     }
 
+    // Browser Companion run-time hard gate (Stage C3 — mirrors the B45
+    // inference-readiness preflight immediately above, same "fail cleanly
+    // before the engine executes" placement). `validate_browser_readiness` is
+    // a no-op `Vec` for a graph with no `tool_call { slug: "browser" }` node.
+    let browser_errors = validate_browser_readiness(config, &flow.graph, browser_tab_id);
+    if !browser_errors.is_empty() {
+        let detail = browser_errors.join(" ");
+        let msg =
+            format!("This flow's browser step needs the Chrome companion ready to run. {detail}");
+        tracing::warn!(
+            target: "flows",
+            flow_id,
+            "[flows] run_flow_body: browser-companion readiness preflight failed — finalizing \
+             run as failed without invoking the engine: {msg}"
+        );
+        if let Err(rec_err) = store::record_run(config, flow_id, "failed") {
+            tracing::warn!(
+                target: "flows",
+                flow_id,
+                error = %rec_err,
+                "[flows] run_flow_body: failed to record failed run (browser-companion preflight)"
+            );
+        }
+        let observed = current_persisted_steps(config, &thread_id);
+        finish_flow_run_row(
+            config,
+            &thread_id,
+            flow_id,
+            "failed",
+            &observed,
+            &[],
+            Some(&msg),
+        );
+        return Err(msg);
+    }
+
     // Recompile to execute — the entry point already compile-checked to fail
     // fast before the running row existed. A failure *now* (after the row was
     // inserted) must finalize the row as failed, never orphan it.
@@ -4698,10 +5013,58 @@ async fn run_flow_body(
     };
 
     // Scope the state store per-flow so two flows never collide on a state key.
-    let caps = crate::openhuman::tinyflows::build_capabilities(
+    let mut caps = crate::openhuman::tinyflows::build_capabilities(
         config_arc.clone(),
         format!("flow:{flow_id}"),
     );
+    // Browser Companion routing (Stage C3). This is one of the TWO real
+    // `build_capabilities` execution sites in this file (the other is
+    // `flows_resume`'s, further below) — `dry_run_workflow` is a sandbox and
+    // does not route through `run_flow_body` at all, so there is no mock path
+    // here that must NOT be wrapped. The run-time hard gate above already
+    // proved (when the graph has a browser node) that the companion is
+    // running, an extension is connected, and `browser_tab_id` is set;
+    // `bind_run` is the remaining authoritative check that THIS SPECIFIC tab
+    // is actually shared — a real `tab_not_shared`-shaped error surfaces here
+    // if it isn't.
+    let mut _browser_unbind_guard = BrowserRunUnbindGuard::none();
+    if graph_has_browser_node(&flow.graph) {
+        if let (Some(relay), Some(tab_id)) = (
+            crate::openhuman::browser_companion::browser_relay(),
+            browser_tab_id,
+        ) {
+            if let Err(e) = crate::openhuman::browser_companion::bind_run(&thread_id, tab_id) {
+                let msg = e.to_string();
+                tracing::warn!(
+                    target: "flows",
+                    flow_id,
+                    error = %msg,
+                    "[flows] run_flow_body: browser bind_run failed after start row inserted"
+                );
+                let observed = current_persisted_steps(config, &thread_id);
+                finish_flow_run_row(
+                    config,
+                    &thread_id,
+                    flow_id,
+                    "failed",
+                    &observed,
+                    &[],
+                    Some(&msg),
+                );
+                return Err(msg);
+            }
+            _browser_unbind_guard = BrowserRunUnbindGuard::bound(&thread_id);
+            let browser = std::sync::Arc::new(tinyflows::browser::ChromeToolInvoker::new(
+                relay,
+                thread_id.clone(),
+                tab_id,
+            ));
+            caps.tools = std::sync::Arc::new(tinyflows::browser::RoutingToolInvoker::new(
+                browser,
+                caps.tools.clone(),
+            ));
+        }
+    }
     let checkpointer = match crate::openhuman::tinyflows::open_flow_checkpointer(config) {
         Ok(checkpointer) => checkpointer,
         Err(e) => {
@@ -5013,6 +5376,19 @@ pub async fn flows_resume(
     }
     let compiled = tinyflows::compiler::compile(&flow.graph).map_err(|e| e.to_string())?;
     let config_arc = Arc::new(config.clone());
+    // NOT wrapped with `RoutingToolInvoker` (Stage C3 deviation from the
+    // brief, which asked for both `build_capabilities` sites): this is a
+    // second REAL execution path (resuming a paused human-in-the-loop
+    // checkpoint), not a mock/dry-run — but unlike `run_flow_body`,
+    // `flows_resume` has no `browser_tab_id` input in this increment (see
+    // `flows_run_with_browser_tab`'s doc — only `flows.run` threads one
+    // through), so there is no tab to rebind here. A resumed run whose graph
+    // has a `tool_call { slug: "browser" }` node still fails CLOSED: with no
+    // `RoutingToolInvoker` installed, `OpenHumanTools::invoke`'s explicit
+    // `slug == "browser"` early-out (`src/openhuman/tinyflows/caps.rs`) is
+    // the fallback that rejects it with an actionable message instead of
+    // running unrouted. Threading `browser_tab_id` through `flows_resume`
+    // too is follow-up, not required for this increment.
     let caps =
         crate::openhuman::tinyflows::build_capabilities(config_arc, format!("flow:{flow_id}"));
     let checkpointer =

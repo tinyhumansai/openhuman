@@ -2810,6 +2810,26 @@ impl ToolInvoker for PreflightToolInvoker {
 #[async_trait]
 impl ToolInvoker for OpenHumanTools {
     async fn invoke(&self, slug: &str, args: Value, conn: Option<&str>) -> Result<Value> {
+        // Browser Companion fallback (Stage C3): `slug:"browser"` is a
+        // built-in Chrome-automation slug, never a Composio action nor a
+        // native `oh:` tool. `OpenHumanTools` reaching this branch for it at
+        // all means `src/openhuman/flows/ops.rs::run_flow_body` did NOT
+        // install a `tinyflows::browser::RoutingToolInvoker` around this
+        // run's tools — the companion isn't running, no extension is
+        // connected, or no tab was shared/selected for this run (the
+        // run-time hard gate — `validate_browser_readiness` — should already
+        // have failed such a run before the engine ever started, but this is
+        // the guaranteed backstop). Reject explicitly here rather than
+        // falling through to the Composio branch below, which would fail
+        // with a confusing "unknown toolkit" instead of this actionable
+        // message.
+        if slug == "browser" {
+            return Err(EngineError::Capability(
+                "the Chrome browser companion is not running or no tab was shared — enable it \
+                 in Settings > Browser Companion and share a tab"
+                    .to_string(),
+            ));
+        }
         // Native OpenHuman tool path (the "Tool" node): `oh:<tool_name>`. Bypasses
         // the Composio curation gate (it isn't a Composio slug) but still runs
         // through the autonomy-tier + approval gates, then dispatches to the
@@ -4532,6 +4552,34 @@ mod tests {
                 msg.contains(POLICY_BLOCKED_MARKER),
                 "expected a policy-blocked refusal, got: {msg}"
             );
+        } else {
+            panic!("expected EngineError::Capability");
+        }
+    }
+
+    // ── Browser Companion fallback (Stage C3) ───────────────────────────────
+
+    /// `slug:"browser"` reaching `OpenHumanTools::invoke` directly (i.e. no
+    /// `RoutingToolInvoker` was installed around it — the companion off, or
+    /// no tab shared/selected for this run) must fail with the dedicated,
+    /// actionable "not running or no tab was shared" message rather than
+    /// falling through to the Composio branch and failing with a confusing
+    /// "unknown toolkit" error instead.
+    #[tokio::test]
+    async fn browser_slug_without_a_routing_invoker_fails_with_actionable_message() {
+        use crate::openhuman::security::AutonomyLevel;
+
+        let tools = OpenHumanTools {
+            config: Arc::new(Config::default()),
+            security: Arc::new(policy(AutonomyLevel::Full)),
+        };
+        let err = tools
+            .invoke("browser", json!({"action": "snapshot"}), None)
+            .await
+            .expect_err("browser slug with no RoutingToolInvoker installed must fail");
+        if let EngineError::Capability(msg) = err {
+            assert!(msg.contains("browser companion"), "{msg}");
+            assert!(msg.contains("Settings > Browser Companion"), "{msg}");
         } else {
             panic!("expected EngineError::Capability");
         }

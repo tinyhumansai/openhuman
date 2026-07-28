@@ -60,6 +60,16 @@ fn apply_host_overlay(contract: NodeKindContract) -> NodeKindContract {
                  bind downstream as =nodes.<id>.item.json.data.<field>, NOT .item.json.<field>. To \
                  split_out over its result list, use get_tool_contract's primary_array_path \
                  prefixed with `json.` (e.g. \"json.data.messages\").",
+            )
+            .with_note(
+                "config.slug = \"browser\" is a THIRD, built-in slug family — Chrome browser \
+                 automation via the Browser Companion — distinct from both a Composio action and \
+                 an oh: native tool. It needs NO config.connection_ref (it authorizes against a \
+                 per-run shared browser tab instead). config.args must be { \"action\": <one of \
+                 open, snapshot, click, fill, type, get_text, get_title, get_url, screenshot, \
+                 wait, press, hover, scroll, is_visible, close, find>, ...action-specific fields }. \
+                 Requires the user to have paired the Chrome extension and shared a tab — a run \
+                 fails cleanly before executing if the companion isn't ready.",
             ),
         "http_request" => contract.with_note(
             "config.connection_ref is an http_cred:<name> credential for authentication.",
@@ -154,6 +164,16 @@ mod tests {
         assert!(notes.contains("oh:"), "{notes}");
         assert!(notes.contains("data"), "{notes}");
         assert!(notes.contains("get_tool_contract"), "{notes}");
+    }
+
+    #[test]
+    fn tool_call_overlay_documents_the_builtin_browser_slug() {
+        let c = node_kind_contract("tool_call").unwrap();
+        let notes = c.notes.join("\n");
+        assert!(notes.contains("browser"), "{notes}");
+        assert!(notes.contains("Browser Companion"), "{notes}");
+        assert!(notes.contains("connection_ref"), "{notes}");
+        assert!(notes.contains("snapshot"), "{notes}");
     }
 
     #[test]

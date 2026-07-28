@@ -686,6 +686,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Trigger payload seeded into the run; defaults to null.",
                     required: false,
                 },
+                FieldSchema {
+                    name: "browser_tab_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Chrome tab id (from the Browser Companion's shared-tab list) this \
+                              run's `tool_call { slug: \"browser\" }` node(s), if any, are \
+                              authorized against. Required for a graph with a browser node; \
+                              ignored otherwise.",
+                    required: false,
+                },
             ],
             outputs: vec![FieldSchema {
                 name: "result",
@@ -1413,12 +1422,14 @@ fn handle_run(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let id = read_required::<String>(&params, "id")?;
         let input = params.get("input").cloned().unwrap_or(Value::Null);
+        let browser_tab_id = params.get("browser_tab_id").and_then(Value::as_u64);
         to_json(
-            ops::flows_run(
+            ops::flows_run_with_browser_tab(
                 &config,
                 id.trim(),
                 input,
                 crate::openhuman::flows::FlowRunTrigger::Rpc,
+                browser_tab_id,
             )
             .await?,
         )

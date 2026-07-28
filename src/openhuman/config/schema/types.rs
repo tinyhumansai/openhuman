@@ -463,6 +463,16 @@ pub struct Config {
     #[serde(default)]
     pub meet: MeetConfig,
 
+    /// Browser Companion (TinyFlows Chrome extension relay) integration
+    /// settings — loopback port, pairing extension id, and the master
+    /// enable switch. See
+    /// [`crate::openhuman::config::schema::BrowserCompanionConfig`]. Always
+    /// present in the schema regardless of the `flows` Cargo feature (inert
+    /// config data); the domain behaviour that reads it lives in
+    /// `openhuman::browser_companion`, gated behind `feature = "flows"`.
+    #[serde(default)]
+    pub browser_companion: BrowserCompanionConfig,
+
     /// Whether the user has completed the **React UI** onboarding flow.
     ///
     /// Set by `OnboardingOverlay.tsx::handleDone` and the multi-step
@@ -817,6 +827,7 @@ impl Default for Config {
             update: UpdateConfig::default(),
             dictation: DictationConfig::default(),
             meet: MeetConfig::default(),
+            browser_companion: BrowserCompanionConfig::default(),
             onboarding_completed: false,
             chat_onboarding_completed: false,
             model_registry: Vec::new(),

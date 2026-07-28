@@ -63,6 +63,10 @@ pub struct ServiceSet {
     pub memory_sync: bool,
     /// Orchestration relay-mailbox drain supervisor.
     pub orchestration: bool,
+    /// Browser Companion relay (TinyFlows Chrome extension WebSocket server).
+    /// Runtime-gated in turn by `config.browser_companion.enabled`. Only
+    /// meaningful when the `flows` Cargo feature is on — a no-op elsewhere.
+    pub companion_relay: bool,
 }
 
 impl ServiceSet {
@@ -82,6 +86,7 @@ impl ServiceSet {
             integrations: true,
             memory_sync: true,
             orchestration: true,
+            companion_relay: true,
         }
     }
 
@@ -102,6 +107,7 @@ impl ServiceSet {
             integrations: false,
             memory_sync: false,
             orchestration: false,
+            companion_relay: false,
         }
     }
 
@@ -122,6 +128,7 @@ impl ServiceSet {
             integrations: false,
             memory_sync: false,
             orchestration: false,
+            companion_relay: false,
         }
     }
 
@@ -152,6 +159,7 @@ impl ServiceSet {
             integrations: false,
             memory_sync: true,
             orchestration: false,
+            companion_relay: false,
         }
     }
 }
@@ -722,6 +730,10 @@ impl CoreRuntime {
         if self.services.channels {
             services::spawn_channels_service();
         }
+        #[cfg(feature = "flows")]
+        if self.services.companion_relay {
+            services::spawn_companion_relay_service();
+        }
     }
 }
 
@@ -910,5 +922,28 @@ mod tests {
         assert!(!headless.integrations);
         assert!(!headless.memory_sync);
         assert!(!headless.orchestration);
+    }
+
+    #[test]
+    fn companion_relay_service_is_desktop_only() {
+        // The browser-companion relay binds a loopback WebSocket for the Chrome
+        // extension and must run ONLY on the desktop host — never in the
+        // headless API, the bare `none()` set, or the embedded runtime.
+        assert!(
+            ServiceSet::desktop().companion_relay,
+            "desktop() must enable companion_relay"
+        );
+        assert!(
+            !ServiceSet::headless_api().companion_relay,
+            "headless_api() must not enable companion_relay"
+        );
+        assert!(
+            !ServiceSet::none().companion_relay,
+            "none() must not enable companion_relay"
+        );
+        assert!(
+            !ServiceSet::embedded().companion_relay,
+            "embedded() must not enable companion_relay"
+        );
     }
 }

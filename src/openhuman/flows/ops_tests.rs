@@ -4099,6 +4099,64 @@ async fn validate_tool_contracts_passes_a_fully_wired_real_slug() {
     assert!(errors.is_empty(), "{errors:?}");
 }
 
+// ── validate_tool_contracts: built-in `browser` slug (Stage C3) ─────────────
+// The `browser` slug is NOT a Composio action — no live-catalog fetch, no
+// curation check. Its contract is `config.args.action` being one of the 16
+// supported browser actions.
+
+fn browser_tool_call_graph(action_args: Value) -> WorkflowGraph {
+    graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "act", "kind": "tool_call", "name": "Act",
+              "config": { "slug": "browser", "args": action_args } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "act" } ]
+    }))
+}
+
+#[tokio::test]
+async fn validate_tool_contracts_rejects_a_browser_node_missing_action() {
+    let config = Config::default();
+    let g = browser_tool_call_graph(json!({}));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("act"), "{}", errors[0]);
+    assert!(errors[0].contains("config.args.action"), "{}", errors[0]);
+}
+
+#[tokio::test]
+async fn validate_tool_contracts_rejects_a_browser_node_with_an_unknown_action() {
+    let config = Config::default();
+    let g = browser_tool_call_graph(json!({ "action": "teleport" }));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("teleport"), "{}", errors[0]);
+    assert!(errors[0].contains("act"), "{}", errors[0]);
+}
+
+#[tokio::test]
+async fn validate_tool_contracts_passes_every_valid_browser_action() {
+    let config = Config::default();
+    for action in BROWSER_ACTIONS {
+        let g = browser_tool_call_graph(json!({ "action": action }));
+        let errors = validate_tool_contracts(&config, &g).await;
+        assert!(errors.is_empty(), "action `{action}`: {errors:?}");
+    }
+}
+
+#[tokio::test]
+async fn validate_tool_contracts_never_hits_the_live_catalog_for_browser() {
+    // No `seed_live_catalog_cache` call for "browser" — if the check somehow
+    // treated it as a Composio toolkit it would either panic on an unseeded
+    // cache lookup or best-effort-skip (never actually validating the
+    // action), rather than rejecting the unknown action as it must.
+    let config = Config::default();
+    let g = browser_tool_call_graph(json!({ "action": "not_a_real_action" }));
+    let errors = validate_tool_contracts(&config, &g).await;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+}
+
 // ── validate_connection_refs (WS3) ──────────────────────────────────────────
 //
 // The transcript bug: the user's connections were twitter →
@@ -4235,6 +4293,18 @@ fn connection_refs_skip_oh_and_refless_and_expression_nodes() {
 }
 
 #[test]
+fn connection_refs_skip_the_builtin_browser_slug() {
+    // Stage C3: a `browser` tool_call node carries no `connection_ref` at all
+    // (it authorizes against a per-run shared tab instead) — even a stray
+    // `connection_ref` on one must not be checked against the Composio
+    // connection list.
+    let g = ws3_tool_call_graph("browser", Some("composio:twitter:whatever"));
+    assert!(validate_connection_refs_against(&g, Some(&ws3_transcript_connections())).is_empty());
+    // Also skipped when connections are unavailable (fail-open path).
+    assert!(validate_connection_refs_against(&g, None).is_empty());
+}
+
+#[test]
 fn connection_refs_fail_open_on_unavailable_connections_but_keep_mismatch() {
     // Connections unavailable (None): the id-existence check is SKIPPED — a
     // toolkit-matched ref with an unknown id passes rather than false-reject.
@@ -4254,6 +4324,80 @@ fn connection_refs_fail_open_on_unavailable_connections_but_keep_mismatch() {
     let errors = validate_connection_refs_against(&g_mismatch, None);
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(errors[0].contains("tiktok"), "{}", errors[0]);
+}
+
+// ── Browser Companion readiness gate (Stage C3, mirrors B45) ────────────────
+//
+// `validate_browser_readiness` reads the process-wide Browser Companion
+// runtime singleton (`browser_companion::ops`'s own tests document why it
+// can't be a hard per-test guarantee — only one test in the whole binary
+// starts the relay with `enabled: true`). These tests are written to hold
+// deterministically regardless of that shared state where possible, and skip
+// (rather than flake) the one case that truly needs the relay to be down.
+
+#[test]
+fn graph_has_browser_node_detects_and_excludes_correctly() {
+    let with_browser = browser_tool_call_graph(json!({ "action": "snapshot" }));
+    assert!(graph_has_browser_node(&with_browser));
+
+    let without_browser = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_SEND_MESSAGE", "args": {} } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    assert!(!graph_has_browser_node(&without_browser));
+
+    let trigger_only = graph(trigger_only_graph());
+    assert!(!graph_has_browser_node(&trigger_only));
+}
+
+#[test]
+fn validate_browser_readiness_is_a_noop_for_a_graph_without_a_browser_node() {
+    let config = Config::default();
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "post", "kind": "tool_call", "name": "Post",
+              "config": { "slug": "SLACK_SEND_MESSAGE", "args": {} } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "post" } ]
+    }));
+    // Regardless of the process-wide companion runtime state, a graph with no
+    // browser node never pays this check's cost.
+    assert!(validate_browser_readiness(&config, &g, None).is_empty());
+    assert!(validate_browser_readiness(&config, &g, Some(1)).is_empty());
+}
+
+#[test]
+fn validate_browser_readiness_rejects_a_browser_graph_with_no_tab_selected() {
+    let config = Config::default();
+    let g = browser_tool_call_graph(json!({ "action": "snapshot" }));
+    // Deterministic regardless of the shared companion-runtime singleton's
+    // state: whichever of the three preconditions (running / connected / tab
+    // selected) is unmet, `browser_tab_id: None` guarantees the "no tab
+    // selected" one always is — so this must always reject with exactly one
+    // error.
+    let errors = validate_browser_readiness(&config, &g, None);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+}
+
+#[test]
+fn validate_browser_readiness_rejects_when_the_companion_is_not_running() {
+    // Only meaningful to assert when the shared companion-runtime singleton
+    // is known NOT to be running (the default/common case) — skip rather
+    // than flake if some other test in this binary happens to have it up
+    // concurrently.
+    if crate::openhuman::browser_companion::browser_relay().is_some() {
+        return;
+    }
+    let config = Config::default();
+    let g = browser_tool_call_graph(json!({ "action": "snapshot" }));
+    let errors = validate_browser_readiness(&config, &g, Some(1));
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("not running"), "{}", errors[0]);
 }
 
 // ── validate_required_arg_resolvability (issue B18) ─────────────────────────

@@ -1286,13 +1286,24 @@ impl Tool for ListConnectableToolkitsTool {
         use crate::openhuman::memory_sync::composio::providers::agent_ready_toolkits;
         tracing::debug!(target: "flows", "[flows] list_connectable_toolkits: listing toolkits + connected state (read-only)");
         let connected = ops::connected_toolkits(&self.config).await;
-        let toolkits: Vec<Value> = agent_ready_toolkits()
+        let mut toolkits: Vec<Value> = agent_ready_toolkits()
             .into_iter()
             .map(|tk| {
                 let tk_lc = tk.to_ascii_lowercase();
                 json!({ "toolkit": tk_lc, "connected": connected.contains(&tk_lc) })
             })
             .collect();
+        // Browser Companion (Stage C3): a built-in Chrome-automation "toolkit"
+        // — not Composio-backed, so it's appended here rather than coming
+        // from `agent_ready_toolkits()`. `type: "builtin"` distinguishes it
+        // from the Composio entries above so the workflow_builder agent
+        // doesn't try to `composio_connect` it.
+        #[cfg(feature = "flows")]
+        toolkits.push(json!({
+            "toolkit": "browser",
+            "connected": crate::openhuman::browser_companion::is_extension_connected(),
+            "type": "builtin",
+        }));
         Ok(ToolResult::success(serde_json::to_string_pretty(
             &json!({ "toolkits": toolkits }),
         )?))

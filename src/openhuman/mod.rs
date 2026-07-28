@@ -31,6 +31,8 @@ pub mod artifacts;
 #[cfg(feature = "voice")]
 pub mod audio_toolkit;
 pub mod billing;
+#[cfg(feature = "flows")]
+pub mod browser_companion;
 pub mod channels;
 pub mod composio;
 pub mod config;
