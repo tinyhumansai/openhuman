@@ -42,18 +42,14 @@ pub(crate) async fn build_context(
     let mut context = String::new();
     let mut seen_keys = HashSet::new();
 
-    // Pull relevant memories for this message — routed through the tinyagents
-    // retrieval facade (issue #4249, 09.2) so recall is swappable and emits
-    // `MemoryLoaded`. The facade wraps `Memory::recall` verbatim, so the
-    // rendered `[Memory context]` block stays byte-identical.
-    if let Ok(entries) = crate::openhuman::agent::tinyagents::retriever::recall_through_facade(
-        mem,
-        user_msg,
-        5,
-        crate::openhuman::memory::RecallOpts::default(),
-    )
-    .await
+    // Pull relevant memories for this message. The global namespace goes
+    // through the tinyagents retrieval facade (issue #4249, 09.2) so recall
+    // stays swappable and emits `MemoryLoaded`; connector namespaces
+    // (`skill-*`) are merged in alongside it, because a synced email the user
+    // is asking about is otherwise in the store and unreachable from this turn.
     {
+        let entries =
+            crate::openhuman::memory::auto_recall::recall_with_connectors(mem, user_msg, 5).await;
         let relevant: Vec<_> = entries
             .iter()
             .filter(|e| match e.score {

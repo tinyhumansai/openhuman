@@ -11,6 +11,7 @@
 
 // Legacy memory modules
 pub mod agent;
+pub mod auto_recall;
 pub mod conversations;
 pub mod diff;
 pub mod global;

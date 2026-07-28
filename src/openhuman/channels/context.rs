@@ -115,10 +115,11 @@ pub(crate) async fn build_memory_context(
 ) -> String {
     let mut context = String::new();
 
-    if let Ok(entries) = mem
-        .recall(user_msg, 5, crate::openhuman::memory::RecallOpts::default())
-        .await
+    // Global plus connector namespaces — the channel-side turn context has the
+    // same blind spot as the harness one when it only reads `global`.
     {
+        let entries =
+            crate::openhuman::memory::auto_recall::recall_with_connectors(mem, user_msg, 5).await;
         let mut included = 0usize;
         let mut used_chars = 0usize;
 
