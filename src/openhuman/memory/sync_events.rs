@@ -180,6 +180,11 @@ impl EventHandler for SyncCompleteEmbedTrigger {
             if stage == "completed" {
                 log::debug!("[memory-sync] sync completed — triggering batch embedding backfill");
                 crate::openhuman::memory::queue::ensure_reembed_backfill(&self.config);
+                // The tree backfill above covers `mem_tree_chunk_embeddings`
+                // only. Base `vector_chunks` rows whose batch embed failed
+                // during the sync are repaired by their own sweep — a sync is
+                // exactly when a crop of them appears.
+                crate::openhuman::memory::store::vector_reembed::ensure_vector_reembed();
             }
         }
     }

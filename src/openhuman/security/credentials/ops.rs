@@ -615,6 +615,10 @@ async fn store_session_inner(
         "[credentials][auth-store] scheduler gate cleared; ensuring re-embed backfill after login"
     );
     crate::openhuman::memory::queue::ensure_reembed_backfill(&effective_config);
+    // Base `vector_chunks` rows left vector-less while the session was signed
+    // out are unrecoverable-classified, so nothing retries them until the
+    // condition that caused them clears. Logging in is that moment.
+    crate::openhuman::memory::store::vector_reembed::ensure_vector_reembed();
     logs.push("memory re-embed backfill checked after login".to_string());
 
     // Bind the Sentry scope to this user so background events that fire

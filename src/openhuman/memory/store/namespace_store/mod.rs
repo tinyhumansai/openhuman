@@ -33,4 +33,5 @@ mod helpers;
 mod init;
 pub mod profile;
 mod query;
+pub(crate) mod reembed;
 pub mod segments;

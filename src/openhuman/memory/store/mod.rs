@@ -34,6 +34,7 @@ pub mod vectors;
 mod client;
 pub mod factories;
 mod memory_trait;
+pub mod vector_reembed;
 
 pub use kinds::MemoryKind;
 pub use traits::{ObsidianFile, ObsidianRepresentable, VectorEmbeddable};

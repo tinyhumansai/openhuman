@@ -17,6 +17,7 @@ use crate::openhuman::memory::ingestion::{
     IngestionJob, IngestionQueue, IngestionState, MemoryIngestionConfig, MemoryIngestionRequest,
     MemoryIngestionResult,
 };
+use crate::openhuman::memory::store::namespace_store::reembed::ReembedSweepReport;
 use crate::openhuman::memory::store::namespace_store::UnifiedMemory;
 use crate::openhuman::memory::store::types::{
     NamespaceDocumentInput, NamespaceMemoryHit, NamespaceRetrievalContext,
@@ -495,6 +496,16 @@ impl MemoryClient {
             }
             None => self.inner.graph_query_all(subject, predicate).await,
         }
+    }
+
+    /// Re-embed up to `budget` chunks whose vector is missing or unusable under
+    /// the active embedder, returning what the pass managed to repair.
+    ///
+    /// Deficient rows stay in `vector_chunks` until they are repaired, so the
+    /// pending set is re-derived from the table on every call: a pass that dies
+    /// — or a process that restarts — loses no work and needs no queue.
+    pub(crate) async fn sweep_pending_embeddings(&self, budget: usize) -> ReembedSweepReport {
+        self.inner.reembed_pending(budget).await
     }
 }
 

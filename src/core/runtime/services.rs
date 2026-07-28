@@ -277,6 +277,10 @@ pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
     if plan.memory_queue {
         log::debug!("[runtime.bootstrap] starting memory queue workers");
         crate::openhuman::memory::queue::start(config.clone());
+        // Resume re-embedding whatever the previous run left without a usable
+        // vector. Those rows are the durable work-list, so a restart — however
+        // the last run ended — is just another trigger.
+        crate::openhuman::memory::store::vector_reembed::ensure_vector_reembed();
     } else {
         log::debug!("[runtime.bootstrap] memory queue workers disabled by ServiceSet");
     }

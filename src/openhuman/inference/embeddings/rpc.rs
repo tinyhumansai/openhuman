@@ -365,6 +365,10 @@ pub async fn update_settings(
 
     if sig_changed {
         crate::openhuman::memory::queue::ensure_reembed_backfill(&config);
+        // A new embedder changes the active dimension, which is what the base
+        // sweep keys off: every chunk stored at the old dimension is pending
+        // work the moment the switch lands.
+        crate::openhuman::memory::store::vector_reembed::ensure_vector_reembed();
     }
 
     tracing::info!(
