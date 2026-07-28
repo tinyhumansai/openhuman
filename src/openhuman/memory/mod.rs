@@ -21,6 +21,7 @@ pub mod ops;
 pub mod people;
 pub mod preferences;
 pub mod queue;
+pub mod recall_shaping;
 pub mod rpc_models;
 pub mod schemas;
 pub mod search;

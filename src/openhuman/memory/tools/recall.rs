@@ -115,12 +115,22 @@ impl Tool for MemoryRecallTool {
             let origin = entry
                 .namespace
                 .as_deref()
-                .filter(|namespace| *namespace != crate::openhuman::memory_store::types::GLOBAL_NAMESPACE)
+                .filter(|namespace| {
+                    *namespace != crate::openhuman::memory_store::types::GLOBAL_NAMESPACE
+                })
                 .map_or_else(String::new, |namespace| format!(" ({namespace})"));
+            // Condense to the query-relevant chunks, capped: recall returns
+            // whole documents, and one large document (a synced thread, or an
+            // old subagent envelope) would otherwise fill the entire result and
+            // bury every other hit.
+            let content = crate::openhuman::memory::recall_shaping::condense_recall_content(
+                query,
+                &entry.content,
+            );
             let _ = writeln!(
                 output,
-                "- [{}]{origin} {}: {}{score}",
-                entry.category, entry.key, entry.content
+                "- [{}]{origin} {}: {content}{score}",
+                entry.category, entry.key
             );
         }
         Ok(ToolResult::success(output))
