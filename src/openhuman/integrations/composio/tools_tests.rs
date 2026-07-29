@@ -1123,3 +1123,28 @@ fn parse_composio_connect_timeout_honors_override_and_zero_opt_out() {
     // `0` → opt out of the composio-side bound (fall back to the gate TTL).
     assert_eq!(parse_composio_connect_timeout(Some("0")), None);
 }
+
+#[test]
+fn execute_tool_gates_writes_but_not_reads_via_external_effect() {
+    // The approval gate keys off `external_effect_with_args`. A write/admin
+    // Composio action (send/create/delete) must route through the gate; a pure
+    // read (fetch/list) must flow through unprompted. Regression: neither
+    // surface declared external_effect, so mail sends fired with no approval.
+    let t = ComposioExecuteTool::new(fake_config_arc());
+    assert!(
+        t.external_effect_with_args(&serde_json::json!({ "tool": "GMAIL_SEND_EMAIL" })),
+        "a send action must be gated"
+    );
+    assert!(
+        t.external_effect_with_args(&serde_json::json!({ "tool": "GMAIL_DELETE_MESSAGE" })),
+        "a delete action must be gated"
+    );
+    assert!(
+        !t.external_effect_with_args(&serde_json::json!({ "tool": "GMAIL_FETCH_EMAILS" })),
+        "a read action must not prompt"
+    );
+    assert!(
+        t.external_effect_with_args(&serde_json::json!({})),
+        "an absent slug errs on the side of gating"
+    );
+}

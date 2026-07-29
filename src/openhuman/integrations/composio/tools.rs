@@ -74,6 +74,15 @@ enum ToolDecision {
 /// blocking rather than letting a potentially-mutating action slip
 /// through uncategorised.
 pub(super) async fn resolve_action_scope(slug: &str) -> ToolScope {
+    resolve_action_scope_sync(slug)
+}
+
+/// Synchronous core of [`resolve_action_scope`]. Every lookup it makes —
+/// `toolkit_from_slug`, the provider/curated-catalog resolution, and the
+/// `classify_unknown` heuristic — is over static data with no `await`, so a
+/// caller that cannot be `async` (the `Tool::external_effect_with_args`
+/// gate-decision hook) can classify a slug directly.
+pub(super) fn resolve_action_scope_sync(slug: &str) -> ToolScope {
     let Some(toolkit) = toolkit_from_slug(slug) else {
         return ToolScope::Write;
     };
@@ -86,6 +95,18 @@ pub(super) async fn resolve_action_scope(slug: &str) -> ToolScope {
         }
     }
     classify_unknown(slug)
+}
+
+/// Whether a Composio action slug mutates external state, i.e. is
+/// `Write`/`Admin`-scoped. This is the predicate the approval gate keys off —
+/// a write/admin Composio action must route through the human-in-the-loop
+/// `ApprovalGate` before it runs, while a pure `Read` flows through unprompted
+/// (matching the `external_effect` contract on the `Tool` trait).
+pub(super) fn action_mutates_external_state(slug: &str) -> bool {
+    matches!(
+        resolve_action_scope_sync(slug),
+        ToolScope::Write | ToolScope::Admin
+    )
 }
 
 /// Decide whether a Composio action slug should be visible / executable
@@ -1313,6 +1334,18 @@ impl Tool for ComposioExecuteTool {
         // as write-level to respect channel permission caps.
         PermissionLevel::Write
     }
+    fn external_effect_with_args(&self, args: &Value) -> bool {
+        // Route a write/admin Composio action (send mail, create issue, delete,
+        // …) through the approval gate; a pure read flows through unprompted.
+        // The action slug is the `tool` argument. An empty/absent slug errs on
+        // the side of gating rather than letting a possibly-mutating call slip
+        // past the prompt.
+        args.get("tool")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|slug| !slug.is_empty())
+            .is_none_or(action_mutates_external_state)
+    }
     fn category(&self) -> ToolCategory {
         ToolCategory::Workflow
     }
@@ -1441,6 +1474,10 @@ impl Tool for ComposioExecuteTool {
             Some(since) => super::task_window::apply_window_args(&tool, arguments, since),
             None => arguments,
         };
+        // Kept for the post-dispatch envelope reshape (#2585): the dispatch
+        // below consumes `arguments`, but the reshape reads it for the
+        // `raw_html` opt-out.
+        let reshape_args = arguments.clone();
 
         // Resolve the client through the mode-aware factory on every
         // call so a direct-mode toggle takes effect immediately
@@ -1490,10 +1527,26 @@ impl Tool for ComposioExecuteTool {
                 // than the window. No-op unless a window is installed AND the
                 // slug is a curated task-fetch action. Runs before the
                 // markdown/JSON body decision so the agent reads filtered data.
-                let resp = match task_window_since {
+                let mut resp = match task_window_since {
                     Some(since) => super::task_window::filter_response(&tool, resp, since),
                     None => resp,
                 };
+                // Slim the provider envelope before it can become the tool body
+                // (#2585). A verbose Composio payload — Gmail's full MIME tree
+                // under `payload.parts[]`, dozens of `Received:` headers — is
+                // reshaped into one clean record per message. Only the fallback
+                // body path serializes `resp.data`, so this shrinks exactly the
+                // raw-JSON case; a backend-rendered `markdown_formatted` body is
+                // already clean and unaffected. The sync path applies the same
+                // reshape via `ReshapingExecutor`; here we run it inline on the
+                // agent's direct call.
+                if let Some(provider) = toolkit_from_slug(&tool).and_then(|tk| get_provider(&tk)) {
+                    provider.post_process_action_result(
+                        &tool,
+                        reshape_args.as_ref(),
+                        &mut resp.data,
+                    );
+                }
                 tracing::info!(
                     tool = %tool,
                     successful = resp.successful,
