@@ -757,6 +757,16 @@ mod windows_imp {
     /// instance apart from a `core`/`mcp` CLI session or a CEF `--type=` helper.
     /// Includes the current process so its ancestor chain can be walked.
     fn enumerate_all_processes() -> Result<Vec<ProcessInfo>, String> {
+        // wmic is absent from Windows 11 24H2 and later, where the spawn fails
+        // and recovery loses every process. Try it first for older builds, then
+        // fall back to CIM, which returns the same fields.
+        match enumerate_via_wmic() {
+            Ok(processes) if !processes.is_empty() => Ok(processes),
+            _ => enumerate_via_cim(),
+        }
+    }
+
+    fn enumerate_via_wmic() -> Result<Vec<ProcessInfo>, String> {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -775,6 +785,33 @@ mod windows_imp {
 
         if !output.status.success() {
             return Err(format!("wmic exited with {}", output.status));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(parse_wmic_list_output(&stdout))
+    }
+
+    fn enumerate_via_cim() -> Result<Vec<ProcessInfo>, String> {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        // Emit the same `Key=Value` blocks wmic produced, so the existing parser
+        // handles both sources unchanged.
+        let script = "Get-CimInstance Win32_Process | ForEach-Object { \
+             \"Caption=$($_.Caption)\"; \
+             \"CommandLine=$($_.CommandLine)\"; \
+             \"ExecutablePath=$($_.ExecutablePath)\"; \
+             \"ParentProcessId=$($_.ParentProcessId)\"; \
+             \"ProcessId=$($_.ProcessId)\"; \
+             \"\" }";
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("spawn powershell: {e}"))?;
+
+        if !output.status.success() {
+            return Err(format!("powershell exited with {}", output.status));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
