@@ -149,6 +149,15 @@ impl Tool for ComposioActionTool {
         PermissionLevel::Write
     }
 
+    fn external_effect_with_args(&self, _args: &Value) -> bool {
+        // The per-action surface must gate on the approval card exactly like the
+        // `composio_execute` dispatcher: a write/admin action (this tool's own
+        // slug) routes through the `ApprovalGate` before it runs; a pure read
+        // flows through unprompted. Without this the model could send mail /
+        // create records via a per-action tool with no approval prompt at all.
+        super::tools::action_mutates_external_state(&self.action_name)
+    }
+
     fn category(&self) -> ToolCategory {
         ToolCategory::Workflow
     }
@@ -292,6 +301,9 @@ impl Tool for ComposioActionTool {
         let effective_connection_id = runtime_connection_id
             .as_deref()
             .or(self.connection_id.as_deref());
+        // Kept for the post-dispatch envelope reshape (#2585): the dispatch
+        // consumes `args`, but the reshape reads it for the `raw_html` opt-out.
+        let reshape_args = args.clone();
         let res = super::execute_dispatch::execute_composio_action_kind_with_connection(
             kind,
             &self.action_name,
@@ -303,7 +315,7 @@ impl Tool for ComposioActionTool {
         let elapsed_ms = started.elapsed().as_millis() as u64;
 
         match res {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::ComposioActionExecuted {
                         tool: self.action_name.clone(),
@@ -313,6 +325,20 @@ impl Tool for ComposioActionTool {
                         elapsed_ms,
                     },
                 );
+                // Slim the provider envelope before it can become the tool body
+                // (#2585) — the same reshape `ComposioExecuteTool` runs, so a
+                // per-action Gmail fetch doesn't drop a full MIME tree into the
+                // agent's context. Only the raw-JSON fallback body serializes
+                // `resp.data`; a backend-rendered markdown body is unaffected.
+                if let Some(provider) = super::providers::toolkit_from_slug(&self.action_name)
+                    .and_then(|tk| super::providers::get_provider(&tk))
+                {
+                    provider.post_process_action_result(
+                        &self.action_name,
+                        reshape_args.as_ref(),
+                        &mut resp.data,
+                    );
+                }
                 // Mirror `ComposioExecuteTool::execute` (composio/tools.rs):
                 // prefer the backend-rendered `markdownFormatted` for LLM
                 // consumption when present, fall back to the raw JSON
@@ -744,5 +770,26 @@ mod tests {
             !direct_msg.contains("no backend session"),
             "direct-mode tool must not surface backend-session artifacts: {direct_msg}"
         );
+    }
+
+    #[test]
+    fn per_action_tool_gates_writes_but_not_reads() {
+        // The per-action surface must gate on the approval card exactly like the
+        // dispatcher: a write action routes through the gate, a read does not.
+        let send = ComposioActionTool::new(
+            fake_config(),
+            "GMAIL_SEND_EMAIL".to_string(),
+            "send".to_string(),
+            None,
+        );
+        assert!(send.external_effect_with_args(&serde_json::json!({})));
+
+        let read = ComposioActionTool::new(
+            fake_config(),
+            "GMAIL_FETCH_EMAILS".to_string(),
+            "fetch".to_string(),
+            None,
+        );
+        assert!(!read.external_effect_with_args(&serde_json::json!({})));
     }
 }
