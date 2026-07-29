@@ -354,6 +354,18 @@ pub fn start_bootstrap_jobs(services: ServiceSet, _config: &Config) {
 pub async fn start_boot_once_jobs(services: ServiceSet, config: &Config) {
     run_legacy_migrations(config).await;
 
+    // Reap agent runs orphaned by a previous process (crash / restart / deploy).
+    // The core is a single in-process runtime, so any run still
+    // Pending/Running/Interrupted in the durable status store has no executor
+    // left to advance it and would otherwise linger in `agent_runs_active`
+    // indefinitely. Runs before readiness (regardless of ServiceSet) so the
+    // first active-runs read reflects reality. Best-effort — never blocks boot.
+    let reaped =
+        crate::openhuman::tinyagents::reaper::reap_orphaned_runs(&config.workspace_dir).await;
+    if reaped > 0 {
+        log::info!("[runtime] startup run sweep reaped {reaped} orphaned agent run(s)");
+    }
+
     if services.harness_init {
         let cfg_for_init = config.clone();
         tokio::spawn(async move {
