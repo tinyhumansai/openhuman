@@ -35,3 +35,19 @@ async fn missing_token_is_error() {
     let res2 = tool.execute(json!({})).await.unwrap();
     assert!(res2.is_error);
 }
+
+#[test]
+fn miss_message_does_not_instruct_a_blind_re_run() {
+    // See `miss_message` — "re-run the tool" here is what turned a single
+    // eviction into an unbounded compact→retrieve→re-run loop.
+    let msg = miss_message("deadbeefcafe").to_lowercase();
+    assert!(!msg.contains("re-run the same tool") || msg.contains("do not re-run"));
+    assert!(
+        msg.contains("do not re-run"),
+        "must discourage re-running: {msg}"
+    );
+    assert!(
+        msg.contains("compacted summary"),
+        "must point at the summary: {msg}"
+    );
+}
