@@ -40,9 +40,11 @@ fn render_connected_integrations(integrations: &[ConnectedIntegration]) -> Strin
         return String::new();
     }
     let mut out = String::from(
-        "## Connected Integrations\n\nThese platforms are connected and reachable via the \
-         orchestrator's delegation tools — factor them into the plan when a request needs \
-         live data from one:\n",
+        "## Connected Integrations\n\nThese platforms are connected. Their synced history \
+         already lives in memory under `skill-<toolkit>` (e.g. `skill-gmail`) — recall it \
+         first with `memory_recall` (cheaper, offline, no live round-trip). Reach for the \
+         orchestrator's live delegation tools only when the request needs the very latest, \
+         not-yet-synced data, not just because the platform is connected:\n",
     );
     for ci in connected {
         let _ = writeln!(out, "- {}", ci.toolkit);
@@ -204,5 +206,26 @@ mod tests {
     fn render_connected_integrations_empty_when_none_connected() {
         assert!(render_connected_integrations(&[integration("gmail", false)]).is_empty());
         assert!(render_connected_integrations(&[]).is_empty());
+    }
+
+    #[test]
+    fn connected_integrations_block_points_the_scout_at_memory_first() {
+        // The scout was skipping `memory_recall` and recommending a live Gmail
+        // delegation for data already synced into `skill-gmail`. The block must
+        // steer it to memory first so a connected platform is not a reflexive
+        // reason to re-fetch live.
+        let out = render_connected_integrations(&[integration("gmail", true)]);
+        assert!(
+            out.contains("skill-"),
+            "must mention the connector memory namespace: {out}"
+        );
+        assert!(
+            out.contains("memory_recall"),
+            "must name the recall tool: {out}"
+        );
+        assert!(
+            out.to_lowercase().contains("recall it first"),
+            "must instruct memory-first: {out}"
+        );
     }
 }
