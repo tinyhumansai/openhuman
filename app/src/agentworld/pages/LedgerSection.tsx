@@ -15,12 +15,13 @@
  * {@link LEDGER_PAGE_SIZE} means the ledger is exhausted (`hasMore=false`).
  */
 import debug from 'debug';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import PanelScaffold from '../../components/layout/PanelScaffold';
 import Button from '../../components/ui/Button';
 import { type GqlLedgerTransaction } from '../../lib/agentworld/invokeApiClient';
 import { useT } from '../../lib/i18n/I18nContext';
+import { fetchWalletStatus } from '../../services/walletApi';
 import { apiClient } from '../AgentWorldShell';
 import { decimalsForAsset, resolveAssetSymbol } from '../assets';
 import StatusBlock from '../components/StatusBlock';
@@ -167,8 +168,29 @@ function TransactionRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useT();
+  const [copied, setCopied] = useState(false);
+
+  // Copy the ledger Tx ID to the clipboard. Degrades silently when the
+  // clipboard API is unavailable (e.g. insecure context / older webview).
+  const handleCopy = useCallback(() => {
+    const clip = navigator.clipboard;
+    if (!clip?.writeText) {
+      log('copy tx id: clipboard API unavailable');
+      return;
+    }
+    void clip
+      .writeText(tx.txId)
+      .then(() => {
+        log('copied ledger tx id');
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch((err: unknown) => log('copy tx id failed', { error: String(err) }));
+  }, [tx.txId]);
+
   return (
-    <div className="border-b border-line-subtle last:border-0">
+    <div data-testid="ledger-row" className="border-b border-line-subtle last:border-0">
       {/* Summary row — leading icon · stacked content · fixed meta column */}
       <button
         type="button"
@@ -245,9 +267,30 @@ function TransactionRow({
       {expanded && (
         <div className="border-t border-line-subtle bg-surface-muted px-4 py-3">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-            {/* Ledger TX ID */}
+            {/* Ledger TX ID + copy */}
             <dt className="font-medium text-content-muted">Tx ID</dt>
-            <dd className="break-all font-mono text-content">{tx.txId}</dd>
+            <dd className="flex items-center gap-2">
+              <span className="break-all font-mono text-content">{tx.txId}</span>
+              <button
+                type="button"
+                onClick={handleCopy}
+                aria-label={t('agentWorld.ledger.copyTxId', 'Copy transaction ID')}
+                className="shrink-0 rounded p-1 text-content-muted transition-colors hover:bg-surface-subtle hover:text-content">
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  />
+                </svg>
+              </button>
+              {copied && (
+                <span className="text-xs font-medium text-green-600 dark:text-green-400">
+                  {t('agentWorld.ledger.copied', 'Copied')}
+                </span>
+              )}
+            </dd>
 
             {/* Visibility */}
             <dt className="font-medium text-content-muted">Visibility</dt>
@@ -319,6 +362,11 @@ export default function LedgerSection() {
   const { t } = useT();
   const [ledgerState, setLedgerState] = useState<LedgerState>({ status: 'loading' });
   const [expandedTxId, setExpandedTxId] = useState<string | null>(null);
+  // Client-side filters over the loaded rows. `assetFilter` is a resolved symbol
+  // (or 'all'); `directionFilter` is viewer-relative and needs `myAddr`.
+  const [assetFilter, setAssetFilter] = useState<string>('all');
+  const [directionFilter, setDirectionFilter] = useState<'all' | 'in' | 'out'>('all');
+  const [myAddr, setMyAddr] = useState<string | null>(null);
 
   // Guards async setState after unmount (the initial useEffect uses its own
   // `cancelled` flag; "Load more" fetches outlive no single effect, so they read
@@ -328,6 +376,27 @@ export default function LedgerSection() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+    };
+  }, []);
+
+  // Resolve the viewer's wallet address so the direction filter can classify
+  // rows as incoming/outgoing. Absent when the wallet is locked → the control
+  // stays hidden (a public ledger has no viewer-relative direction without it).
+  useEffect(() => {
+    let cancelled = false;
+    void fetchWalletStatus()
+      .then(status => {
+        if (cancelled) return;
+        const accounts = Array.isArray(status?.accounts) ? status.accounts : [];
+        const acct = accounts.find(a => a.chain === 'solana') ?? accounts[0];
+        if (acct?.address) {
+          log('wallet address resolved for direction filter');
+          setMyAddr(acct.address);
+        }
+      })
+      .catch((err: unknown) => log('wallet status failed', { error: String(err) }));
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -411,6 +480,30 @@ export default function LedgerSection() {
       });
   }, []);
 
+  // ── Derived filter state ───────────────────────────────────────────────────
+  // Stable identity so the filter memos below don't recompute every render.
+  const transactions = useMemo(
+    () => (ledgerState.status === 'ok' ? ledgerState.transactions : []),
+    [ledgerState]
+  );
+  // Distinct asset symbols present in the loaded rows, for the asset dropdown.
+  const assetOptions = useMemo(() => {
+    const seen = new Set<string>();
+    for (const tx of transactions) seen.add(resolveAssetSymbol(tx.asset));
+    return Array.from(seen).sort();
+  }, [transactions]);
+  // Apply both filters over the loaded rows.
+  const filtered = useMemo(
+    () =>
+      transactions.filter(tx => {
+        if (assetFilter !== 'all' && resolveAssetSymbol(tx.asset) !== assetFilter) return false;
+        if (directionFilter === 'in' && tx.to !== myAddr) return false;
+        if (directionFilter === 'out' && tx.from !== myAddr) return false;
+        return true;
+      }),
+    [transactions, assetFilter, directionFilter, myAddr]
+  );
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   let body: React.ReactNode;
@@ -432,19 +525,78 @@ export default function LedgerSection() {
       />
     );
   } else {
-    const { transactions, hasMore, loadingMore, moreError, nextOffset } = ledgerState;
+    const { hasMore, loadingMore, moreError, nextOffset } = ledgerState;
     body = (
       <>
-        <div className="rounded-lg border border-line bg-surface">
-          {transactions.map(tx => (
-            <TransactionRow
-              key={tx.txId}
-              tx={tx}
-              expanded={expandedTxId === tx.txId}
-              onToggle={() => setExpandedTxId(prev => (prev === tx.txId ? null : tx.txId))}
-            />
-          ))}
+        {/* Filter bar: asset dropdown + (wallet-gated) direction toggle */}
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs text-content-muted">
+            <span>{t('agentWorld.ledger.filterAsset', 'Asset')}</span>
+            <select
+              aria-label={t('agentWorld.ledger.filterAsset', 'Asset')}
+              value={assetFilter}
+              onChange={e => {
+                log('asset filter changed', { asset: e.target.value });
+                setAssetFilter(e.target.value);
+              }}
+              className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-content focus:border-primary-500 focus:outline-none">
+              <option value="all">{t('agentWorld.ledger.filterAllAssets', 'All assets')}</option>
+              {assetOptions.map(a => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {myAddr && (
+            <div
+              className="flex items-center gap-1"
+              role="group"
+              aria-label={t('agentWorld.ledger.direction', 'Direction')}>
+              {(['all', 'in', 'out'] as const).map(dir => (
+                <button
+                  key={dir}
+                  type="button"
+                  onClick={() => {
+                    log('direction filter changed', { direction: dir });
+                    setDirectionFilter(dir);
+                  }}
+                  className={[
+                    'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                    directionFilter === dir
+                      ? 'bg-primary-600 text-content-inverted'
+                      : 'bg-surface text-content-muted hover:text-content',
+                  ].join(' ')}>
+                  {dir === 'all'
+                    ? t('agentWorld.ledger.directionAll', 'All')
+                    : dir === 'in'
+                      ? t('agentWorld.ledger.directionIn', 'In')
+                      : t('agentWorld.ledger.directionOut', 'Out')}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+
+        {filtered.length === 0 ? (
+          <StatusBlock
+            tone="neutral"
+            title={t('agentWorld.ledger.noMatch', 'No transactions match these filters.')}
+            body={t('agentWorld.ledger.noMatchHint', 'Try widening or clearing the filters.')}
+          />
+        ) : (
+          <div className="rounded-lg border border-line bg-surface">
+            {filtered.map(tx => (
+              <TransactionRow
+                key={tx.txId}
+                tx={tx}
+                expanded={expandedTxId === tx.txId}
+                onToggle={() => setExpandedTxId(prev => (prev === tx.txId ? null : tx.txId))}
+              />
+            ))}
+          </div>
+        )}
 
         {moreError && (
           <p className="mt-3 text-center text-xs text-red-600 dark:text-red-400">
