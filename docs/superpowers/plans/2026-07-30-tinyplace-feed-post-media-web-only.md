@@ -34,9 +34,9 @@ post-media field. Scope recorded in two doc comments.
   one. Docs-only; `cargo fmt --check` verifies.
 - [x] **Task 3 — Tests.** `FeedSection.test.tsx`: mock `openUrl`; assert the note
   renders and the CTA calls `openUrl('https://tiny.place')`.
-- [ ] **Task 4 — GitHub bookkeeping (outward-facing).** Comment the web-only
-  resolution on #4924; the #4776 §2 "Images / media in posts" item is N/A
-  (web-only). Done via `gh`, captured in the PR body.
+- [x] **Task 4 — GitHub bookkeeping (outward-facing).** Done: commented the
+  web-only resolution on #4924, and marked the #4776 §2 "Images / media in posts"
+  item N/A (web-only) via an epic status comment (the epic body is owner-gated).
 
 ## Verification
 

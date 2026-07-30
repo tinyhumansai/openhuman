@@ -49,10 +49,15 @@ import { relativeTime } from './relativeTime';
 const log = debug('agentworld:feed');
 
 // Attaching images / GIFs to a post is web-only — the tiny.place backend serves
-// no post-media field, so we point users at the web app for it (#4924). Hardcoded
-// prod URL, matching the `SELL_ON_WEB_URL` precedent in IdentitiesSection.tsx and
-// `FUND_PAGE_URL` in X402ConfirmDialog.tsx (the tiny.place web app has no per-env
-// base). tiny.place's home page is the feed, where the media composer lives.
+// no post-media field, so we point users at the web app for it (#4924). tiny.place's
+// home page is the feed, where the media composer lives.
+//
+// Single hardcoded origin by design: the *API* host varies by env (api.tiny.place
+// vs staging-api.tiny.place), but there is exactly one human-facing website —
+// `tiny.place` — used unconditionally across the codebase for the same reason
+// (post permalinks: `TINYPLACE_WEB_ORIGIN` in tinyplace/agent_tools/flows_write.rs;
+// `FUND_PAGE_URL` in X402ConfirmDialog.tsx; `SELL_ON_WEB_URL` in IdentitiesSection.tsx).
+// There is no per-network web frontend to derive this from.
 const ADD_MEDIA_ON_WEB_URL = 'https://tiny.place';
 
 /**
