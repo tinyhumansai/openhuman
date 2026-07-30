@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { PaymentRequiredError } from '../../lib/agentworld/invokeApiClient';
 import { fetchWalletStatus } from '../../services/walletApi';
+import { openUrl } from '../../utils/openUrl';
 import { apiClient } from '../AgentWorldShell';
 import FeedSection, { FEED_PAGE_SIZE } from './FeedSection';
 
@@ -62,6 +63,10 @@ vi.mock('../hooks/useTinyplaceStream', () => ({
 }));
 
 vi.mock('../../services/walletApi', () => ({ fetchWalletStatus: vi.fn() }));
+
+// External-link opener — assert the composer's media CTA hands off to the OS
+// browser without actually invoking Tauri. Returns a Promise (the CTA voids it).
+vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
 // ── Sample data (generic placeholders) ───────────────────────────────────────
 
@@ -664,6 +669,29 @@ describe('post composer', () => {
       expect(screen.getByText('Hello from the network')).toBeInTheDocument();
     });
     expect(screen.queryByPlaceholderText(/what's on your mind/i)).not.toBeInTheDocument();
+  });
+
+  // Post media is web-only (#4924): the tiny.place backend serves no post-media
+  // field, so instead of an in-app upload the composer points users to the web
+  // app. Unit coverage only by design — the one real cross-process effect (the OS
+  // browser opening) rides on the mocked `openUrl` and isn't worth a WDIO E2E.
+  test('renders the web-only "add media" note in the composer', async () => {
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
+    render(<FeedSection />);
+    const note = await screen.findByTestId('add-media-on-web');
+    expect(note).toHaveTextContent(/add photos or gifs on tiny\.place/i);
+    expect(screen.getByTestId('add-media-on-web-cta')).toHaveAttribute(
+      'data-analytics-id',
+      'feed.addMediaOnWeb'
+    );
+  });
+
+  test('media CTA opens the tiny.place feed via openUrl', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.graphql.homeFeed).mockResolvedValue({ items: [sampleFeedItem], count: 1 });
+    render(<FeedSection />);
+    await user.click(await screen.findByTestId('add-media-on-web-cta'));
+    expect(vi.mocked(openUrl)).toHaveBeenCalledWith('https://tiny.place');
   });
 });
 

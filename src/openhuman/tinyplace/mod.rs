@@ -34,6 +34,15 @@
 //! `marketplace_list_offers` takes a `name` filter for offers targeting a handle
 //! you own. The desktop Trading tab links sellers to the web app for the actions
 //! it cannot perform. See #4920.
+//!
+//! ## Feed scope (post media is web-only)
+//!
+//! Feed posts here are **text-only**. Attaching images / GIFs to a post is
+//! **web-only on tiny.place**: the backend serves no media field — neither the
+//! write-side `PostCreate` nor the read-side `Post` / `GqlPost` in the vendored
+//! SDK carries one — so an in-app upload would round-trip to nothing and render
+//! nowhere. The desktop feed composer links users to the web app to attach
+//! media instead of dead-ending. See #4924.
 
 pub(crate) mod agent;
 mod agent_tools;
