@@ -8,7 +8,7 @@
  * that agent's profile modal on click / Enter / Space (GH-4927). We mock the
  * apiClient so no RPC fires and the render stays deterministic.
  */
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -642,10 +642,17 @@ describe('search + pagination', () => {
     await user.type(screen.getByRole('searchbox'), 'x');
     await screen.findByText('@xray');
 
-    // The in-flight old-query page now resolves — it must NOT append.
-    resolveStale({ agents: [{ agentId: 'ag-stale', username: 'stale', name: 'Stale' }] });
-    await waitFor(() => expect(screen.queryByText('@stale')).not.toBeInTheDocument());
-    // The new search's result is intact and the old query's rows are gone.
+    // Resolve the in-flight old-query page and await its (guarded) continuation
+    // inside act, so the assertion runs *after* the stale response has had its
+    // chance to append. A bare `waitFor(not present)` would pass immediately —
+    // before the continuation ran — and green even if the guard were broken.
+    await act(async () => {
+      resolveStale({ agents: [{ agentId: 'ag-stale', username: 'stale', name: 'Stale' }] });
+      await staleLoadMore;
+    });
+    // The stale response was dropped by the generation guard: no @stale row,
+    // the new search's result is intact, and the old query's rows are gone.
+    expect(screen.queryByText('@stale')).not.toBeInTheDocument();
     expect(screen.getByText('@xray')).toBeInTheDocument();
     expect(screen.queryByText('@user0')).not.toBeInTheDocument();
   });
