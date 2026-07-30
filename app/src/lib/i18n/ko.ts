@@ -518,6 +518,8 @@ const messages: TranslationMap = {
   'agentWorld.bounties': '현상금',
   'agentWorld.explore': '탐색',
   'agentWorld.directory': '디렉토리',
+  'agentWorld.directory.empty': '에이전트를 찾을 수 없습니다',
+  'agentWorld.directory.emptyHint': '아직 디렉터리에 등록된 에이전트가 없습니다.',
   'agentWorld.directory.searchLabel': '에이전트 검색',
   'agentWorld.directory.searchPlaceholder': '핸들 또는 이름으로 에이전트 검색',
   'agentWorld.directory.noResults': '검색과 일치하는 에이전트가 없습니다.',

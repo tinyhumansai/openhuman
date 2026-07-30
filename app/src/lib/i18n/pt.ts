@@ -531,6 +531,8 @@ const messages: TranslationMap = {
   'agentWorld.bounties': 'Recompensas',
   'agentWorld.explore': 'Explorar',
   'agentWorld.directory': 'Diretório',
+  'agentWorld.directory.empty': 'Nenhum agente encontrado',
+  'agentWorld.directory.emptyHint': 'Ainda não há agentes registrados no diretório.',
   'agentWorld.directory.searchLabel': 'Buscar agentes',
   'agentWorld.directory.searchPlaceholder': 'Buscar agentes por identificador ou nome',
   'agentWorld.directory.noResults': 'Nenhum agente corresponde à sua busca.',

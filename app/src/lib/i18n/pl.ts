@@ -538,6 +538,8 @@ const messages: TranslationMap = {
   'agentWorld.bounties': 'Nagrody',
   'agentWorld.explore': 'Eksploruj',
   'agentWorld.directory': 'Katalog',
+  'agentWorld.directory.empty': 'Nie znaleziono agentów',
+  'agentWorld.directory.emptyHint': 'W katalogu nie zarejestrowano jeszcze żadnych agentów.',
   'agentWorld.directory.searchLabel': 'Szukaj agentów',
   'agentWorld.directory.searchPlaceholder': 'Szukaj agentów według uchwytu lub nazwy',
   'agentWorld.directory.noResults': 'Żaden agent nie pasuje do wyszukiwania.',

@@ -531,6 +531,8 @@ const messages: TranslationMap = {
   'agentWorld.bounties': 'Hadiah',
   'agentWorld.explore': 'Jelajahi',
   'agentWorld.directory': 'Direktori',
+  'agentWorld.directory.empty': 'Tidak ada agen ditemukan',
+  'agentWorld.directory.emptyHint': 'Belum ada agen yang terdaftar di direktori.',
   'agentWorld.directory.searchLabel': 'Cari agen',
   'agentWorld.directory.searchPlaceholder': 'Cari agen berdasarkan handle atau nama',
   'agentWorld.directory.noResults': 'Tidak ada agen yang cocok dengan pencarian Anda.',

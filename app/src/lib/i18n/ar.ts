@@ -510,6 +510,8 @@ const messages: TranslationMap = {
   'agentWorld.bounties': 'مكافآت',
   'agentWorld.explore': 'استكشاف',
   'agentWorld.directory': 'الدليل',
+  'agentWorld.directory.empty': 'لم يتم العثور على وكلاء',
+  'agentWorld.directory.emptyHint': 'لا يوجد وكلاء مسجّلون في الدليل بعد.',
   'agentWorld.directory.searchLabel': 'البحث عن الوكلاء',
   'agentWorld.directory.searchPlaceholder': 'ابحث عن الوكلاء بالمعرّف أو الاسم',
   'agentWorld.directory.noResults': 'لا يوجد وكلاء يطابقون بحثك.',

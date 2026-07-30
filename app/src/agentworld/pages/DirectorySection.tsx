@@ -57,6 +57,12 @@ function useDirectoryAgents(query: string): { state: State; loadMore: (offset: n
   const [state, setState] = useState<State>({ status: 'loading' });
   // Guards late async resolutions from a "Load more" after unmount.
   const mountedRef = useRef(true);
+  // Bumped on every page-0 fetch (i.e. every query change). A `loadMore`
+  // captures the generation live at call time and drops its response if a newer
+  // page-0 has since taken over — otherwise a stale in-flight "Load more" for
+  // the previous query could append its agents onto a different search's result
+  // set (the mounted check alone doesn't catch this; #5271 review).
+  const genRef = useRef(0);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -67,9 +73,12 @@ function useDirectoryAgents(query: string): { state: State; loadMore: (offset: n
   // Page 0 — on mount and whenever the debounced query changes.
   useEffect(() => {
     let cancelled = false;
+    genRef.current += 1;
     const q = query.trim() || undefined;
+    // Log only whether a query is present, never the raw term — search text is
+    // user-authored and may contain PII (AGENTS.md: never log full PII).
     setState({ status: 'loading' });
-    debug('[agentworld:directory] fetching page 0 q=%s', q ?? '(none)');
+    debug('[agentworld:directory] fetching page 0 hasQuery=%s', q !== undefined);
 
     void apiClient.graphql
       .agents({ q, limit: DIRECTORY_PAGE_SIZE, offset: 0 })
@@ -111,7 +120,10 @@ function useDirectoryAgents(query: string): { state: State; loadMore: (offset: n
   const loadMore = useCallback(
     (offset: number) => {
       const q = query.trim() || undefined;
-      debug('[agentworld:directory] loading more offset=%d q=%s', offset, q ?? '(none)');
+      // Snapshot the generation so a query change (new page 0) invalidates this
+      // in-flight request; see `genRef`.
+      const gen = genRef.current;
+      debug('[agentworld:directory] loading more offset=%d hasQuery=%s', offset, q !== undefined);
       setState(prev =>
         prev.status === 'ok' ? { ...prev, loadingMore: true, loadMoreError: null } : prev
       );
@@ -119,7 +131,7 @@ function useDirectoryAgents(query: string): { state: State; loadMore: (offset: n
       void apiClient.graphql
         .agents({ q, limit: DIRECTORY_PAGE_SIZE, offset })
         .then(result => {
-          if (!mountedRef.current) return;
+          if (!mountedRef.current || gen !== genRef.current) return;
           const page = result.agents ?? [];
           const hasMore = page.length >= DIRECTORY_PAGE_SIZE;
           setState(prev => {
@@ -145,7 +157,7 @@ function useDirectoryAgents(query: string): { state: State; loadMore: (offset: n
           });
         })
         .catch((err: unknown) => {
-          if (!mountedRef.current) return;
+          if (!mountedRef.current || gen !== genRef.current) return;
           debug('[agentworld:directory] load more failed: %s', String(err));
           setState(prev =>
             prev.status === 'ok'
@@ -392,8 +404,8 @@ export default function DirectorySection() {
     ) : (
       <StatusBlock
         tone="neutral"
-        title="No agents found"
-        body="No agents are registered in the directory yet."
+        title={t('agentWorld.directory.empty', 'No agents found')}
+        body={t('agentWorld.directory.emptyHint', 'No agents are registered in the directory yet.')}
       />
     );
   } else {

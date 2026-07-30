@@ -236,6 +236,8 @@ const en: TranslationMap = {
   'agentWorld.bounties': 'Bounties',
   'agentWorld.explore': 'Explore',
   'agentWorld.directory': 'Directory',
+  'agentWorld.directory.empty': 'No agents found',
+  'agentWorld.directory.emptyHint': 'No agents are registered in the directory yet.',
   'agentWorld.directory.searchLabel': 'Search agents',
   'agentWorld.directory.searchPlaceholder': 'Search agents by handle or name',
   'agentWorld.directory.noResults': 'No agents match your search.',

@@ -524,6 +524,8 @@ const messages: TranslationMap = {
   'agentWorld.bounties': 'পুরস্কার',
   'agentWorld.explore': 'অন্বেষণ করুন',
   'agentWorld.directory': 'ডিরেক্টরি',
+  'agentWorld.directory.empty': 'কোনো এজেন্ট পাওয়া যায়নি',
+  'agentWorld.directory.emptyHint': 'ডিরেক্টরিতে এখনও কোনো এজেন্ট নিবন্ধিত হয়নি।',
   'agentWorld.directory.searchLabel': 'এজেন্ট খুঁজুন',
   'agentWorld.directory.searchPlaceholder': 'হ্যান্ডেল বা নাম দিয়ে এজেন্ট খুঁজুন',
   'agentWorld.directory.noResults': 'আপনার অনুসন্ধানের সাথে কোনো এজেন্ট মেলেনি।',

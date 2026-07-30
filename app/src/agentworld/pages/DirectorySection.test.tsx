@@ -546,6 +546,10 @@ describe('search + pagination', () => {
     await waitFor(() =>
       expect(listAgents).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'bet', offset: 0 }))
     );
+    // Proves the debounce, not just the final args: the three keystrokes collapse
+    // into a single search request (mount + one search = 2), not one per keystroke
+    // (which would be 4). Guards against a regression that fires on every keypress.
+    expect(listAgents).toHaveBeenCalledTimes(2);
     expect(await screen.findByText('@beta')).toBeInTheDocument();
     // The previous (unfiltered) result is replaced, not appended.
     expect(screen.queryByText('@alpha')).not.toBeInTheDocument();
@@ -611,5 +615,38 @@ describe('search + pagination', () => {
     expect(await screen.findByText(/Couldn't load more/i)).toBeInTheDocument();
     // Existing rows survive the failed append.
     expect(screen.getByText('@user0')).toBeInTheDocument();
+  });
+
+  test('discards a stale Load more response after the query changes', async () => {
+    const user = userEvent.setup();
+    const firstPage = Array.from({ length: DIRECTORY_PAGE_SIZE }, (_, i) => agent(i));
+    // The load-more response (for the empty query) is held open until after the
+    // search has replaced the list, so its append must be dropped.
+    let resolveStale: (v: { agents: Array<ReturnType<typeof agent>> }) => void = () => {};
+    const staleLoadMore = new Promise<{ agents: Array<ReturnType<typeof agent>> }>(res => {
+      resolveStale = res;
+    });
+    listAgents.mockImplementation(params => {
+      const p = params ?? {};
+      if (!p.q && p.offset === 0) return Promise.resolve({ agents: firstPage });
+      if (!p.q && p.offset === DIRECTORY_PAGE_SIZE) return staleLoadMore; // stale (old query)
+      if (p.q === 'x' && p.offset === 0)
+        return Promise.resolve({ agents: [{ agentId: 'ag-x', username: 'xray', name: 'Xray' }] });
+      return Promise.resolve({ agents: [] });
+    });
+
+    render(<DirectorySection />);
+    await screen.findByText('@user0');
+    // Start Load more (old query), then change the search before it resolves.
+    await user.click(await screen.findByRole('button', { name: /load more/i }));
+    await user.type(screen.getByRole('searchbox'), 'x');
+    await screen.findByText('@xray');
+
+    // The in-flight old-query page now resolves — it must NOT append.
+    resolveStale({ agents: [{ agentId: 'ag-stale', username: 'stale', name: 'Stale' }] });
+    await waitFor(() => expect(screen.queryByText('@stale')).not.toBeInTheDocument());
+    // The new search's result is intact and the old query's rows are gone.
+    expect(screen.getByText('@xray')).toBeInTheDocument();
+    expect(screen.queryByText('@user0')).not.toBeInTheDocument();
   });
 });
