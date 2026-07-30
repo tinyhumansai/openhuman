@@ -8,14 +8,12 @@
  * users can follow/unfollow agents directly from the card.
  */
 import debugFactory from 'debug';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import PanelScaffold from '../../components/layout/PanelScaffold';
-import {
-  type AgentCard,
-  type ListAgentsResponse,
-  PaymentRequiredError,
-} from '../../lib/agentworld/invokeApiClient';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
+import { type AgentCard, PaymentRequiredError } from '../../lib/agentworld/invokeApiClient';
+import { useT } from '../../lib/i18n/I18nContext';
 import { apiClient } from '../AgentWorldShell';
 import AgentProfileModal from '../components/AgentProfileModal';
 import StatusBlock from '../components/StatusBlock';
@@ -24,35 +22,80 @@ import { getAvatarColor, getHandle, getInitials, getSkills } from './directoryHe
 
 const debug = debugFactory('agentworld:directory');
 
+// One page of directory results. Grid-friendly (divides 1/2/3-column layouts).
+// Exported so the pagination tests can build a full page without magic numbers.
+export const DIRECTORY_PAGE_SIZE = 24;
+
 // ── State machine ─────────────────────────────────────────────────────────────
 
 type State =
   | { status: 'loading' }
   | { status: 'payment_required'; challenge: unknown }
   | { status: 'error'; message: string }
-  | { status: 'ok'; data: ListAgentsResponse };
+  | {
+      status: 'ok';
+      agents: AgentCard[];
+      /** Offset to request for the next "Load more" page. */
+      nextOffset: number;
+      hasMore: boolean;
+      loadingMore: boolean;
+      /** Non-null after a failed "Load more"; existing rows are preserved. */
+      loadMoreError: string | null;
+    };
 
-function useDirectoryAgents(): State {
+/**
+ * Fetches the directory grid with server-side search + offset pagination.
+ *
+ * `query` is the debounced search term (empty = browse all). It maps to the
+ * GraphQL `query` variable via `graphql.agents({ q })`. A query change refetches
+ * page 0 and replaces the list; `loadMore(offset)` appends the next page,
+ * deduping by `agentId` so a mutation-shifted offset can't double-render a card.
+ * End-of-list is inferred from a short page (`< DIRECTORY_PAGE_SIZE`), mirroring
+ * the Feed/Ledger "Load more" pattern.
+ */
+function useDirectoryAgents(query: string): { state: State; loadMore: (offset: number) => void } {
   const [state, setState] = useState<State>({ status: 'loading' });
+  // Guards late async resolutions from a "Load more" after unmount.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
+  // Page 0 — on mount and whenever the debounced query changes.
   useEffect(() => {
     let cancelled = false;
-    debug('fetching directory agents through GraphQL');
+    const q = query.trim() || undefined;
+    setState({ status: 'loading' });
+    debug('[agentworld:directory] fetching page 0 q=%s', q ?? '(none)');
 
     void apiClient.graphql
-      .agents()
-      .then(data => {
+      .agents({ q, limit: DIRECTORY_PAGE_SIZE, offset: 0 })
+      .then(result => {
         if (cancelled) return;
-        debug('[tinyplace][ui] DirectorySection: loaded %d GraphQL agents', data.agents.length);
-        setState({ status: 'ok', data });
+        // Reading `.length` throws if the payload omits `agents` → error branch
+        // (preserves the existing malformed-payload contract).
+        const page = result.agents;
+        const hasMore = page.length >= DIRECTORY_PAGE_SIZE;
+        debug('[agentworld:directory] loaded page 0 received=%d hasMore=%s', page.length, hasMore);
+        setState({
+          status: 'ok',
+          agents: page,
+          nextOffset: DIRECTORY_PAGE_SIZE,
+          hasMore,
+          loadingMore: false,
+          loadMoreError: null,
+        });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         if (err instanceof PaymentRequiredError) {
-          debug('[tinyplace][ui] DirectorySection: 402 payment_required');
+          debug('[agentworld:directory] page 0 payment_required');
           setState({ status: 'payment_required', challenge: err.challenge });
         } else {
-          debug('[tinyplace][ui] DirectorySection: error: %s', String(err));
+          debug('[agentworld:directory] page 0 error: %s', String(err));
           setState({ status: 'error', message: String(err) });
         }
       });
@@ -60,9 +103,61 @@ function useDirectoryAgents(): State {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [query]);
 
-  return state;
+  // Append the next page. `offset` comes from the rendered 'ok' state so the
+  // cursor stays a pure function of pages requested; reentry is prevented by
+  // disabling the button while `loadingMore` is set.
+  const loadMore = useCallback(
+    (offset: number) => {
+      const q = query.trim() || undefined;
+      debug('[agentworld:directory] loading more offset=%d q=%s', offset, q ?? '(none)');
+      setState(prev =>
+        prev.status === 'ok' ? { ...prev, loadingMore: true, loadMoreError: null } : prev
+      );
+
+      void apiClient.graphql
+        .agents({ q, limit: DIRECTORY_PAGE_SIZE, offset })
+        .then(result => {
+          if (!mountedRef.current) return;
+          const page = result.agents ?? [];
+          const hasMore = page.length >= DIRECTORY_PAGE_SIZE;
+          setState(prev => {
+            if (prev.status !== 'ok') return prev;
+            // Dedupe by agentId: if the directory shifted between page fetches
+            // the overlap must not produce duplicate React keys or double rows.
+            const seen = new Set(prev.agents.map(a => a.agentId));
+            const fresh = page.filter(a => !seen.has(a.agentId));
+            debug(
+              '[agentworld:directory] appended received=%d fresh=%d hasMore=%s',
+              page.length,
+              fresh.length,
+              hasMore
+            );
+            return {
+              status: 'ok',
+              agents: [...prev.agents, ...fresh],
+              nextOffset: offset + DIRECTORY_PAGE_SIZE,
+              hasMore,
+              loadingMore: false,
+              loadMoreError: null,
+            };
+          });
+        })
+        .catch((err: unknown) => {
+          if (!mountedRef.current) return;
+          debug('[agentworld:directory] load more failed: %s', String(err));
+          setState(prev =>
+            prev.status === 'ok'
+              ? { ...prev, loadingMore: false, loadMoreError: String(err) }
+              : prev
+          );
+        });
+    },
+    [query]
+  );
+
+  return { state, loadMore };
 }
 
 function getViewerIsFollowing(agent: AgentCard): boolean | null {
@@ -249,11 +344,17 @@ function AgentCardItem({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function DirectorySection() {
-  const state = useDirectoryAgents();
+  const { t } = useT();
+  // Immediate input value; the fetch keys off the debounced copy so typing
+  // doesn't fire a request per keystroke.
+  const [query, setQuery] = useState('');
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const { state, loadMore } = useDirectoryAgents(debouncedQuery);
   const myAgent = useMyAgentId();
   const myAgentId = myAgent.status === 'ready' ? myAgent.agentId : null;
   // The directory entry whose profile is open in the modal, or null when closed.
   const [openAgent, setOpenAgent] = useState<AgentCard | null>(null);
+  const hasQuery = debouncedQuery.trim().length > 0;
 
   let body: React.ReactNode;
 
@@ -280,34 +381,74 @@ export default function DirectorySection() {
     ) : (
       <StatusBlock tone="danger" title="Failed to load Directory" body={state.message} />
     );
+  } else if (state.agents.length === 0) {
+    // A search that matched nothing reads differently from an empty directory.
+    body = hasQuery ? (
+      <StatusBlock
+        tone="neutral"
+        title={t('agentWorld.directory.noResults', 'No agents match your search.')}
+        body={t('agentWorld.directory.noResultsHint', 'Try a different handle or name.')}
+      />
+    ) : (
+      <StatusBlock
+        tone="neutral"
+        title="No agents found"
+        body="No agents are registered in the directory yet."
+      />
+    );
   } else {
-    const agents = state.data.agents ?? [];
-    body =
-      agents.length === 0 ? (
-        <StatusBlock
-          tone="neutral"
-          title="No agents found"
-          body="No agents are registered in the directory yet."
-        />
-      ) : (
+    body = (
+      <>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {agents.map(agent => (
+          {state.agents.map(agent => (
             <AgentCardItem
               key={agent.agentId}
               agent={agent}
               myAgentId={myAgentId}
               onOpen={() => {
-                debug('[tinyplace][ui] DirectorySection: opening profile for a directory entry');
+                debug('[agentworld:directory] opening profile for a directory entry');
                 setOpenAgent(agent);
               }}
             />
           ))}
         </div>
-      );
+        {state.hasMore && (
+          <div className="mt-4 flex justify-center">
+            <button
+              type="button"
+              disabled={state.loadingMore}
+              onClick={() => loadMore(state.nextOffset)}
+              className="rounded-md border border-line bg-surface px-4 py-1.5 text-sm font-medium text-content transition-colors hover:border-line-strong disabled:opacity-60">
+              {state.loadingMore
+                ? t('agentWorld.directory.loadingMore', 'Loading…')
+                : t('agentWorld.directory.loadMore', 'Load more')}
+            </button>
+          </div>
+        )}
+        {state.loadMoreError && (
+          <p className="mt-2 text-center text-xs text-red-600 dark:text-red-400">
+            {t('agentWorld.directory.loadMoreError', "Couldn't load more agents.")}
+          </p>
+        )}
+      </>
+    );
   }
 
   return (
     <PanelScaffold description="Browse agents in the tiny.place directory">
+      <div className="mb-3">
+        <input
+          type="search"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          aria-label={t('agentWorld.directory.searchLabel', 'Search agents')}
+          placeholder={t(
+            'agentWorld.directory.searchPlaceholder',
+            'Search agents by handle or name'
+          )}
+          className="w-full rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-content placeholder:text-content-faint focus:border-primary-500 focus:outline-none"
+        />
+      </div>
       {body}
       {openAgent && <AgentProfileModal agent={openAgent} onClose={() => setOpenAgent(null)} />}
     </PanelScaffold>

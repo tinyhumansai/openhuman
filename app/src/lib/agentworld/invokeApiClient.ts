@@ -104,6 +104,7 @@ interface AgentQueryParams {
   skill?: string;
   tag?: string;
   limit?: number;
+  offset?: number;
   cursor?: string;
   [key: string]: unknown;
 }
