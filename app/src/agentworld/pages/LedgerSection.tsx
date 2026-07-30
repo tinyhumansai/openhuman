@@ -388,7 +388,10 @@ export default function LedgerSection() {
       .then(status => {
         if (cancelled) return;
         const accounts = Array.isArray(status?.accounts) ? status.accounts : [];
-        const acct = accounts.find(a => a.chain === 'solana') ?? accounts[0];
+        // Tiny Place identity is the Solana address (same as FeedSection /
+        // ProfilesSection). Fall back to nothing for EVM/BTC-only wallets rather
+        // than classifying direction against an unrelated address.
+        const acct = accounts.find(a => a.chain === 'solana');
         if (acct?.address) {
           log('wallet address resolved for direction filter');
           setMyAddr(acct.address);
@@ -489,7 +492,9 @@ export default function LedgerSection() {
   // Distinct asset symbols present in the loaded rows, for the asset dropdown.
   const assetOptions = useMemo(() => {
     const seen = new Set<string>();
-    for (const tx of transactions) seen.add(resolveAssetSymbol(tx.asset));
+    // Skip rows with no asset — `resolveAssetSymbol(undefined)` is '' and would
+    // add a blank, unlabeled <option>.
+    for (const tx of transactions) if (tx.asset) seen.add(resolveAssetSymbol(tx.asset));
     return Array.from(seen).sort();
   }, [transactions]);
   // Apply both filters over the loaded rows.
@@ -558,6 +563,7 @@ export default function LedgerSection() {
                 <button
                   key={dir}
                   type="button"
+                  aria-pressed={directionFilter === dir}
                   onClick={() => {
                     log('direction filter changed', { direction: dir });
                     setDirectionFilter(dir);

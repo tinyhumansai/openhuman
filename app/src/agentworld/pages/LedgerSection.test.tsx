@@ -493,4 +493,51 @@ describe('Ledger filters + copy', () => {
     expect(screen.queryByText(/no transactions found/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText(/asset/i)).toBeInTheDocument();
   });
+
+  test('hides the direction control for an EVM-only wallet (no Solana account)', async () => {
+    vi.mocked(fetchWalletStatus).mockResolvedValue({
+      accounts: [{ chain: 'evm', address: '0xEvmOnlyAddress' }],
+    } as unknown as Awaited<ReturnType<typeof fetchWalletStatus>>);
+    vi.mocked(apiClient.graphql.ledgerTransactions).mockResolvedValue({
+      transactions: [sampleTransaction],
+      count: 1,
+    });
+    render(<LedgerSection />);
+    await screen.findByTestId('ledger-row');
+    expect(screen.queryByRole('button', { name: /^in$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^out$/i })).not.toBeInTheDocument();
+  });
+
+  test('omits a blank asset option for rows with no asset', async () => {
+    vi.mocked(apiClient.graphql.ledgerTransactions).mockResolvedValue({
+      transactions: [
+        { ...sampleTransaction, txId: 'tx-usdc', asset: 'USDC' },
+        { ...sampleTransaction, txId: 'tx-noasset', asset: undefined },
+      ],
+      count: 2,
+    });
+    render(<LedgerSection />);
+    await waitFor(() => expect(screen.getAllByTestId('ledger-row')).toHaveLength(2));
+
+    // Options are only "All assets" + "USDC" — no empty/unlabeled option.
+    const options = within(screen.getByLabelText(/asset/i)).getAllByRole('option');
+    expect(options).toHaveLength(2);
+    expect(options.every(o => o.textContent && o.textContent.trim() !== '')).toBe(true);
+  });
+
+  test('marks the active direction with aria-pressed for assistive tech', async () => {
+    const user = userEvent.setup();
+    withWallet(MY_WALLET);
+    vi.mocked(apiClient.graphql.ledgerTransactions).mockResolvedValue({
+      transactions: [{ ...sampleTransaction, from: 'Sender1', to: MY_WALLET }],
+      count: 1,
+    });
+    render(<LedgerSection />);
+    await screen.findByTestId('ledger-row');
+
+    await user.click(await screen.findByRole('button', { name: /^in$/i }));
+    expect(screen.getByRole('button', { name: /^in$/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: /^out$/i })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: /^all$/i })).toHaveAttribute('aria-pressed', 'false');
+  });
 });
