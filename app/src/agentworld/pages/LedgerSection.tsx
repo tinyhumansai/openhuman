@@ -274,7 +274,7 @@ function TransactionRow({
               <button
                 type="button"
                 onClick={handleCopy}
-                aria-label={t('agentWorld.ledger.copyTxId', 'Copy transaction ID')}
+                aria-label={t('agentWorld.ledger.copyTxId')}
                 className="shrink-0 rounded p-1 text-content-muted transition-colors hover:bg-surface-subtle hover:text-content">
                 <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -287,7 +287,7 @@ function TransactionRow({
               </button>
               {copied && (
                 <span className="text-xs font-medium text-green-600 dark:text-green-400">
-                  {t('agentWorld.ledger.copied', 'Copied')}
+                  {t('agentWorld.ledger.copied')}
                 </span>
               )}
             </dd>
@@ -536,16 +536,16 @@ export default function LedgerSection() {
         {/* Filter bar: asset dropdown + (wallet-gated) direction toggle */}
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-1.5 text-xs text-content-muted">
-            <span>{t('agentWorld.ledger.filterAsset', 'Asset')}</span>
+            <span>{t('agentWorld.ledger.filterAsset')}</span>
             <select
-              aria-label={t('agentWorld.ledger.filterAsset', 'Asset')}
+              aria-label={t('agentWorld.ledger.filterAsset')}
               value={assetFilter}
               onChange={e => {
                 log('asset filter changed', { asset: e.target.value });
                 setAssetFilter(e.target.value);
               }}
               className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-content focus:border-primary-500 focus:outline-none">
-              <option value="all">{t('agentWorld.ledger.filterAllAssets', 'All assets')}</option>
+              <option value="all">{t('agentWorld.ledger.filterAllAssets')}</option>
               {assetOptions.map(a => (
                 <option key={a} value={a}>
                   {a}
@@ -558,7 +558,7 @@ export default function LedgerSection() {
             <div
               className="flex items-center gap-1"
               role="group"
-              aria-label={t('agentWorld.ledger.direction', 'Direction')}>
+              aria-label={t('agentWorld.ledger.direction')}>
               {(['all', 'in', 'out'] as const).map(dir => (
                 <button
                   key={dir}
@@ -575,10 +575,10 @@ export default function LedgerSection() {
                       : 'bg-surface text-content-muted hover:text-content',
                   ].join(' ')}>
                   {dir === 'all'
-                    ? t('agentWorld.ledger.directionAll', 'All')
+                    ? t('agentWorld.ledger.directionAll')
                     : dir === 'in'
-                      ? t('agentWorld.ledger.directionIn', 'In')
-                      : t('agentWorld.ledger.directionOut', 'Out')}
+                      ? t('agentWorld.ledger.directionIn')
+                      : t('agentWorld.ledger.directionOut')}
                 </button>
               ))}
             </div>
@@ -588,8 +588,8 @@ export default function LedgerSection() {
         {filtered.length === 0 ? (
           <StatusBlock
             tone="neutral"
-            title={t('agentWorld.ledger.noMatch', 'No transactions match these filters.')}
-            body={t('agentWorld.ledger.noMatchHint', 'Try widening or clearing the filters.')}
+            title={t('agentWorld.ledger.noMatch')}
+            body={t('agentWorld.ledger.noMatchHint')}
           />
         ) : (
           <div className="rounded-lg border border-line bg-surface">

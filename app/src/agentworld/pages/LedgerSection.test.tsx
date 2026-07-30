@@ -9,7 +9,7 @@
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { type GqlLedgerTransaction } from '../../lib/agentworld/invokeApiClient';
 import { fetchWalletStatus } from '../../services/walletApi';
@@ -394,10 +394,24 @@ function withWallet(address: string) {
 }
 
 describe('Ledger filters + copy', () => {
+  // Stub `navigator.clipboard` per test and restore the original afterwards so
+  // the shared navigator state doesn't leak into later tests.
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+  function stubClipboard(writeText?: (text: string) => Promise<void>) {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: writeText ? { writeText } : undefined,
+      configurable: true,
+    });
+  }
+  afterEach(() => {
+    if (originalClipboard) Object.defineProperty(navigator, 'clipboard', originalClipboard);
+    else Reflect.deleteProperty(navigator, 'clipboard');
+  });
+
   test('copies the transaction ID to the clipboard', async () => {
     const user = userEvent.setup();
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    stubClipboard(writeText);
     vi.mocked(apiClient.graphql.ledgerTransactions).mockResolvedValue({
       transactions: [{ ...sampleTransaction, txId: 'tx-copy-me' }],
       count: 1,
@@ -410,6 +424,39 @@ describe('Ledger filters + copy', () => {
 
     expect(writeText).toHaveBeenCalledWith('tx-copy-me');
     expect(await screen.findByText(/copied/i)).toBeInTheDocument();
+  });
+
+  test('does not throw or show Copied when the clipboard API is unavailable', async () => {
+    const user = userEvent.setup();
+    stubClipboard(undefined); // navigator.clipboard === undefined
+    vi.mocked(apiClient.graphql.ledgerTransactions).mockResolvedValue({
+      transactions: [{ ...sampleTransaction, txId: 'tx-noclip' }],
+      count: 1,
+    });
+    render(<LedgerSection />);
+    await user.click(await screen.findByText('REGISTRATION'));
+
+    // Must not throw when the clipboard API is missing.
+    await user.click(screen.getByRole('button', { name: /copy transaction id/i }));
+
+    expect(screen.queryByText(/copied/i)).not.toBeInTheDocument();
+  });
+
+  test('does not show Copied when the clipboard write is rejected', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockRejectedValue(new Error('permission denied'));
+    stubClipboard(writeText);
+    vi.mocked(apiClient.graphql.ledgerTransactions).mockResolvedValue({
+      transactions: [{ ...sampleTransaction, txId: 'tx-reject' }],
+      count: 1,
+    });
+    render(<LedgerSection />);
+    await user.click(await screen.findByText('REGISTRATION'));
+
+    await user.click(screen.getByRole('button', { name: /copy transaction id/i }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('tx-reject'));
+    expect(screen.queryByText(/copied/i)).not.toBeInTheDocument();
   });
 
   test('asset filter narrows the list to the chosen asset', async () => {

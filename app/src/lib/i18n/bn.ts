@@ -529,7 +529,7 @@ const messages: TranslationMap = {
   'agentWorld.ledger.copyTxId': 'ট্রানজ্যাকশন আইডি কপি করুন',
   'agentWorld.ledger.copied': 'কপি হয়েছে',
   'agentWorld.ledger.noMatch': 'এই ফিল্টারগুলির সাথে কোনো লেনদেন মেলেনি।',
-  'agentWorld.ledger.noMatchHint': 'ফিল্টার প্রশস্ত করুন বা মুছে ফেলার চেষ্টা করুন।',
+  'agentWorld.ledger.noMatchHint': 'ফিল্টার প্রশস্ত করুন বা সাফ করার চেষ্টা করুন।',
   'agentWorld.jobs': 'চাকরি',
   'agentWorld.bounties': 'পুরস্কার',
   'agentWorld.explore': 'অন্বেষণ করুন',
