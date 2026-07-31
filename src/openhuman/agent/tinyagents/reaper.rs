@@ -11,7 +11,7 @@
 //! On startup we sweep every still-active run to the terminal `Cancelled` state
 //! with an explanatory error so the active listing reflects reality. This is
 //! the one *writer* over the status seam that
-//! [`crate::openhuman::tinyagents::journal`] exposes; the replay/status
+//! [`crate::openhuman::agent::tinyagents::journal`] exposes; the replay/status
 //! controllers ([`super::replay`]) stay strictly read-only.
 
 use std::path::Path;
@@ -21,8 +21,8 @@ use tinyagents::harness::events::HarnessRunStatus;
 use tinyagents::harness::ids::{ExecutionStatus, HarnessPhase};
 use tinyagents::harness::observability::HarnessStatusStore;
 
-use crate::openhuman::session_import::ops::open_session_stores;
-use crate::openhuman::tinyagents::journal::FileStatusStore;
+use crate::openhuman::agent::session_import::ops::open_session_stores;
+use crate::openhuman::agent::tinyagents::journal::FileStatusStore;
 
 /// Error recorded on a run reaped by the startup sweep. Stable + grep-friendly
 /// so an operator (or a test) can tell a reaped run from a genuinely failed one.
@@ -52,7 +52,7 @@ pub(crate) async fn reap_orphaned_runs(workspace: &Path) -> usize {
         log::debug!("[agent] startup run sweep: no orphaned runs");
         return 0;
     }
-    log::info!(
+    log::debug!(
         "[agent] startup run sweep: {} orphaned run(s) to reap",
         active.len()
     );
@@ -71,7 +71,13 @@ pub(crate) async fn reap_orphaned_runs(workspace: &Path) -> usize {
             }
         }
     }
-    log::info!("[agent] startup run sweep: reaped {reaped} orphaned run(s)");
+    // One operator-visible line for the whole sweep, and only when it did
+    // something: a clean boot is the normal case and says nothing.
+    if reaped > 0 {
+        log::info!("[agent] startup run sweep: reaped {reaped} orphaned run(s)");
+    } else {
+        log::debug!("[agent] startup run sweep: nothing to reap");
+    }
     reaped
 }
 
@@ -99,7 +105,7 @@ mod tests {
 
     use tinyagents::harness::ids::ComponentId;
 
-    use crate::openhuman::tinyagents::journal::mint_run_id;
+    use crate::openhuman::agent::tinyagents::journal::mint_run_id;
 
     /// Build a fresh status in the given non-terminal state and persist it.
     async fn seed_status(store: &FileStatusStore, status_kind: ExecutionStatus) -> String {
@@ -176,6 +182,68 @@ mod tests {
     async fn reap_on_empty_workspace_is_a_noop() {
         let tmp = std::env::temp_dir().join(format!("oh-reaper-empty-{}", uuid::Uuid::new_v4()));
         assert_eq!(reap_orphaned_runs(&tmp).await, 0);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The sweep has to happen on the path a **build-only** embedder takes.
+    ///
+    /// `CoreRuntime::invoke` dispatches `openhuman.agent_runs_active` the moment
+    /// `build()` returns, with no transport and no background services in
+    /// between, so a sweep that lived with the other boot-once jobs (which run
+    /// from `serve()`) would leave that caller reading the previous process's
+    /// graveyard. This pins the sweep to the build path with every optional
+    /// service off.
+    #[tokio::test]
+    async fn a_build_only_runtime_is_swept_before_it_can_be_invoked() {
+        use crate::core::runtime::{CoreBuilder, DomainSet, ServiceSet};
+        use crate::core::types::HostKind;
+
+        let tmp = std::env::temp_dir().join(format!("oh-reaper-boot-{}", uuid::Uuid::new_v4()));
+        // `OPENHUMAN_WORKSPACE` names the root; the resolved workspace is the
+        // `workspace` directory under it, which is what the sweep will read.
+        let workspace = tmp.join("workspace");
+        let store = FileStatusStore::new(open_session_stores(&workspace).kv);
+        let orphan = seed_status(&store, ExecutionStatus::Running).await;
+        assert_eq!(store.list_active().await.unwrap().len(), 1);
+
+        // Point the runtime at this workspace, then build it with no transport
+        // and no services — the shape `examples/embed_headless.rs` documents.
+        // `OPENHUMAN_WORKSPACE` is process-global; take the same lock the other
+        // env-mutating tests do so a parallel test cannot read ours.
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var("OPENHUMAN_WORKSPACE").ok();
+        std::env::set_var("OPENHUMAN_WORKSPACE", &tmp);
+        let built = CoreBuilder::new(HostKind::Cli)
+            .services(ServiceSet::none())
+            .domains(DomainSet::harness())
+            .build()
+            .await;
+        match previous {
+            Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+            None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+        }
+        let built = built.expect("a headless build succeeds");
+        assert_eq!(
+            built.context().workspace_dir().ok(),
+            Some(workspace.clone()),
+            "the build must have resolved the workspace this test seeded"
+        );
+
+        let after = store
+            .get_status(&orphan)
+            .await
+            .unwrap()
+            .expect("the seeded run is still readable");
+        assert_eq!(
+            after.status,
+            ExecutionStatus::Cancelled,
+            "build() must reap before any RPC can be dispatched"
+        );
+        assert_eq!(after.error.as_deref(), Some(ORPHAN_REAP_REASON));
+        assert!(store.list_active().await.unwrap().is_empty());
+
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
