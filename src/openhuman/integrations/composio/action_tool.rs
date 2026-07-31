@@ -316,15 +316,6 @@ impl Tool for ComposioActionTool {
 
         match res {
             Ok(mut resp) => {
-                crate::core::event_bus::publish_global(
-                    crate::core::event_bus::DomainEvent::ComposioActionExecuted {
-                        tool: self.action_name.clone(),
-                        success: resp.successful,
-                        error: resp.error.clone(),
-                        cost_usd: resp.cost_usd,
-                        elapsed_ms,
-                    },
-                );
                 // Slim the provider envelope before it can become the tool body
                 // (#2585) — the same reshape `ComposioExecuteTool` runs, so a
                 // per-action Gmail fetch doesn't drop a full MIME tree into the
@@ -339,6 +330,20 @@ impl Tool for ComposioActionTool {
                         &mut resp.data,
                     );
                 }
+                // Published after the reshape, matching `ComposioExecuteTool`.
+                // The payload names no reshaped field today, so the order is not
+                // observable — but the two surfaces describing the same action
+                // must not disagree about which snapshot the event saw, or the
+                // first field added here diverges silently between them.
+                crate::core::event_bus::publish_global(
+                    crate::core::event_bus::DomainEvent::ComposioActionExecuted {
+                        tool: self.action_name.clone(),
+                        success: resp.successful,
+                        error: resp.error.clone(),
+                        cost_usd: resp.cost_usd,
+                        elapsed_ms,
+                    },
+                );
                 // Mirror `ComposioExecuteTool::execute` (composio/tools.rs):
                 // prefer the backend-rendered `markdownFormatted` for LLM
                 // consumption when present, fall back to the raw JSON
