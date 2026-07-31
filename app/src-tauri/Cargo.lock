@@ -5621,6 +5621,7 @@ dependencies = [
  "whisper-rs",
  "windows-sys 0.61.2",
  "x25519-dalek",
+ "xxhash-rust",
  "xz2",
  "zeroize",
  "zip 2.4.2",
@@ -11271,6 +11272,12 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aee1b19627c7c60102ab80d3a9cbe18de90bfe03bfa6c3715447681f0e8c8af6"
 
 [[package]]
 name = "xz2"

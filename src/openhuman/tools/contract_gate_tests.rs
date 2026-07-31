@@ -340,24 +340,33 @@ async fn fresh_gates_eventually_auto_proceed() {
 
     let config = Config::default();
 
-    // Gates 1-3 each surface the contract (fresh instance, first-time consult).
-    for i in 1..=3 {
-        let gate = ContractGate::new();
-        let decision = consult_composio(&gate, &config, slug, &guessing_args()).await;
-        assert!(
-            matches!(decision, GateDecision::Surface(_)),
-            "fresh gate {i} must surface the contract (count {i})"
-        );
-    }
+    // Scoped like a real turn. The counter this asserts on lives in the turn's
+    // task-local state, and a test that skips the scope reads the process-wide
+    // fallback instead: the count would then survive into the next run of this
+    // test in the same binary (a `nextest` retry, or any future caller), gate 1
+    // would auto-proceed, and the first assertion would fail for a reason that
+    // has nothing to do with the behaviour under test.
+    super::with_turn(async {
+        // Gates 1-3 each surface the contract (fresh instance, first-time consult).
+        for i in 1..=3 {
+            let gate = ContractGate::new();
+            let decision = consult_composio(&gate, &config, slug, &guessing_args()).await;
+            assert!(
+                matches!(decision, GateDecision::Surface(_)),
+                "fresh gate {i} must surface the contract (count {i})"
+            );
+        }
 
-    // Gate 4: auto-proceeds because 3+ fresh instances have already surfaced
-    // this contract without any of them executing.
-    let gate4 = ContractGate::new();
-    let decision = consult_composio(&gate4, &config, slug, &guessing_args()).await;
-    assert!(
-        matches!(decision, GateDecision::Proceed),
-        "gate 4 must auto-proceed after 3+ fresh instances surfaced the same slug"
-    );
+        // Gate 4: auto-proceeds because 3+ fresh instances have already surfaced
+        // this contract without any of them executing.
+        let gate4 = ContractGate::new();
+        let decision = consult_composio(&gate4, &config, slug, &guessing_args()).await;
+        assert!(
+            matches!(decision, GateDecision::Proceed),
+            "gate 4 must auto-proceed after 3+ fresh instances surfaced the same slug"
+        );
+    })
+    .await;
 }
 
 // ── target identity (kind-agnostic, compiled in every configuration) ────────
