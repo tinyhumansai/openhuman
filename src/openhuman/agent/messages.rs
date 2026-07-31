@@ -60,6 +60,19 @@ impl ChatMessage {
 pub struct ToolResultMessage {
     pub tool_call_id: String,
     pub content: String,
+    /// The result asked to reach the model unchanged — see
+    /// [`ToolResult::trusted_verbatim`](crate::openhuman::tools::ToolResult).
+    ///
+    /// Carried on the persisted shape, not just the live one, because the
+    /// serializers that batch and wrap a round run again every turn from
+    /// durable history. Without it here a contract delivered verbatim in the
+    /// turn that produced it comes back framed in the next one, and the model
+    /// reads a schema it can no longer copy from.
+    ///
+    /// `#[serde(default)]` so transcripts written before the field existed load
+    /// as unmarked, which is what they were.
+    #[serde(default)]
+    pub trusted_verbatim: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

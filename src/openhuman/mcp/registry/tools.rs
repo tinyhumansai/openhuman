@@ -388,7 +388,7 @@ impl Tool for McpRegistryToolCallTool {
                     tool_name = %tool_name,
                     "[mcp_registry][contract-gate] returning full contract before first call"
                 );
-                return Ok(ToolResult::error(contract));
+                return Ok(contract_gate::surface_result(contract));
             }
             contract_gate::GateDecision::Proceed => {}
         }

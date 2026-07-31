@@ -390,7 +390,7 @@ impl Tool for RunWorkflowTool {
                         workflow_id = %workflow_id,
                         "[workflows][contract-gate] returning full input contract before first run"
                     );
-                    return Ok(ToolResult::error(contract));
+                    return Ok(contract_gate::surface_result(contract));
                 }
                 contract_gate::GateDecision::Proceed => {}
             }

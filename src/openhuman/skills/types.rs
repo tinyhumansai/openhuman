@@ -22,6 +22,28 @@ pub struct ToolResult {
         skip_serializing_if = "Option::is_none"
     )]
     pub markdown_formatted: Option<String>,
+    /// Asks the host to put this result's content in front of the model
+    /// unchanged: at byte 0 of its own message, with no banner, no wrapper, and
+    /// no batching with the results around it.
+    ///
+    /// A host is free to reshape tool output, and mostly should — batching and
+    /// wrapping is how a model tells one result from the next. This marks the
+    /// results where reshaping produces something that still reads well and is
+    /// wrong: an input schema whose argument names the model must copy
+    /// character for character, a signature, a diff.
+    ///
+    /// Mirrors `tinyagents::harness::tool::ToolResult::mark_trusted_verbatim`;
+    /// [`Self::mark_trusted_verbatim`] carries the request across the adapter
+    /// into that crate's flag, and from there onto
+    /// `tinyagents::harness::message::ToolMessage::trusted_verbatim`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub trusted_verbatim: bool,
+}
+
+/// `skip_serializing_if` for a plain `bool`, so an unmarked result serializes to
+/// exactly the JSON it did before the field existed.
+fn is_false(flag: &bool) -> bool {
+    !*flag
 }
 
 impl ToolResult {
@@ -30,6 +52,7 @@ impl ToolResult {
             content: vec![ToolContent::Text { text: text.into() }],
             is_error: false,
             markdown_formatted: None,
+            trusted_verbatim: false,
         }
     }
 
@@ -40,6 +63,7 @@ impl ToolResult {
             }],
             is_error: true,
             markdown_formatted: None,
+            trusted_verbatim: false,
         }
     }
 
@@ -48,6 +72,7 @@ impl ToolResult {
             content: vec![ToolContent::Json { data }],
             is_error: false,
             markdown_formatted: None,
+            trusted_verbatim: false,
         }
     }
 
@@ -59,12 +84,23 @@ impl ToolResult {
             content: vec![ToolContent::Json { data }],
             is_error: false,
             markdown_formatted: Some(markdown.into()),
+            trusted_verbatim: false,
         }
     }
 
     /// Attach (or replace) the markdown rendering on an existing result.
     pub fn with_markdown(mut self, markdown: impl Into<String>) -> Self {
         self.markdown_formatted = Some(markdown.into());
+        self
+    }
+
+    /// Ask hosts to deliver this result unchanged — see [`Self::trusted_verbatim`].
+    ///
+    /// Takes and returns `self` so a marked result reads as one expression at
+    /// the point it is produced, which is the only place that knows whether the
+    /// content is copy-exact.
+    pub fn mark_trusted_verbatim(mut self) -> Self {
+        self.trusted_verbatim = true;
         self
     }
 
@@ -160,6 +196,7 @@ mod tests {
             ],
             is_error: false,
             markdown_formatted: None,
+            trusted_verbatim: false,
         };
         assert_eq!(r.text(), "line1\nline2");
         let output = r.output();
@@ -211,6 +248,7 @@ mod tests {
             content: vec![],
             is_error: false,
             markdown_formatted: None,
+            trusted_verbatim: false,
         };
         assert!(r.text().is_empty());
         assert!(r.output().is_empty());

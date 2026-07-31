@@ -3081,9 +3081,17 @@ impl Middleware<()> for ImageAwareMessageTrimMiddleware {
 /// **Registration order matters twice.** `before_model` runs in registration
 /// order, so this must be pushed AFTER every context middleware (microcompact,
 /// compression, trim) to observe the transcript they leave behind rather than
-/// the one they are about to rewrite. And only **tool-role** messages are
-/// scanned — a model echoing the marker in its own prose must not be able to
+/// the one they are about to rewrite. And **assistant messages are never
+/// scanned** — a model echoing the marker in its own prose must not be able to
 /// claim a contract is present.
+///
+/// Tool rows are not the only place a delivery sits. A text-mode turn has no
+/// tool role to send: the harness renders results into user turns, and a
+/// delivery marked `trusted_verbatim` lands as a user turn of its own with the
+/// marker at byte 0. Scanning tool rows alone would credit nothing there, and
+/// the gate would re-deliver the same contract on every turn. The model still
+/// cannot reach either row: it does not author user turns, and the payload has
+/// to hash to the value recorded at delivery.
 pub(crate) struct ContractGatePresenceMiddleware;
 
 #[async_trait]
@@ -3102,7 +3110,7 @@ impl Middleware<()> for ContractGatePresenceMiddleware {
             request
                 .messages
                 .iter()
-                .filter(|m| matches!(m, TaMessage::Tool(_)))
+                .filter(|m| matches!(m, TaMessage::Tool(_) | TaMessage::User(_)))
                 .map(|m| m.text()),
         );
         Ok(())

@@ -478,6 +478,7 @@ fn trim_history_snaps_past_orphaned_tool_results() {
         ConversationMessage::ToolResults(vec![ToolResultMessage {
             tool_call_id: "call_x".into(),
             content: "result".into(),
+            trusted_verbatim: false,
         }]),
         ConversationMessage::Chat(ChatMessage::user("u2")),
         ConversationMessage::Chat(ChatMessage::assistant("a2")),

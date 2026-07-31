@@ -280,14 +280,26 @@ pub(crate) async fn execute_openhuman_tool(
             } else {
                 None
             };
-            TaToolResult {
+            let mut rendered = TaToolResult {
                 call_id: call.id,
                 name: call.name,
                 content,
                 raw: None,
                 error,
                 elapsed_ms,
+            };
+            // Carry the "deliver this unchanged" request across the crate
+            // boundary. This is the only conversion from an openhuman result to
+            // a harness one, so a flag dropped here is dropped everywhere: the
+            // harness would batch and wrap a contract the model has to copy
+            // character for character.
+            if result.trusted_verbatim && !rendered.mark_trusted_verbatim() {
+                tracing::warn!(
+                    tool = %rendered.name,
+                    "[tinyagents] result asked to be delivered verbatim but its `raw` holds a non-object; the request was refused"
+                );
             }
+            rendered
         }
         Err(e) => {
             tracing::warn!(tool = %call.name, error = %e, "[tinyagents] tool failed");

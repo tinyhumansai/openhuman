@@ -229,9 +229,11 @@ pub async fn with_run_presence<F: std::future::Future>(f: F) -> F::Output {
 
 /// Rebuild this run's presence set from the transcript's tool messages.
 ///
-/// Call from `before_model`, passing the text of every **tool-role** message —
-/// role filtering is the caller's job because only that role is trustworthy: a
-/// model echoing the marker in its own prose must not be able to claim presence.
+/// Call from `before_model`, passing the text of every message the **host**
+/// wrote — tool rows, and the user rows a text-mode turn renders results into.
+/// Role filtering is the caller's job, and the one role it must exclude is
+/// assistant: a model echoing the marker in its own prose must not be able to
+/// claim presence. It cannot reach the other two.
 ///
 /// Each text is matched with a fixed-prefix compare at byte 0 (see the module
 /// doc), and its payload re-hashed against [`DELIVERED`]; only an exact match
@@ -706,6 +708,25 @@ pub(crate) fn is_contract_delivery(content: &str) -> bool {
         credit_marker(content, &delivered, &mut present);
     }
     !present.is_empty()
+}
+
+/// The tool result a [`GateDecision::Surface`] has to be returned as.
+///
+/// One constructor for every gated call site, because the two properties that
+/// make a delivery work are invisible when a site forgets them:
+///
+/// - it is an **error** result, so the model reads "the call did not run" and
+///   retries; a success result reads as output and it moves on;
+/// - it is **`trusted_verbatim`**, so hosts put the contract at byte 0 of its
+///   own message. That is what lets the model copy argument names character for
+///   character, and what keeps the payload hashing to its recorded value so
+///   [`refresh_present`] can credit the contract as present.
+///
+/// A site that hand-rolls `ToolResult::error(contract)` still compiles and still
+/// delivers something the model can read, so the loss shows up only as a gate
+/// that re-delivers forever and a model that mis-copies argument names.
+pub(crate) fn surface_result(contract: String) -> crate::openhuman::tools::ToolResult {
+    crate::openhuman::tools::ToolResult::error(contract).mark_trusted_verbatim()
 }
 
 /// If `text` leads with a `[contract-gate:<slug list>]` marker whose payload

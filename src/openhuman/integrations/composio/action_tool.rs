@@ -241,7 +241,7 @@ impl Tool for ComposioActionTool {
                     tool = %self.action_name,
                     "[composio][contract-gate] returning full contract before first execute"
                 );
-                return Ok(ToolResult::error(contract));
+                return Ok(contract_gate::surface_result(contract));
             }
             contract_gate::GateDecision::Proceed => {}
         }

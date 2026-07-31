@@ -3472,6 +3472,7 @@ fn agent_dispatchers_and_host_runtime_cover_public_edge_paths() {
         ConversationMessage::ToolResults(vec![ToolResultMessage {
             tool_call_id: "call-1".into(),
             content: "paired result".into(),
+            trusted_verbatim: false,
         }]),
         ConversationMessage::AssistantToolCalls {
             text: Some("drop me".into()),
@@ -3487,6 +3488,7 @@ fn agent_dispatchers_and_host_runtime_cover_public_edge_paths() {
         ConversationMessage::ToolResults(vec![ToolResultMessage {
             tool_call_id: "orphan".into(),
             content: "orphan result".into(),
+            trusted_verbatim: false,
         }]),
         ConversationMessage::Chat(ChatMessage::user("done")),
     ];
