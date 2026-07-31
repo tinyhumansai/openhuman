@@ -781,3 +781,151 @@ fn a_re_delivery_is_immediately_creditable_even_when_the_contract_changed() {
     ])
     .contains(&key));
 }
+
+// ── harness wiring (issue #4853) ─────────────────────────────────────────────
+
+/// The gate's sequence, driven through the real harness rather than simulated.
+///
+/// Every other test here calls [`consult`] directly, which proves the decision
+/// logic but not the wiring: that `ContractGatePresenceMiddleware::before_model`
+/// runs after the context middlewares and rebuilds presence from the transcript
+/// the model is about to read, that the tool's own consult sits inside the tool
+/// call, and that those two orderings compose into deliver-then-retry. A test
+/// that rescans by hand cannot fail if the middleware is registered in the wrong
+/// place, or not at all.
+///
+/// So this drives a turn through `assemble_turn_harness` (via the channel graph,
+/// which is the thinnest caller of it) with a scripted model that calls the same
+/// gated tool twice. The first call must come back as the contract without the
+/// tool running; the second must execute.
+#[cfg(feature = "flows")]
+#[tokio::test]
+async fn the_harness_delivers_the_contract_then_lets_the_retry_execute() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use tinyagents::harness::message::AssistantMessage;
+    use tinyagents::harness::model::{ChatModel, ModelProfile, ModelResponse};
+    use tinyagents::harness::testkit::ScriptedModel;
+    use tinyagents::harness::tool::ToolCall as TaToolCall;
+
+    use crate::openhuman::agent::messages::ChatMessage;
+    use crate::openhuman::agent::tinyagents::TurnModelSource;
+    use crate::openhuman::config::{MultimodalConfig, MultimodalFileConfig};
+    use crate::openhuman::tools::{Tool, ToolResult};
+
+    let toolkit = "harnesskit";
+    let slug = "HARNESSKIT_FETCH_EMAILS";
+    seed_live_catalog_cache(toolkit, vec![full_contract(slug, toolkit)]);
+
+    /// Stands in for a per-action Composio tool: same gate consult, same
+    /// delivery, no network. Counts the times the action actually ran.
+    struct GatedTool {
+        gate: ContractGate,
+        slug: String,
+        config: Config,
+        executed: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Tool for GatedTool {
+        fn name(&self) -> &str {
+            &self.slug
+        }
+        fn description(&self) -> &str {
+            "fetches emails"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({ "type": "object" })
+        }
+        async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            match consult(
+                &self.gate,
+                Some(&self.config),
+                &GateTarget::Composio(self.slug.clone()),
+                &args,
+            )
+            .await
+            {
+                GateDecision::Surface(contract) => Ok(super::surface_result(contract)),
+                GateDecision::Proceed => {
+                    self.executed.fetch_add(1, Ordering::SeqCst);
+                    Ok(ToolResult::success("3 threads"))
+                }
+            }
+        }
+    }
+
+    let executed = Arc::new(AtomicUsize::new(0));
+    let tool = GatedTool {
+        gate: ContractGate::new(),
+        slug: slug.to_string(),
+        config: Config::default(),
+        executed: Arc::clone(&executed),
+    };
+
+    fn call(id: &str, name: &str, args: serde_json::Value) -> ModelResponse {
+        ModelResponse {
+            message: AssistantMessage {
+                id: None,
+                content: Vec::new(),
+                tool_calls: vec![TaToolCall::new(id, name, args)],
+                usage: None,
+            },
+            usage: None,
+            finish_reason: Some("tool_calls".to_string()),
+            raw: None,
+            resolved_model: None,
+            continue_turn: None,
+        }
+    }
+
+    // Guessed args, then the same call again — the shape a model takes when the
+    // first attempt comes back as a contract to read.
+    let scripted: Arc<dyn ChatModel<()>> = Arc::new(ScriptedModel::new(vec![
+        call("c1", slug, serde_json::json!({})),
+        call(
+            "c2",
+            slug,
+            serde_json::json!({ "query": "subject:\"quarterly report\"" }),
+        ),
+        ModelResponse::assistant("found 3"),
+    ]));
+    let mut profile = ModelProfile::default();
+    profile.tool_calling = true;
+
+    let mut history = vec![ChatMessage::user("search my mail")];
+    let text = crate::openhuman::agent::harness::graph::run_channel_turn_via_graph(
+        TurnModelSource::from_model_with_profile(scripted, profile),
+        &mut history,
+        Arc::new(vec![Box::new(tool) as Box<dyn Tool>]),
+        vec![],
+        None,
+        "mock-model",
+        0.0,
+        10,
+        MultimodalConfig::default(),
+        MultimodalFileConfig::default(),
+        None,
+    )
+    .await
+    .expect("the turn runs");
+
+    assert_eq!(text, "found 3");
+    assert_eq!(
+        executed.load(Ordering::SeqCst),
+        1,
+        "the gated action must run exactly once — not on the first call, and not \
+         skipped on the retry"
+    );
+
+    let delivered = history
+        .iter()
+        .any(|message| message.content.contains("[contract-gate:"));
+    assert!(
+        delivered,
+        "the contract must reach the transcript the next model call reads, got: {:?}",
+        history.iter().map(|m| &m.content).collect::<Vec<_>>()
+    );
+}
