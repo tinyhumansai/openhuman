@@ -260,7 +260,12 @@ fn validate_segments_against_hints(segments: &[String], hints: &[Value]) -> bool
 
 /// Returns true when the caller explicitly set `raw_html: true` (or the
 /// camelCase `rawHtml: true`) in the `arguments` object.
-fn is_raw_html_flag_set(arguments: Option<&Value>) -> bool {
+/// Whether the caller asked for the raw Composio shape.
+///
+/// `pub(super)` so the sync executor can gate its own reshape step on the same
+/// answer: two reshapes that disagree about the flag would let one of them run
+/// on a payload the caller asked to keep untouched.
+pub(super) fn is_raw_html_flag_set(arguments: Option<&Value>) -> bool {
     let Some(obj) = arguments.and_then(|v| v.as_object()) else {
         return false;
     };

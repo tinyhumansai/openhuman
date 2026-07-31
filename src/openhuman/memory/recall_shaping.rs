@@ -12,7 +12,7 @@
 //! sees the matching passages, not a wall of unrelated text); the char cap is
 //! the backstop that also bounds documents stored before any of this existed.
 
-use crate::openhuman::memory_store::UnifiedMemory;
+use crate::openhuman::memory::store::UnifiedMemory;
 use crate::openhuman::util::truncate_with_ellipsis;
 
 /// Most chunks surfaced from one source document. Enough to carry the matching
@@ -103,11 +103,17 @@ fn condense_with(
 /// Truncate so the result is at most `max_chars` characters *including* the
 /// ellipsis — `truncate_with_ellipsis` alone can exceed its budget by the
 /// suffix length, which would defeat a hard cap.
+/// Characters `truncate_with_ellipsis` appends when it truncates.
+const ELLIPSIS_CHARS: usize = 3;
+
 fn hard_cap(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_string();
     }
-    truncate_with_ellipsis(text, max_chars.saturating_sub(1))
+    // `truncate_with_ellipsis` appends "..." ON TOP of the budget it is given,
+    // so the suffix has to come out of the budget or the result is three chars
+    // over the cap this function exists to enforce.
+    truncate_with_ellipsis(text, max_chars.saturating_sub(ELLIPSIS_CHARS))
 }
 
 /// Lowercased query tokens, split on whitespace. Substring matching keeps this

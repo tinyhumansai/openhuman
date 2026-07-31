@@ -40,7 +40,33 @@ pub(crate) async fn recall_with_connectors(
     query: &str,
     limit: usize,
 ) -> Vec<MemoryEntry> {
-    let mut entries = match crate::openhuman::tinyagents::retriever::recall_through_facade(
+    recall_across(mem, query, limit, Some(MAX_CONNECTOR_NAMESPACES)).await
+}
+
+/// Recall for the **explicit** `memory_recall` tool called without a namespace.
+///
+/// Searches every non-empty connector namespace, not the busiest few. The tool's
+/// schema tells the model that omitting the namespace searches everywhere, and
+/// the model is instructed to omit it; borrowing the per-turn cap here would
+/// make that instruction quietly false for anyone with more connectors than the
+/// cap, and the memory it was told to look for would simply not be looked at.
+/// The turn-context path keeps the cap — there the cost is paid on every turn,
+/// not on a call the model chose to make.
+pub(crate) async fn recall_every_namespace(
+    mem: &dyn Memory,
+    query: &str,
+    limit: usize,
+) -> Vec<MemoryEntry> {
+    recall_across(mem, query, limit, None).await
+}
+
+async fn recall_across(
+    mem: &dyn Memory,
+    query: &str,
+    limit: usize,
+    max_namespaces: Option<usize>,
+) -> Vec<MemoryEntry> {
+    let mut entries = match crate::openhuman::agent::tinyagents::retriever::recall_through_facade(
         mem,
         query,
         limit,
@@ -55,7 +81,7 @@ pub(crate) async fn recall_with_connectors(
         }
     };
 
-    let namespaces = connector_namespaces(mem).await;
+    let namespaces = connector_namespaces(mem, max_namespaces).await;
     if !namespaces.is_empty() {
         tracing::debug!(
             "[memory::auto-recall] fanning out to connector namespaces: {}",
@@ -85,9 +111,9 @@ pub(crate) async fn recall_with_connectors(
     rank_and_truncate(entries, limit)
 }
 
-/// The connector namespaces worth searching this turn: non-empty, busiest
-/// first, capped at [`MAX_CONNECTOR_NAMESPACES`].
-async fn connector_namespaces(mem: &dyn Memory) -> Vec<String> {
+/// The connector namespaces worth searching: non-empty, busiest first, capped at
+/// `max_namespaces` when the caller sets one. `None` searches all of them.
+async fn connector_namespaces(mem: &dyn Memory, max_namespaces: Option<usize>) -> Vec<String> {
     let mut summaries = match mem.namespace_summaries().await {
         Ok(summaries) => summaries,
         Err(error) => {
@@ -105,7 +131,9 @@ async fn connector_namespaces(mem: &dyn Memory) -> Vec<String> {
             .cmp(&a.count)
             .then_with(|| a.namespace.cmp(&b.namespace))
     });
-    summaries.truncate(MAX_CONNECTOR_NAMESPACES);
+    if let Some(cap) = max_namespaces {
+        summaries.truncate(cap);
+    }
     summaries
         .into_iter()
         .map(|summary| summary.namespace)

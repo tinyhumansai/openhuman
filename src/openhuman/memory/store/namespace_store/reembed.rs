@@ -16,8 +16,10 @@
 use rusqlite::params;
 
 use super::UnifiedMemory;
-use crate::openhuman::embeddings::retry_after::{backoff_ms_for_attempt, MAX_429_RETRIES};
-use crate::openhuman::memory_tree::health::classify_embed_error;
+use crate::openhuman::inference::embeddings::retry_after::{
+    backoff_ms_for_attempt, MAX_429_RETRIES,
+};
+use crate::openhuman::memory::tree::health::classify_embed_error;
 
 /// A `vector_chunks` row whose embedding must be recomputed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,30 +54,42 @@ impl UnifiedMemory {
     ///     writes: they satisfy a naive "has an embedding" check yet score
     ///     against nothing.
     ///
-    /// Dimension — not the signature string — is the predicate on purpose: it
-    /// is the format-agnostic, numeric truth, so this stays correct regardless
-    /// of the separate signature-convention unification. Blank-text rows are
-    /// excluded: they are permanently un-embeddable, not pending work, and
-    /// re-queuing them would spin forever.
+    ///   * `model_signature` is set and differs from the active embedder's —
+    ///     recall skips those rows outright, because cosine across two
+    ///     embedding spaces is meaningless. A provider or model swap that keeps
+    ///     the dimension is invisible to the two checks above, so without this
+    ///     the `sig_changed` trigger would schedule a sweep that repairs
+    ///     nothing and the rows would stay unreachable until their document was
+    ///     rewritten.
+    ///
+    /// A NULL signature is deliberately NOT pending. Recall accepts those rows
+    /// (written before model tagging) as long as the dimension matches, so
+    /// selecting them would re-embed the entire legacy corpus to change nothing.
+    /// Blank-text rows are excluded too: they are permanently un-embeddable, not
+    /// pending work, and re-queuing them would spin forever.
     pub(crate) fn scan_chunks_needing_reembed(
         &self,
         limit: usize,
     ) -> Result<Vec<ReembedCandidate>, String> {
         let active_dim = self.embedder.dimensions() as i64;
+        let active_signature = self.embedder.signature();
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT namespace, document_id, chunk_id, text
                    FROM vector_chunks
-                  WHERE (embedding IS NULL OR dim IS NULL OR dim <> ?1)
+                  WHERE (embedding IS NULL
+                         OR dim IS NULL
+                         OR dim <> ?1
+                         OR (model_signature IS NOT NULL AND model_signature <> ?2))
                     AND text IS NOT NULL
                     AND trim(text) <> ''
                   ORDER BY updated_at DESC, chunk_id ASC
-                  LIMIT ?2",
+                  LIMIT ?3",
             )
             .map_err(|e| format!("prepare scan_chunks_needing_reembed: {e}"))?;
         let rows = stmt
-            .query_map(params![active_dim, limit as i64], |row| {
+            .query_map(params![active_dim, active_signature, limit as i64], |row| {
                 Ok(ReembedCandidate {
                     namespace: row.get(0)?,
                     document_id: row.get(1)?,
@@ -220,25 +234,43 @@ impl UnifiedMemory {
         let bytes = Self::vec_to_bytes(vector);
         let dim = vector.len() as i64;
         let conn = self.conn.lock();
-        conn.execute(
-            "UPDATE vector_chunks
+        // Keyed on the scanned `text` as well as the row identity: the embed
+        // call between the scan and this write is a network round trip with
+        // retries, and a document re-ingested in that window leaves a row whose
+        // text this vector no longer describes. Overwriting it would stamp the
+        // stale vector with the ACTIVE dim and signature, so no later scan could
+        // ever tell it apart from a healthy row.
+        let updated = conn
+            .execute(
+                "UPDATE vector_chunks
                 SET embedding = ?1, dim = ?2, model_signature = ?3, updated_at = ?4
-              WHERE namespace = ?5 AND chunk_id = ?6",
-            params![
-                bytes,
-                dim,
-                signature,
-                now,
-                candidate.namespace,
-                candidate.chunk_id
-            ],
-        )
-        .map_err(|error| {
-            format!(
-                "write_chunk_embedding {}/{}: {error}",
-                candidate.namespace, candidate.chunk_id
+              WHERE namespace = ?5 AND chunk_id = ?6 AND text = ?7",
+                params![
+                    bytes,
+                    dim,
+                    signature,
+                    now,
+                    candidate.namespace,
+                    candidate.chunk_id,
+                    candidate.text
+                ],
             )
-        })?;
+            .map_err(|error| {
+                format!(
+                    "write_chunk_embedding {}/{}: {error}",
+                    candidate.namespace, candidate.chunk_id
+                )
+            })?;
+        if updated == 0 {
+            // The row moved on (re-ingested, or deleted). Nothing to repair from
+            // this pass; if it still needs an embedding the next scan picks up
+            // its current text.
+            tracing::debug!(
+                namespace = %candidate.namespace,
+                chunk_id = %candidate.chunk_id,
+                "[memory][reembed] row changed under the sweep; vector discarded"
+            );
+        }
         Ok(())
     }
 }

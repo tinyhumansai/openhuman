@@ -92,3 +92,22 @@ fn the_system_prompt_envelope_no_longer_floods_the_result() {
         "envelope exceeded the cap"
     );
 }
+
+/// The cap is a cap. `truncate_with_ellipsis` adds its "..." on top of the
+/// budget it is handed, so a hard cap that forgets to reserve those characters
+/// returns text longer than the limit it was asked to enforce — silently, and on
+/// every truncated recall entry.
+#[test]
+fn hard_cap_counts_the_ellipsis_against_the_budget() {
+    let long = "x".repeat(500);
+    for max in [10usize, 33, 120] {
+        let capped = super::hard_cap(&long, max);
+        assert!(
+            capped.chars().count() <= max,
+            "hard_cap({max}) returned {} chars: {capped}",
+            capped.chars().count()
+        );
+    }
+    // Text that already fits is returned whole, ellipsis or not.
+    assert_eq!(super::hard_cap("short", 32), "short");
+}

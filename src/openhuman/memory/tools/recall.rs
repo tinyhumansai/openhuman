@@ -88,7 +88,10 @@ impl Tool for MemoryRecallTool {
                 }
             }
             None => {
-                crate::openhuman::memory::auto_recall::recall_with_connectors(
+                // The schema says omitting the namespace searches everywhere,
+                // so it has to search everywhere — the per-turn cap belongs to
+                // the automatic context path, not to a call the model made.
+                crate::openhuman::memory::auto_recall::recall_every_namespace(
                     self.memory.as_ref(),
                     query,
                     limit,
@@ -116,7 +119,7 @@ impl Tool for MemoryRecallTool {
                 .namespace
                 .as_deref()
                 .filter(|namespace| {
-                    *namespace != crate::openhuman::memory_store::types::GLOBAL_NAMESPACE
+                    *namespace != crate::openhuman::memory::store::types::GLOBAL_NAMESPACE
                 })
                 .map_or_else(String::new, |namespace| format!(" ({namespace})"));
             // Condense to the query-relevant chunks, capped: recall returns
