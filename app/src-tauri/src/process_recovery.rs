@@ -1234,6 +1234,9 @@ ProcessId=9000\r\r\n";
         fn parse_reads_cim_blocks_with_non_ascii_and_empty_fields() {
             // What the CIM script emits: LF separated, blank line between
             // records, empty values for a process with no command line.
+            // Müller is representable in cp1252, 用户 is not. Both are here so a
+            // regression that drops the encoding pin fails on one or the other,
+            // whichever code page the runner happens to use.
             let cim = "Caption=System Idle Process\n\
 CommandLine=\n\
 ExecutablePath=\n\
@@ -1241,8 +1244,8 @@ ParentProcessId=0\n\
 ProcessId=0\n\
 \n\
 Caption=OpenHuman.exe\n\
-CommandLine=\"C:\\Users\\Ordner\\OpenHuman.exe\" --flag=a,b\n\
-ExecutablePath=C:\\Users\\Ordner\\OpenHuman.exe\n\
+CommandLine=\"C:\\Users\\Müller\\用户\\OpenHuman.exe\" --flag=a,b\n\
+ExecutablePath=C:\\Users\\Müller\\用户\\OpenHuman.exe\n\
 ParentProcessId=4\n\
 ProcessId=42\n";
             let results = parse_wmic_list_output(cim);
@@ -1250,8 +1253,8 @@ ProcessId=42\n";
             // No executable path, so argv0 falls back to the caption.
             assert_eq!(results[0].argv0, "System Idle Process");
             assert_eq!(results[1].pid, 42);
-            assert!(
-                results[1].argv0.contains("Ordner"),
+            assert_eq!(
+                results[1].argv0, "C:\\Users\\Müller\\用户\\OpenHuman.exe",
                 "non-ASCII path was mangled"
             );
             assert!(results[1].command.ends_with("--flag=a,b"));
