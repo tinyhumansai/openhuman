@@ -349,3 +349,5 @@ fn xml_tool_response(name: &str, args: &str) -> ChatResponse {
 mod part_01_tests;
 #[path = "agent_tests_part_02_tests.rs"]
 mod part_02_tests;
+#[path = "agent_tests_part_03_tests.rs"]
+mod part_03_tests;

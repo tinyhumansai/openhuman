@@ -124,6 +124,34 @@ impl AgentTurnOrigin {
             AgentTurnOrigin::Unknown => "Unknown".to_string(),
         }
     }
+
+    /// Whether the turn's text was written by a **person**.
+    ///
+    /// `WebChat` and `ExternalChannel` carry what a human sent. Every other
+    /// origin carries text the host wrote for an agent to act on: a
+    /// `TrustedAutomation` prompt (cron, subconscious, goal continuation,
+    /// workflow), a `Cli` invocation — which this module documents as
+    /// "command-line / **sub-agent** / one-off internal" — or an unscoped
+    /// `Unknown`.
+    ///
+    /// An allowlist, not a denylist, and for the same reason the permission
+    /// gate uses one: a new origin is a turn nobody has classified yet, and
+    /// mistaking a host-written prompt for a user message writes it into the
+    /// user's memory, where it is indistinguishable from something they said.
+    /// A caller that genuinely relays a person's text scopes one of the two
+    /// origins above.
+    pub fn is_user_authored(&self) -> bool {
+        matches!(
+            self,
+            AgentTurnOrigin::WebChat { .. } | AgentTurnOrigin::ExternalChannel { .. }
+        )
+    }
+}
+
+/// Whether the current turn's text was written by a person — `false` outside
+/// any origin scope, matching [`AgentTurnOrigin::is_user_authored`]'s allowlist.
+pub fn current_is_user_authored() -> bool {
+    current().is_some_and(|origin| origin.is_user_authored())
 }
 
 tokio::task_local! {
