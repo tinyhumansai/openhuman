@@ -761,8 +761,21 @@ mod windows_imp {
         // and recovery loses every process. Try it first for older builds, then
         // fall back to CIM, which returns the same fields.
         match enumerate_via_wmic() {
-            Ok(processes) if !processes.is_empty() => Ok(processes),
-            _ => enumerate_via_cim(),
+            Ok(processes) if !processes.is_empty() => {
+                log::debug!(
+                    "[startup-recovery] wmic enumerated {} processes",
+                    processes.len()
+                );
+                Ok(processes)
+            }
+            Ok(_) => {
+                log::debug!("[startup-recovery] wmic returned no processes, trying CIM");
+                enumerate_via_cim()
+            }
+            Err(err) => {
+                log::debug!("[startup-recovery] wmic unavailable ({err}), trying CIM");
+                enumerate_via_cim()
+            }
         }
     }
 
@@ -797,7 +810,13 @@ mod windows_imp {
 
         // Emit the same `Key=Value` blocks wmic produced, so the existing parser
         // handles both sources unchanged.
-        let script = "Get-CimInstance Win32_Process | ForEach-Object { \
+        //
+        // OutputEncoding is pinned because PowerShell otherwise writes stdout in
+        // the console's OEM code page. On a non-English install a path outside
+        // that page is replaced with `?` before it ever reaches us, so no decode
+        // on this side can recover it.
+        let script = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \
+             Get-CimInstance Win32_Process | ForEach-Object { \
              \"Caption=$($_.Caption)\"; \
              \"CommandLine=$($_.CommandLine)\"; \
              \"ExecutablePath=$($_.ExecutablePath)\"; \
@@ -811,11 +830,20 @@ mod windows_imp {
             .map_err(|e| format!("spawn powershell: {e}"))?;
 
         if !output.status.success() {
+            log::warn!(
+                "[startup-recovery] CIM enumeration failed: powershell exited with {}",
+                output.status
+            );
             return Err(format!("powershell exited with {}", output.status));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(parse_wmic_list_output(&stdout))
+        let processes = parse_wmic_list_output(&stdout);
+        log::debug!(
+            "[startup-recovery] CIM enumerated {} processes",
+            processes.len()
+        );
+        Ok(processes)
     }
 
     /// Parse `wmic ... /format:list` output: records are blocks of `Key=Value`
