@@ -935,7 +935,7 @@ mod tests {
 
         let (_tmp, mem) = fresh_mem();
         mem.store(
-            "global",
+            "conversation_memory",
             "user_msg:current-turn",
             "Please look up Jordan Rivera's chat platform user ID for me.",
             MemoryCategory::Conversation,
@@ -944,7 +944,7 @@ mod tests {
         .await
         .unwrap();
         mem.store(
-            "global",
+            "conversation_memory",
             "fact:jordan-rivera-platform-id",
             "Jordan Rivera's chat platform user ID is U0000042.",
             MemoryCategory::Conversation,
@@ -958,7 +958,7 @@ mod tests {
                 "Jordan Rivera chat platform user ID",
                 10,
                 RecallOpts {
-                    namespace: Some("global"),
+                    namespace: Some("conversation_memory"),
                     min_score: Some(0.0),
                     ..Default::default()
                 },
@@ -970,8 +970,8 @@ mod tests {
 
         assert!(
             !entries.iter().any(|e| e.key == "user_msg:current-turn"),
-            "recall inside the ambient current-thread scope must exclude that thread's own \
-             autosaved request, got {entries:#?}"
+            "recall inside the ambient current-thread scope must exclude a document derived \
+             from that same thread, got {entries:#?}"
         );
         assert!(
             entries
@@ -985,7 +985,7 @@ mod tests {
     async fn recall_outside_any_thread_scope_is_unaffected() {
         let (_tmp, mem) = fresh_mem();
         mem.store(
-            "global",
+            "conversation_memory",
             "user_msg:current-turn",
             "Please look up Jordan Rivera's chat platform user ID for me.",
             MemoryCategory::Conversation,
@@ -1003,7 +1003,7 @@ mod tests {
                 "Jordan Rivera chat platform user ID",
                 10,
                 RecallOpts {
-                    namespace: Some("global"),
+                    namespace: Some("conversation_memory"),
                     min_score: Some(0.0),
                     ..Default::default()
                 },

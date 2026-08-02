@@ -863,7 +863,12 @@ fn conversation_doc_with_session(
     session_id: Option<&str>,
 ) -> NamespaceDocumentInput {
     NamespaceDocumentInput {
-        namespace: "global".to_string(),
+        // NOT the global namespace: a global `conversation` document is a
+        // verbatim message copy and recall drops it outright, so it could not
+        // demonstrate anything about session scoping. Session-tagged documents
+        // now live here — `learning::transcript_ingest` stamps each extracted
+        // candidate with the thread it came from.
+        namespace: "conversation_memory".to_string(),
         key: key.to_string(),
         title: key.to_string(),
         content: content.to_string(),
@@ -883,9 +888,11 @@ async fn excludes_same_session_document_but_keeps_unrelated_useful_doc() {
     let tmp = TempDir::new().unwrap();
     let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
 
-    // (a) The current turn's own auto-saved request — tagged with the live
-    // session/thread id, exactly like `agent::harness::session::turn::core`
-    // tags the `user_msg:<uuid>` autosave.
+    // (a) A document tagged with the live session/thread id. The chat autosave
+    // that originally motivated this guard is gone (messages are no longer
+    // copied into the store at all), but `learning::transcript_ingest` still
+    // stamps every extracted candidate with its source thread, so a turn can
+    // still retrieve something derived from the very request it is answering.
     memory
         .upsert_document(conversation_doc_with_session(
             "user_msg:current-turn",
@@ -911,7 +918,7 @@ async fn excludes_same_session_document_but_keeps_unrelated_useful_doc() {
     // Sanity check: without exclusion, both documents are lexically relevant
     // and both come back (this is the pre-fix, buggy shape).
     let unfiltered = memory
-        .query_namespace_hits("global", query, 10)
+        .query_namespace_hits("conversation_memory", query, 10)
         .await
         .unwrap();
     assert!(
@@ -922,7 +929,12 @@ async fn excludes_same_session_document_but_keeps_unrelated_useful_doc() {
     // With the current-session exclusion applied, the self-echo document is
     // dropped and the useful fact survives.
     let filtered = memory
-        .query_namespace_hits_excluding_session("global", query, 10, Some("thread-current"))
+        .query_namespace_hits_excluding_session(
+            "conversation_memory",
+            query,
+            10,
+            Some("thread-current"),
+        )
         .await
         .unwrap();
 
@@ -963,7 +975,7 @@ async fn no_session_context_leaves_results_unchanged() {
     let query = "Jordan Rivera chat platform user ID";
 
     let baseline = memory
-        .query_namespace_hits("global", query, 10)
+        .query_namespace_hits("conversation_memory", query, 10)
         .await
         .unwrap();
 
@@ -972,7 +984,7 @@ async fn no_session_context_leaves_results_unchanged() {
     // identically to the pre-existing `query_namespace_hits` entry point:
     // same hit count, same keys, in the same order.
     let explicit_none = memory
-        .query_namespace_hits_excluding_session("global", query, 10, None)
+        .query_namespace_hits_excluding_session("conversation_memory", query, 10, None)
         .await
         .unwrap();
 
@@ -990,7 +1002,7 @@ async fn no_session_context_leaves_results_unchanged() {
     // An empty/whitespace exclude id must also be treated as "no filter",
     // not accidentally matched against a document with `session_id: None`.
     let empty_string = memory
-        .query_namespace_hits_excluding_session("global", query, 10, Some("   "))
+        .query_namespace_hits_excluding_session("conversation_memory", query, 10, Some("   "))
         .await
         .unwrap();
     let empty_string_keys: Vec<&str> = empty_string.iter().map(|h| h.key.as_str()).collect();
@@ -998,4 +1010,148 @@ async fn no_session_context_leaves_results_unchanged() {
         baseline_keys, empty_string_keys,
         "a blank exclude_session_id must not filter anything"
     );
+}
+
+// ── Verbatim conversation copies stay out of recall (#5312) ─────────────
+//
+// Installs from before the chat/channel paths stopped copying messages into
+// the store still carry those rows. Recall must not answer with them: the
+// conversation is `transcript_search`'s to read.
+
+fn conversation_copy(namespace: &str, key: &str, content: &str) -> NamespaceDocumentInput {
+    NamespaceDocumentInput {
+        namespace: namespace.to_string(),
+        key: key.to_string(),
+        title: key.to_string(),
+        content: content.to_string(),
+        source_type: "chat".to_string(),
+        priority: "normal".to_string(),
+        tags: vec![],
+        metadata: json!({}),
+        category: "conversation".to_string(),
+        session_id: None,
+        document_id: None,
+        taint: crate::openhuman::memory::MemoryTaint::Internal,
+    }
+}
+
+#[tokio::test]
+async fn recall_drops_a_legacy_user_message_copy() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    memory
+        .upsert_document(conversation_copy(
+            "",
+            "user_msg:11111111-1111-1111-1111-111111111111",
+            "my flight to Denver is on Tuesday",
+        ))
+        .await
+        .unwrap();
+
+    let results = memory
+        .query_namespace_ranked("", "flight to Denver", 5)
+        .await
+        .unwrap();
+    assert!(
+        results.is_empty(),
+        "a verbatim chat line must not answer recall: {:?}",
+        results.iter().map(|r| &r.key).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn recall_drops_a_legacy_channel_message_copy() {
+    // The channel copy's key is `{channel}_{sender}_{id}` — no prefix to match
+    // on, which is why the filter keys off the category instead.
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    memory
+        .upsert_document(conversation_copy(
+            "",
+            "telegram_U123_msg_abc",
+            "my flight to Denver is on Tuesday",
+        ))
+        .await
+        .unwrap();
+
+    let results = memory
+        .query_namespace_ranked("", "flight to Denver", 5)
+        .await
+        .unwrap();
+    assert!(results.is_empty(), "{results:?}");
+}
+
+#[tokio::test]
+async fn recall_drops_the_legacy_assistant_reply_snapshot() {
+    // Written under a FIXED key and mislabelled `daily`, so the category test
+    // above cannot catch it — it needs its own.
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    let mut doc = conversation_copy("", "assistant_resp", "Your flight to Denver is Tuesday…");
+    doc.category = "daily".to_string();
+    memory.upsert_document(doc).await.unwrap();
+
+    let results = memory
+        .query_namespace_ranked("", "flight to Denver", 5)
+        .await
+        .unwrap();
+    assert!(results.is_empty(), "{results:?}");
+}
+
+#[tokio::test]
+async fn recall_keeps_extracted_conversation_memories() {
+    // The half worth keeping. `learning::transcript_ingest` distils
+    // preferences / decisions / commitments / facts into dedicated namespaces
+    // under the SAME `conversation` category, so a category-only filter would
+    // have deleted them along with the raw copies.
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    memory
+        .upsert_document(conversation_copy(
+            "conversation_memory",
+            "preference:1",
+            "[preference high] books flights on Tuesdays when travelling to Denver",
+        ))
+        .await
+        .unwrap();
+    memory
+        .upsert_document(conversation_copy(
+            "conversation_reflections",
+            "reflection:1",
+            "[high travel] recurring Denver trips cluster mid-week",
+        ))
+        .await
+        .unwrap();
+
+    for ns in ["conversation_memory", "conversation_reflections"] {
+        let results = memory
+            .query_namespace_ranked(ns, "Denver", 5)
+            .await
+            .unwrap();
+        assert!(
+            !results.is_empty(),
+            "extracted memories in `{ns}` must stay recallable"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_non_conversation_global_memory_is_untouched() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    let mut doc = conversation_copy("", "fact:flight", "the user's flight to Denver is Tuesday");
+    doc.category = "core".to_string();
+    memory.upsert_document(doc).await.unwrap();
+
+    let results = memory
+        .query_namespace_ranked("", "flight to Denver", 5)
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 1, "a real memory must still answer recall");
+    assert_eq!(results[0].key, "fact:flight");
 }

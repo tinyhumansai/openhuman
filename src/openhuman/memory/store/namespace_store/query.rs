@@ -17,6 +17,13 @@ use crate::openhuman::memory::store::types::{
 use super::events;
 use super::fts5;
 use super::UnifiedMemory;
+use crate::openhuman::memory::MemoryCategory;
+use tinycortex::memory::types::{StoredMemoryDocument, GLOBAL_NAMESPACE};
+
+/// Fixed key the old assistant-reply copy was written under. Retained only so
+/// [`UnifiedMemory::drop_verbatim_conversation_copies`] can recognise the rows
+/// existing installs still carry; nothing writes it.
+const LEGACY_ASSISTANT_REPLY_KEY: &str = "assistant_resp";
 
 const GRAPH_WEIGHT: f64 = 0.55;
 const VECTOR_WEIGHT: f64 = 0.30;
@@ -114,6 +121,55 @@ impl UnifiedMemory {
         Ok(out)
     }
 
+    /// Drop documents that are a verbatim copy of something already in the
+    /// chat transcript, so recall answers with memories rather than with the
+    /// conversation itself.
+    ///
+    /// Nothing writes these any more — the chat and channel paths no longer
+    /// copy messages into the store. This is for installs that already have
+    /// them: those rows sit in the same vector space the agent searches for
+    /// facts, so without this filter every existing user keeps competing with
+    /// their own chat lines for recall slots (#5312) until someone deletes
+    /// them by hand. `transcript_search` is the tool that reads the
+    /// conversation, and it reads the transcript, not this store.
+    ///
+    /// Scoped to the **global** namespace on purpose. What is worth keeping
+    /// from a conversation is *extracted*, not copied, and
+    /// `learning::transcript_ingest` writes those distilled preferences /
+    /// decisions / commitments / facts into the dedicated
+    /// `conversation_memory` and `conversation_reflections` namespaces. They
+    /// carry the same `conversation` category, so a category-only filter would
+    /// take them out too — which would delete the useful half of the feature.
+    /// In the global namespace the category has only ever meant a raw copy.
+    ///
+    /// Two shapes, matching the two writers this replaces:
+    /// - `category = conversation` — a user or channel message, verbatim
+    ///   (keys `user_msg:*`, the legacy fixed `user_msg`, and the channel
+    ///   `{channel}_{sender}_{id}`, which has no prefix to match on).
+    /// - the fixed key `assistant_resp` — a 100-character truncation of the
+    ///   last assistant reply, mislabelled `Daily`, overwritten every turn.
+    fn drop_verbatim_conversation_copies(ns: &str, docs: &mut Vec<StoredMemoryDocument>) {
+        if ns != GLOBAL_NAMESPACE {
+            return;
+        }
+        let before = docs.len();
+        docs.retain(|doc| {
+            let is_message_copy = doc
+                .category
+                .eq_ignore_ascii_case(&MemoryCategory::Conversation.to_string());
+            let is_assistant_snapshot = doc.key == LEGACY_ASSISTANT_REPLY_KEY;
+            !(is_message_copy || is_assistant_snapshot)
+        });
+        let dropped = before - docs.len();
+        if dropped > 0 {
+            tracing::debug!(
+                "[query] dropped {dropped} verbatim conversation copy/copies from recall \
+                 namespace={ns} remaining={} (transcript_search reads the transcript instead)",
+                docs.len()
+            );
+        }
+    }
+
     /// Hybrid retrieval: returns ranked hits across documents and KV records,
     /// scored by graph relevance + vector similarity + keyword overlap +
     /// freshness.
@@ -156,6 +212,7 @@ impl UnifiedMemory {
             .map(str::trim)
             .filter(|id| !id.is_empty());
         let mut docs = self.load_documents_for_scope(&ns).await?;
+        Self::drop_verbatim_conversation_copies(&ns, &mut docs);
         if let Some(exclude) = exclude_session_id {
             let before = docs.len();
             docs.retain(|doc| doc.session_id.as_deref() != Some(exclude));
@@ -443,7 +500,10 @@ impl UnifiedMemory {
         limit: u32,
     ) -> Result<Vec<NamespaceMemoryHit>, String> {
         let ns = Self::sanitize_namespace(namespace);
-        let docs = self.load_documents_for_scope(&ns).await?;
+        let mut docs = self.load_documents_for_scope(&ns).await?;
+        // Query-less recall is still recall, so it owes the same answer as the
+        // query path above: memories, not a replay of the chat.
+        Self::drop_verbatim_conversation_copies(&ns, &mut docs);
         let kvs = self.kv_records_for_scope(&ns).await?;
         let graph_relations = self
             .graph_relations_for_scope(&ns)

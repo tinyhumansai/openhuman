@@ -642,7 +642,16 @@ async fn history_trims_after_max_messages() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn auto_save_stores_messages_in_memory() {
+async fn a_turn_does_not_copy_the_conversation_into_memory() {
+    // The chat used to write two documents per turn: the user's message
+    // verbatim, and a 100-character truncation of the reply under the fixed
+    // key `assistant_resp`. Both were copies of text the transcript already
+    // held, and both landed in the vector space the agent searches for facts,
+    // where they competed with real memories for every recall slot (#5312).
+    //
+    // The transcript is still written, and `transcript_search` reads it. What
+    // is worth keeping from a conversation is extracted rather than copied, by
+    // `learning::transcript_ingest`, into its own namespaces.
     let (mem, _tmp) = make_sqlite_memory();
     let provider = Arc::new(ScriptedProvider::new(vec![text_response(
         "I remember everything",
@@ -652,28 +661,21 @@ async fn auto_save_stores_messages_in_memory() {
         provider,
         vec![],
         mem.clone(),
-        true, // auto_save enabled
+        true, // auto_save enabled — it must no longer mean "copy the chat"
     );
 
     let _ = agent.turn("Remember this fact").await.unwrap();
 
-    // Both user message and assistant response should be saved. The assistant
-    // reply is persisted synchronously, but the user message is saved
-    // fire-and-forget (tokio::spawn in turn/core.rs, #3610), so it may land a
-    // moment after `turn()` returns — poll briefly instead of reading once,
-    // which otherwise races on a loaded CI runner under llvm-cov instrumentation.
-    let mut count = 0;
-    for _ in 0..50 {
-        count = mem.count().await.unwrap();
-        if count >= 2 {
-            break;
-        }
+    // The writes were fire-and-forget (`tokio::spawn`), so give a stray one
+    // time to land before concluding none happened.
+    for _ in 0..25 {
+        assert_eq!(
+            mem.count().await.unwrap(),
+            0,
+            "a chat turn must write no conversation copies"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    assert!(
-        count >= 2,
-        "Expected at least 2 memory entries, got {count}"
-    );
 }
 
 #[tokio::test]

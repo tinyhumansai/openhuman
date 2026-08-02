@@ -18,7 +18,7 @@ use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::channels::context::{
     build_memory_context, compact_sender_history, conversation_history_key,
-    conversation_memory_key, is_context_window_overflow_error, ChannelRuntimeContext,
+    is_context_window_overflow_error, ChannelRuntimeContext,
 };
 use crate::openhuman::channels::providers::telegram::TELEGRAM_APPROVAL_CLIENT_ID;
 use crate::openhuman::channels::routes::{
@@ -267,19 +267,16 @@ pub(crate) async fn process_channel_runtime_message(
     let memory_context =
         build_memory_context(ctx.memory.as_ref(), &msg.content, ctx.min_relevance_score).await;
 
-    if ctx.auto_save_memory {
-        let autosave_key = conversation_memory_key(&msg);
-        let _ = ctx
-            .memory
-            .store(
-                "",
-                &autosave_key,
-                &msg.content,
-                crate::openhuman::memory::MemoryCategory::Conversation,
-                None,
-            )
-            .await;
-    }
+    // An inbound channel message is not copied into the memory store — the same
+    // change as the chat path (`agent::harness::session::turn::core`). The
+    // conversation is already persisted as a transcript and searchable through
+    // `transcript_search`; a second copy in `memory_docs` only put raw message
+    // text into the vector space the agent searches for facts.
+    //
+    // This copy was additionally blind: it passed `session_id: None`, so the
+    // same-session exclusion could not recognise it, and the message the user
+    // had just sent could come back as a "relevant memory" while answering that
+    // very message.
 
     let channel_context = build_channel_context_block(&msg);
     let enriched_message = match (memory_context.is_empty(), channel_context.is_empty()) {

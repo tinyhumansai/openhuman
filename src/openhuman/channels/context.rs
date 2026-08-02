@@ -59,10 +59,6 @@ pub(crate) struct ChannelRuntimeContext {
     pub(crate) config: Option<Arc<crate::openhuman::config::Config>>,
 }
 
-pub(crate) fn conversation_memory_key(msg: &super::traits::ChannelMessage) -> String {
-    tinychannels::context::conversation_memory_key(msg)
-}
-
 pub(crate) fn conversation_history_key(msg: &super::traits::ChannelMessage) -> String {
     tinychannels::context::conversation_history_key(msg)
 }
@@ -327,7 +323,6 @@ mod tests {
 
         let telegram = channel_message("telegram");
         let discord = channel_message("discord");
-        assert_eq!(conversation_memory_key(&telegram), "telegram_alice_m1");
         assert_eq!(conversation_history_key(&telegram), "telegram_alice_reply");
         assert_eq!(
             conversation_history_key(&discord),

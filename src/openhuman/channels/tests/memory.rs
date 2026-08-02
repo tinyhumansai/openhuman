@@ -1,6 +1,6 @@
 use super::super::context::{
-    build_memory_context, clear_sender_history, conversation_history_key, conversation_memory_key,
-    ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS,
+    build_memory_context, clear_sender_history, conversation_history_key, ChannelRuntimeContext,
+    CHANNEL_MESSAGE_TIMEOUT_SECS,
 };
 use super::super::runtime::process_channel_message;
 use super::super::{traits, Channel};
@@ -13,99 +13,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-fn conversation_memory_key_uses_message_id() {
-    let msg = traits::ChannelMessage {
-        id: "msg_abc123".into(),
-        sender: "U123".into(),
-        reply_target: "C456".into(),
-        content: "hello".into(),
-        channel: "slack".into(),
-        timestamp: 1,
-        thread_ts: None,
-    };
-
-    assert_eq!(conversation_memory_key(&msg), "slack_U123_msg_abc123");
-}
-
-#[test]
-fn conversation_memory_key_is_unique_per_message() {
-    let msg1 = traits::ChannelMessage {
-        id: "msg_1".into(),
-        sender: "U123".into(),
-        reply_target: "C456".into(),
-        content: "first".into(),
-        channel: "slack".into(),
-        timestamp: 1,
-        thread_ts: None,
-    };
-    let msg2 = traits::ChannelMessage {
-        id: "msg_2".into(),
-        sender: "U123".into(),
-        reply_target: "C456".into(),
-        content: "second".into(),
-        channel: "slack".into(),
-        timestamp: 2,
-        thread_ts: None,
-    };
-
-    assert_ne!(
-        conversation_memory_key(&msg1),
-        conversation_memory_key(&msg2)
-    );
-}
-
-#[tokio::test]
-async fn autosave_keys_preserve_multiple_conversation_facts() {
-    let tmp = TempDir::new().unwrap();
-    let mem = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
-
-    let msg1 = traits::ChannelMessage {
-        id: "msg_1".into(),
-        sender: "U123".into(),
-        reply_target: "C456".into(),
-        content: "I'm Paul".into(),
-        channel: "slack".into(),
-        timestamp: 1,
-        thread_ts: None,
-    };
-    let msg2 = traits::ChannelMessage {
-        id: "msg_2".into(),
-        sender: "U123".into(),
-        reply_target: "C456".into(),
-        content: "I'm 45".into(),
-        channel: "slack".into(),
-        timestamp: 2,
-        thread_ts: None,
-    };
-
-    mem.store(
-        "",
-        &conversation_memory_key(&msg1),
-        &msg1.content,
-        MemoryCategory::Conversation,
-        None,
-    )
-    .await
-    .unwrap();
-    mem.store(
-        "",
-        &conversation_memory_key(&msg2),
-        &msg2.content,
-        MemoryCategory::Conversation,
-        None,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(mem.count().await.unwrap(), 2);
-
-    let recalled = mem
-        .recall("45", 5, crate::openhuman::memory::RecallOpts::default())
-        .await
-        .unwrap();
-    assert!(recalled.iter().any(|entry| entry.content.contains("45")));
-}
-
 #[tokio::test]
 async fn build_memory_context_includes_recalled_entries() {
     let tmp = TempDir::new().unwrap();
@@ -114,7 +21,10 @@ async fn build_memory_context_includes_recalled_entries() {
         "",
         "age_fact",
         "Age is 45",
-        MemoryCategory::Conversation,
+        // A real memory, not a `Conversation` copy: recall drops verbatim chat
+        // copies from the global namespace, and this test is about whether
+        // `build_memory_context` renders what recall returns.
+        MemoryCategory::Core,
         None,
     )
     .await
@@ -211,7 +121,7 @@ async fn process_channel_message_restores_per_sender_history_on_follow_ups() {
 }
 
 #[tokio::test]
-async fn process_channel_message_uses_autosaved_memory_after_history_is_cleared() {
+async fn process_channel_message_does_not_replay_a_prior_message_from_memory() {
     let _bus_guard = super::common::use_real_agent_handler().await;
     let channel_impl = Arc::new(RecordingChannel::default());
     let channel: Arc<dyn Channel> = channel_impl.clone();
@@ -288,14 +198,15 @@ async fn process_channel_message_uses_autosaved_memory_after_history_is_cleared(
     assert_eq!(calls[1].len(), 2);
     assert_eq!(calls[1][0].0, "system");
     assert_eq!(calls[1][1].0, "user");
+    // The inbound message is no longer copied into the memory store, so once the
+    // in-process history is cleared the prior message does not come back through
+    // recall. That is the intended split: the message IS retained — the
+    // `memory_conversations` subscriber persists every `ChannelMessageReceived`
+    // into the thread transcript — and `transcript_search` is the tool that
+    // reads it. Recall answers with memories, not with a replay of the chat.
     assert!(
-        calls[1][1].1.contains("[Memory context]"),
-        "second turn should include recalled memory context: {:?}",
-        calls[1][1]
-    );
-    assert!(
-        calls[1][1].1.contains("phoenix-773"),
-        "second turn should surface the autosaved fact: {:?}",
+        !calls[1][1].1.contains("phoenix-773"),
+        "a raw prior message must not be replayed out of memory: {:?}",
         calls[1][1]
     );
     assert!(

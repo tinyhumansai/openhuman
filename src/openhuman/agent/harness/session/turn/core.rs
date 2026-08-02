@@ -16,7 +16,6 @@ use crate::openhuman::agent::hooks::{self, TurnContext};
 use crate::openhuman::agent::messages::{ChatMessage, ConversationMessage};
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::memory::agent::memory_loader::collect_recall_citations;
-use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::util::truncate_with_ellipsis;
 
 use anyhow::Result;
@@ -640,59 +639,18 @@ impl Agent {
             );
         }
 
-        if self.auto_save {
-            // Fire-and-forget: persisting the user message to the memory store
-            // does an embedding round-trip (Voyage) + memory-tree write that the
-            // in-flight turn never reads back. Awaiting it delayed the start of
-            // *every* turn before recall/LLM began, so spawn it and let the chat
-            // continue immediately.
-            //
-            // Use a UNIQUE per-message key: the old fixed `"user_msg"` key
-            // upserts a single document (`upsert_document` keys by namespace+key),
-            // so concurrent turns would race on — and overwrite — one shared slot.
-            // A unique key makes each user message its own conversation document,
-            // which both removes the race and stops the autosave from only ever
-            // retaining the latest message.
-            let memory = self.memory.clone();
-            let user_msg = user_message.to_string();
-            let autosave_key = format!("user_msg:{}", uuid::Uuid::new_v4());
-            let chars = user_msg.chars().count();
-            // Captured *before* `tokio::spawn` — the ambient thread id is a
-            // `tokio::task_local` (see `tinyagents::thread_context`)
-            // and does not propagate into a spawned task, so it must be read
-            // on this (still-scoped) task and moved in explicitly. Tagging
-            // this document with the live chat thread id is what lets the
-            // same-session exclusion filter (`UnifiedMemory::recall` /
-            // `memory_hybrid_search`) recognize and drop it later this same
-            // turn, so the agent's own on-demand memory search doesn't echo
-            // its own triggering request back as a "relevant" result.
-            let session_id_for_autosave =
-                crate::openhuman::agent::tinyagents::thread_context::current_thread_id();
-            log::debug!(
-                "[agent_autosave] enqueue user-message store key={autosave_key} chars={chars} \
-                 session_id={}",
-                session_id_for_autosave.as_deref().unwrap_or("<none>")
-            );
-            tokio::spawn(async move {
-                match memory
-                    .store(
-                        "",
-                        &autosave_key,
-                        &user_msg,
-                        MemoryCategory::Conversation,
-                        session_id_for_autosave.as_deref(),
-                    )
-                    .await
-                {
-                    Ok(()) => log::debug!(
-                        "[agent_autosave] stored user-message key={autosave_key} chars={chars}"
-                    ),
-                    Err(err) => log::warn!(
-                        "[agent_autosave] user-message memory autosave failed key={autosave_key} err={err}"
-                    ),
-                }
-            });
-        }
+        // The user's message is NOT copied into the memory store. The chat
+        // transcript already holds every message verbatim, and `transcript_search`
+        // is the tool that reads it — a second copy in `memory_docs` bought
+        // nothing and cost an embedding round-trip (Voyage) per message, on text
+        // no reader wanted. Worse, it landed in the same vector space the agent
+        // searches for *facts*, so raw chat lines competed with real memories for
+        // every recall slot (#5312).
+        //
+        // What the conversation is actually worth keeping is extracted, not
+        // copied: `learning::transcript_ingest` distils preferences, decisions,
+        // commitments, and facts into the `conversation_memory` /
+        // `conversation_reflections` namespaces. Those stay, and stay recallable.
 
         log::info!("[agent] loading memory context for user message");
         const MEMORY_CITATION_LIMIT: usize = 5;
@@ -1620,13 +1578,13 @@ impl Agent {
         })
         .await;
 
-        if self.auto_save {
-            let summary = truncate_with_ellipsis(&reply, 100);
-            let _ = self
-                .memory
-                .store("", "assistant_resp", &summary, MemoryCategory::Daily, None)
-                .await;
-        }
+        // The assistant's reply is not copied into memory either, for the same
+        // reason as the user's message above — and this copy was the weaker of
+        // the two: a 100-character truncation under the FIXED key
+        // `assistant_resp`, which `upsert_document` keys by namespace+key, so
+        // every turn in the workspace overwrote the one before it. It was a
+        // single perpetually-stale row, mislabelled `Daily`, that no reader
+        // could have used as history.
 
         // Fire post-turn hooks (non-blocking), matching the legacy engine.
         if !self.post_turn_hooks.is_empty() {
