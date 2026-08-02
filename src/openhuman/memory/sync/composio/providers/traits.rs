@@ -234,6 +234,31 @@ pub trait ComposioProvider: Send + Sync {
         let _ = (slug, arguments, data);
     }
 
+    /// Whether [`Self::post_process_action_result`]'s rewrite of `data`
+    /// **replaces** the backend's `markdownFormatted` rendering for `slug`.
+    ///
+    /// Both Composio dispatch paths — `ComposioActionTool` and the
+    /// `composio_execute` dispatcher — build the model-facing body by
+    /// preferring `markdownFormatted` and falling back to the JSON envelope
+    /// only when it is absent. A reshape of an action the backend also renders
+    /// is therefore **invisible** to the model unless the provider says so
+    /// here; `data` is rewritten, and then nothing reads it.
+    ///
+    /// Answer `true` only where the reshape carries something the rendering
+    /// drops. It is deliberately per-action rather than per-toolkit, because
+    /// within one toolkit the answer differs: Gmail's `GMAIL_FETCH_EMAILS`
+    /// reshape *consumes* `markdownFormatted` (it is the message body, already
+    /// URL-shortened and footer-stripped), while `GMAIL_LIST_THREADS` is
+    /// rendered as a bare list of thread ids that discards the subjects,
+    /// senders, dates, and snippets the same payload carries.
+    ///
+    /// Default `false`: a provider that has not thought about it keeps the
+    /// existing behaviour.
+    fn reshape_supersedes_markdown(&self, slug: &str) -> bool {
+        let _ = slug;
+        false
+    }
+
     /// Hook fired when a Composio trigger webhook arrives for this
     /// toolkit. `payload` is the raw provider payload as forwarded by
     /// the backend. Implementations should be defensive — payload

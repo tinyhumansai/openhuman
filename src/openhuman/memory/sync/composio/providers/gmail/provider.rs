@@ -80,6 +80,29 @@ impl ComposioProvider for GmailProvider {
         super::post_process::post_process(slug, arguments, data);
     }
 
+    /// Only `GMAIL_LIST_THREADS`, and only because its rendering throws away
+    /// the answer.
+    ///
+    /// The backend renders a thread list as bare ids — captured verbatim:
+    ///
+    /// ```text
+    /// **Gmail Threads** — 2 returned
+    /// - `19fbd08f6a3e635b`
+    /// - `19fbc77215064e91`
+    /// ```
+    ///
+    /// The payload behind that list carries each thread's subject, sender,
+    /// date, labels, and snippet, and `reshape_list_threads` lifts them. Live,
+    /// a sub-agent searching for a mail that does exist got the ids, had
+    /// nothing to recognise the thread by, and reported it could not be found.
+    ///
+    /// `GMAIL_FETCH_EMAILS` is deliberately absent: its reshape *reads*
+    /// `markdownFormatted` for the message body (`extract_markdown_body`), so
+    /// clearing it there would throw away the body rather than reveal it.
+    fn reshape_supersedes_markdown(&self, slug: &str) -> bool {
+        slug.eq_ignore_ascii_case("GMAIL_LIST_THREADS")
+    }
+
     async fn fetch_user_profile(
         &self,
         ctx: &ProviderContext,
@@ -188,3 +211,29 @@ impl ComposioProvider for GmailProvider {
 // the sole consumer; the `sync_depth_days` date floor (`epoch_floor_from_depth`)
 // stays in `super::super::helpers` because `gmail::source` builds an
 // `after:<epoch>` filter from it.
+
+#[cfg(test)]
+mod supersede_tests {
+    use super::*;
+    use crate::openhuman::memory_sync::composio::providers::ComposioProvider;
+
+    /// The rendering for a thread list is a bare id list, so the reshape — which
+    /// lifts the subject, sender, date, and snippet the same payload carries —
+    /// has to replace it or the model never sees any of them.
+    #[test]
+    fn the_thread_list_reshape_supersedes_the_backend_rendering() {
+        assert!(GmailProvider.reshape_supersedes_markdown("GMAIL_LIST_THREADS"));
+        // The model's casing varies; the action does not.
+        assert!(GmailProvider.reshape_supersedes_markdown("gmail_list_threads"));
+    }
+
+    /// The failure case that matters. `reshape_fetch_emails` READS
+    /// `markdownFormatted` for the message body, so clearing it here would
+    /// throw the body away instead of revealing it.
+    #[test]
+    fn the_message_fetch_reshape_does_not() {
+        assert!(!GmailProvider.reshape_supersedes_markdown("GMAIL_FETCH_EMAILS"));
+        assert!(!GmailProvider.reshape_supersedes_markdown("GMAIL_FETCH_MESSAGE_BY_THREAD_ID"));
+        assert!(!GmailProvider.reshape_supersedes_markdown("GMAIL_SEND_EMAIL"));
+    }
+}

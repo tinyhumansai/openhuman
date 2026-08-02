@@ -65,9 +65,128 @@ pub fn post_process(slug: &str, arguments: Option<&Value>, data: &mut Value) {
         );
         return;
     }
-    if slug == "GMAIL_FETCH_EMAILS" {
-        reshape_fetch_emails(data)
+    match slug {
+        "GMAIL_FETCH_EMAILS" => reshape_fetch_emails(data),
+        "GMAIL_LIST_THREADS" => reshape_list_threads(data),
+        _ => {}
     }
+}
+
+/// Rewrite a `GMAIL_LIST_THREADS` `data` object in place so each thread carries
+/// what a list is read for: who it is from, what it is about, and when.
+///
+/// The upstream shape has neither of those at the top level. With `verbose`
+/// off a thread is `{historyId, id, snippet}`; with it on the sender and
+/// subject are buried in `messages[].payload.headers[]` alongside the full MIME
+/// tree and ~40 `Received:` headers. Composio's own markdown rendering of this
+/// action is a bare list of thread ids and nothing else, so an agent that ran a
+/// search got back a page of hex strings and had to fetch every thread in full
+/// just to learn which one it wanted. Observed live: a search over 20 threads
+/// answered "not found" after opening the first four.
+///
+/// So this lifts the headers out and drops `payload` entirely. `verbose` still
+/// decides how much there is to lift, but the envelope is the same either way.
+fn reshape_list_threads(data: &mut Value) {
+    let container = match data.get_mut("threads") {
+        Some(_) => data,
+        None => match data.get_mut("data").and_then(|v| v.as_object_mut()) {
+            Some(_) => data.get_mut("data").unwrap(),
+            None => return,
+        },
+    };
+
+    let Some(obj) = container.as_object_mut() else {
+        return;
+    };
+
+    let raw_threads = obj
+        .remove("threads")
+        .and_then(|v| match v {
+            Value::Array(arr) => Some(arr),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let next_page_token = obj.remove("nextPageToken").unwrap_or(Value::Null);
+    let result_size_estimate = obj.remove("resultSizeEstimate").unwrap_or(Value::Null);
+
+    let threads: Vec<Value> = raw_threads.into_iter().map(reshape_thread).collect();
+    tracing::debug!(
+        threads = threads.len(),
+        "[composio:gmail][post-process] GMAIL_LIST_THREADS reshaped"
+    );
+
+    let mut envelope = Map::new();
+    envelope.insert("threads".into(), Value::Array(threads));
+    if !next_page_token.is_null() {
+        envelope.insert("nextPageToken".into(), next_page_token);
+    }
+    if !result_size_estimate.is_null() {
+        envelope.insert("resultSizeEstimate".into(), result_size_estimate);
+    }
+
+    *container = Value::Object(envelope);
+}
+
+/// Map one raw thread to its slim counterpart.
+///
+/// `subject` / `from` / `date` / `labels` come from the thread's newest message
+/// (the one a list view is about), picked by `internalDate` because the action's
+/// own contract states message order is not guaranteed. They are absent
+/// entirely when the caller did not ask for `verbose`, since the upstream sends
+/// no messages to read them from — `snippet` is then the only content there is.
+fn reshape_thread(raw: Value) -> Value {
+    let Value::Object(obj) = raw else {
+        return raw;
+    };
+
+    let mut out = Map::new();
+    out.insert("id".into(), obj.get("id").cloned().unwrap_or(Value::Null));
+
+    let messages = obj.get("messages").and_then(|v| v.as_array());
+    let newest = messages.and_then(|arr| {
+        arr.iter().filter_map(|m| m.as_object()).max_by_key(|m| {
+            m.get("internalDate")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0)
+        })
+    });
+
+    if let Some(msg) = newest {
+        if let Some(subject) = pick_header(msg, "Subject") {
+            out.insert("subject".into(), subject);
+        }
+        if let Some(from) = pick_header(msg, "From") {
+            out.insert("from".into(), from);
+        }
+        let date = pick_header(msg, "Date").unwrap_or(Value::Null);
+        if !date.is_null() {
+            if let Some(local) = date.as_str().and_then(format_email_local_time) {
+                out.insert("date_local".into(), Value::String(local));
+            }
+            out.insert("date".into(), date);
+        }
+        if let Some(labels) = msg.get("labelIds").cloned() {
+            out.insert("labels".into(), labels);
+        }
+    }
+
+    // The thread-level snippet is what `verbose` off gives; a verbose response
+    // carries it per message instead, so fall back to the newest message's.
+    let snippet = obj
+        .get("snippet")
+        .cloned()
+        .or_else(|| newest.and_then(|m| m.get("snippet").cloned()))
+        .unwrap_or(Value::Null);
+    if !snippet.is_null() {
+        out.insert("snippet".into(), snippet);
+    }
+
+    if let Some(count) = messages.map(|m| m.len()) {
+        out.insert("messageCount".into(), Value::from(count));
+    }
+
+    Value::Object(out)
 }
 
 /// Stash per-message slices of the response-level `markdownFormatted`

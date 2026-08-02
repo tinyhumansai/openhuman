@@ -1546,6 +1546,17 @@ impl Tool for ComposioExecuteTool {
                         reshape_args.as_ref(),
                         &mut resp.data,
                     );
+                    // A reshape the backend also renders is invisible unless the
+                    // provider says its version supersedes: the body below
+                    // prefers `markdownFormatted` and only falls back to the
+                    // JSON envelope when it is absent.
+                    if provider.reshape_supersedes_markdown(&tool) {
+                        tracing::debug!(
+                            tool = %&tool,
+                            "[composio] provider reshape supersedes the backend markdown rendering"
+                        );
+                        resp.markdown_formatted = None;
+                    }
                 }
                 tracing::info!(
                     tool = %tool,
