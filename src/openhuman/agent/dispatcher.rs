@@ -334,14 +334,17 @@ impl ToolDispatcher for PFormatToolDispatcher {
              than JSON.\n\n",
         );
         instructions
-            .push_str("```\n<tool_call>\nget_weather[London|metric]\n</tool_call>\n```\n\n");
+            .push_str("```\n<tool_call>\nget_weather[0|London|1|metric]\n</tool_call>\n```\n\n");
         instructions.push_str(
             "**Rules:**\n\
-             - Form: `name[arg1|arg2|...|argN]`. Arguments are positional and must match the \
-               order shown in each tool's `Call as:` signature in the `## Tools` section above \
-               (alphabetical by parameter name).\n\
+             - Form: `name[index|value|index|value|...]`. A `Call as:` signature numbers its \
+               slots and shows each as a `<name>` placeholder; replace each one with a value, \
+               keeping its number. `get_weather[0|<location>|1|<unit>]` is called as \
+               `get_weather[0|London|1|metric]`.\n\
+             - Send only the arguments you are actually passing, each with its own number. \
+               `get_weather[1|metric]` sends unit and no location. The numbers do the \
+               skipping, so there are no empty slots to count.\n\
              - Empty calls: `name[]` for zero-arg tools.\n\
-             - Empty argument: `name[||value]` is three positional values, the first two empty.\n\
              - Escapes inside argument values: `\\|` → `|`, `\\]` → `]`, `\\\\` → `\\`.\n\
              - You may emit multiple `<tool_call>` blocks in a single response. Each tag holds \
                exactly one call.\n\
