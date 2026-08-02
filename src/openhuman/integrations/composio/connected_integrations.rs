@@ -959,6 +959,10 @@ async fn fetch_connected_integrations_uncached(
         integrations.push(ConnectedIntegration {
             toolkit: slug.clone(),
             description: resolve_toolkit_description(&catalog_descriptions, slug),
+            // Unlike the description, this has no catalog counterpart to prefer
+            // — the Composio catalog publishes what an action takes, never what
+            // it returns — so the local table is the only source.
+            result_notes: super::providers::toolkit_result_notes(slug).map(str::to_string),
             tools,
             gated_tools,
             connected,

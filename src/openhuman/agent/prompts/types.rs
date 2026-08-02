@@ -133,6 +133,17 @@ pub struct ConnectedIntegration {
     pub toolkit: String,
     /// Human-readable one-line description of what this integration can do.
     pub description: String,
+    /// What this toolkit's actions hand back, and which returned field feeds
+    /// which follow-up action. `None` for a toolkit we have not established
+    /// this for — see
+    /// [`toolkit_result_notes`](crate::openhuman::integrations::composio::providers::toolkit_result_notes).
+    ///
+    /// Separate from [`Self::description`] because the two answer different
+    /// questions for different readers. The description is a routing signal and
+    /// belongs anywhere a service is named, including the delegator's guide;
+    /// this is only useful to whoever actually calls the actions and reads what
+    /// comes back, so only that agent renders it.
+    pub result_notes: Option<String>,
     /// Per-action catalogue (only populated when `connected == true`).
     pub tools: Vec<ConnectedIntegrationTool>,
     /// Per-action catalogue for actions that the toolkit **does** support but

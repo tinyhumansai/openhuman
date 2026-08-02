@@ -339,6 +339,7 @@ fn parent(workspace_dir: PathBuf, model: Arc<ScriptedModel>) -> ParentExecutionC
         session_id: "round25-session".to_string(),
         channel: "round25".to_string(),
         connected_integrations: vec![ConnectedIntegration {
+            result_notes: None,
             toolkit: "gmail".to_string(),
             description: "Round25 Gmail".to_string(),
             tools: vec![ConnectedIntegrationTool {

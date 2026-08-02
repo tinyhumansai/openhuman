@@ -866,6 +866,7 @@ async fn run_typed_mode(
                     }
                 };
                 let integration = crate::openhuman::agent::context::prompt::ConnectedIntegration {
+                    result_notes: None,
                     toolkit: cached_integration.toolkit.clone(),
                     description: cached_integration.description.clone(),
                     tools: fresh_actions,

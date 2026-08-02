@@ -662,6 +662,7 @@ mod tests {
         toolkit: &str,
     ) -> crate::openhuman::agent::prompts::ConnectedIntegration {
         crate::openhuman::agent::prompts::ConnectedIntegration {
+            result_notes: None,
             toolkit: toolkit.to_string(),
             description: String::new(),
             tools: Vec::new(),

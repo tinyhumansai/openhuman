@@ -2927,6 +2927,7 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
     let prompt_tools = PromptTool::from_tools(&tools);
     let skills = Vec::new();
     let integrations = vec![ConnectedIntegration {
+        result_notes: None,
         toolkit: "gmail".into(),
         description: "Email account".into(),
         tools: vec![],

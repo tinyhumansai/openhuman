@@ -316,6 +316,7 @@ fn coverage_connected_integration(
     connected: bool,
 ) -> ConnectedIntegration {
     ConnectedIntegration {
+        result_notes: None,
         toolkit: toolkit.into(),
         description: description.into(),
         tools: vec![],

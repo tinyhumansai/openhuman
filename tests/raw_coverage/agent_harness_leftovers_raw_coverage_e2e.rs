@@ -665,6 +665,7 @@ fn subagent_prompt_renderer_handles_formats_caps_and_stale_tool_indices() -> Res
         include_memory_md: true,
     };
     let connected = vec![ConnectedIntegration {
+        result_notes: None,
         toolkit: "gmail".to_string(),
         description: "Mail".to_string(),
         tools: Vec::new(),

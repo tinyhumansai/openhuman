@@ -108,6 +108,20 @@ fn render_connected_integrations(integrations: &[ConnectedIntegration]) -> Strin
         } else {
             let _ = writeln!(out, "- **{}** — {}", ci.toolkit, ci.description);
         }
+        // What the actions hand back. This agent is the one that calls them and
+        // reads the results, so it is the one that needs to know a returned id
+        // is the handle for the detail it wanted. Nothing else it reads says so:
+        // the catalogue, the parameter schemas, and the contract the gate
+        // delivers all describe arguments only. Omitted for a toolkit we have
+        // not established a result shape for.
+        if let Some(notes) = ci
+            .result_notes
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+        {
+            let _ = writeln!(out, "  Results: {notes}");
+        }
     }
 
     // Surface pref-gated tools so the agent can honestly say "I have this
@@ -215,6 +229,7 @@ mod tests {
     #[test]
     fn build_includes_connected_integrations_in_executor_voice() {
         let integrations = vec![ConnectedIntegration {
+            result_notes: None,
             toolkit: "gmail".into(),
             description: "Email access.".into(),
             tools: Vec::new(),
@@ -247,6 +262,7 @@ mod tests {
     #[test]
     fn build_skips_unconnected_integrations() {
         let integrations = vec![ConnectedIntegration {
+            result_notes: None,
             toolkit: "notion".into(),
             description: "Pages.".into(),
             tools: Vec::new(),
@@ -257,5 +273,52 @@ mod tests {
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
         assert!(!body.contains("## Connected Integrations"));
+    }
+
+    /// This agent is the one that calls the actions and reads what comes back,
+    /// so it is the one that has to know a returned id is the handle for the
+    /// detail it wanted. Everything else it reads describes arguments.
+    #[test]
+    fn build_states_what_the_actions_hand_back() {
+        let integrations = vec![ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email access.".into(),
+            result_notes: Some(
+                "Read actions answer with one record per message carrying id and threadId. \
+                 To read one message in full, pass its id to \
+                 GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID."
+                    .into(),
+            ),
+            tools: Vec::new(),
+            gated_tools: Vec::new(),
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        }];
+        let body = build(&ctx_with(&integrations)).unwrap();
+        assert!(
+            body.contains("Results: Read actions answer with one record per message"),
+            "result notes must reach the executor prompt: {body}"
+        );
+        assert!(body.contains("GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID"));
+    }
+
+    /// A toolkit whose result shape this repository has not established renders
+    /// nothing rather than a guess.
+    #[test]
+    fn build_omits_result_notes_when_there_are_none() {
+        let integrations = vec![ConnectedIntegration {
+            toolkit: "notion".into(),
+            description: "Pages.".into(),
+            result_notes: None,
+            tools: Vec::new(),
+            gated_tools: Vec::new(),
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        }];
+        let body = build(&ctx_with(&integrations)).unwrap();
+        assert!(body.contains("- **notion** — Pages."));
+        assert!(!body.contains("Results:"), "no notes, no line: {body}");
     }
 }
