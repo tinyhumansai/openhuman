@@ -33,7 +33,7 @@ impl Tool for BrowserTool {
                 },
                 "selector": {
                     "type": "string",
-                    "description": "Element selector: @ref (e.g. @e1), CSS (#id, .class), or text=..."
+                    "description": "Element selector: an @ref copied from the latest page snapshot, CSS (#id, .class), or text=..."
                 },
                 "value": {
                     "type": "string",

@@ -167,13 +167,20 @@ impl Tool for ExtractFromResultTool {
     }
 
     fn description(&self) -> &str {
+        // No sample handle is shown here, deliberately. A handle is minted at
+        // runtime and only exists once a result was actually stashed, so any
+        // example is a string the model cannot legitimately send — and it sends
+        // it: shown `result_id="res_1"`, two live runs called this tool with
+        // `res_1` against a cache that had never issued one, and both got a
+        // cache-miss instead of the data they wanted.
         "Answer a targeted question against an oversized tool output that was \
          stashed under a `result_id` handle. Use this when a previous tool call \
-         returned a placeholder like `result_id=\"res_1\"` because its raw output \
-         was too large to show inline. Pass the handle plus a natural-language \
-         `query` naming the exact facts/identifiers you need; returns only the \
-         extracted answer, not the full payload. Multiple queries against the \
-         same `result_id` are allowed — each one is independent."
+         came back as a placeholder carrying such a handle, because its raw \
+         output was too large to show inline. Copy that handle from the \
+         placeholder and pass it with a natural-language `query` naming the \
+         exact facts/identifiers you need; returns only the extracted answer, \
+         not the full payload. Multiple queries against the same `result_id` \
+         are allowed — each one is independent."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -182,7 +189,7 @@ impl Tool for ExtractFromResultTool {
             "properties": {
                 "result_id": {
                     "type": "string",
-                    "description": "The handle emitted in the oversized tool output placeholder (e.g. `res_1`)."
+                    "description": "The handle emitted in the oversized tool output placeholder, copied exactly. Only a handle that appeared in an earlier result is valid; there is no handle to send if no result was stashed."
                 },
                 "query": {
                     "type": "string",

@@ -103,7 +103,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "source_id",
                     ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Exact source id (e.g. `slack:#eng`, `gmail:abc`).",
+                    comment: "Exact source id, copied from `tree.list_sources`.",
                     required: false,
                 },
                 FieldSchema {
@@ -165,7 +165,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "source_id",
                     ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Exact source id (e.g. `slack:#eng`, `gmail:abc`).",
+                    comment: "Exact source id, copied from `tree.list_sources`.",
                     required: false,
                 },
                 FieldSchema {

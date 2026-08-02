@@ -182,7 +182,7 @@ impl Tool for GoalsEditTool {
             "type": "object",
             "required": ["id", "text"],
             "properties": {
-                "id": { "type": "string", "description": "The goal id to edit (e.g. 'g1')." },
+                "id": { "type": "string", "description": "The goal id to edit, taken from a goals list you have read. Ids are sequential, so a guessed one lands on a real goal you never looked at." },
                 "text": { "type": "string", "description": "The new goal text." }
             }
         })
@@ -239,7 +239,7 @@ impl Tool for GoalsDeleteTool {
             "type": "object",
             "required": ["id"],
             "properties": {
-                "id": { "type": "string", "description": "The goal id to delete (e.g. 'g1')." }
+                "id": { "type": "string", "description": "The goal id to delete, taken from a goals list you have read. Ids are sequential, so a guessed one deletes a real goal you never looked at." }
             }
         })
     }

@@ -100,7 +100,7 @@ fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "id",
                     ty: TypeSchema::String,
-                    comment: "The goal id to edit (e.g. 'g1').",
+                    comment: "The goal id to edit, taken from a goals list you have read.",
                     required: true,
                 },
                 FieldSchema {
@@ -124,7 +124,7 @@ fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![FieldSchema {
                 name: "id",
                 ty: TypeSchema::String,
-                comment: "The goal id to delete (e.g. 'g1').",
+                comment: "The goal id to delete, taken from a goals list you have read.",
                 required: true,
             }],
             outputs: vec![FieldSchema {
