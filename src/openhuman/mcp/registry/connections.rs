@@ -173,6 +173,11 @@ struct Connection {
     qualified_name: String,
     display_name: String,
     description: Option<String>,
+    /// The `instructions` string the server returned from `initialize`. Kept
+    /// beside the registry identity for the same reason: a config-free caller
+    /// (the orchestrator prompt builder) needs it without re-reading the
+    /// install store or re-running the handshake.
+    instructions: Option<String>,
 }
 
 impl Connection {
@@ -396,7 +401,11 @@ async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Res
     // Branch on transport variant. Both branches end with `initialize` +
     // `list_tools` so a misconfigured server fails loudly at connect
     // instead of silently at first `call_tool`.
-    let client = match &server.transport {
+    // `initialize` also carries the server's own `instructions` — the
+    // MCP-standard usage guidance. It was parsed and dropped on the floor
+    // until now; keep it so a server with no registry description can still
+    // say what it is for.
+    let (client, instructions) = match &server.transport {
         Transport::Stdio => {
             let stdio = Arc::new(McpStdioClient::new(
                 server.command.clone(),
@@ -405,8 +414,8 @@ async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Res
                 None,
                 identity,
             ));
-            stdio.initialize().await?;
-            ActiveClient::Stdio(stdio)
+            let init = stdio.initialize().await?;
+            (ActiveClient::Stdio(stdio), init.instructions)
         }
         Transport::HttpRemote { url } => {
             if url.is_empty() {
@@ -450,8 +459,8 @@ async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Res
             // 30s timeout matches setup_ops::test_connection so install
             // and runtime see the same connect-failure deadlines.
             let http = Arc::new(McpHttpClient::with_options(dial_url, 30, auth, identity));
-            http.initialize().await?;
-            ActiveClient::Http(http)
+            let init = http.initialize().await?;
+            (ActiveClient::Http(http), init.instructions)
         }
     };
 
@@ -469,6 +478,7 @@ async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Res
         qualified_name: server.qualified_name.clone(),
         display_name: server.display_name.clone(),
         description: server.description.clone(),
+        instructions,
     });
 
     {
@@ -716,6 +726,7 @@ pub async fn connected_overview() -> Vec<ConnectedServerOverview> {
             qualified_name: c.qualified_name.clone(),
             display_name: c.display_name.clone(),
             description: c.description.clone(),
+            instructions: c.instructions.clone(),
             tools: c.tools_snapshot().await,
         });
     }
