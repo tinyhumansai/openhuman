@@ -24,6 +24,25 @@ use crate::openhuman::memory::conversations;
 const AUTH_ME_STORE_RETRY_DELAY: Duration = Duration::from_millis(150);
 const AUTH_ME_STORE_TRANSIENT_STATUSES: &[u16] = &[408, 429, 500, 502, 503, 504, 520];
 
+/// Wall-clock budget for the store-time `GET /auth/me` validation (issue #5166).
+///
+/// The shared backend client allows a 120s request timeout + 15s connect timeout
+/// (`api::rest`), but the desktop sign-in RPC that drives `auth_store_session`
+/// gives up far sooner — `AUTH_STORE_TIMEOUT_MS` (25s) × `AUTH_STORE_RETRIES` in
+/// `desktopDeepLinkListener.ts`. If the backend is reachable but slow, that 120s
+/// ceiling lets `/auth/me` hang past the frontend's patience: the RPC times out
+/// and bounces a genuinely-authenticated user back to sign-in *before* the
+/// deferred-validation fallback in `store_session_inner` ever gets a chance to
+/// fire (the exact `auth_me_timeout` bounce in Sentry `TAURI-REACT-1V`).
+///
+/// Capping store-time validation well under the frontend budget makes a slow
+/// backend fail *fast* into the caller-authorized pending-session path (for a
+/// live-`exp` JWT), so the user lands in the app with deferred revalidation
+/// instead of being bounced. Overridable via `OPENHUMAN_AUTH_ME_STORE_TIMEOUT_MS`
+/// for ops tuning and tests.
+const AUTH_ME_STORE_VALIDATION_BUDGET: Duration = Duration::from_secs(12);
+const AUTH_ME_STORE_VALIDATION_BUDGET_ENV: &str = "OPENHUMAN_AUTH_ME_STORE_TIMEOUT_MS";
+
 /// Start all login-gated background services (local AI, voice, and
 /// orchestration). Called both from the initial boot path (when an existing
 /// session is detected) and from `store_session()` on fresh login.
@@ -610,7 +629,55 @@ async fn store_session_inner(
     Ok(RpcOutcome::new(summarize_auth_profile(&profile), logs))
 }
 
+/// Store-time `GET /auth/me` budget resolver. Reads the
+/// `OPENHUMAN_AUTH_ME_STORE_TIMEOUT_MS` override (positive integer milliseconds),
+/// otherwise the `AUTH_ME_STORE_VALIDATION_BUDGET` default.
+fn auth_me_store_validation_budget() -> Duration {
+    std::env::var(AUTH_ME_STORE_VALIDATION_BUDGET_ENV)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(AUTH_ME_STORE_VALIDATION_BUDGET)
+}
+
+/// Validate the freshly minted session token against `GET /auth/me`, bounded by
+/// `auth_me_store_validation_budget()`. On budget exhaustion returns a
+/// transient-classified timeout error so `store_session_inner` routes a
+/// live-`exp` JWT into the deferred-validation fallback rather than hanging until
+/// the desktop sign-in RPC times out and bounces the user (issue #5166).
 async fn fetch_current_user_for_session_store(
+    client: &BackendOAuthClient,
+    token: &str,
+) -> Result<Value, String> {
+    let budget = auth_me_store_validation_budget();
+    match tokio::time::timeout(
+        budget,
+        fetch_current_user_for_session_store_inner(client, token),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_elapsed) => {
+            // Message must contain a `TRANSIENT_TRANSPORT_PHRASES` phrase
+            // ("timeout") so `auth_me_store_failure_is_transient` buckets it as
+            // transient and the deferred-validation path can take over.
+            let reason = format!(
+                "GET /auth/me validation timeout after {}ms (store-time budget exceeded)",
+                budget.as_millis()
+            );
+            tracing::warn!(
+                domain = "credentials",
+                operation = "fetch_current_user_for_session_store",
+                budget_ms = budget.as_millis() as u64,
+                "[credentials][auth-store] {reason}"
+            );
+            Err(reason)
+        }
+    }
+}
+
+async fn fetch_current_user_for_session_store_inner(
     client: &BackendOAuthClient,
     token: &str,
 ) -> Result<Value, String> {

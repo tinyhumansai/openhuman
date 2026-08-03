@@ -28,6 +28,10 @@ pub(crate) use impl_load::CONFIG_OWNER_MISMATCH_MARKER;
 // Tests are a submodule of `load`, so `super::*` == this module's namespace.
 #[cfg(test)]
 pub(crate) use dirs::default_root_dir_name_pub as default_root_dir_name;
+// The strict active-user read is consumed by the resolver via `dirs`'s own
+// re-export; only the load_tests module needs it visible at this level.
+#[cfg(test)]
+pub(crate) use dirs::read_active_user_id_checked;
 #[cfg(test)]
 pub(crate) use dirs::{
     resolve_config_dir_for_workspace, resolve_runtime_config_dirs,

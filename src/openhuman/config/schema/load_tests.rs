@@ -38,6 +38,62 @@ fn write_and_clear_active_user_roundtrip() {
 }
 
 #[test]
+fn read_active_user_checked_returns_none_when_no_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(read_active_user_id_checked(tmp.path()).unwrap().is_none());
+}
+
+#[test]
+fn read_active_user_checked_returns_none_when_empty() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join(ACTIVE_USER_STATE_FILE), "").unwrap();
+    assert!(read_active_user_id_checked(tmp.path()).unwrap().is_none());
+}
+
+#[test]
+fn read_active_user_checked_returns_id_when_present() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_active_user_id(tmp.path(), "user-checked").unwrap();
+    assert_eq!(
+        read_active_user_id_checked(tmp.path()).unwrap(),
+        Some("user-checked".to_string())
+    );
+}
+
+#[test]
+fn read_active_user_checked_errors_when_marker_unreadable() {
+    // A marker that EXISTS but cannot be read as a file (here: a directory at
+    // the marker path) must surface an error rather than being laundered into
+    // "signed out". Otherwise a returning user is silently downgraded to the
+    // pre-login profile and their data under users/<id> is orphaned (#5334).
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join(ACTIVE_USER_STATE_FILE)).unwrap();
+    assert!(read_active_user_id_checked(tmp.path()).is_err());
+
+    // The best-effort wrapper still collapses to `None` for hint-only callers.
+    assert!(read_active_user_id(tmp.path()).is_none());
+}
+
+#[tokio::test]
+async fn resolve_dirs_errors_instead_of_pre_login_when_marker_unreadable() {
+    // End-to-end: an unreadable active_user.toml must make directory
+    // resolution FAIL rather than silently resolve to users/local — the path
+    // that presents a signed-in user with a fresh, empty profile (#5334).
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join(ACTIVE_USER_STATE_FILE)).unwrap();
+
+    let default_workspace = root.join("workspace");
+    let result =
+        resolve_runtime_config_dirs_with(root, &default_workspace, &MapEnv::default()).await;
+
+    assert!(
+        result.is_err(),
+        "unreadable marker must not silently fall back to the pre-login profile"
+    );
+}
+
+#[test]
 fn user_openhuman_dir_builds_correct_path() {
     let root = PathBuf::from("/home/test/.openhuman");
     let dir = user_openhuman_dir(&root, "user-123");

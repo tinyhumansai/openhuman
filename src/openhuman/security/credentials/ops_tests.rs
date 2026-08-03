@@ -20,6 +20,12 @@ impl EnvVarGuard {
         unsafe { std::env::set_var(key, path) };
         Self { key, previous }
     }
+
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
 }
 
 impl Drop for EnvVarGuard {
@@ -60,6 +66,25 @@ fn count_reembed_backfill_jobs(config: &Config) -> i64 {
 
 async fn spawn_auth_me_status(status: StatusCode) -> String {
     let app = Router::new().route("/auth/me", get(move || async move { status }));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}")
+}
+
+/// A backend that accepts the connection but never answers `/auth/me`, modelling
+/// a reachable-but-slow backend whose request hangs far past the store-time
+/// validation budget (issue #5166).
+async fn spawn_auth_me_hang() -> String {
+    let app = Router::new().route(
+        "/auth/me",
+        get(|| async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            StatusCode::OK
+        }),
+    );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -324,6 +349,85 @@ async fn store_session_defers_minimal_live_jwt_when_auth_me_transient_and_allowe
         Some(json!({ "pendingBackendValidation": true })),
         "deferred fallback must not copy identity claims from an unverified JWT or callback payload"
     );
+}
+
+#[tokio::test]
+async fn store_session_defers_live_jwt_when_auth_me_hangs_past_budget() {
+    // Issue #5166: a reachable-but-slow backend must not hang store-time
+    // validation until the desktop sign-in RPC times out. Capping the budget
+    // makes the hang fail fast (as transient) into the deferred-validation path
+    // so a live-`exp` JWT still persists instead of bouncing the user.
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _budget = EnvVarGuard::set(AUTH_ME_STORE_VALIDATION_BUDGET_ENV, "200");
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set_to_path("HOME", tmp.path());
+    let mut config = test_config(&tmp);
+    config.api_url = Some(spawn_auth_me_hang().await);
+    let token = jwt_with_payload(json!({
+        "sub": "unverified-jwt-user",
+        "email": "jwt@example.test",
+        "name": "Unverified JWT User",
+        "exp": (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp()
+    }));
+
+    let started = std::time::Instant::now();
+    let result = store_session_with_deferred_validation(&config, &token, None, Some(json!({})))
+        .await
+        .unwrap();
+    // The 200ms budget must cap the 60s hang — proves the timeout fired rather
+    // than the store awaiting the backend. Bound safely above the 200ms budget
+    // but below the 12s default so a multi-second regression still fails.
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "store-time validation should be capped by the budget, took {:?}",
+        started.elapsed()
+    );
+
+    assert!(result.value.has_token);
+    let log_text = result.logs.join(" ");
+    assert!(
+        log_text.contains("session JWT accepted with deferred GET /auth/me validation"),
+        "expected deferred validation log after budget timeout, got: {log_text}"
+    );
+    let state = auth_get_state(&config).await.unwrap().value;
+    assert!(state.is_authenticated);
+    assert_eq!(
+        state.user,
+        Some(json!({ "pendingBackendValidation": true })),
+        "budget-timeout fallback must not copy identity claims from an unverified JWT"
+    );
+}
+
+#[test]
+fn auth_me_store_validation_budget_reads_env_override() {
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    {
+        let _guard = EnvVarGuard::set(AUTH_ME_STORE_VALIDATION_BUDGET_ENV, "750");
+        assert_eq!(
+            auth_me_store_validation_budget(),
+            std::time::Duration::from_millis(750)
+        );
+    }
+    // Invalid / non-positive overrides fall back to the compiled default.
+    {
+        let _guard = EnvVarGuard::set(AUTH_ME_STORE_VALIDATION_BUDGET_ENV, "0");
+        assert_eq!(
+            auth_me_store_validation_budget(),
+            AUTH_ME_STORE_VALIDATION_BUDGET
+        );
+    }
+    {
+        let _guard = EnvVarGuard::set(AUTH_ME_STORE_VALIDATION_BUDGET_ENV, "not-a-number");
+        assert_eq!(
+            auth_me_store_validation_budget(),
+            AUTH_ME_STORE_VALIDATION_BUDGET
+        );
+    }
 }
 
 #[tokio::test]

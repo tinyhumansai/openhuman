@@ -19,7 +19,7 @@ use futures::future::join_all;
 
 use crate::openhuman::config::Config;
 
-use super::registries::{enabled_registries, registry_for_source};
+use super::registries::{enabled_registries, registry_for_source, Registry};
 use super::types::{SmitheryServerDetail, SmitheryServerSummary};
 
 const SOURCE_SEPARATOR: &str = "::";
@@ -53,7 +53,31 @@ pub async fn registry_search(
     page: u32,
     page_size: u32,
 ) -> Result<(Vec<SmitheryServerSummary>, u32)> {
-    let registries = enabled_registries(config);
+    registry_search_with(
+        enabled_registries(config),
+        config,
+        query,
+        transport,
+        page,
+        page_size,
+    )
+    .await
+}
+
+/// [`registry_search`] over a caller-supplied registry set. Split out so the
+/// total-outage vs partial-outage decision (`!any_ok` → empty catalog, never
+/// `Err`) is unit-testable with injected registries and no network — the
+/// graceful-degrade fix for issue #5159 (TAURI-RUST-K74) shipped without a
+/// regression test. `registry_search` passes [`enabled_registries`]; tests pass
+/// mock registries. `config` is still threaded to each registry's own `search`.
+async fn registry_search_with(
+    registries: Vec<Box<dyn Registry>>,
+    config: &Config,
+    query: Option<&str>,
+    transport: Option<&str>,
+    page: u32,
+    page_size: u32,
+) -> Result<(Vec<SmitheryServerSummary>, u32)> {
     let fetch_size = strict_fetch_size(page_size);
     let results = join_all(
         registries
@@ -350,5 +374,125 @@ mod tests {
         // A query that matches nothing returns the unrefined rows (never blank).
         let none = refine_by_relevance(vec![community.clone()], "github");
         assert_eq!(none.len(), 1);
+    }
+
+    // ── registry_search_with: outage branching (issue #5159) ────────────────
+    //
+    // A tiny in-memory `Registry` so the total-outage vs partial-outage
+    // decision is exercised with no network. `registry_search` itself resolves
+    // `enabled_registries`, which hard-wires the real HTTP adapters — hence the
+    // `registry_search_with` seam these tests inject into.
+    use async_trait::async_trait;
+
+    enum MockOutcome {
+        /// The registry's upstream call errored (timeout / 5xx / DNS).
+        Fail,
+        /// The registry answered with `(servers, total_pages)`.
+        Answered(Vec<SmitheryServerSummary>, u32),
+    }
+
+    struct MockRegistry {
+        source: &'static str,
+        outcome: MockOutcome,
+    }
+
+    #[async_trait]
+    impl Registry for MockRegistry {
+        fn source(&self) -> &'static str {
+            self.source
+        }
+
+        async fn search(
+            &self,
+            _config: &Config,
+            _query: Option<&str>,
+            _page: u32,
+            _page_size: u32,
+        ) -> Result<(Vec<SmitheryServerSummary>, u32)> {
+            match &self.outcome {
+                MockOutcome::Fail => Err(anyhow::anyhow!("mock upstream failure")),
+                MockOutcome::Answered(servers, pages) => Ok((servers.clone(), *pages)),
+            }
+        }
+
+        async fn get(
+            &self,
+            _config: &Config,
+            _qualified_name: &str,
+        ) -> Result<SmitheryServerDetail> {
+            Err(anyhow::anyhow!("mock get unsupported"))
+        }
+    }
+
+    /// A "perfect" survivor row (website + `api_key` auth) so it clears
+    /// `retain_perfect_servers` in the partial-outage path — keeping that test
+    /// focused on the outage branch, not the curation filter.
+    fn perfect_summary(qualified_name: &str, source: &str) -> SmitheryServerSummary {
+        SmitheryServerSummary {
+            website_url: Some("https://vendor.example".to_string()),
+            auth_kind: Some("api_key".to_string()),
+            ..summary(qualified_name, source)
+        }
+    }
+
+    #[tokio::test]
+    async fn search_degrades_to_empty_catalog_when_every_registry_fails() {
+        // TAURI-RUST-K74 (#5159): a *total* outage (every enabled registry
+        // errored) must degrade to an empty catalog — `Ok((vec![], 0))` — not
+        // bubble an `Err`. The `Err` path reaches `report_error_or_expected`
+        // and pages Sentry as a false code-defect. This pins the graceful
+        // return so it cannot silently regress back to a `bail!`.
+        let config = Config::default();
+        let registries: Vec<Box<dyn Registry>> = vec![
+            Box::new(MockRegistry {
+                source: "mcp_official",
+                outcome: MockOutcome::Fail,
+            }),
+            Box::new(MockRegistry {
+                source: "smithery",
+                outcome: MockOutcome::Fail,
+            }),
+        ];
+
+        let (servers, total_pages) =
+            registry_search_with(registries, &config, Some("github"), None, 1, 10)
+                .await
+                .expect("total registry outage must degrade to Ok(empty), never Err");
+
+        assert!(servers.is_empty(), "total outage must return no rows");
+        assert_eq!(total_pages, 0, "total outage must report zero pages");
+    }
+
+    #[tokio::test]
+    async fn search_returns_survivor_rows_when_one_registry_answers() {
+        // Boundary guard: the empty-catalog early return fires only on a
+        // *total* outage (`!any_ok`). With at least one registry answering, the
+        // failed one is logged+skipped and the survivor's rows come through —
+        // proving the condition is `!any_ok`, not `!all_ok`. The survivor
+        // reports 0 pages and the request is for page 3, so the
+        // `total_pages == 0 → page.max(1)` normalisation is exercised
+        // meaningfully — page 1 would make the assertion tautological.
+        let config = Config::default();
+        let registries: Vec<Box<dyn Registry>> = vec![
+            Box::new(MockRegistry {
+                source: "mcp_official",
+                outcome: MockOutcome::Fail,
+            }),
+            Box::new(MockRegistry {
+                source: "smithery",
+                outcome: MockOutcome::Answered(vec![perfect_summary("smi/only", "smithery")], 0),
+            }),
+        ];
+
+        let (servers, total_pages) = registry_search_with(registries, &config, None, None, 3, 10)
+            .await
+            .expect("partial outage must still return Ok");
+
+        assert_eq!(servers.len(), 1, "survivor row must pass through");
+        assert_eq!(servers[0].qualified_name, "smi/only");
+        assert_eq!(
+            total_pages, 3,
+            "zero reported pages normalise to the requested page (page.max(1) = 3)"
+        );
     }
 }
