@@ -12,9 +12,11 @@
  * verdict so the row can honestly say "Ingested only" instead of "synced":
  *
  * 1. **Per-source, precise** — `SourceStatus.chunks_pending` is the SQL count
- *    of this source's chunks whose `embedding IS NULL` (see
- *    `memory_sources/status.rs`). `> 0` in a settled state means those chunks
- *    were stored WITHOUT vectors → semantic search can't reach them.
+ *    of this source's chunks that have no vector in the
+ *    `mem_tree_chunk_embeddings` sidecar under the active model signature, and
+ *    no terminal marker (re-embed tombstone / dropped) explaining the absence
+ *    (see `memory/sources/status.rs`). `> 0` in a settled state means those
+ *    chunks were stored WITHOUT vectors → semantic search can't reach them.
  * 2. **Global pipeline health** — `memory_tree_pipeline_status` (the same RPC
  *    that drives the Brain > Memory > Sync "Degraded" panel) carries the
  *    process-wide `degraded` snapshot + `first_blocking_cause`. Embedding /
@@ -77,9 +79,10 @@ export function deriveSourcePipelineHealth(
 
   const issues: SourcePipelineIssueKind[] = [];
 
-  // Layer 1 — embeddings. Precise per-source signal (chunks with NULL
-  // embedding) OR the global "semantic recall degraded" latch (no usable
-  // embeddings provider). Either means this source's chunks aren't vector-searchable.
+  // Layer 1 — embeddings. Precise per-source signal (chunks with no vector for
+  // the active embedding signature) OR the global "semantic recall degraded"
+  // latch (no usable embeddings provider). Either means this source's chunks
+  // aren't vector-searchable.
   const storedWithoutVectors =
     (status?.chunks_pending ?? 0) > 0 || degraded?.semantic_recall === true;
   if (storedWithoutVectors) {
