@@ -7,12 +7,14 @@
 //!   (e.g. `gmail:user@example.com:msg_xxx`), so we match by toolkit
 //!   prefix instead.
 //!
-//! "Pending" means *not yet resolved for the active embedding signature*: the
-//! chunk has no vector in the `mem_tree_chunk_embeddings` sidecar under
-//! [`tree_active_signature`], no re-embed tombstone for that signature, and was
-//! not dropped by the admission gate. This mirrors the resolution rule the
+//! "Pending" means *not yet resolved for the active embedding signature*. A
+//! chunk is resolved when it has a vector in the `mem_tree_chunk_embeddings`
+//! sidecar under [`tree_active_signature`], has a re-embed tombstone for that
+//! signature, was dropped by the admission gate, or still carries a legacy
+//! pre-sidecar `embedding` blob. This mirrors the resolution rule the
 //! provider-level sibling (`tinycortex::memory::sync::list_sync_statuses`) and
-//! `has_uncovered_reembed_work` already use, so a settled store reports zero.
+//! `has_uncovered_reembed_work` already use, so a settled store reports zero
+//! instead of reporting every ingested chunk as pending forever.
 
 use serde::Serialize;
 
@@ -67,7 +69,7 @@ pub async fn source_status(
 
     tokio::task::spawn_blocking(move || {
         // Embeddings are scoped per (chunk, model signature); a vector stored
-        // under a superseded signature is unreachable for the active vector
+        // under a superseded signature is unreachable in the active vector
         // space, so it must still read as pending.
         let signature = tree_active_signature(&cfg);
 
@@ -76,6 +78,13 @@ pub async fn source_status(
 
             // Surface real query errors so status telemetry doesn't lie about
             // a healthy zero-row state when the DB is actually broken.
+            //
+            // The trailing `c.embedding IS NOT NULL` term is a compatibility
+            // clause for vaults that predate the embedding sidecar:
+            // `migrate_legacy_embeddings_to_sidecar` copies those blobs into
+            // `mem_tree_chunk_embeddings` but deliberately preserves the legacy
+            // column, so it remains a valid "this chunk was embedded" signal.
+            // It is inert for anything ingested after the sidecar landed.
             let (synced, pending, last_ts): (i64, i64, Option<i64>) = conn.query_row(
                 "SELECT \
                        COUNT(*), \
@@ -88,6 +97,7 @@ pub async fn source_status(
                                      WHERE s.chunk_id = c.id \
                                        AND s.model_signature = ?2) \
                                  OR c.lifecycle_status = ?3 \
+                                 OR c.embedding IS NOT NULL \
                                 THEN 0 ELSE 1 END), \
                        MAX(c.timestamp_ms) \
                      FROM mem_tree_chunks c \
@@ -262,9 +272,9 @@ mod tests {
         assert_eq!(source_id_prefix(&entry), "gmail:%");
     }
 
-    /// The reported bug (#5329): the old query read the vestigial
-    /// `mem_tree_chunks.embedding` column, which no production writer ever
-    /// populates, so `pending` always equalled `synced`. Reading the sidecar
+    /// The reported bug (#5329): the old query counted pending as
+    /// `mem_tree_chunks.embedding IS NULL`, and no production writer populates
+    /// that column, so `pending` always equalled `synced`. Reading the sidecar
     /// lets a fully-embedded source settle at zero.
     #[tokio::test]
     async fn pending_reaches_zero_once_every_chunk_has_an_active_embedding() {
@@ -316,6 +326,28 @@ mod tests {
         let status = status_of(&cfg, "src_terminal").await;
         assert_eq!(status.chunks_synced, 3);
         assert_eq!(status.chunks_pending, 1, "only the untouched chunk pends");
+    }
+
+    /// Vaults created before the embedding sidecar keep their vector in the
+    /// legacy `mem_tree_chunks.embedding` column, which
+    /// `migrate_legacy_embeddings_to_sidecar` preserves. Those chunks stay
+    /// resolved so an old vault does not regress to "everything pending".
+    #[tokio::test]
+    async fn pending_treats_a_legacy_pre_sidecar_embedding_as_resolved() {
+        let (_tmp, cfg) = test_config();
+        let chunks = seed(&cfg, "src_legacy", 2);
+        with_connection(&cfg, |conn| {
+            conn.execute(
+                "UPDATE mem_tree_chunks SET embedding = X'00010203' WHERE id = ?1",
+                [&chunks[0].id],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let status = status_of(&cfg, "src_legacy").await;
+        assert_eq!(status.chunks_synced, 2);
+        assert_eq!(status.chunks_pending, 1);
     }
 
     /// A source with no chunks at all must report zeroes rather than erroring
