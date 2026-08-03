@@ -97,6 +97,9 @@ pub fn run_doctor(config: &Config) -> DoctorReport {
     use crate::openhuman::memory::queue::store as queue;
     use crate::openhuman::memory::queue::types::JobStatus;
     use crate::openhuman::memory::store::chunks::store as chunks;
+    use crate::openhuman::memory::tree::score::embed::factory::{
+        resolved_embedder, ResolvedEmbedder,
+    };
 
     let degraded = current_degraded_state();
     let counters = DoctorCounters {
@@ -134,29 +137,34 @@ pub fn run_doctor(config: &Config) -> DoctorReport {
         ));
     }
 
-    // 1. Routing/config sanity — is *any* embeddings provider configured?
-    //    (`build_write_embedder` skips embedding when none is, so this is the
-    //    most common "empty wiki" root cause.)
-    let embeddings_provider = config
-        .memory_tree
-        .embedding_endpoint
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .map(|_| "ollama-override".to_string())
-        .or_else(|| config.embeddings_provider.clone())
-        .filter(|s| !s.trim().is_empty());
-    stages.push(match embeddings_provider.as_deref() {
+    // 1. Routing/config sanity — will the embedder factory actually resolve a
+    //    provider? (`build_write_embedder` skips embedding when it can't, so
+    //    this is the most common "empty wiki" root cause.)
+    //
+    //    Ask the factory's own resolution ladder rather than re-deriving it
+    //    here. This stage used to check `memory_tree.embedding_endpoint` and
+    //    then fall back to the top-level `embeddings_provider` workload field —
+    //    a one-step approximation of a six-step ladder, and `embeddings_provider`
+    //    is `None` by default. Every install resolving further down the ladder
+    //    (unified local model, user OpenAI-compatible endpoint, or the
+    //    logged-in managed cloud that most installs land on) was therefore
+    //    reported as `embeddings_unconfigured` while embedding demonstrably
+    //    worked — masking the real blocking cause and sending users off to
+    //    "fix" a setting that was already correct.
+    stages.push(match resolved_embedder(config) {
         // Explicit `none` opt-out: semantic recall is off by the user's choice,
         // not a fault. Reported `ok` (consistent with a `scheduler_gate=off`
         // pause and the write-path opt-out treatment) but with an honest note,
         // so the prior "provider configured: none" can't read as a working
         // embeddings provider. (CodeRabbit on doctor.rs)
-        Some("none") => StageHealth::ok(
+        ResolvedEmbedder::OptOut => StageHealth::ok(
             "embeddings",
             "embeddings disabled by you (provider = none) — semantic recall is intentionally off",
         ),
-        Some(p) => StageHealth::ok("embeddings", format!("provider configured: {p}")),
-        None => StageHealth::bad(
+        ResolvedEmbedder::Provider(p) => {
+            StageHealth::ok("embeddings", format!("provider configured: {p}"))
+        }
+        ResolvedEmbedder::Unconfigured => StageHealth::bad(
             "embeddings",
             PipelineFailure::new(FailureCode::EmbeddingsUnconfigured),
             "no embeddings provider configured — semantic recall is off",
@@ -286,7 +294,24 @@ mod tests {
         cfg.workspace_dir = tmp.path().to_path_buf();
         cfg.memory_tree.embedding_endpoint = None;
         cfg.memory_tree.embedding_model = None;
+        // Plant config_path in the tempdir. The embeddings stage now walks the
+        // factory's ladder, whose last rung probes for `auth-profiles.json`
+        // next to the config file — without this the tests would read the
+        // developer's real session and pass or fail depending on whether the
+        // machine happens to be logged in. (Mirrors the factory's own harness.)
+        cfg.config_path = tmp.path().join("config.toml");
         (tmp, cfg)
+    }
+
+    /// Simulate a logged-in install: the ladder's cloud rung only checks that
+    /// `auth-profiles.json` exists next to the config file.
+    fn touch_auth_profile(cfg: &Config) {
+        let path = cfg
+            .config_path
+            .parent()
+            .map(|p| p.join("auth-profiles.json"))
+            .expect("config_path has a parent");
+        std::fs::write(&path, "{}").expect("write stub auth-profiles.json");
     }
 
     #[test]
@@ -452,6 +477,84 @@ mod tests {
             .expect("storage stage present");
         assert!(!storage.ok);
         assert!(report.degraded.storage);
+    }
+
+    /// The embeddings stage must be diagnosed from the factory's resolution
+    /// ladder, not from a local approximation of it.
+    ///
+    /// Regression: a logged-in install with no explicit embeddings config
+    /// resolves to the managed cloud and embeds fine, but this stage used to
+    /// read the top-level `embeddings_provider` workload field — which is
+    /// `None` by default — and reported `embeddings_unconfigured`. Because
+    /// embeddings sit near the front of the stage list that became
+    /// `first_blocking_cause`, hiding the genuine failure further down and
+    /// pointing the user at a setting that was already correct.
+    #[test]
+    fn working_cloud_provider_is_not_reported_unconfigured() {
+        use crate::openhuman::memory::tree::score::embed::factory::{
+            resolved_embedder, ResolvedEmbedder,
+        };
+        let _g = super::super::test_guard();
+        let (_tmp, mut cfg) = test_config();
+        // A default install: no override, no workload model, no OpenAI-compatible
+        // backend — just a session, which is all the cloud rung needs.
+        cfg.embeddings_provider = None;
+        touch_auth_profile(&cfg);
+
+        // Precondition: the ladder really does resolve a usable provider here,
+        // so a non-ok embeddings stage below can only be the doctor's own fault.
+        assert_eq!(
+            resolved_embedder(&cfg),
+            ResolvedEmbedder::Provider("cloud"),
+            "test setup: the factory must resolve to the managed cloud"
+        );
+
+        let report = run_doctor(&cfg);
+        let embed = report
+            .stages
+            .iter()
+            .find(|s| s.stage == "embeddings")
+            .expect("embeddings stage present");
+        assert!(
+            embed.ok,
+            "a provider the factory would really use must not be a fault, got: {}",
+            embed.note
+        );
+        assert!(
+            embed.note.contains("cloud"),
+            "the note should name the resolved provider, got: {}",
+            embed.note
+        );
+        assert_ne!(
+            report.first_blocking_cause.clone().map(|c| c.code),
+            Some(FailureCode::EmbeddingsUnconfigured),
+            "embeddings must not mask the real blocking cause"
+        );
+    }
+
+    /// The stage must also see a provider that resolves at the *middle* of the
+    /// ladder (unified workload model), not just the terminal cloud rung.
+    #[test]
+    fn workload_local_model_is_reported_as_configured() {
+        let _g = super::super::test_guard();
+        let (_tmp, mut cfg) = test_config();
+        cfg.embeddings_provider = Some("ollama:all-minilm:latest".into());
+        cfg.local_ai.runtime_enabled = true;
+        cfg.local_ai.embedding_model_id = "all-minilm:latest".to_string();
+        // Deliberately NOT logged in: the local model alone must be enough.
+
+        let report = run_doctor(&cfg);
+        let embed = report
+            .stages
+            .iter()
+            .find(|s| s.stage == "embeddings")
+            .expect("embeddings stage present");
+        assert!(embed.ok, "local Ollama embeddings are a real provider");
+        assert!(
+            embed.note.contains("ollama"),
+            "the note should name the resolved provider, got: {}",
+            embed.note
+        );
     }
 
     #[test]
