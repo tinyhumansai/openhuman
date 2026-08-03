@@ -43,9 +43,16 @@ if not defined BASH_EXE call :use_if_exists "%ProgramFiles%\Git\bin\bash.exe"
 if not defined BASH_EXE call :use_if_exists "%ProgramFiles(x86)%\Git\bin\bash.exe"
 if not defined BASH_EXE call :use_if_exists "%LOCALAPPDATA%\Programs\Git\bin\bash.exe"
 
-rem Derive the install root from git.exe on PATH, which covers winget, scoop
-rem and chocolatey layouts. git.exe sits in <root>\cmd or <root>\bin, so
-rem bash.exe is always at <root>\bin\bash.exe.
+rem Scoop only ever puts shims on PATH, so the git.exe probe below would derive
+rem <scoop>\bin\bash.exe, which does not exist. The real binary always sits
+rem under apps\git\current\bin, via the `current` junction scoop maintains.
+if not defined BASH_EXE call :use_if_exists "%SCOOP%\apps\git\current\bin\bash.exe"
+if not defined BASH_EXE call :use_if_exists "%USERPROFILE%\scoop\apps\git\current\bin\bash.exe"
+if not defined BASH_EXE call :use_if_exists "%ProgramData%\scoop\apps\git\current\bin\bash.exe"
+
+rem Derive the install root from git.exe on PATH, which covers the winget and
+rem chocolatey layouts. git.exe sits in <root>\cmd or <root>\bin, so bash.exe
+rem is always at <root>\bin\bash.exe.
 if not defined BASH_EXE (
   for /f "delims=" %%G in ('where git.exe 2^>nul') do (
     if not defined BASH_EXE call :use_if_exists "%%~dpG..\bin\bash.exe"
@@ -66,8 +73,8 @@ rem parentheses below would otherwise close the block early.
 :no_bash
 echo [run-dev-win] Could not locate the bash.exe shipped with Git for Windows.>&2
 echo [run-dev-win] Looked under Program Files\Git\bin, Program Files (x86)\Git\bin,>&2
-echo [run-dev-win] LOCALAPPDATA\Programs\Git\bin, and the Git install root derived>&2
-echo [run-dev-win] from git.exe on PATH.>&2
+echo [run-dev-win] LOCALAPPDATA\Programs\Git\bin, the scoop apps\git\current\bin>&2
+echo [run-dev-win] directories, and the Git install root derived from git.exe on PATH.>&2
 echo [run-dev-win] Install Git for Windows from https://git-scm.com/download/win,>&2
 echo [run-dev-win] or set OPENHUMAN_BASH_EXE to the full path of bash.exe and retry.>&2
 exit /b 1
