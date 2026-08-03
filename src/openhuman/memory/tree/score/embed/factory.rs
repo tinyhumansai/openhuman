@@ -185,6 +185,48 @@ fn resolve_embedder_choice(config: &Config) -> Result<EmbedderChoice> {
     Ok(EmbedderChoice::NoProvider)
 }
 
+/// Which provider the resolution ladder selects, as a *diagnostic* — no
+/// embedder is constructed and no network call is made. See
+/// [`resolved_embedder`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResolvedEmbedder {
+    /// A usable provider resolved. Carries the same stable short label the
+    /// built embedder reports from [`Embedder::name`] (`ollama`, `openai`,
+    /// `custom`, `cloud`).
+    Provider(&'static str),
+    /// `embeddings_provider = "none"` — vector search off by deliberate user
+    /// choice, not a fault.
+    OptOut,
+    /// No usable provider resolved, or the configured one could not be built.
+    Unconfigured,
+}
+
+/// Report which embedder [`build_embedder_from_config`] / [`build_write_embedder`]
+/// *would* select for `config`, without building it.
+///
+/// Exists so the health doctor can diagnose the embeddings stage from the real
+/// ladder instead of re-deriving it. The doctor used to approximate step 1 plus
+/// the top-level `embeddings_provider` workload field — which is `None` by
+/// default — so every install that resolves further down (unified local model,
+/// user OpenAI-compatible endpoint, or the logged-in managed cloud that most
+/// installs land on) was reported as `embeddings_unconfigured` even though
+/// embedding demonstrably worked, masking the real blocking cause. Routing both
+/// through [`resolve_embedder_choice`] makes the diagnosis correct by
+/// construction and keeps it correct as the ladder evolves.
+pub fn resolved_embedder(config: &Config) -> ResolvedEmbedder {
+    match resolve_embedder_choice(config) {
+        Ok(EmbedderChoice::Ollama { .. }) => ResolvedEmbedder::Provider("ollama"),
+        Ok(EmbedderChoice::OptOut) => ResolvedEmbedder::OptOut,
+        Ok(EmbedderChoice::OpenAiCompat(openai)) => ResolvedEmbedder::Provider(openai.name()),
+        Ok(EmbedderChoice::Cloud) => ResolvedEmbedder::Provider("cloud"),
+        // A ladder error means the configured OpenAI-compatible provider could
+        // not be constructed. From the user's point of view embeddings are not
+        // usable, which is exactly what `Unconfigured` reports — and the write
+        // path already fails loudly with the same underlying error.
+        Ok(EmbedderChoice::NoProvider) | Err(_) => ResolvedEmbedder::Unconfigured,
+    }
+}
+
 /// Build the embedder used by **write** paths (ingest extract + seal), with an
 /// explicit "no usable embedder" signal (#002 FR-002).
 ///
@@ -318,7 +360,7 @@ mod tests {
         assert_eq!(e.name(), "ollama");
     }
 
-    // ── build_write_embedder (T010, #002 FR-002) ─────────────────────────
+    // ── build_write_embedder (T010, #002 FR-002) ─────────────────────────────
     //
     // These assert the write-path factory's "skip vs embed" contract. The
     // degraded flag is a process-global atomic, so the flag-sensitive tests
@@ -605,5 +647,101 @@ mod tests {
         cfg.local_ai.usage.embeddings = true;
         let e = build_embedder_from_config(&cfg).expect("override path should build");
         assert_eq!(e.name(), "ollama");
+    }
+
+    // ── resolved_embedder (health-doctor diagnostic view) ────────────────────
+    //
+    // `resolved_embedder` is the ladder's answer *without* building anything.
+    // Its whole value is that it cannot drift from the factories, so the tests
+    // below assert agreement with the built embedder rather than restating the
+    // ladder a third time.
+
+    #[test]
+    fn resolved_embedder_reports_the_logged_in_cloud_default() {
+        // The regression that motivated this API: a default, logged-in install
+        // resolves to the managed cloud and embeds fine, but the doctor read a
+        // config field that is `None` by default and cried "unconfigured".
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        touch_auth_profile(&cfg);
+        assert_eq!(
+            resolved_embedder(&cfg),
+            ResolvedEmbedder::Provider("cloud"),
+            "a logged-in default install has a working provider"
+        );
+    }
+
+    #[test]
+    fn resolved_embedder_reports_opt_out_not_unconfigured() {
+        // `none` is a deliberate choice; it must stay distinguishable from
+        // "nothing is set up" so surfaces don't nag a user who opted out.
+        let (_tmp, mut cfg) = test_config();
+        cfg.embeddings_provider = Some("none".into());
+        touch_auth_profile(&cfg);
+        assert_eq!(resolved_embedder(&cfg), ResolvedEmbedder::OptOut);
+    }
+
+    #[test]
+    fn resolved_embedder_reports_unconfigured_when_nothing_resolves() {
+        // No override, no workload model, no OpenAI-compatible backend and no
+        // session — the one case that genuinely is unconfigured.
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.embeddings_provider = None;
+        assert_eq!(resolved_embedder(&cfg), ResolvedEmbedder::Unconfigured);
+    }
+
+    #[test]
+    fn resolved_embedder_reports_the_openai_compatible_backend() {
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.embeddings_provider = None; // top-level workload routing: unset
+        cfg.memory.embedding_provider = "openai".to_string();
+        cfg.memory.embedding_model = "text-embedding-3-large".to_string();
+        assert_eq!(
+            resolved_embedder(&cfg),
+            ResolvedEmbedder::Provider("openai"),
+            "must see the user's OpenAI embeddings, not report unconfigured"
+        );
+    }
+
+    #[test]
+    fn resolved_embedder_label_agrees_with_the_built_embedder() {
+        // Parity guard: for every provider the ladder can select, the label the
+        // diagnostic reports must equal the name the read factory's embedder
+        // reports. If a future branch is added to the ladder and only one of
+        // the two match arms is updated, this fails.
+        let cases: Vec<(&str, Box<dyn Fn(&mut Config)>)> = vec![
+            (
+                "ollama",
+                Box::new(|c: &mut Config| {
+                    c.memory_tree.embedding_endpoint = Some("http://localhost:11434".into());
+                    c.memory_tree.embedding_model = Some("bge-m3".into());
+                }),
+            ),
+            (
+                "openai",
+                Box::new(|c: &mut Config| {
+                    c.memory.embedding_provider = "openai".to_string();
+                    c.memory.embedding_model = "text-embedding-3-large".to_string();
+                }),
+            ),
+        ];
+        for (expected, setup) in cases {
+            let (_tmp, mut cfg) = test_config();
+            cfg.memory_tree.embedding_endpoint = None;
+            cfg.memory_tree.embedding_model = None;
+            setup(&mut cfg);
+            let built = build_embedder_from_config(&cfg).expect("factory should build");
+            assert_eq!(
+                resolved_embedder(&cfg),
+                ResolvedEmbedder::Provider(expected),
+                "diagnostic label drifted from the factory for {expected}"
+            );
+            assert_eq!(built.name(), expected);
+        }
     }
 }
