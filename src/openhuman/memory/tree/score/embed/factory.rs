@@ -649,7 +649,7 @@ mod tests {
         assert_eq!(e.name(), "ollama");
     }
 
-    // ── resolved_embedder (health-doctor diagnostic view) ────────────────────
+    // resolved_embedder (health-doctor diagnostic view)
     //
     // `resolved_embedder` is the ladder's answer *without* building anything.
     // Its whole value is that it cannot drift from the factories, so the tests
