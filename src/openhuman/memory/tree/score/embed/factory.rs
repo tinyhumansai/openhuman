@@ -360,7 +360,7 @@ mod tests {
         assert_eq!(e.name(), "ollama");
     }
 
-    // ── build_write_embedder (T010, #002 FR-002) ─────────────────────────────
+    // ── build_write_embedder (T010, #002 FR-002) ─────────────────────
     //
     // These assert the write-path factory's "skip vs embed" contract. The
     // degraded flag is a process-global atomic, so the flag-sensitive tests
