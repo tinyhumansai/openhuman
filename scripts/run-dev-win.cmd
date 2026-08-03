@@ -56,17 +56,21 @@ rem NOTE: we deliberately never fall back to a bare `bash` lookup on PATH.
 rem When WSL is enabled, `bash` resolves to C:\Windows\System32\bash.exe -- the
 rem WSL launcher -- which would run run-dev-win.sh inside a Linux distro where
 rem none of the Windows toolchain it configures (MSVC, CEF, cargo-tauri) exists.
-if not defined BASH_EXE (
-  echo [run-dev-win] Could not locate Git for Windows' bash.exe.>&2
-  echo [run-dev-win] Looked in: %%ProgramFiles%%\Git\bin, %%ProgramFiles(x86)%%\Git\bin,>&2
-  echo [run-dev-win] %%LOCALAPPDATA%%\Programs\Git\bin, and the parent of git.exe on PATH.>&2
-  echo [run-dev-win] Install Git for Windows ^(https://git-scm.com/download/win^) or set>&2
-  echo [run-dev-win] OPENHUMAN_BASH_EXE to the full path of bash.exe and retry.>&2
-  exit /b 1
-)
+if not defined BASH_EXE goto :no_bash
 
 "%BASH_EXE%" "%SCRIPT_DIR%run-dev-win.sh" %*
 exit /b %ERRORLEVEL%
+
+rem Reported from a label rather than inside an `if (...)` block: the literal
+rem parentheses below would otherwise close the block early.
+:no_bash
+echo [run-dev-win] Could not locate the bash.exe shipped with Git for Windows.>&2
+echo [run-dev-win] Looked under Program Files\Git\bin, Program Files (x86)\Git\bin,>&2
+echo [run-dev-win] LOCALAPPDATA\Programs\Git\bin, and the Git install root derived>&2
+echo [run-dev-win] from git.exe on PATH.>&2
+echo [run-dev-win] Install Git for Windows from https://git-scm.com/download/win,>&2
+echo [run-dev-win] or set OPENHUMAN_BASH_EXE to the full path of bash.exe and retry.>&2
+exit /b 1
 
 :use_if_exists
 if exist "%~1" set "BASH_EXE=%~1"
