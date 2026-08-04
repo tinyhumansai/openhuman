@@ -47,9 +47,9 @@ function programTokenUnderCmdS(script: string): string {
 function launcherCodeLines(launcher: string): string[] {
   return launcher
     .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .filter((line) => !line.toLowerCase().startsWith('rem'));
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+    .filter(line => !line.toLowerCase().startsWith('rem'));
 }
 
 describe('pnpm dev:app:win entry point', () => {
@@ -95,8 +95,8 @@ describe('pnpm dev:app:win entry point', () => {
     // chunks, so `goto`/`call :label` is the one construct whose behaviour
     // depends on whether the file is LF or CRLF. Keeping the launcher free of
     // labels makes it correct either way instead of relying on a checkout rule.
-    expect(code.filter((line) => line.startsWith(':'))).toEqual([]);
-    expect(code.filter((line) => /(^|\s)(goto|call)\s/i.test(line))).toEqual([]);
+    expect(code.filter(line => line.startsWith(':'))).toEqual([]);
+    expect(code.filter(line => /(^|\s)(goto|call)\s/i.test(line))).toEqual([]);
     expect(code.length).toBeGreaterThan(0);
   });
 });
