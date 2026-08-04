@@ -186,7 +186,7 @@ fn resolve_embedder_choice(config: &Config) -> Result<EmbedderChoice> {
 }
 
 /// Which provider the resolution ladder selects, as a *diagnostic* — no
-/// embedder is constructed and no network call is made. See
+/// embedder is returned to the caller and no network call is made. See
 /// [`resolved_embedder`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResolvedEmbedder {
@@ -202,7 +202,12 @@ pub enum ResolvedEmbedder {
 }
 
 /// Report which embedder [`build_embedder_from_config`] / [`build_write_embedder`]
-/// *would* select for `config`, without building it.
+/// *would* select for `config`, without handing one back.
+///
+/// Cheap and side-effect-free: it allocates, probes one path, and (only on the
+/// OpenAI-compatible rung) constructs an `OpenAiCompatEmbedder` that is dropped
+/// immediately after its label is read. No network request is issued on any
+/// rung, and no embedder escapes.
 ///
 /// Exists so the health doctor can diagnose the embeddings stage from the real
 /// ladder instead of re-deriving it. The doctor used to approximate step 1 plus
@@ -727,6 +732,15 @@ mod tests {
                 Box::new(|c: &mut Config| {
                     c.memory.embedding_provider = "openai".to_string();
                     c.memory.embedding_model = "text-embedding-3-large".to_string();
+                }),
+            ),
+            (
+                // The terminal rung, and the one most installs actually land
+                // on — so a rename of the `cloud` label must break this guard
+                // too. (greptile on the parity guard)
+                "cloud",
+                Box::new(|c: &mut Config| {
+                    touch_auth_profile(c);
                 }),
             ),
         ];
