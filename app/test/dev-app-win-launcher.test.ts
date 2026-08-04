@@ -43,6 +43,15 @@ function programTokenUnderCmdS(script: string): string {
   return remaining.trimStart().split(/\s/)[0];
 }
 
+/** Executable lines of the launcher: comments and blank lines removed. */
+function launcherCodeLines(launcher: string): string[] {
+  return launcher
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => !line.toLowerCase().startsWith('rem'));
+}
+
 describe('pnpm dev:app:win entry point', () => {
   it('reproduces the historical failure: quotes do not survive cmd.exe /s', () => {
     // cmd sees `C:/Program` as the program name, producing the reported
@@ -77,5 +86,17 @@ describe('pnpm dev:app:win entry point', () => {
     // A bare `bash` lookup would hit C:\Windows\System32\bash.exe (the WSL
     // launcher) on machines with WSL enabled.
     expect(launcher).not.toMatch(/where\s+bash\.exe/i);
+  });
+
+  it('uses no label-based control flow, so line endings cannot change behaviour', () => {
+    const code = launcherCodeLines(readFileSync(LAUNCHER_PATH, 'utf8'));
+
+    // cmd.exe finds a label by byte offset and re-reads the script in 512-byte
+    // chunks, so `goto`/`call :label` is the one construct whose behaviour
+    // depends on whether the file is LF or CRLF. Keeping the launcher free of
+    // labels makes it correct either way instead of relying on a checkout rule.
+    expect(code.filter((line) => line.startsWith(':'))).toEqual([]);
+    expect(code.filter((line) => /(^|\s)(goto|call)\s/i.test(line))).toEqual([]);
+    expect(code.length).toBeGreaterThan(0);
   });
 });
