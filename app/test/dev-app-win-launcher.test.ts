@@ -22,6 +22,18 @@ const DEV_APP_WIN = packageJson.scripts['dev:app:win'];
 const LEGACY_BROKEN_SCRIPT = '"C:/Program Files/Git/bin/bash.exe" ../scripts/run-dev-win.sh';
 
 /**
+ * A batch label, optionally behind the `@` echo-suppression prefix.
+ */
+const BATCH_LABEL = /^@?:/;
+
+/**
+ * A `goto`/`call` jump in any form cmd accepts: optionally prefixed with `@`,
+ * introduced by start-of-line or a command separator, and followed by either
+ * whitespace (`goto :eof`) or a colon (`goto:eof`).
+ */
+const BATCH_JUMP = /(^|[\s&|()])@?(goto|call)[\s:]/i;
+
+/**
  * Models how `cmd.exe /d /s /c <string>` picks the program to execute, which is
  * how pnpm invokes package.json scripts on Windows.
  *
@@ -88,6 +100,33 @@ describe('pnpm dev:app:win entry point', () => {
     expect(launcher).not.toMatch(/where\s+bash\.exe/i);
   });
 
+  it('recognises every batch jump form, so the guard below cannot be bypassed', () => {
+    // Positive controls: each of these must count as a jump.
+    for (const jump of [
+      'goto :label',
+      'call :label',
+      '@goto :label',
+      '@call :label',
+      'goto:eof',
+      '@goto:eof',
+      '& goto :label',
+      '( @goto :label)',
+      'if not defined BASH_EXE goto :no_bash',
+    ]) {
+      expect(BATCH_JUMP.test(jump), jump).toBe(true);
+    }
+
+    // Negative controls: ordinary text must not trip the guard.
+    for (const plain of [
+      'echo go to label',
+      'echo recall the value',
+      'exit /b %ERRORLEVEL%',
+      '"%BASH_EXE%" "%SCRIPT_DIR%run-dev-win.sh" %*',
+    ]) {
+      expect(BATCH_JUMP.test(plain), plain).toBe(false);
+    }
+  });
+
   it('uses no label-based control flow, so line endings cannot change behaviour', () => {
     const code = launcherCodeLines(readFileSync(LAUNCHER_PATH, 'utf8'));
 
@@ -95,8 +134,8 @@ describe('pnpm dev:app:win entry point', () => {
     // chunks, so `goto`/`call :label` is the one construct whose behaviour
     // depends on whether the file is LF or CRLF. Keeping the launcher free of
     // labels makes it correct either way instead of relying on a checkout rule.
-    expect(code.filter(line => line.startsWith(':'))).toEqual([]);
-    expect(code.filter(line => /(^|\s)(goto|call)\s/i.test(line))).toEqual([]);
+    expect(code.filter(line => BATCH_LABEL.test(line))).toEqual([]);
+    expect(code.filter(line => BATCH_JUMP.test(line))).toEqual([]);
     expect(code.length).toBeGreaterThan(0);
   });
 });
