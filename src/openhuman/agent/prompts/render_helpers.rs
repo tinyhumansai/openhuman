@@ -438,7 +438,7 @@ pub fn render_subagent_system_prompt_with_format(
                  A `Call as:` signature numbers its slots and shows each as a `<name>` \
                  placeholder; replace each one with a value, keeping its number, and send \
                  only the arguments you are actually passing. \
-                 Escape `|` as `\\|`, `]` as `\\]` inside values. \
+                 Escape `|` as `\\|`, `]` as `\\]`, and `\\` as `\\\\` inside values. \
                  You may emit multiple `<tool_call>` blocks per response.\n\n\
                  Use the provided tools to accomplish the task. Reply with a concise, dense \
                  final answer when you have one — the parent agent will weave it back into the \

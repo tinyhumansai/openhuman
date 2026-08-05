@@ -276,6 +276,13 @@ pub fn parse_call(body: &str, registry: &PFormatRegistry) -> Option<(String, Val
     // values back to named JSON keys with the correct types.
     let params = registry.get(name)?;
 
+    // The correlation field for every rejection below. `parse_call` is pure and
+    // takes no context, but it runs inside the turn's task, so the ambient chat
+    // thread id is readable without threading an argument through a parser that
+    // has no other use for one. `None` outside a turn (unit tests, CLI probes).
+    let session = crate::openhuman::agent::tinyagents::thread_context::current_thread_id();
+    let session_id = session.as_deref().unwrap_or("<none>");
+
     let tokens = split_pipes(inner);
     // Index/value pairs, so an odd token count means the model dropped or added
     // a delimiter. Reject rather than guess: the whole point of the indices is
@@ -285,6 +292,7 @@ pub fn parse_call(body: &str, registry: &PFormatRegistry) -> Option<(String, Val
     if !tokens.len().is_multiple_of(2) {
         tracing::debug!(
             tool = name,
+            session_id,
             tokens = tokens.len(),
             "[pformat] odd token count — not index/value pairs, refusing to parse"
         );
@@ -300,6 +308,7 @@ pub fn parse_call(body: &str, registry: &PFormatRegistry) -> Option<(String, Val
             // would silently resurrect the off-by-one this format exists to end.
             tracing::debug!(
                 tool = name,
+                session_id,
                 index = %raw_index,
                 "[pformat] slot index is not a number — refusing to parse"
             );
@@ -308,6 +317,7 @@ pub fn parse_call(body: &str, registry: &PFormatRegistry) -> Option<(String, Val
         let Some(param_name) = params.names.get(slot) else {
             tracing::debug!(
                 tool = name,
+                session_id,
                 slot,
                 slots = params.names.len(),
                 "[pformat] slot index out of range — refusing to parse"
@@ -322,6 +332,7 @@ pub fn parse_call(body: &str, registry: &PFormatRegistry) -> Option<(String, Val
         if raw.trim().is_empty() {
             tracing::debug!(
                 tool = name,
+                session_id,
                 slot,
                 param = %param_name,
                 "[pformat] empty value for a named slot — argument omitted"
