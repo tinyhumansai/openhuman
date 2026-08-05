@@ -8,8 +8,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     default_state, group_first_time, group_first_time_when_bus_ready, invoke_method,
-    is_session_expired_error, is_unconfirmed_unauthorized_error, params_to_object,
-    parse_json_params, type_name, DomainSubscriberPlan,
+    is_session_expired_error, is_unconfirmed_unauthorized_error,
+    learning_first_time_when_bus_ready, params_to_object, parse_json_params, type_name,
+    DomainSubscriberPlan,
 };
 // These are the `http-server`-gated RPC-surface symbols (#5048); the tests that
 // name them below carry the same `#[cfg]` so the disabled-build test compile
@@ -153,6 +154,31 @@ fn domain_subscriber_registration_is_idempotent_after_success() {
         1,
         "a completed group must be recorded exactly once"
     );
+}
+
+#[test]
+fn learning_subscriber_registration_retries_after_bus_becomes_ready() {
+    let completed = std::sync::Mutex::new(false);
+
+    assert!(!learning_first_time_when_bus_ready(&completed, false));
+    assert!(
+        !*completed.lock().expect("registry lock"),
+        "a deferred learning attempt must not consume its token"
+    );
+
+    assert!(learning_first_time_when_bus_ready(&completed, true));
+    assert!(
+        *completed.lock().expect("registry lock"),
+        "the ready retry must consume the learning token"
+    );
+}
+
+#[test]
+fn learning_subscriber_registration_is_idempotent_after_success() {
+    let completed = std::sync::Mutex::new(false);
+
+    assert!(learning_first_time_when_bus_ready(&completed, true));
+    assert!(!learning_first_time_when_bus_ready(&completed, true));
 }
 
 #[test]

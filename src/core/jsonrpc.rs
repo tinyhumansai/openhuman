@@ -1971,6 +1971,36 @@ fn group_first_time(group: crate::core::all::DomainGroup) -> bool {
     )
 }
 
+/// Consume the learning-subscriber token only when the global event bus is
+/// ready. Learning has a separate token from the Agent group because both
+/// registration blocks must run exactly once.
+fn learning_first_time_when_bus_ready(completed: &std::sync::Mutex<bool>, bus_ready: bool) -> bool {
+    if !bus_ready {
+        log::warn!(
+            "[event_bus] deferred Agent learning subscriber registration - bus not initialized"
+        );
+        return false;
+    }
+
+    let mut completed = completed
+        .lock()
+        .expect("learning-subscriber registry lock poisoned");
+    if *completed {
+        false
+    } else {
+        *completed = true;
+        true
+    }
+}
+
+fn learning_first_time() -> bool {
+    static DONE: std::sync::OnceLock<std::sync::Mutex<bool>> = std::sync::OnceLock::new();
+    learning_first_time_when_bus_ready(
+        DONE.get_or_init(|| std::sync::Mutex::new(false)),
+        crate::core::event_bus::global().is_some(),
+    )
+}
+
 /// Registers all long-lived domain event-bus subscribers, each group at most
 /// once per process.
 ///
@@ -1986,7 +2016,7 @@ fn register_domain_subscribers(
     domains: crate::core::runtime::DomainSet,
 ) {
     use crate::core::all::DomainGroup;
-    use std::sync::{Arc, Mutex, Once, OnceLock};
+    use std::sync::{Arc, Once};
 
     let plan = DomainSubscriberPlan::for_domains(domains);
     log::debug!("[event_bus] register_domain_subscribers: domains={domains:?} plan={plan:?}");
@@ -1996,23 +2026,6 @@ fn register_domain_subscribers(
     // guarantees the registrations in the guarded block cannot later lose bus
     // availability. A premature call leaves the group absent from `DONE`, so a
     // later bootstrap retries it instead of permanently skipping subscribers.
-
-    /// Learning subscribers need their own idempotency token rather than
-    /// `group_first_time(DomainGroup::Agent)`: the Agent block below already
-    /// consumes that token, and whichever ran second would silently skip.
-    fn learning_first_time() -> bool {
-        static DONE: OnceLock<Mutex<bool>> = OnceLock::new();
-        let mut done = DONE
-            .get_or_init(|| Mutex::new(false))
-            .lock()
-            .expect("learning-subscriber registry lock poisoned");
-        if *done {
-            false
-        } else {
-            *done = true;
-            true
-        }
-    }
 
     // Seed the live tool-execution timeout from the persisted `[agent]` config
     // so a user-configured value (Settings → Agent OS access → Action timeout)
