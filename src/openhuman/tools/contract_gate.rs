@@ -643,14 +643,20 @@ const RETRY_BANNER: &str = "This tool was NOT executed and returned NO result. Y
      it, re-issue the SAME tool call now with arguments matching the schema below. Do NOT report \
      \"no results\" or stop: the call has not happened.";
 
-/// XXH3-64 hash of a marker's **payload** (the bytes after the marker's `]`).
-/// Recorded in [`DELIVERED`] at delivery and recomputed on rescan: a fast,
-/// stable (cross-process reproducible) fingerprint that detects any downstream
-/// reformat — summarizer, size cap, or the sub-agent handoff's
-/// whitespace-collapse — of the delivered contract. Non-cryptographic: it guards
-/// accidental mutation, not a forged collision.
+/// Fingerprint of a marker's **payload** (the bytes after the marker's `]`).
+/// Recorded in [`DELIVERED`] at delivery and recomputed on rescan: a stable
+/// (cross-process reproducible) value that detects any downstream reformat —
+/// summarizer, size cap, or the sub-agent handoff's whitespace-collapse — of the
+/// delivered contract. It guards accidental mutation, not a forged collision.
+///
+/// SHA-256 truncated to its leading 8 bytes rather than a dedicated fast hash:
+/// this runs once per gate delivery on a payload of a few hundred bytes, so the
+/// cost is unmeasurable, and `sha2` is already a dependency. A hash crate added
+/// for this would be a new entry in the kernel dependency floor for nothing.
 fn payload_hash(payload: &str) -> u64 {
-    xxhash_rust::xxh3::xxh3_64(payload.as_bytes())
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(payload.as_bytes());
+    u64::from_be_bytes(digest[..8].try_into().expect("sha256 yields 32 bytes"))
 }
 
 /// Canonical slug-list string used **both** as a transcript marker's body and as
