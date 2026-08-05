@@ -282,7 +282,7 @@ pub fn parse_call(body: &str, registry: &PFormatRegistry) -> Option<(String, Val
     // that a miscounted delimiter can no longer bind a value to the wrong
     // parameter, and silently keeping the pairs that happen to line up would
     // put that failure right back.
-    if tokens.len() % 2 != 0 {
+    if !tokens.len().is_multiple_of(2) {
         tracing::debug!(
             tool = name,
             tokens = tokens.len(),

@@ -273,7 +273,7 @@ impl<'a> PromptTool<'a> {
 /// historic format; P-Format is the new default text protocol.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ToolCallFormat {
-    /// `tool_name[arg1|arg2|...]` — compact, positional. Default.
+    /// `tool_name[index|value|...]` — compact, slot-numbered. Default.
     #[default]
     PFormat,
     /// Legacy JSON-in-tag rendering with full schemas.
