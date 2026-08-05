@@ -1147,4 +1147,20 @@ fn execute_tool_gates_writes_but_not_reads_via_external_effect() {
         t.external_effect_with_args(&serde_json::json!({})),
         "an absent slug errs on the side of gating"
     );
+    // A whitespace-only slug is a different path from an absent one: it survives
+    // the key lookup and is only rejected by the `trim` + emptiness filter. A
+    // model that emits `"tool": " "` must still be gated, not waved through on a
+    // slug that classifies as neither read nor write.
+    for blank in [" ", "", "\t\n"] {
+        assert!(
+            t.external_effect_with_args(&serde_json::json!({ "tool": blank })),
+            "a blank slug ({blank:?}) must fail closed"
+        );
+    }
+    // And the same for a slug of the wrong JSON type, which also reaches the
+    // filter with nothing usable.
+    assert!(
+        t.external_effect_with_args(&serde_json::json!({ "tool": 42 })),
+        "a non-string slug must fail closed"
+    );
 }
