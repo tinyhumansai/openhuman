@@ -41,7 +41,6 @@ pub mod bus;
 pub mod catalog;
 pub mod client;
 mod connected_integrations;
-pub mod contract_gate;
 pub(crate) mod direct_auth;
 pub mod error_mapping;
 pub mod execute_dispatch;

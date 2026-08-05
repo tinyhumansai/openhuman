@@ -442,6 +442,7 @@ impl Tool for Round17Tool {
             content: vec![ToolContent::Text { text: text.clone() }],
             is_error: self.error_result,
             markdown_formatted: options.prefer_markdown.then(|| format!("**{text}**")),
+            trusted_verbatim: false,
         })
     }
 

@@ -497,6 +497,16 @@ impl Middleware<()> for HandoffMiddleware {
         _state: &(),
         result: &mut TaToolResult,
     ) -> TaResult<()> {
+        // A contract-gate delivery must reach the transcript byte-for-byte
+        // (issue #4853). `apply_handoff`'s cleaner collapses every whitespace run
+        // to a single space, which flattens the delivered JSON schema's
+        // indentation — the gate then re-hashes different bytes, never credits
+        // the contract as present, and re-delivers on every call. This hook runs
+        // FIRST in the reverse-order `after_tool` chain, so the guard has to be
+        // here and not only downstream.
+        if crate::openhuman::tools::contract_gate::is_contract_delivery(&result.content) {
+            return Ok(());
+        }
         result.content = crate::openhuman::agent::harness::subagent_runner::apply_handoff(
             &self.cache,
             &result.name,
@@ -834,6 +844,19 @@ impl Middleware<()> for ToolOutputMiddleware {
         // breaks the whole-string JSON parse both proposal consumers do. See
         // [`is_compaction_exempt`]/[`is_truncation_exempt`] for which stages
         // each tool family skips and why.
+        // A contract-gate delivery is exempt from every stage below for the same
+        // reason (issue #4853): summarising, tabulating, or truncating it changes
+        // the bytes the gate re-hashes, so the contract could never be credited
+        // as present and would be re-delivered on every call. It is bounded and
+        // small — one schema, once per tool.
+        if crate::openhuman::tools::contract_gate::is_contract_delivery(&result.content) {
+            tracing::debug!(
+                tool = %result.name,
+                bytes = result.content.len(),
+                "[tinyagents::mw] tool_output: contract-gate delivery kept verbatim"
+            );
+            return Ok(());
+        }
         let compaction_exempt = is_compaction_exempt(&result.name);
         let truncation_exempt = is_truncation_exempt(&result.name);
         if compaction_exempt {
@@ -2276,6 +2299,20 @@ impl Middleware<()> for RepeatedToolFailureMiddleware {
             .unwrap_or_default();
         let step = self.step.fetch_add(1, Ordering::SeqCst) + 1;
 
+        // A contract-gate delivery is a tool error but not a tool failure (issue
+        // #4853): it hands the model the schema and asks for the same call again,
+        // and is bounded to once per tool while the contract stays in the
+        // transcript. Counting it would spend the model's failure ladder on the
+        // gate's own nudge. A gate *NotFound* message carries no marker, so a
+        // model looping on a bogus slug still trips the breaker normally.
+        if crate::openhuman::tools::contract_gate::is_contract_delivery(&result.content) {
+            tracing::debug!(
+                tool = %result.name,
+                "[tinyagents::mw] repeat_failure: contract-gate delivery is not a failure"
+            );
+            return Ok(());
+        }
+
         // Body-level failure signal: `validate_workflow` / `dry_run_workflow`
         // report an invalid graph via a `success` result whose JSON body carries
         // `"ok": false` — see `is_body_level_failure`. Only meaningful when
@@ -3023,6 +3060,59 @@ impl Middleware<()> for ImageAwareMessageTrimMiddleware {
                 "[tinyagents::mw] message_trim evicted oldest history to fit the token budget"
             );
         }
+        Ok(())
+    }
+}
+
+/// Rebuilds the contract gate's presence set from the transcript before every
+/// model call (issue #4853).
+///
+/// The gate runs at the tool layer and cannot read the transcript from there, so
+/// this is the seam that tells it which delivered contracts the model can still
+/// actually see. Every tool message leading with the gate's marker has its
+/// payload re-hashed against what was recorded at delivery; only an exact match
+/// credits that target as present.
+///
+/// That is what makes the gate survive context management: a contract folded
+/// into a summary, blanked by microcompact, evicted by the trim, or truncated by
+/// a size cap no longer hashes equal, so it stops counting as present and the
+/// next call re-delivers it once.
+///
+/// **Registration order matters twice.** `before_model` runs in registration
+/// order, so this must be pushed AFTER every context middleware (microcompact,
+/// compression, trim) to observe the transcript they leave behind rather than
+/// the one they are about to rewrite. And **assistant messages are never
+/// scanned** — a model echoing the marker in its own prose must not be able to
+/// claim a contract is present.
+///
+/// Tool rows are not the only place a delivery sits. A text-mode turn has no
+/// tool role to send: the harness renders results into user turns, and a
+/// delivery marked `trusted_verbatim` lands as a user turn of its own with the
+/// marker at byte 0. Scanning tool rows alone would credit nothing there, and
+/// the gate would re-deliver the same contract on every turn. The model still
+/// cannot reach either row: it does not author user turns, and the payload has
+/// to hash to the value recorded at delivery.
+pub(crate) struct ContractGatePresenceMiddleware;
+
+#[async_trait]
+impl Middleware<()> for ContractGatePresenceMiddleware {
+    fn name(&self) -> &str {
+        "contract_gate_presence"
+    }
+
+    async fn before_model(
+        &self,
+        _ctx: &mut RunContext<()>,
+        _state: &(),
+        request: &mut ModelRequest,
+    ) -> TaResult<()> {
+        crate::openhuman::tools::contract_gate::refresh_present(
+            request
+                .messages
+                .iter()
+                .filter(|m| matches!(m, TaMessage::Tool(_) | TaMessage::User(_)))
+                .map(|m| m.text()),
+        );
         Ok(())
     }
 }

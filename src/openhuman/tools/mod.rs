@@ -1,4 +1,5 @@
 pub mod agent_policy;
+pub mod contract_gate;
 pub mod generated;
 pub mod ops;
 pub mod orchestrator_tools;

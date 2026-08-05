@@ -243,6 +243,7 @@ pub fn all_tools_with_runtime(
         #[cfg(feature = "skills")]
         Box::new(
             RunWorkflowTool::new()
+                .with_config(config.clone())
                 .with_active_profile(active_profile.cloned())
                 .with_skill_allowlist(skill_allowlist.cloned())
                 .with_profile_skills_root(profile_skills_root.map(|p| p.to_path_buf())),
@@ -756,7 +757,7 @@ pub fn all_tools_with_runtime(
         #[cfg(feature = "mcp")]
         Box::new(McpRegistryDisconnectTool),
         #[cfg(feature = "mcp")]
-        Box::new(McpRegistryToolCallTool),
+        Box::new(McpRegistryToolCallTool::new()),
         #[cfg(feature = "mcp")]
         Box::new(McpRegistryConfigAssistTool::new(config.clone())),
         #[cfg(feature = "mcp")]

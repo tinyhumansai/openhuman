@@ -154,6 +154,7 @@ impl Tool for Round22Tool {
             content: vec![ToolContent::Text { text: body }],
             is_error: self.is_error,
             markdown_formatted: None,
+            trusted_verbatim: false,
         })
     }
 

@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::openhuman::config::Config;
+use crate::openhuman::tools::contract_gate;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 
 use super::ops;
@@ -30,6 +31,23 @@ macro_rules! emit {
         let outcome = $outcome.map_err(|e| anyhow::anyhow!(concat!($name, ": {}"), e))?;
         Ok(ToolResult::success(serde_json::to_string(&outcome.value)?))
     }};
+}
+
+/// Gate presence keys for every tool named in a `mcp_registry_list_tools`
+/// payload, so the marker credits exactly what a later `mcp_registry_tool_call`
+/// gates on.
+fn mcp_list_tools_keys(server: &str, value: &serde_json::Value) -> Vec<String> {
+    value
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(|t| t.get("name").and_then(Value::as_str))
+                .map(|name| contract_gate::mcp_key(server, name))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn req_str(args: &serde_json::Value, key: &str) -> anyhow::Result<String> {
@@ -216,10 +234,20 @@ impl Tool for McpRegistryListToolsTool {
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let sid = req_str(&args, "server_id")?;
-        emit!(
-            ops::mcp_clients_list_tools(sid).await,
-            "mcp_registry_list_tools"
-        )
+        let outcome = ops::mcp_clients_list_tools(sid.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("mcp_registry_list_tools: {}", e))?;
+        let body = serde_json::to_string(&outcome.value)?;
+        // This listing carries each tool's FULL input schema — the same contract
+        // the gate would deliver — so pre-credit every (server, tool) it
+        // described: a `mcp_registry_tool_call` right after pays no redundant
+        // re-delivery. One marker leads the message, so the gate's fixed-prefix
+        // scan still finds it at byte 0 (issue #4853).
+        let body = contract_gate::prefix_with_present_marker(
+            mcp_list_tools_keys(&sid, &outcome.value),
+            &body,
+        );
+        Ok(ToolResult::success(body))
     }
     fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {
         true
@@ -293,7 +321,22 @@ impl Tool for McpRegistryDisconnectTool {
 }
 
 /// Call a tool on a connected MCP server.
-pub struct McpRegistryToolCallTool;
+#[derive(Default)]
+pub struct McpRegistryToolCallTool {
+    /// Per-turn contract gate (#4853). The tool's own schema declares
+    /// `arguments` as a bare object — the remote tool's real input schema is
+    /// only visible through `mcp_registry_list_tools`, which the model has
+    /// usually not called. On the first call to a given `(server, tool)` pair
+    /// this turn the gate surfaces that schema and lets the retry execute.
+    gate: contract_gate::ContractGate,
+}
+
+impl McpRegistryToolCallTool {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 #[async_trait]
 impl Tool for McpRegistryToolCallTool {
     fn name(&self) -> &str {
@@ -321,6 +364,34 @@ impl Tool for McpRegistryToolCallTool {
         let sid = req_str(&args, "server_id")?;
         let tool_name = req_str(&args, "tool_name")?;
         let arguments = args.get("arguments").cloned().unwrap_or(json!({}));
+        // Contract gate (#4853): surface the remote tool's advertised input
+        // schema before the first call to it this turn, so the model composes
+        // `arguments` against the real contract instead of guessing from the
+        // bare `object`. A call whose arguments already conform is dispatched
+        // directly, and an unresolvable contract (server not connected, tool
+        // unknown) never blocks — see `contract_gate::consult`. No config is
+        // needed: the schema comes from the live connection map.
+        match contract_gate::consult(
+            &self.gate,
+            None,
+            &contract_gate::GateTarget::McpRegistry {
+                server: sid.to_string(),
+                tool: tool_name.to_string(),
+            },
+            &arguments,
+        )
+        .await
+        {
+            contract_gate::GateDecision::Surface(contract) => {
+                tracing::info!(
+                    server_id = %sid,
+                    tool_name = %tool_name,
+                    "[mcp_registry][contract-gate] returning full contract before first call"
+                );
+                return Ok(contract_gate::surface_result(contract));
+            }
+            contract_gate::GateDecision::Proceed => {}
+        }
         emit!(
             ops::mcp_clients_tool_call(sid, tool_name, arguments).await,
             "mcp_registry_tool_call"
@@ -478,7 +549,7 @@ mod tests {
             PermissionLevel::Execute
         );
         assert_eq!(
-            McpRegistryToolCallTool.permission_level(),
+            McpRegistryToolCallTool::new().permission_level(),
             PermissionLevel::Execute
         );
         // Discovery tool: read-only, names match.

@@ -1205,6 +1205,7 @@ fn conversation_message_serialization_roundtrip() {
         ConversationMessage::ToolResults(vec![ToolResultMessage {
             tool_call_id: "tc1".into(),
             content: "ok".into(),
+            trusted_verbatim: false,
         }]),
         ConversationMessage::Chat(ChatMessage::assistant("done")),
     ];
@@ -1336,6 +1337,7 @@ fn xml_dispatcher_converts_history_to_provider_messages() {
         ConversationMessage::ToolResults(vec![ToolResultMessage {
             tool_call_id: "tc1".into(),
             content: "ok".into(),
+            trusted_verbatim: false,
         }]),
         ConversationMessage::Chat(ChatMessage::assistant("done")),
     ];
@@ -1381,10 +1383,12 @@ fn native_dispatcher_converts_tool_results_to_tool_messages() {
             ToolResultMessage {
                 tool_call_id: "tc1".into(),
                 content: "output1".into(),
+                trusted_verbatim: false,
             },
             ToolResultMessage {
                 tool_call_id: "tc2".into(),
                 content: "output2".into(),
+                trusted_verbatim: false,
             },
         ]),
     ];
@@ -1407,6 +1411,7 @@ fn native_dispatcher_drops_standalone_orphan_tool_results() {
     let history = vec![ConversationMessage::ToolResults(vec![ToolResultMessage {
         tool_call_id: "tc-orphan".into(),
         content: "stranded".into(),
+        trusted_verbatim: false,
     }])];
 
     let messages = dispatcher.to_provider_messages(&history);

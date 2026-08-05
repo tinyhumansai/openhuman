@@ -95,6 +95,48 @@ impl XmlToolDispatcher {
     }
 }
 
+/// Render one round's results, giving every result that asked to be delivered
+/// unchanged a turn of its own and handing the rest to `frame` in batches.
+///
+/// `frame` is the caller's batch rendering — the `<tool_result>` wrap both
+/// text-mode dispatchers emit. A verbatim result never reaches it: its content
+/// is emitted as-is, at byte 0 of its own user turn.
+///
+/// Order is preserved, and a batch is closed before a verbatim result opens, for
+/// the same reason the flag exists. The contract gate credits a delivered
+/// contract only while its payload still hashes to the value recorded at
+/// delivery, and that hash covers everything after the marker's `]` — so a
+/// second result appended under the same banner changes the payload and the
+/// contract stops being creditable. Splitting on the boundary is what keeps the
+/// marker at byte 0 and the payload exact.
+fn split_verbatim_results(
+    results: &[ToolResultMessage],
+    frame: impl Fn(&[ToolResultMessage]) -> String,
+) -> Vec<ChatMessage> {
+    // The overwhelmingly common shape: nothing marked, one framed batch. Kept as
+    // its own branch so an unmarked round allocates exactly what it always did.
+    if !results.iter().any(|result| result.trusted_verbatim) {
+        return vec![ChatMessage::user(frame(results))];
+    }
+
+    let mut out = Vec::new();
+    let mut batch: Vec<ToolResultMessage> = Vec::new();
+    for result in results {
+        if result.trusted_verbatim {
+            if !batch.is_empty() {
+                out.push(ChatMessage::user(frame(&std::mem::take(&mut batch))));
+            }
+            out.push(ChatMessage::user(result.content.clone()));
+        } else {
+            batch.push(result.clone());
+        }
+    }
+    if !batch.is_empty() {
+        out.push(ChatMessage::user(frame(&batch)));
+    }
+    out
+}
+
 impl ToolDispatcher for XmlToolDispatcher {
     fn parse_response(&self, response: &ChatResponse) -> (String, Vec<ParsedToolCall>) {
         let text = response.text_or_empty();
@@ -144,15 +186,17 @@ impl ToolDispatcher for XmlToolDispatcher {
                     vec![msg]
                 }
                 ConversationMessage::ToolResults(results) => {
-                    let mut content = String::new();
-                    for result in results {
-                        let _ = writeln!(
-                            content,
-                            "<tool_result id=\"{}\">\n{}\n</tool_result>",
-                            result.tool_call_id, result.content
-                        );
-                    }
-                    vec![ChatMessage::user(format!("[Tool results]\n{content}"))]
+                    split_verbatim_results(results, |batch| {
+                        let mut content = String::new();
+                        for result in batch {
+                            let _ = writeln!(
+                                content,
+                                "<tool_result id=\"{}\">\n{}\n</tool_result>",
+                                result.tool_call_id, result.content
+                            );
+                        }
+                        format!("[Tool results]\n{content}")
+                    })
                 }
             })
             .collect()
@@ -373,15 +417,17 @@ impl ToolDispatcher for PFormatToolDispatcher {
                     vec![msg]
                 }
                 ConversationMessage::ToolResults(results) => {
-                    let mut content = String::new();
-                    for result in results {
-                        let _ = writeln!(
-                            content,
-                            "<tool_result id=\"{}\">\n{}\n</tool_result>",
-                            result.tool_call_id, result.content
-                        );
-                    }
-                    vec![ChatMessage::user(format!("[Tool results]\n{content}"))]
+                    split_verbatim_results(results, |batch| {
+                        let mut content = String::new();
+                        for result in batch {
+                            let _ = writeln!(
+                                content,
+                                "<tool_result id=\"{}\">\n{}\n</tool_result>",
+                                result.tool_call_id, result.content
+                            );
+                        }
+                        format!("[Tool results]\n{content}")
+                    })
                 }
             })
             .collect()
@@ -470,6 +516,10 @@ impl ToolDispatcher for NativeToolDispatcher {
                     .clone()
                     .unwrap_or_else(|| "unknown".to_string()),
                 content: result.output.clone(),
+                // Nothing to carry and nothing to lose: a native round already
+                // gives every result its own `tool` row with the payload at byte
+                // 0, which is what the flag asks a text-mode serializer to do.
+                trusted_verbatim: false,
             })
             .collect();
         ConversationMessage::ToolResults(messages)

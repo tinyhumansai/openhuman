@@ -36,6 +36,7 @@ use crate::openhuman::agent::harness::current_sandbox_mode;
 use crate::openhuman::agent::harness::definition::SandboxMode;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
+use crate::openhuman::tools::contract_gate;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 /// A single Composio action exposed as a first-class tool.
@@ -73,7 +74,7 @@ pub struct ComposioActionTool {
     /// queries) instead of guessing from the thin spawn-time schema; the retry
     /// executes normally. Held per tool instance, which lives for one
     /// `integrations_agent` spawn, so "seen" is scoped to that turn.
-    gate: super::contract_gate::ContractGate,
+    gate: contract_gate::ContractGate,
 }
 
 impl ComposioActionTool {
@@ -100,7 +101,7 @@ impl ComposioActionTool {
             description,
             parameters,
             connection_id,
-            gate: super::contract_gate::ContractGate::new(),
+            gate: contract_gate::ContractGate::new(),
         }
     }
 }
@@ -225,19 +226,24 @@ impl Tool for ComposioActionTool {
         // contract (input schema + description) as a recoverable tool error and
         // let the retry — now with the schema in context — execute. Degrades to
         // a normal execute whenever the contract can't be resolved (see
-        // `contract_gate::consult`), so an unconfigured/offline client never
+        // `tools::contract_gate::consult`), so an unconfigured/offline client never
         // blocks the action. Uses `live_config` so gate routing matches dispatch.
-        match super::contract_gate::consult(&self.gate, &live_config, &self.action_name, &args)
-            .await
+        match contract_gate::consult(
+            &self.gate,
+            Some(&live_config),
+            &contract_gate::GateTarget::Composio(self.action_name.clone()),
+            &args,
+        )
+        .await
         {
-            super::contract_gate::GateDecision::Surface(contract) => {
+            contract_gate::GateDecision::Surface(contract) => {
                 tracing::info!(
                     tool = %self.action_name,
                     "[composio][contract-gate] returning full contract before first execute"
                 );
-                return Ok(ToolResult::error(contract));
+                return Ok(contract_gate::surface_result(contract));
             }
-            super::contract_gate::GateDecision::Proceed => {}
+            contract_gate::GateDecision::Proceed => {}
         }
 
         // Inject `timeZone` / `singleEvents` defaults for Google

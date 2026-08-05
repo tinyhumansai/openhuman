@@ -53,6 +53,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use futures::StreamExt;
+
+use crate::openhuman::tools::contract_gate;
 use tinyagents::harness::agent_loop::AgentStreamItem;
 use tinyagents::harness::cache::InMemoryResponseCache;
 use tinyagents::harness::context::{RunConfig, RunContext};
@@ -882,30 +884,48 @@ pub(crate) async fn run_turn_via_tinyagents_shared(
     // nested inside its parent's drive future — leaving it inline on the stack
     // overflows when the parent + child drives compose. Boxing keeps only a
     // pointer on the stack at each level.
-    let run_result = with_run_cancellation(cancellation.clone(), async {
-        if streaming {
-            let mut stream = Box::pin(harness.invoke_stream_in_context(&(), ctx, input));
-            let mut terminal = None;
-            while let Some(item) = stream.next().await {
-                match item {
-                    AgentStreamItem::Event(_) => {}
-                    AgentStreamItem::Completed(run) => {
-                        terminal = Some(Ok(*run));
-                        break;
-                    }
-                    AgentStreamItem::Failed(error) => {
-                        terminal = Some(Err(tinyagents::TinyAgentsError::Model(error)));
-                        break;
+    // Contract-gate scopes (issue #4853), both established around the drive
+    // future so every tool `execute()` on this task reads them:
+    //
+    // - **presence** is scoped per RUN, sub-agents included: it describes one
+    //   transcript, and a sub-agent's is its own.
+    // - **auto-proceed accounting** is scoped only by the TOP-LEVEL turn. A
+    //   fresh count per sub-agent spawn is exactly the re-delegation loop the
+    //   safety net exists to detect, so a nested run must inherit the parent's
+    //   rather than start over; task-locals nest, so skipping the scope here is
+    //   all that takes.
+    let is_top_level_turn = subagent_scope.is_none();
+    let run_result = contract_gate::with_run_presence(async {
+        let drive = with_run_cancellation(cancellation.clone(), async {
+            if streaming {
+                let mut stream = Box::pin(harness.invoke_stream_in_context(&(), ctx, input));
+                let mut terminal = None;
+                while let Some(item) = stream.next().await {
+                    match item {
+                        AgentStreamItem::Event(_) => {}
+                        AgentStreamItem::Completed(run) => {
+                            terminal = Some(Ok(*run));
+                            break;
+                        }
+                        AgentStreamItem::Failed(error) => {
+                            terminal = Some(Err(tinyagents::TinyAgentsError::Model(error)));
+                            break;
+                        }
                     }
                 }
+                terminal.unwrap_or_else(|| {
+                    Err(tinyagents::TinyAgentsError::Model(
+                        "tinyagents stream ended without terminal run".to_string(),
+                    ))
+                })
+            } else {
+                Box::pin(harness.invoke_in_context(&(), ctx, input)).await
             }
-            terminal.unwrap_or_else(|| {
-                Err(tinyagents::TinyAgentsError::Model(
-                    "tinyagents stream ended without terminal run".to_string(),
-                ))
-            })
+        });
+        if is_top_level_turn {
+            contract_gate::with_turn(drive).await
         } else {
-            Box::pin(harness.invoke_in_context(&(), ctx, input)).await
+            drive.await
         }
     })
     .await;
@@ -2253,6 +2273,14 @@ fn assemble_turn_harness(
     harness.push_middleware(Arc::new(
         TaToolPolicyMiddleware::new(harness.tools().policies()).require_sandbox(true),
     ));
+
+    // Contract-gate presence (issue #4853). `before_model` runs in REGISTRATION
+    // order, so this sits after every context middleware (microcompact,
+    // compression, trim above) and therefore reads the transcript they leave
+    // behind. It re-derives which delivered contracts are still verifiably in
+    // context; one that was summarised, blanked, evicted, or truncated stops
+    // counting and the next gated call re-delivers it once.
+    harness.push_middleware(Arc::new(middleware::ContractGatePresenceMiddleware));
 
     // Human-in-the-loop approval as a named tool middleware (issue #4249,
     // Phase 1): an external-effect tool intercepts through the global

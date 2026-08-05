@@ -715,6 +715,7 @@ mod tests {
             ],
             is_error: false,
             markdown_formatted: None,
+            trusted_verbatim: false,
         };
         let payload = native_tool_payload(&result);
         let text = payload["text"].as_str().expect("text field");

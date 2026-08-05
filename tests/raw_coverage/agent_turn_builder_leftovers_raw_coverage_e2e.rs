@@ -254,6 +254,7 @@ impl Tool for Round20Tool {
             }],
             is_error: self.is_error,
             markdown_formatted: None,
+            trusted_verbatim: false,
         })
     }
 

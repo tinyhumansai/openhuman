@@ -35,6 +35,7 @@ use crate::openhuman::agent::harness::current_task_recency_window;
 use crate::openhuman::agent::harness::definition::SandboxMode;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
+use crate::openhuman::tools::contract_gate;
 use crate::openhuman::tools::traits::{
     PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult,
 };
@@ -1229,9 +1230,26 @@ impl Tool for ComposioListToolsTool {
                     }
                 }
 
-                let mut result = ToolResult::success(
-                    serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
-                );
+                let json = serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into());
+                // Pre-credit the contract gate ONLY when the model will actually
+                // read the full JSON schemas (i.e. NOT the thin markdown path):
+                // then a `composio_execute` for any listed slug skips a redundant
+                // contract re-delivery. Under `prefer_markdown` the model reads
+                // the compact rendering (schemas dropped), which is exactly the
+                // thin listing the gate guards against — crediting it would mark
+                // a contract the model never saw as present. Marker leads for the
+                // fixed-prefix scan (issue #4853).
+                let content = if options.prefer_markdown {
+                    json
+                } else {
+                    contract_gate::prefix_with_present_marker(
+                        resp.tools
+                            .iter()
+                            .map(|t| contract_gate::composio_key(&t.function.name)),
+                        &json,
+                    )
+                };
+                let mut result = ToolResult::success(content);
                 if options.prefer_markdown {
                     result.markdown_formatted = Some(render_tools_markdown(&resp));
                 }
@@ -1268,11 +1286,20 @@ pub struct ComposioExecuteTool {
     /// [`crate::openhuman::integrations::composio::ops::composio_execute`]. See
     /// issue #1710.
     config: Arc<Config>,
+    /// Per-turn contract gate (#4853). The dispatcher's own schema says nothing
+    /// about the action being dispatched, so on the first call to a given action
+    /// this turn the gate surfaces that action's FULL live contract and lets the
+    /// retry execute. Held per tool instance, which lives for one agent spawn,
+    /// so "seen" is scoped to that turn.
+    gate: contract_gate::ContractGate,
 }
 
 impl ComposioExecuteTool {
     pub fn new(config: Arc<Config>) -> Self {
-        Self { config }
+        Self {
+            config,
+            gate: contract_gate::ContractGate::new(),
+        }
     }
 }
 
@@ -1465,6 +1492,33 @@ impl Tool for ComposioExecuteTool {
                 )));
             }
         };
+        // Contract gate (#4853): `composio_execute` advertises an opaque
+        // `{tool, arguments}` envelope — `arguments` is a bare object whose real
+        // shape lives in the action's own contract, which the model has usually
+        // not read. On the first call to an action this turn, surface that
+        // contract as a recoverable tool error and let the retry execute. A call
+        // whose arguments already conform is dispatched directly, and an
+        // unresolvable contract never blocks — see `contract_gate::consult`.
+        // Uses `live_config` so gate routing matches dispatch, exactly as
+        // `ComposioActionTool` does on the per-action surface.
+        match contract_gate::consult(
+            &self.gate,
+            Some(&live_config),
+            &contract_gate::GateTarget::Composio(tool.clone()),
+            arguments.as_ref().unwrap_or(&Value::Null),
+        )
+        .await
+        {
+            contract_gate::GateDecision::Surface(contract) => {
+                tracing::info!(
+                    tool = %tool,
+                    "[composio][contract-gate] returning full contract before first execute"
+                );
+                return Ok(contract_gate::surface_result(contract));
+            }
+            contract_gate::GateDecision::Proceed => {}
+        }
+
         let kind = match create_composio_client(&live_config) {
             Ok(kind) => kind,
             Err(e) => {

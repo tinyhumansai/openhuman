@@ -205,6 +205,7 @@ impl Tool for EchoTool {
             }],
             is_error: false,
             markdown_formatted: Some(format!("**echo** `{args}`")),
+            trusted_verbatim: false,
         })
     }
 

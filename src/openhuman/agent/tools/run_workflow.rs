@@ -219,6 +219,16 @@ pub struct RunWorkflowTool {
     /// (`<workspace>/personalities/<id>/skills/`). Resolves + implicitly allows
     /// the owner's profile-local skills. `None` = byte-identical to today.
     profile_skills_root: Option<std::path::PathBuf>,
+    /// Live config, threaded in so the contract gate can resolve a workflow's
+    /// declared inputs out of `workspace_dir`. `None` (the bare `new()` used by
+    /// tests) simply means the gate finds no contract and never blocks.
+    config: Option<std::sync::Arc<crate::openhuman::config::Config>>,
+    /// Per-turn contract gate (#4853). `run_workflow` advertises `inputs` as a
+    /// bare object; the workflow's declared `[[inputs]]` block is only visible
+    /// through `describe_workflow`, which the model has usually not called. On
+    /// the first run of a given workflow this turn the gate surfaces that
+    /// contract and lets the retry execute.
+    gate: crate::openhuman::tools::contract_gate::ContractGate,
 }
 
 impl Default for RunWorkflowTool {
@@ -233,7 +243,16 @@ impl RunWorkflowTool {
             active_profile: None,
             skill_allowlist: None,
             profile_skills_root: None,
+            config: None,
+            gate: crate::openhuman::tools::contract_gate::ContractGate::new(),
         }
+    }
+
+    /// Thread the live config in so the contract gate can read the target
+    /// workflow's declared inputs. Without it the gate stays inert.
+    pub fn with_config(mut self, config: std::sync::Arc<crate::openhuman::config::Config>) -> Self {
+        self.config = Some(config);
+        self
     }
 
     pub fn with_active_profile(
@@ -346,6 +365,37 @@ impl Tool for RunWorkflowTool {
             }
         }
         let inputs = args.get("inputs").cloned();
+
+        // Contract gate (#4853): a workflow's real input contract lives in its
+        // `[[inputs]]` block, which this tool's own `inputs: {type: object}`
+        // schema does not carry. On the first run of this workflow this turn,
+        // surface that contract as a recoverable tool error so the model fills
+        // in every required input instead of guessing; a call whose inputs
+        // already conform runs directly, and an unresolvable contract never
+        // blocks (see `contract_gate::consult`). Consulted AFTER the profile
+        // allowlist check above, so a scoped-out workflow's contract is never
+        // rendered.
+        {
+            use crate::openhuman::tools::contract_gate;
+            match contract_gate::consult(
+                &self.gate,
+                self.config.as_deref(),
+                &contract_gate::GateTarget::Workflow(workflow_id.clone()),
+                inputs.as_ref().unwrap_or(&serde_json::Value::Null),
+            )
+            .await
+            {
+                contract_gate::GateDecision::Surface(contract) => {
+                    tracing::info!(
+                        workflow_id = %workflow_id,
+                        "[workflows][contract-gate] returning full input contract before first run"
+                    );
+                    return Ok(contract_gate::surface_result(contract));
+                }
+                contract_gate::GateDecision::Proceed => {}
+            }
+        }
+
         let wait_seconds = parse_wait_seconds(&args);
 
         // Fire-and-forget: only the spawn backstop applies — no await, so no

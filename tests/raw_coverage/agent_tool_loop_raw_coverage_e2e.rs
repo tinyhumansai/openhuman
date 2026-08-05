@@ -204,6 +204,7 @@ impl Tool for StaticTool {
             content: vec![ToolContent::Text { text: body }],
             is_error: self.is_error,
             markdown_formatted: None,
+            trusted_verbatim: false,
         })
     }
 

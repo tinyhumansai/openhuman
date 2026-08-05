@@ -272,6 +272,7 @@ pub(crate) fn messages_to_conversation(messages: &[Message]) -> Vec<Conversation
                 pending.push(ToolResultMessage {
                     tool_call_id: t.tool_call_id.clone(),
                     content: msg.text(),
+                    trusted_verbatim: t.trusted_verbatim,
                 });
             }
             Message::System(_) => {
@@ -380,6 +381,14 @@ pub(crate) fn messages_to_text_mode_chat(messages: &[Message]) -> Vec<ChatMessag
 
     for msg in messages {
         match msg {
+            // A result that asked to be delivered unchanged gets its own turn,
+            // its content at byte 0: no banner, and nothing batched in front of
+            // it. Text mode has no tool role to send, so this user turn is the
+            // only place the marker can lead the message.
+            Message::Tool(t) if t.trusted_verbatim => {
+                flush(&mut out, &mut pending);
+                out.push(ChatMessage::user(msg.text()));
+            }
             Message::Tool(_) => pending.push(msg.text()),
             _ => {
                 flush(&mut out, &mut pending);

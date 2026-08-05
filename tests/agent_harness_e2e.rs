@@ -2612,6 +2612,7 @@ mod streaming_support {
                 }],
                 is_error: false,
                 markdown_formatted: None,
+                trusted_verbatim: false,
             })
         }
 

@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::tools::contract_gate::{prefix_with_present_marker, workflow_key};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 
 use super::ops_create::{create_workflow, CreateWorkflowParams};
@@ -234,11 +235,17 @@ impl Tool for WorkflowDescribeTool {
             self.profile_skills_root.as_deref(),
         )
         .ok_or_else(|| anyhow::anyhow!("describe_workflow: workflow `{skill_id}` not found"))?;
-        Ok(ToolResult::success(serde_json::to_string(&json!({
+        let body = serde_json::to_string(&json!({
             "definition": def.definition,
             "inputs": def.inputs,
             "github_gated": def.github.is_some(),
-        }))?))
+        }))?;
+        // This IS the workflow's full input contract — the same source the gate
+        // delivers — so pre-credit it: a `run_workflow` right after pays no
+        // redundant re-delivery. The marker leads the message so the gate's
+        // fixed-prefix scan finds it at byte 0 (issue #4853).
+        let body = prefix_with_present_marker([workflow_key(&skill_id)], &body);
+        Ok(ToolResult::success(body))
     }
 
     fn is_concurrency_safe(&self, _args: &serde_json::Value) -> bool {

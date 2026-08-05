@@ -281,6 +281,7 @@ fn tool_results(id: &str) -> ConversationMessage {
     ConversationMessage::ToolResults(vec![ToolResultMessage {
         tool_call_id: id.into(),
         content: "ok".into(),
+        trusted_verbatim: false,
     }])
 }
 
@@ -464,6 +465,7 @@ fn tool_results_multi(ids: &[&str]) -> ConversationMessage {
             .map(|id| ToolResultMessage {
                 tool_call_id: (*id).into(),
                 content: "ok".into(),
+                trusted_verbatim: false,
             })
             .collect(),
     )
@@ -547,5 +549,133 @@ fn to_provider_messages_drops_pair_with_extra_unsolicited_results() {
         roles,
         vec!["user", "assistant"],
         "extra unsolicited tool_call_ids must invalidate the pair, kept: {roles:?}"
+    );
+}
+
+// ── contract-gate delivery framing (issue #4853) ─────────────────────────────
+
+/// The contract gate credits a delivered contract as "the model can see this"
+/// by finding its `[contract-gate:…]` marker at **byte 0** of a message and
+/// re-hashing the payload that follows. Both text-mode serializers used to
+/// break both halves of that: they wrapped every result in
+/// `<tool_result id="…">` and prefixed the batch with a `[Tool results]`
+/// banner, so the marker sat mid-message and the payload carried whatever else
+/// the round returned.
+///
+/// So on the session and sub-agent paths — which rebuild their history through
+/// this renderer every turn — presence was never credited, and the
+/// compaction-safety the gate grew was inert there: a contract summarised out
+/// of context was not re-delivered, because it had never counted as present.
+///
+/// [`ToolResultMessage::trusted_verbatim`] closes it. A delivery is emitted as
+/// its own turn, unframed; the batch around it is unchanged.
+#[test]
+fn a_contract_delivery_reaches_the_model_unframed() {
+    use crate::openhuman::agent::messages::ToolResultMessage;
+
+    let delivery = "[contract-gate:composio:GMAIL_FETCH_EMAILS]\n\nthe full contract";
+    let history = vec![ConversationMessage::ToolResults(vec![ToolResultMessage {
+        tool_call_id: "call-1".into(),
+        content: delivery.into(),
+        trusted_verbatim: true,
+    }])];
+
+    for (label, rendered) in [
+        ("xml", XmlToolDispatcher.to_provider_messages(&history)),
+        (
+            "pformat",
+            PFormatToolDispatcher::new(PFormatRegistry::new()).to_provider_messages(&history),
+        ),
+    ] {
+        assert!(
+            rendered.iter().any(|m| m.content == delivery),
+            "[{label}] a gate delivery must reach the model with its marker at byte 0 and \
+             its payload unchanged, but the renderer framed it as: {:?}",
+            rendered.iter().map(|m| &m.content).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// The split is per result, not per round: an unmarked result sharing the round
+/// keeps its banner and its wrapper, and the order the tools ran in survives.
+///
+/// Both halves matter. Dropping the banner for everything would retire the
+/// shape prompt-guided models are taught to read; letting the delivery ride
+/// inside it would put the marker back off byte 0. And a delivery appended to a
+/// batch would change the payload the gate hashes, so the contract could never
+/// be credited.
+#[test]
+fn a_verbatim_delivery_splits_the_round_without_reframing_the_rest() {
+    use crate::openhuman::agent::messages::ToolResultMessage;
+
+    let delivery = "[contract-gate:composio:GMAIL_FETCH_EMAILS]\n\nthe full contract";
+    let history = vec![ConversationMessage::ToolResults(vec![
+        ToolResultMessage {
+            tool_call_id: "call-1".into(),
+            content: "3 threads".into(),
+            trusted_verbatim: false,
+        },
+        ToolResultMessage {
+            tool_call_id: "call-2".into(),
+            content: delivery.into(),
+            trusted_verbatim: true,
+        },
+        ToolResultMessage {
+            tool_call_id: "call-3".into(),
+            content: "archived".into(),
+            trusted_verbatim: false,
+        },
+    ])];
+
+    let rendered = XmlToolDispatcher.to_provider_messages(&history);
+    let contents: Vec<&str> = rendered.iter().map(|m| m.content.as_str()).collect();
+
+    assert_eq!(
+        contents.len(),
+        3,
+        "one turn per group, in order: {contents:?}"
+    );
+    assert!(
+        contents[0].starts_with("[Tool results]")
+            && contents[0].contains("<tool_result id=\"call-1\">"),
+        "the results before the delivery keep the legacy framing: {contents:?}"
+    );
+    assert_eq!(
+        contents[1], delivery,
+        "the delivery is unframed: {contents:?}"
+    );
+    assert!(
+        contents[2].starts_with("[Tool results]")
+            && contents[2].contains("<tool_result id=\"call-3\">"),
+        "the results after it are framed as their own batch: {contents:?}"
+    );
+}
+
+/// An unmarked round renders byte-for-byte what it rendered before the flag
+/// existed — one banner, one batch, every result wrapped.
+#[test]
+fn an_unmarked_round_renders_exactly_as_it_always_did() {
+    use crate::openhuman::agent::messages::ToolResultMessage;
+
+    let history = vec![ConversationMessage::ToolResults(vec![
+        ToolResultMessage {
+            tool_call_id: "call-1".into(),
+            content: "3 threads".into(),
+            trusted_verbatim: false,
+        },
+        ToolResultMessage {
+            tool_call_id: "call-2".into(),
+            content: "archived".into(),
+            trusted_verbatim: false,
+        },
+    ])];
+
+    let rendered = XmlToolDispatcher.to_provider_messages(&history);
+
+    assert_eq!(rendered.len(), 1, "one batch, one turn");
+    assert_eq!(
+        rendered[0].content,
+        "[Tool results]\n<tool_result id=\"call-1\">\n3 threads\n</tool_result>\n\
+         <tool_result id=\"call-2\">\narchived\n</tool_result>\n"
     );
 }
