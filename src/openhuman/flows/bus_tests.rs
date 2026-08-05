@@ -237,8 +237,7 @@ async fn handle_app_event_ignores_disabled_flows() {
     // `list_enabled_flows` must not surface the disabled flow at all —
     // proves the subscriber's dispatch source already excludes it,
     // rather than asserting on a spawned background task's side effect.
-    let (enabled, skipped) =
-        crate::openhuman::flows::store::list_enabled_flows(&config).unwrap();
+    let (enabled, skipped) = crate::openhuman::flows::store::list_enabled_flows(&config).unwrap();
     assert!(enabled.is_empty());
     assert_eq!(skipped, 0);
 }
@@ -1343,15 +1342,13 @@ async fn dedup_commit_run_started_is_a_noop_for_a_missing_flow() {
     })
     .await;
 
-    assert!(
-        store::kv_get(
-            &config,
-            &dedup_state_namespace("f-gone"),
-            &run_dedup_snapshot_key("run-gone"),
-        )
-        .unwrap()
-        .is_none()
-    );
+    assert!(store::kv_get(
+        &config,
+        &dedup_state_namespace("f-gone"),
+        &run_dedup_snapshot_key("run-gone"),
+    )
+    .unwrap()
+    .is_none());
 }
 
 /// End-to-end proof of the actual bug in issue #5268 item 2, driven
