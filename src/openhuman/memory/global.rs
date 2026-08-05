@@ -126,6 +126,7 @@ pub fn rebind_current_workspace() -> Result<Option<MemoryClientRef>, String> {
 }
 
 fn rebind_in_slot(slot: &GlobalClientSlot) -> Result<Option<MemoryClientRef>, String> {
+    log::debug!("[memory:global] rebind entry");
     let workspace_dir = {
         let guard = slot
             .read()
@@ -133,7 +134,7 @@ fn rebind_in_slot(slot: &GlobalClientSlot) -> Result<Option<MemoryClientRef>, St
         match guard.as_ref() {
             Some(existing) => existing.workspace_dir.clone(),
             None => {
-                log::debug!("[memory:global] rebind skipped — no client bound yet");
+                log::debug!("[memory:global] rebind exit branch=nothing-bound");
                 return Ok(None);
             }
         }
@@ -153,7 +154,16 @@ fn rebind_in_slot_for(
         "[memory:global] rebuilding MemoryClient in place workspace={}",
         workspace_dir.display()
     );
-    let client = Arc::new(MemoryClient::from_workspace_dir(workspace_dir.clone())?);
+    let client = match MemoryClient::from_workspace_dir(workspace_dir.clone()) {
+        Ok(client) => Arc::new(client),
+        Err(error) => {
+            log::debug!(
+                "[memory:global] rebind exit branch=build-failed workspace={} error={error}",
+                workspace_dir.display()
+            );
+            return Err(error);
+        }
+    };
 
     let mut guard = slot
         .write()
@@ -175,6 +185,10 @@ fn rebind_in_slot_for(
             return Ok(None);
         }
     }
+    log::debug!(
+        "[memory:global] rebind exit branch=installed workspace={}",
+        workspace_dir.display()
+    );
     *guard = Some(GlobalMemoryClient {
         workspace_dir,
         client: Arc::clone(&client),

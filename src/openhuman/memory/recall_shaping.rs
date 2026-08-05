@@ -56,14 +56,32 @@ fn condense_with(
 ) -> String {
     let trimmed = content.trim();
     let chunks = UnifiedMemory::chunk_document_content(trimmed, CHUNK_MAX_TOKENS);
+    // Counts and lengths only — this function's input is recalled memory, so
+    // its content must not reach the log.
+    log::debug!(
+        "[memory::recall_shaping] condense entry chars={} chunks={} max_chunks={max_chunks} \
+         max_chars={max_chars} query_chars={}",
+        trimmed.chars().count(),
+        chunks.len(),
+        query.chars().count()
+    );
 
     // Short, few-chunk content is the common case for a real fact — pass it
     // through untouched so nothing is lost to condensation it didn't need.
     if chunks.len() <= max_chunks && trimmed.chars().count() <= max_chars {
+        log::debug!(
+            "[memory::recall_shaping] condense exit branch=passthrough chars={}",
+            trimmed.chars().count()
+        );
         return trimmed.to_string();
     }
     if chunks.is_empty() {
-        return hard_cap(trimmed, max_chars);
+        let out = hard_cap(trimmed, max_chars);
+        log::debug!(
+            "[memory::recall_shaping] condense exit branch=unsplittable chars={}",
+            out.chars().count()
+        );
+        return out;
     }
 
     let query_terms = query_terms(query);
@@ -76,8 +94,16 @@ fn condense_with(
         .collect();
     ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
+    // Once anything matches, an unmatched chunk is not a runner-up — it is
+    // unrelated text, and padding the remaining slots with it hands the model
+    // content the query never asked for next to content it did. Only when
+    // nothing matches does the head of the document become the best available
+    // answer, which is the fallback the all-zero case keeps (the sort's
+    // index tie-break leaves the chunks in document order).
+    let has_match = ranked.iter().any(|(_, score)| *score > 0);
     let mut keep: Vec<usize> = ranked
         .into_iter()
+        .filter(|(_, score)| !has_match || *score > 0)
         .take(max_chunks)
         .map(|(idx, _)| idx)
         .collect();
@@ -97,7 +123,14 @@ fn condense_with(
         rendered.push_str(&format!(" … (+{dropped} more section(s))"));
     }
 
-    hard_cap(&rendered, max_chars)
+    let out = hard_cap(&rendered, max_chars);
+    log::debug!(
+        "[memory::recall_shaping] condense exit branch=selected kept={} dropped={dropped} \
+         had_match={has_match} chars={}",
+        keep.len(),
+        out.chars().count()
+    );
+    out
 }
 
 /// Truncate so the result is at most `max_chars` characters *including* the

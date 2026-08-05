@@ -44,6 +44,53 @@ fn only_the_query_relevant_chunks_survive() {
     );
 }
 
+/// With fewer matches than slots, the leftover slots used to be filled by
+/// whatever sorted next — which, once anything matches, is unrelated text. The
+/// model then read a passage the query never asked for beside one it did.
+#[test]
+fn unmatched_sections_do_not_pad_out_the_remaining_slots() {
+    let content = [
+        para("alpha unrelated"),
+        para("beta 콜로라도 대학 연구"),
+        para("gamma unrelated"),
+        para("delta unrelated"),
+        para("epsilon unrelated"),
+    ]
+    .join("\n\n");
+
+    let out = condense_recall_content("콜로라도", &content);
+
+    assert!(
+        out.contains("beta"),
+        "the only match must be kept: {out:.120}"
+    );
+    for unrelated in ["alpha", "gamma", "delta", "epsilon"] {
+        assert!(
+            !out.contains(unrelated),
+            "`{unrelated}` does not match the query and must not fill a slot: {out:.200}"
+        );
+    }
+}
+
+/// The fallback the change above must not break: with nothing matching there is
+/// no better answer than the head of the document, so the slots are still used.
+#[test]
+fn nothing_matching_still_returns_the_head_of_the_document() {
+    let content = (0..5)
+        .map(|i| para(&format!("sec{i} unrelated")))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let out = condense_recall_content("콜로라도", &content);
+    let kept = (0..5).filter(|i| out.contains(&format!("sec{i}"))).count();
+
+    assert_eq!(
+        kept, MAX_CHUNKS_PER_SOURCE,
+        "with no match the cap still fills from the top: {out:.200}"
+    );
+    assert!(out.contains("sec0"), "and starts at the head: {out:.120}");
+}
+
 #[test]
 fn at_most_three_chunks_from_one_source() {
     // Six sections all match — the cap, not relevance, must bound the output.
