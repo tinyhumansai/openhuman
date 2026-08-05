@@ -414,7 +414,20 @@ async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Res
                 None,
                 identity,
             ));
+            tracing::debug!(
+                target: "mcp",
+                server_id = %server.server_id,
+                transport = "stdio",
+                "[rpc] initialize >>"
+            );
             let init = stdio.initialize().await?;
+            tracing::debug!(
+                target: "mcp",
+                server_id = %server.server_id,
+                transport = "stdio",
+                instructions_present = init.instructions.is_some(),
+                "[rpc] initialize <<"
+            );
             (ActiveClient::Stdio(stdio), init.instructions)
         }
         Transport::HttpRemote { url } => {
@@ -459,7 +472,20 @@ async fn connect_inner(config: &Config, server: &InstalledServer) -> anyhow::Res
             // 30s timeout matches setup_ops::test_connection so install
             // and runtime see the same connect-failure deadlines.
             let http = Arc::new(McpHttpClient::with_options(dial_url, 30, auth, identity));
+            tracing::debug!(
+                target: "mcp",
+                server_id = %server.server_id,
+                transport = "http_remote",
+                "[rpc] initialize >>"
+            );
             let init = http.initialize().await?;
+            tracing::debug!(
+                target: "mcp",
+                server_id = %server.server_id,
+                transport = "http_remote",
+                instructions_present = init.instructions.is_some(),
+                "[rpc] initialize <<"
+            );
             (ActiveClient::Http(http), init.instructions)
         }
     };

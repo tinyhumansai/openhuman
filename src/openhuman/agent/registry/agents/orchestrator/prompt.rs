@@ -686,6 +686,47 @@ mod tests {
     }
 
     #[test]
+    fn connected_mcp_block_bounds_long_instructions() {
+        // Instructions are remote free-form text with no length contract, so a
+        // verbose (or hostile) server must not be able to spend the
+        // orchestrator's prompt budget. The bound is wider than the
+        // description's 240 because guidance is longer than a blurb by nature,
+        // but it is still a bound.
+        use crate::openhuman::mcp::registry::connections::ConnectedServerOverview;
+        let long = "guidance ".repeat(400);
+        assert!(long.len() > 600 * 4, "the fixture must exceed the cap");
+
+        let block = format_connected_mcp_block(&[ConnectedServerOverview {
+            server_id: "id-1".into(),
+            qualified_name: "verbose/server".into(),
+            display_name: "Verbose".into(),
+            description: None,
+            instructions: Some(long.clone()),
+            tools: vec![],
+        }]);
+
+        assert!(
+            block.len() < long.len(),
+            "the rendered line must be shorter than the raw instructions"
+        );
+        assert!(
+            block.contains("guidance"),
+            "the surviving prefix is still rendered: {block:.120}"
+        );
+        // The bound is on the instructions, not on the whole block, so compare
+        // against the block minus its fixed preamble and per-server framing.
+        let line = block
+            .lines()
+            .find(|l| l.starts_with("- **Verbose**"))
+            .expect("the server line renders");
+        assert!(
+            line.len() <= 600 + 120,
+            "instructions must be bounded near 600 bytes, line was {} bytes",
+            line.len()
+        );
+    }
+
+    #[test]
     fn build_includes_datetime() {
         let body = build(&ctx_with(&[])).unwrap();
         assert!(body.contains("## Current Date & Time"));
