@@ -739,13 +739,45 @@ impl DedupCommitSubscriber {
         Some(ids)
     }
 
+    /// Pins the ids of every `dedup` node in the graph this run is starting
+    /// with, so [`Self::dedup_node_ids`] can settle the run against the nodes
+    /// it actually executed rather than whatever the flow has been edited into
+    /// by the time it finishes (issue #5268 item 2).
+    ///
+    /// Reading the saved graph here, rather than having `flows::ops` hand us
+    /// its in-hand `Flow`, keeps the whole fix inside this subscriber.
+    /// `FlowRunStarted` is published from `flows::ops::flows_run{,_detached}`
+    /// immediately after the `flow_runs` row insert — before the engine
+    /// executes a single node — so the graph read back here is the one the run
+    /// is starting with.
+    ///
+    /// Best-effort like everything else in this subscriber: a load failure is
+    /// logged and swallowed, degrading settlement to the historical "use the
+    /// flow's current saved graph" behaviour rather than disturbing the run.
+    fn snapshot_run_nodes(&self, flow_id: &str, run_id: &str) {
+        match store::get_flow(&self.config, flow_id) {
+            Ok(Some(flow)) => snapshot_run_dedup_nodes(&self.config, flow_id, run_id, &flow),
+            // Nothing to pin, and not an error worth logging: the fallback
+            // already handles a flow that is no longer there.
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    target: "flows", %flow_id, %run_id, error = %e,
+                    "[dedup-commit] could not load flow to snapshot its dedup nodes at run start \
+                     — settlement will fall back to the flow's saved graph"
+                );
+            }
+        }
+    }
+
     /// Drops this run's dedup-node snapshot once the run has been settled.
     ///
     /// Best-effort: a failed delete leaves one small run-scoped KV row
     /// behind, which nothing reads again (snapshots are keyed by `run_id`, and
     /// run ids are never reused).
     fn clear_run_snapshot(&self, namespace: &str, flow_id: &str, run_id: &str) {
-        if let Err(e) = store::kv_delete(&self.config, namespace, &run_dedup_snapshot_key(run_id)) {
+        let key = run_dedup_snapshot_key(run_id);
+        if let Err(e) = store::kv_delete(&self.config, namespace, &key) {
             tracing::warn!(
                 target: "flows", %flow_id, %run_id, error = %e,
                 "[dedup-commit] failed to clear this run's dedup snapshot — harmless: the key is \
@@ -877,45 +909,20 @@ impl EventHandler for DedupCommitSubscriber {
     }
 
     async fn handle(&self, event: &DomainEvent) {
-        match event {
-            // Pin the `dedup` nodes THIS run is about to execute, so
-            // settlement at `FlowRunFinished` uses the graph the run really
-            // ran rather than whatever the flow has been edited into by the
-            // time it finishes (issue #5268 item 2).
-            //
-            // Reading the saved graph here rather than having `flows::ops`
-            // hand us its in-hand `Flow` keeps the whole fix inside this
-            // subscriber, and `FlowRunStarted` is published from
-            // `flows::ops::flows_run{,_detached}` immediately after the
-            // `flow_runs` row insert — before the engine executes a single
-            // node — so the graph read back here is the one the run is
-            // starting with.
-            //
-            // Best-effort like everything else in this subscriber: a load
-            // failure is logged and swallowed, degrading settlement to the
-            // historical "use the current saved graph" behaviour rather than
-            // disturbing the run.
-            DomainEvent::FlowRunStarted { flow_id, run_id } => {
-                match store::get_flow(&self.config, flow_id) {
-                    Ok(Some(flow)) => {
-                        snapshot_run_dedup_nodes(&self.config, flow_id, run_id, &flow);
-                    }
-                    // Nothing to pin, and not an error worth logging: the
-                    // fallback already handles a flow that isn't there.
-                    Ok(None) => {}
-                    Err(e) => tracing::warn!(
-                        target: "flows", %flow_id, %run_id, error = %e,
-                        "[dedup-commit] could not load flow to snapshot its dedup nodes at run \
-                         start — settlement will fall back to the flow's saved graph"
-                    ),
-                }
-            }
-            DomainEvent::FlowRunFinished {
-                flow_id,
-                run_id,
-                status,
-            } => self.handle_finished(flow_id, run_id, status).await,
-            _ => {}
+        // Pin the `dedup` nodes THIS run is about to execute, so settlement at
+        // `FlowRunFinished` uses the graph the run really ran rather than
+        // whatever the flow has been edited into by the time it finishes
+        // (issue #5268 item 2).
+        if let DomainEvent::FlowRunStarted { flow_id, run_id } = event {
+            self.snapshot_run_nodes(flow_id, run_id);
+        }
+        if let DomainEvent::FlowRunFinished {
+            flow_id,
+            run_id,
+            status,
+        } = event
+        {
+            self.handle_finished(flow_id, run_id, status).await;
         }
     }
 }
@@ -942,8 +949,8 @@ fn run_dedup_snapshot_key(run_id: &str) -> String {
 
 /// The ids of every `dedup` node in `flow`'s graph, in graph order.
 fn dedup_node_ids_in(flow: &Flow) -> Vec<String> {
-    flow.graph
-        .nodes
+    let nodes = &flow.graph.nodes;
+    nodes
         .iter()
         .filter(|n| n.kind == NodeKind::Dedup)
         .map(|n| n.id.clone())
