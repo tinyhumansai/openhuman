@@ -42,7 +42,7 @@ use crate::openhuman::tools::traits::{
 use super::client::{create_composio_client, direct_list_connections, ComposioClientKind};
 use super::providers::{
     catalog_for_toolkit, classify_unknown, find_curated, get_provider, load_user_scope_or_default,
-    toolkit_from_slug, ToolScope, UserScopePref,
+    provider_for_reshape, toolkit_from_slug, ToolScope, UserScopePref,
 };
 use super::types::ComposioToolsResponse;
 
@@ -1540,7 +1540,13 @@ impl Tool for ComposioExecuteTool {
                 // already clean and unaffected. The sync path applies the same
                 // reshape via `ReshapingExecutor`; here we run it inline on the
                 // agent's direct call.
-                if let Some(provider) = toolkit_from_slug(&tool).and_then(|tk| get_provider(&tk)) {
+                // Only a successful response is reshaped. A failure carries the
+                // provider's diagnostics in `data`, which a reshaper written for
+                // the success shape rewrites into an empty or wrong-shaped
+                // record, and `reshape_supersedes_markdown` would then clear the
+                // backend's error rendering on behalf of a reshape that found
+                // nothing — leaving the model neither.
+                if let Some(provider) = provider_for_reshape(&tool, resp.successful) {
                     provider.post_process_action_result(
                         &tool,
                         reshape_args.as_ref(),

@@ -53,6 +53,28 @@ pub fn register_provider(provider: ProviderArc) {
 }
 
 /// Look up the provider for a toolkit slug, if one is registered.
+/// The provider that should reshape an action response, or `None`.
+///
+/// Two conditions, and the second is the one that is easy to forget at a call
+/// site: the slug must map to a registered provider, **and** the response must
+/// have succeeded. [`ComposioProvider::post_process_action_result`] and
+/// [`ComposioProvider::reshape_supersedes_markdown`] are both written against
+/// the success shape. A failure carries the provider's diagnostics in `data`
+/// instead, so a reshaper run on it rewrites them into an empty or wrong-shaped
+/// record — and `reshape_supersedes_markdown` then clears the backend's error
+/// rendering on behalf of a reshape that found nothing, leaving the model with
+/// neither the error nor the diagnostics.
+///
+/// Named rather than inlined so both execute paths (`ComposioExecuteTool` and
+/// `ComposioActionTool`) state the same rule, and so the rule is testable
+/// without a live client.
+pub fn provider_for_reshape(slug: &str, successful: bool) -> Option<ProviderArc> {
+    if !successful {
+        return None;
+    }
+    super::toolkit_from_slug(slug).and_then(|toolkit| get_provider(&toolkit))
+}
+
 pub fn get_provider(toolkit: &str) -> Option<ProviderArc> {
     let key = toolkit.trim();
     if key.is_empty() {
@@ -149,5 +171,28 @@ mod tests {
     fn empty_slug_is_rejected() {
         register_provider(Arc::new(DummyProvider { slug: "" }));
         assert!(get_provider("").is_none());
+    }
+
+    /// The regression for the failure path. A `GMAIL_LIST_THREADS` that failed
+    /// carries the provider's diagnostics in `data`; reshaping it rewrote them
+    /// into the success shape and then cleared the backend's error rendering on
+    /// behalf of a reshape that had found nothing, so the model got neither.
+    #[test]
+    fn a_failed_response_selects_no_provider_to_reshape_with() {
+        register_provider(Arc::new(DummyProvider { slug: "gmail" }));
+
+        assert!(
+            provider_for_reshape("GMAIL_LIST_THREADS", true).is_some(),
+            "the success case must still reshape, or this test proves nothing"
+        );
+        assert!(provider_for_reshape("GMAIL_LIST_THREADS", false).is_none());
+    }
+
+    /// An unregistered toolkit has nothing to reshape with either way — the
+    /// success flag does not manufacture a provider.
+    #[test]
+    fn an_unknown_slug_selects_no_provider_even_on_success() {
+        assert!(provider_for_reshape("NOT_A_REAL_ACTION", true).is_none());
+        assert!(provider_for_reshape("", true).is_none());
     }
 }

@@ -321,8 +321,14 @@ impl Tool for ComposioActionTool {
                 // per-action Gmail fetch doesn't drop a full MIME tree into the
                 // agent's context. Only the raw-JSON fallback body serializes
                 // `resp.data`; a backend-rendered markdown body is unaffected.
-                if let Some(provider) = super::providers::toolkit_from_slug(&self.action_name)
-                    .and_then(|tk| super::providers::get_provider(&tk))
+                // Only a successful response is reshaped. A failure carries the
+                // provider's diagnostics in `data`, which a reshaper written for
+                // the success shape rewrites into an empty or wrong-shaped
+                // record, and `reshape_supersedes_markdown` would then clear the
+                // backend's error rendering on behalf of a reshape that found
+                // nothing — leaving the model neither.
+                if let Some(provider) =
+                    super::providers::provider_for_reshape(&self.action_name, resp.successful)
                 {
                     provider.post_process_action_result(
                         &self.action_name,
