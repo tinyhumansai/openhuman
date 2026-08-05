@@ -1057,6 +1057,41 @@ async fn recall_keeps_extracted_conversation_memories() {
     }
 }
 
+/// The same filter runs on the query-less path, and only a test that calls it
+/// can say so. `query_namespace_ranked` passing proves nothing about
+/// `recall_namespace_memories` — they load the same documents but neither
+/// delegates to the other, so the filter is applied in two places and either
+/// could lose it alone.
+#[tokio::test]
+async fn query_less_recall_drops_the_copies_and_keeps_the_memories() {
+    let tmp = TempDir::new().unwrap();
+    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+    memory
+        .upsert_document(conversation_copy(
+            "",
+            "user_msg:1",
+            "my flight to Denver is Tuesday",
+        ))
+        .await
+        .unwrap();
+    let mut fact = conversation_copy("", "fact:flight", "the user's flight to Denver is Tuesday");
+    fact.category = "core".to_string();
+    memory.upsert_document(fact).await.unwrap();
+
+    let hits = memory.recall_namespace_memories("", 10).await.unwrap();
+    let keys: Vec<&str> = hits.iter().map(|h| h.key.as_str()).collect();
+
+    assert!(
+        !keys.contains(&"user_msg:1"),
+        "a verbatim copy must not come back from query-less recall either: {keys:?}"
+    );
+    assert!(
+        keys.contains(&"fact:flight"),
+        "and the real memory must still be returned: {keys:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_non_conversation_global_memory_is_untouched() {
     let tmp = TempDir::new().unwrap();

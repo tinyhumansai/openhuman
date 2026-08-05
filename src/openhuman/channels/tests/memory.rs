@@ -132,6 +132,7 @@ async fn process_channel_message_does_not_replay_a_prior_message_from_memory() {
     let provider_impl = Arc::new(HistoryCaptureModel::default());
     let tmp = TempDir::new().unwrap();
     let memory = Arc::new(UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap());
+    let store = memory.clone();
 
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
@@ -213,6 +214,24 @@ async fn process_channel_message_does_not_replay_a_prior_message_from_memory() {
         calls[1][1].1.contains("What is my launch code?"),
         "current user question should remain in the final prompt: {:?}",
         calls[1][1]
+    );
+    drop(calls);
+
+    // The prompt assertion alone cannot tell "never stored" from "stored and
+    // hidden by the recall filter" — it would pass either way, which is the
+    // wrong thing for it to be indifferent about. Read the store directly.
+    let stored: i64 = {
+        let conn = store.conn.lock();
+        conn.query_row(
+            "SELECT COUNT(*) FROM memory_docs WHERE content LIKE '%phoenix-773%'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        stored, 0,
+        "the inbound message must not be written to the memory store at all"
     );
 }
 

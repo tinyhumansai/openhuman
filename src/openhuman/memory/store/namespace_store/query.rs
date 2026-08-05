@@ -142,7 +142,15 @@ impl UnifiedMemory {
     /// - the fixed key `assistant_resp` — a 100-character truncation of the
     ///   last assistant reply, mislabelled `Daily`, overwritten every turn.
     fn drop_verbatim_conversation_copies(ns: &str, docs: &mut Vec<StoredMemoryDocument>) {
+        log::debug!(
+            "[memory::query] drop-copies entry namespace={ns} docs={}",
+            docs.len()
+        );
         if ns != GLOBAL_NAMESPACE {
+            log::debug!(
+                "[memory::query] drop-copies exit branch=non-global namespace={ns} docs={}",
+                docs.len()
+            );
             return;
         }
         let before = docs.len();
@@ -154,13 +162,14 @@ impl UnifiedMemory {
             !(is_message_copy || is_assistant_snapshot)
         });
         let dropped = before - docs.len();
-        if dropped > 0 {
-            tracing::debug!(
-                "[query] dropped {dropped} verbatim conversation copy/copies from recall \
-                 namespace={ns} remaining={} (transcript_search reads the transcript instead)",
-                docs.len()
-            );
-        }
+        // One exit event either way: a run that drops nothing is as much a fact
+        // about this filter as one that drops. Counts only — these documents are
+        // recalled memory and their content must not reach the log.
+        log::debug!(
+            "[memory::query] drop-copies exit branch=global namespace={ns} dropped={dropped} \
+             remaining={} (transcript_search reads the transcript instead)",
+            docs.len()
+        );
     }
 
     /// Hybrid retrieval: returns ranked hits across documents and KV records,
