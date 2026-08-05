@@ -89,6 +89,19 @@ pub fn toolkit_description(slug: &str) -> &'static str {
 /// Gmail read action answers with a markdown body, when only
 /// `GMAIL_FETCH_EMAILS` carries one.
 pub fn toolkit_result_notes(slug: &str) -> Option<&'static str> {
+    let notes = result_notes_for(slug);
+    // The result content is prose we authored, not user data, but log only
+    // whether an entry exists: the notes themselves belong in the prompt, and
+    // repeating a paragraph per lookup is noise at debug level.
+    tracing::debug!(
+        toolkit = %slug,
+        has_notes = notes.is_some(),
+        "[composio] toolkit result-notes lookup"
+    );
+    notes
+}
+
+fn result_notes_for(slug: &str) -> Option<&'static str> {
     match slug {
         // Reshapes: `gmail/post_process.rs::{reshape_fetch_emails, reshape_list_threads}`.
         // Slugs: `gmail/tools.rs::GMAIL_CURATED`.
@@ -129,20 +142,26 @@ mod tests {
     /// after a tool that is not in its list.
     #[test]
     fn result_notes_only_name_curated_action_slugs() {
-        let curated: Vec<&str> = super::super::gmail::GMAIL_CURATED
+        // Each toolkit is checked against its OWN catalogue. Pooling them let a
+        // Gmail note name a Slack-only action and still pass, which is the
+        // mistake most likely to be made when editing prose that mentions both.
+        let gmail: Vec<&str> = super::super::gmail::GMAIL_CURATED
             .iter()
             .map(|t| t.slug)
-            .chain(super::super::catalogs::SLACK_CURATED.iter().map(|t| t.slug))
+            .collect();
+        let slack: Vec<&str> = super::super::catalogs::SLACK_CURATED
+            .iter()
+            .map(|t| t.slug)
             .collect();
 
-        for slug in ["gmail", "slack"] {
+        for (slug, curated) in [("gmail", &gmail), ("slack", &slack)] {
             let notes = toolkit_result_notes(slug).expect("both toolkits have notes");
             for word in notes.split(|c: char| !(c.is_ascii_uppercase() || c == '_')) {
                 // An all-caps underscored token in this prose is an action slug.
                 if word.len() > 6 && word.contains('_') {
                     assert!(
                         curated.contains(&word),
-                        "{slug} notes name `{word}`, which is not a curated action"
+                        "{slug} notes name `{word}`, which is not one of {slug}'s curated actions"
                     );
                 }
             }
