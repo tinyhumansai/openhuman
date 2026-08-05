@@ -7,8 +7,9 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    default_state, invoke_method, is_session_expired_error, is_unconfirmed_unauthorized_error,
-    params_to_object, parse_json_params, type_name, DomainSubscriberPlan,
+    default_state, group_first_time, group_first_time_when_bus_ready, invoke_method,
+    is_session_expired_error, is_unconfirmed_unauthorized_error, params_to_object,
+    parse_json_params, type_name, DomainSubscriberPlan,
 };
 // These are the `http-server`-gated RPC-surface symbols (#5048); the tests that
 // name them below carry the same `#[cfg]` so the disabled-build test compile
@@ -95,6 +96,72 @@ fn domain_subscriber_plan_harness_gates_by_owning_group() {
         "harness must skip hosted orchestration ingest"
     );
     assert!(!plan.mcp, "harness must skip mcp_registry bus init");
+}
+
+#[test]
+fn domain_subscriber_registration_retries_after_bus_becomes_ready() {
+    use crate::core::all::DomainGroup;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    let completed = Mutex::new(HashSet::new());
+
+    assert!(!group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Flows,
+        false,
+    ));
+    assert!(
+        completed.lock().expect("registry lock").is_empty(),
+        "a deferred attempt must not mark the group complete"
+    );
+
+    assert!(group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Flows,
+        true,
+    ));
+    assert!(
+        completed
+            .lock()
+            .expect("registry lock")
+            .contains(&DomainGroup::Flows),
+        "the ready retry must mark the group complete"
+    );
+}
+
+#[test]
+fn domain_subscriber_registration_is_idempotent_after_success() {
+    use crate::core::all::DomainGroup;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    let completed = Mutex::new(HashSet::new());
+
+    assert!(group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Channels,
+        true,
+    ));
+    assert!(!group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Channels,
+        true,
+    ));
+    assert_eq!(
+        completed.lock().expect("registry lock").len(),
+        1,
+        "a completed group must be recorded exactly once"
+    );
+}
+
+#[test]
+fn domain_subscriber_registration_wrapper_uses_the_global_bus() {
+    use crate::core::all::DomainGroup;
+
+    crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
+    assert!(group_first_time(DomainGroup::Media));
+    assert!(!group_first_time(DomainGroup::Media));
 }
 
 /// #5027 — the tool-execution timeout must be seeded on the always-on core boot
