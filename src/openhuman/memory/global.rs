@@ -138,7 +138,17 @@ fn rebind_in_slot(slot: &GlobalClientSlot) -> Result<Option<MemoryClientRef>, St
             }
         }
     };
+    rebind_in_slot_for(slot, workspace_dir)
+}
 
+/// The build-and-install half of [`rebind_in_slot`], split out so the
+/// install-time recheck can be exercised directly: a test can hand it a
+/// workspace the slot has since moved off, which is what the released lock
+/// makes possible in production.
+fn rebind_in_slot_for(
+    slot: &GlobalClientSlot,
+    workspace_dir: PathBuf,
+) -> Result<Option<MemoryClientRef>, String> {
     log::info!(
         "[memory:global] rebuilding MemoryClient in place workspace={}",
         workspace_dir.display()
@@ -148,6 +158,23 @@ fn rebind_in_slot(slot: &GlobalClientSlot) -> Result<Option<MemoryClientRef>, St
     let mut guard = slot
         .write()
         .map_err(|e| format!("[memory:global] write lock poisoned: {e}"))?;
+    // The lock is released while the client is built, so an `init` for a
+    // different workspace (a post-login active-user switch) can land in the
+    // gap. Installing unconditionally would then overwrite that newer binding
+    // with a client for the workspace this rebind started from, and every write
+    // after it would go to the previous user's store. A rebind is only ever
+    // valid for the binding it read.
+    match guard.as_ref() {
+        Some(current) if current.workspace_dir == workspace_dir => {}
+        _ => {
+            log::info!(
+                "[memory:global] discarding rebuilt MemoryClient for {} — the global rebound \
+                 while it was being built",
+                workspace_dir.display()
+            );
+            return Ok(None);
+        }
+    }
     *guard = Some(GlobalMemoryClient {
         workspace_dir,
         client: Arc::clone(&client),
@@ -277,6 +304,31 @@ mod tests {
             "rebind must build a new client, not hand back the bound one"
         );
         assert!(Arc::ptr_eq(&rebound, &current), "and must install it");
+    }
+
+    /// The window the rebind opens: it releases the read lock to build, so an
+    /// `init` for a different workspace can land before it installs. Installing
+    /// anyway would point the global at the workspace the rebind *started*
+    /// from — the pre-login store, after a post-login user switch. Simulated by
+    /// rebinding the slot out from under a client built for the old workspace.
+    #[tokio::test]
+    async fn rebind_does_not_overwrite_a_workspace_bound_while_it_was_building() {
+        let slot = GlobalClientSlot::default();
+        let tmp = TempDir::new().unwrap();
+        let workspace_a = tmp.path().join("ws-a");
+
+        let _a = init_in_slot(&slot, workspace_a.clone()).unwrap();
+        // Stand in for the build window: the switch happens before the install.
+        let b = init_in_slot(&slot, tmp.path().join("ws-b")).unwrap();
+
+        // A rebind that read `ws-a` must find the slot changed and stand down.
+        let stale = rebind_in_slot_for(&slot, workspace_a).unwrap();
+
+        assert!(stale.is_none(), "a stale rebind must not install");
+        assert!(
+            Arc::ptr_eq(&client_from(&slot).unwrap(), &b),
+            "the newer binding must survive"
+        );
     }
 
     #[tokio::test]
