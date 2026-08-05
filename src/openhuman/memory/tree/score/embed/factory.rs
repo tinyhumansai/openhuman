@@ -551,109 +551,6 @@ mod tests {
         assert_eq!(e.name(), "inert");
     }
 
-    #[test]
-    fn write_embedder_routes_to_openai_when_memory_provider_is_openai() {
-        // #002 FR-015 regression: the headline bug was that a user-configured
-        // OpenAI embeddings provider (`config.memory.embedding_provider =
-        // "openai"`) matched no factory branch and silently fell through to the
-        // managed-budget backend. Lock the routing in at the FACTORY level —
-        // `openai_compat`'s own tests only cover `try_from_config` in isolation,
-        // so a factory refactor could re-break this with those tests still green.
-        //
-        // Note the two distinct config fields the factory reads: the top-level
-        // `embeddings_provider` (here unset, so the "none"/`ollama:` branches do
-        // not match) vs `memory.embedding_provider` (the unified Embeddings-
-        // settings field that drives the OpenAI/custom detection).
-        let _guard = degraded_flag_lock();
-        use crate::openhuman::memory::tree::health::{
-            current_degraded_state, mark_semantic_recall_degraded, FailureCode,
-        };
-        mark_semantic_recall_degraded(FailureCode::EmbeddingsUnconfigured);
-        let (_tmp, mut cfg) = test_config();
-        cfg.memory_tree.embedding_endpoint = None;
-        cfg.memory_tree.embedding_model = None;
-        cfg.embeddings_provider = None; // top-level workload routing: unset
-        cfg.memory.embedding_provider = "openai".to_string();
-        cfg.memory.embedding_model = "text-embedding-3-large".to_string();
-        let e = build_write_embedder(&cfg)
-            .expect("factory must not error")
-            .expect("openai provider → Some(embedder), must NOT fall through to skip/cloud");
-        assert_eq!(
-            e.name(),
-            "openai",
-            "must route to the user's OpenAI embeddings, not the managed backend"
-        );
-        assert!(
-            !current_degraded_state().semantic_recall,
-            "a usable OpenAI provider must clear the degraded flag"
-        );
-    }
-
-    #[test]
-    fn write_embedder_routes_to_lmstudio_local_endpoint() {
-        // #3781 regression at the factory/seal level: a configured local
-        // OpenAI-compatible embeddings backend (LM Studio at localhost:1234,
-        // registered as a `cloud_providers` slug) must drive bucket sealing —
-        // the same way the LLM extractor already resolves the `lmstudio` slug —
-        // and NOT fall through to the managed cloud budget (which 400s with
-        // "Insufficient budget" and fails the seal job unrecoverably).
-        use crate::openhuman::config::schema::cloud_providers::CloudProviderCreds;
-        use crate::openhuman::memory::tree::health::{
-            current_degraded_state, mark_semantic_recall_degraded, FailureCode,
-        };
-        let _guard = degraded_flag_lock();
-        mark_semantic_recall_degraded(FailureCode::EmbeddingsUnconfigured);
-        let (_tmp, mut cfg) = test_config();
-        cfg.memory_tree.embedding_endpoint = None;
-        cfg.memory_tree.embedding_model = None;
-        cfg.embeddings_provider = None; // top-level workload routing: unset
-        cfg.memory.embedding_provider = "lmstudio".to_string();
-        cfg.memory.embedding_model = "bge-m3".to_string();
-        cfg.cloud_providers = vec![CloudProviderCreds {
-            id: "p_lmstudio".to_string(),
-            slug: "lmstudio".to_string(),
-            endpoint: "http://localhost:1234/v1".to_string(),
-            ..Default::default()
-        }];
-        let e = build_write_embedder(&cfg)
-            .expect("factory must not error")
-            .expect("lmstudio backend → Some(embedder), must NOT fall through to cloud");
-        assert_eq!(
-            e.name(),
-            "custom",
-            "must route to the local OpenAI-compatible endpoint, not the managed backend"
-        );
-        assert!(
-            !current_degraded_state().semantic_recall,
-            "a usable local provider must clear the degraded flag"
-        );
-    }
-
-    #[test]
-    fn read_embedder_routes_to_openai_when_memory_provider_is_openai() {
-        // Same FR-015 routing, read path (`build_embedder_from_config`).
-        let (_tmp, mut cfg) = test_config();
-        cfg.memory_tree.embedding_endpoint = None;
-        cfg.memory_tree.embedding_model = None;
-        cfg.embeddings_provider = None;
-        cfg.memory.embedding_provider = "openai".to_string();
-        cfg.memory.embedding_model = "text-embedding-3-large".to_string();
-        let e = build_embedder_from_config(&cfg).expect("openai path should build");
-        assert_eq!(e.name(), "openai");
-    }
-
-    #[test]
-    fn explicit_endpoint_override_wins_over_local_ai_flag() {
-        // Power-user override beats the checkbox.
-        let (_tmp, mut cfg) = test_config();
-        cfg.memory_tree.embedding_endpoint = Some("http://staging-embed:11434".into());
-        cfg.memory_tree.embedding_model = Some("bge-m3".into());
-        cfg.local_ai.runtime_enabled = true;
-        cfg.local_ai.usage.embeddings = true;
-        let e = build_embedder_from_config(&cfg).expect("override path should build");
-        assert_eq!(e.name(), "ollama");
-    }
-
     // resolved_embedder (health-doctor diagnostic view)
     //
     // `resolved_embedder` is the ladder's answer *without* building anything.
@@ -757,5 +654,108 @@ mod tests {
             );
             assert_eq!(built.name(), expected);
         }
+    }
+
+    #[test]
+    fn write_embedder_routes_to_openai_when_memory_provider_is_openai() {
+        // #002 FR-015 regression: the headline bug was that a user-configured
+        // OpenAI embeddings provider (`config.memory.embedding_provider =
+        // "openai"`) matched no factory branch and silently fell through to the
+        // managed-budget backend. Lock the routing in at the FACTORY level —
+        // `openai_compat`'s own tests only cover `try_from_config` in isolation,
+        // so a factory refactor could re-break this with those tests still green.
+        //
+        // Note the two distinct config fields the factory reads: the top-level
+        // `embeddings_provider` (here unset, so the "none"/`ollama:` branches do
+        // not match) vs `memory.embedding_provider` (the unified Embeddings-
+        // settings field that drives the OpenAI/custom detection).
+        let _guard = degraded_flag_lock();
+        use crate::openhuman::memory::tree::health::{
+            current_degraded_state, mark_semantic_recall_degraded, FailureCode,
+        };
+        mark_semantic_recall_degraded(FailureCode::EmbeddingsUnconfigured);
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.embeddings_provider = None; // top-level workload routing: unset
+        cfg.memory.embedding_provider = "openai".to_string();
+        cfg.memory.embedding_model = "text-embedding-3-large".to_string();
+        let e = build_write_embedder(&cfg)
+            .expect("factory must not error")
+            .expect("openai provider → Some(embedder), must NOT fall through to skip/cloud");
+        assert_eq!(
+            e.name(),
+            "openai",
+            "must route to the user's OpenAI embeddings, not the managed backend"
+        );
+        assert!(
+            !current_degraded_state().semantic_recall,
+            "a usable OpenAI provider must clear the degraded flag"
+        );
+    }
+
+    #[test]
+    fn write_embedder_routes_to_lmstudio_local_endpoint() {
+        // #3781 regression at the factory/seal level: a configured local
+        // OpenAI-compatible embeddings backend (LM Studio at localhost:1234,
+        // registered as a `cloud_providers` slug) must drive bucket sealing —
+        // the same way the LLM extractor already resolves the `lmstudio` slug —
+        // and NOT fall through to the managed cloud budget (which 400s with
+        // "Insufficient budget" and fails the seal job unrecoverably).
+        use crate::openhuman::config::schema::cloud_providers::CloudProviderCreds;
+        use crate::openhuman::memory::tree::health::{
+            current_degraded_state, mark_semantic_recall_degraded, FailureCode,
+        };
+        let _guard = degraded_flag_lock();
+        mark_semantic_recall_degraded(FailureCode::EmbeddingsUnconfigured);
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.embeddings_provider = None; // top-level workload routing: unset
+        cfg.memory.embedding_provider = "lmstudio".to_string();
+        cfg.memory.embedding_model = "bge-m3".to_string();
+        cfg.cloud_providers = vec![CloudProviderCreds {
+            id: "p_lmstudio".to_string(),
+            slug: "lmstudio".to_string(),
+            endpoint: "http://localhost:1234/v1".to_string(),
+            ..Default::default()
+        }];
+        let e = build_write_embedder(&cfg)
+            .expect("factory must not error")
+            .expect("lmstudio backend → Some(embedder), must NOT fall through to cloud");
+        assert_eq!(
+            e.name(),
+            "custom",
+            "must route to the local OpenAI-compatible endpoint, not the managed backend"
+        );
+        assert!(
+            !current_degraded_state().semantic_recall,
+            "a usable local provider must clear the degraded flag"
+        );
+    }
+
+    #[test]
+    fn read_embedder_routes_to_openai_when_memory_provider_is_openai() {
+        // Same FR-015 routing, read path (`build_embedder_from_config`).
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.embeddings_provider = None;
+        cfg.memory.embedding_provider = "openai".to_string();
+        cfg.memory.embedding_model = "text-embedding-3-large".to_string();
+        let e = build_embedder_from_config(&cfg).expect("openai path should build");
+        assert_eq!(e.name(), "openai");
+    }
+
+    #[test]
+    fn explicit_endpoint_override_wins_over_local_ai_flag() {
+        // Power-user override beats the checkbox.
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = Some("http://staging-embed:11434".into());
+        cfg.memory_tree.embedding_model = Some("bge-m3".into());
+        cfg.local_ai.runtime_enabled = true;
+        cfg.local_ai.usage.embeddings = true;
+        let e = build_embedder_from_config(&cfg).expect("override path should build");
+        assert_eq!(e.name(), "ollama");
     }
 }
