@@ -6,17 +6,21 @@ on:
       - "ci/fmt-probe"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  fmt-probe:
-    name: Fmt Probe
+  fmt-fix:
+    name: Fmt Fix
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout the PR branch
+        uses: actions/checkout@v5
         with:
+          ref: fix/5268-dedup-run-graph-snapshot
           fetch-depth: 1
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Install pinned toolchain
         run: |
@@ -31,29 +35,38 @@ jobs:
           echo "edition=${ED:-2021}" >> "$GITHUB_OUTPUT"
           echo "edition is ${ED:-2021}"
 
-      - name: Run rustfmt on the two touched files
+      - name: Format the two touched files
         run: |
-          set +e
           rustup run 1.96.1 rustfmt \
             --edition "${{ steps.ed.outputs.edition }}" \
-            --check \
             src/openhuman/flows/bus.rs \
-            src/openhuman/flows/bus_tests.rs \
-            > fmt.diff 2>&1
-          echo "rustfmt exit: $?"
-          wc -c fmt.diff
+            src/openhuman/flows/bus_tests.rs
 
-      - name: Publish diff
+      - name: Show what rustfmt changed
         run: |
+          git --no-pager diff --stat
+          git --no-pager diff > applied.diff || true
           {
-            echo '### rustfmt --check diff'
+            echo '### rustfmt applied'
             echo '```diff'
-            cat fmt.diff
+            cat applied.diff
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ -s fmt.diff ]; then
-            msg=$(sed -e 's/%/%25/g' -e 's/\r//g' fmt.diff | awk '{printf "%s%%0A", $0}')
-            echo "::error title=FMTDIFF::$msg"
-            exit 1
+          if [ -s applied.diff ]; then
+            msg=$(sed -e 's/%/%25/g' -e 's/\r//g' applied.diff | awk '{printf "%s%%0A", $0}')
+            echo "::warning title=APPLIED::$msg"
+          else
+            echo "::notice title=APPLIED::already clean, nothing to do"
           fi
-          echo "rustfmt is clean"
+
+      - name: Commit and push if anything changed
+        run: |
+          if [ -z "$(git status --porcelain -- src/openhuman/flows)" ]; then
+            echo "nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/openhuman/flows/bus.rs src/openhuman/flows/bus_tests.rs
+          git commit -m "style: apply cargo fmt to the touched flows files"
+          git push origin HEAD:fix/5268-dedup-run-graph-snapshot
