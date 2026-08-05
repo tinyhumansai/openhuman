@@ -1,0 +1,59 @@
+name: Fmt Probe
+
+on:
+  push:
+    branches:
+      - "ci/fmt-probe"
+  workflow_dispatch:
+
+jobs:
+  fmt-probe:
+    name: Fmt Probe
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install pinned toolchain
+        run: |
+          rustup toolchain install 1.96.1 --profile minimal --component rustfmt
+          rustup component add rustfmt --toolchain 1.96.1
+          rustup run 1.96.1 rustfmt --version
+
+      - name: Detect edition
+        id: ed
+        run: |
+          ED=$(grep -m1 -E '^\s*edition\s*=' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "edition=${ED:-2021}" >> "$GITHUB_OUTPUT"
+          echo "edition is ${ED:-2021}"
+
+      - name: Run rustfmt on the two touched files
+        run: |
+          set +e
+          rustup run 1.96.1 rustfmt \
+            --edition "${{ steps.ed.outputs.edition }}" \
+            --check \
+            src/openhuman/flows/bus.rs \
+            src/openhuman/flows/bus_tests.rs \
+            > fmt.diff 2>&1
+          echo "rustfmt exit: $?"
+          wc -c fmt.diff
+
+      - name: Publish diff
+        run: |
+          {
+            echo '### rustfmt --check diff'
+            echo '```diff'
+            cat fmt.diff
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -s fmt.diff ]; then
+            msg=$(sed -e 's/%/%25/g' -e 's/\r//g' fmt.diff | awk '{printf "%s%%0A", $0}')
+            echo "::error title=FMTDIFF::$msg"
+            exit 1
+          fi
+          echo "rustfmt is clean"
