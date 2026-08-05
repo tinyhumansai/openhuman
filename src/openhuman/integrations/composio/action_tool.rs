@@ -333,7 +333,9 @@ impl Tool for ComposioActionTool {
                     // provider says its version supersedes: the body below
                     // prefers `markdownFormatted` and only falls back to the
                     // JSON envelope when it is absent.
-                    if provider.reshape_supersedes_markdown(&self.action_name) {
+                    if provider
+                        .reshape_supersedes_markdown(&self.action_name, reshape_args.as_ref())
+                    {
                         tracing::debug!(
                             tool = %&self.action_name,
                             "[composio] provider reshape supersedes the backend markdown rendering"

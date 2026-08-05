@@ -252,10 +252,21 @@ pub trait ComposioProvider: Send + Sync {
     /// rendered as a bare list of thread ids that discards the subjects,
     /// senders, dates, and snippets the same payload carries.
     ///
+    /// `arguments` is the caller's original argument object, because the answer
+    /// is a property of the **call**, not of the slug alone: the same action can
+    /// be invoked in a way that skips the reshape entirely. Gmail's `raw_html`
+    /// opt-out is the live example — `post_process` returns early and leaves
+    /// `data` untouched, so a slug-only `true` cleared the rendering on behalf
+    /// of a reshape that never ran and the model got neither.
+    ///
     /// Default `false`: a provider that has not thought about it keeps the
     /// existing behaviour.
-    fn reshape_supersedes_markdown(&self, slug: &str) -> bool {
-        let _ = slug;
+    fn reshape_supersedes_markdown(
+        &self,
+        slug: &str,
+        arguments: Option<&serde_json::Value>,
+    ) -> bool {
+        let _ = (slug, arguments);
         false
     }
 

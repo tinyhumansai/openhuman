@@ -99,8 +99,14 @@ impl ComposioProvider for GmailProvider {
     /// `GMAIL_FETCH_EMAILS` is deliberately absent: its reshape *reads*
     /// `markdownFormatted` for the message body (`extract_markdown_body`), so
     /// clearing it there would throw away the body rather than reveal it.
-    fn reshape_supersedes_markdown(&self, slug: &str) -> bool {
+    fn reshape_supersedes_markdown(&self, slug: &str, arguments: Option<&Value>) -> bool {
+        // `raw_html` makes `post_process` pass the response through untouched,
+        // so there is no reshape to supersede anything. Clearing the rendering
+        // anyway left the model with neither the backend summary nor the slim
+        // envelope — just the raw MIME tree, which is the opposite of what the
+        // flag is for.
         slug.eq_ignore_ascii_case("GMAIL_LIST_THREADS")
+            && !super::post_process::is_raw_html_flag_set(arguments)
     }
 
     async fn fetch_user_profile(
@@ -215,16 +221,16 @@ impl ComposioProvider for GmailProvider {
 #[cfg(test)]
 mod supersede_tests {
     use super::*;
-    use crate::openhuman::memory_sync::composio::providers::ComposioProvider;
+    use crate::openhuman::memory::sync::composio::providers::ComposioProvider;
 
     /// The rendering for a thread list is a bare id list, so the reshape — which
     /// lifts the subject, sender, date, and snippet the same payload carries —
     /// has to replace it or the model never sees any of them.
     #[test]
     fn the_thread_list_reshape_supersedes_the_backend_rendering() {
-        assert!(GmailProvider.reshape_supersedes_markdown("GMAIL_LIST_THREADS"));
+        assert!(GmailProvider.reshape_supersedes_markdown("GMAIL_LIST_THREADS", None));
         // The model's casing varies; the action does not.
-        assert!(GmailProvider.reshape_supersedes_markdown("gmail_list_threads"));
+        assert!(GmailProvider.reshape_supersedes_markdown("gmail_list_threads", None));
     }
 
     /// The failure case that matters. `reshape_fetch_emails` READS
@@ -232,8 +238,70 @@ mod supersede_tests {
     /// throw the body away instead of revealing it.
     #[test]
     fn the_message_fetch_reshape_does_not() {
-        assert!(!GmailProvider.reshape_supersedes_markdown("GMAIL_FETCH_EMAILS"));
-        assert!(!GmailProvider.reshape_supersedes_markdown("GMAIL_FETCH_MESSAGE_BY_THREAD_ID"));
-        assert!(!GmailProvider.reshape_supersedes_markdown("GMAIL_SEND_EMAIL"));
+        assert!(!GmailProvider.reshape_supersedes_markdown("GMAIL_FETCH_EMAILS", None));
+        assert!(
+            !GmailProvider.reshape_supersedes_markdown("GMAIL_FETCH_MESSAGE_BY_THREAD_ID", None)
+        );
+        assert!(!GmailProvider.reshape_supersedes_markdown("GMAIL_SEND_EMAIL", None));
+    }
+
+    /// `raw_html` makes `post_process` pass the response through untouched, so
+    /// there is no reshape to supersede. Answering `true` anyway cleared the
+    /// rendering on behalf of a reshape that never ran, and the model was handed
+    /// the raw MIME tree with neither the backend summary nor the slim envelope.
+    #[test]
+    fn a_raw_html_call_supersedes_nothing() {
+        let raw = json!({ "raw_html": true });
+        assert!(!GmailProvider.reshape_supersedes_markdown("GMAIL_LIST_THREADS", Some(&raw)));
+        // The camelCase spelling the model also sends.
+        let camel = json!({ "rawHtml": true });
+        assert!(!GmailProvider.reshape_supersedes_markdown("GMAIL_LIST_THREADS", Some(&camel)));
+        // Explicitly off is the ordinary call, and still supersedes.
+        let off = json!({ "raw_html": false });
+        assert!(GmailProvider.reshape_supersedes_markdown("GMAIL_LIST_THREADS", Some(&off)));
+    }
+}
+
+#[cfg(test)]
+mod dispatch_case_tests {
+    use super::*;
+    use crate::openhuman::memory::sync::composio::providers::ComposioProvider;
+
+    /// The slug reaching `post_process` is whatever the model wrote —
+    /// `composio_execute` takes the action as an argument, so a lowercase spelling
+    /// arrives verbatim. A case-sensitive dispatch fell through to the no-op arm
+    /// while `reshape_supersedes_markdown` folded case and still cleared the
+    /// backend rendering: the model got the raw MIME tree and nothing else.
+    #[test]
+    fn a_lowercase_slug_is_reshaped_like_its_uppercase_spelling() {
+        let payload = || {
+            json!({
+                "threads": [{
+                    "id": "abc",
+                    "snippet": "hello",
+                    "messages": [{
+                        "payload": { "headers": [
+                            { "name": "Subject", "value": "Quarterly report" },
+                            { "name": "From", "value": "a@example.com" }
+                        ]}
+                    }]
+                }]
+            })
+        };
+
+        let mut upper = payload();
+        GmailProvider.post_process_action_result("GMAIL_LIST_THREADS", None, &mut upper);
+        let mut lower = payload();
+        GmailProvider.post_process_action_result("gmail_list_threads", None, &mut lower);
+
+        assert_eq!(
+            upper, lower,
+            "the action is the same action whatever the model capitalises"
+        );
+        // And the reshape actually ran, so the assertion above is not two no-ops.
+        assert!(
+            upper.to_string().contains("Quarterly report"),
+            "the reshape lifts the subject out of the MIME tree: {upper}"
+        );
     }
 }

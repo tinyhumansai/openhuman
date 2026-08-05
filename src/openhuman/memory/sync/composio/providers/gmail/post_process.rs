@@ -65,10 +65,17 @@ pub fn post_process(slug: &str, arguments: Option<&Value>, data: &mut Value) {
         );
         return;
     }
-    match slug {
-        "GMAIL_FETCH_EMAILS" => reshape_fetch_emails(data),
-        "GMAIL_LIST_THREADS" => reshape_list_threads(data),
-        _ => {}
+    // Case-insensitive, because the slug reaching here is whatever the model
+    // wrote. `composio_execute` takes the action as an argument, so a lowercase
+    // `gmail_list_threads` arrives verbatim; a case-sensitive match dropped it
+    // to the no-op arm while `reshape_supersedes_markdown` — which folds case —
+    // still cleared the backend rendering, handing the model the raw MIME tree
+    // with neither the reshape nor the markdown. The action is the same action
+    // whatever the model capitalises; only one of the two may decide that.
+    if slug.eq_ignore_ascii_case("GMAIL_FETCH_EMAILS") {
+        reshape_fetch_emails(data);
+    } else if slug.eq_ignore_ascii_case("GMAIL_LIST_THREADS") {
+        reshape_list_threads(data);
     }
 }
 
@@ -379,7 +386,7 @@ fn validate_segments_against_hints(segments: &[String], hints: &[Value]) -> bool
 
 /// Returns true when the caller explicitly set `raw_html: true` (or the
 /// camelCase `rawHtml: true`) in the `arguments` object.
-fn is_raw_html_flag_set(arguments: Option<&Value>) -> bool {
+pub(super) fn is_raw_html_flag_set(arguments: Option<&Value>) -> bool {
     let Some(obj) = arguments.and_then(|v| v.as_object()) else {
         return false;
     };
