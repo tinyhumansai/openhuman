@@ -149,14 +149,19 @@ async fn recall_namespace_memories_includes_namespace_kv() {
     )));
 }
 
+/// The regression for #5312: an episodic row matching the query must not come
+/// back from a global memory search. Episodic rows are raw chat turns, and
+/// `memory_hybrid_search` renders every hit it is handed — so a merged episodic
+/// hit put the verbatim conversation back into recall through a second door,
+/// after `drop_verbatim_conversation_copies` had removed it from the document
+/// side. Reading the conversation is `transcript_search`'s job.
 #[tokio::test]
-async fn query_returns_episodic_hits_when_available() {
+async fn a_matching_episodic_row_is_not_returned_by_memory_search() {
     use crate::openhuman::memory::store::fts5::{self, EpisodicEntry};
 
     let tmp = TempDir::new().unwrap();
     let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
 
-    // Insert an episodic entry that matches the query.
     fts5::episodic_insert(
         &memory.conn,
         &EpisodicEntry {
@@ -172,18 +177,24 @@ async fn query_returns_episodic_hits_when_available() {
     )
     .unwrap();
 
+    // The row matches: `episodic_search` finds it directly.
+    let direct = fts5::episodic_search(&memory.conn, "Tokio async Rust", 10).unwrap();
+    assert!(
+        !direct.is_empty(),
+        "the fixture must match, or this test proves nothing"
+    );
+
     let hits = memory
         .query_namespace_hits("global", "Tokio async Rust", 10)
         .await
         .unwrap();
 
-    let episodic_hits: Vec<_> = hits
-        .iter()
-        .filter(|h| h.kind == crate::openhuman::memory::store::MemoryItemKind::Episodic)
-        .collect();
     assert!(
-        !episodic_hits.is_empty(),
-        "Expected at least one Episodic hit for 'Tokio async Rust'"
+        !hits
+            .iter()
+            .any(|h| h.kind == crate::openhuman::memory::store::MemoryItemKind::Episodic),
+        "memory search must not replay transcript rows: {:?}",
+        hits.iter().map(|h| (&h.kind, &h.key)).collect::<Vec<_>>()
     );
 }
 
@@ -226,99 +237,6 @@ async fn query_returns_event_hits_when_available() {
     assert!(
         !event_hits.is_empty(),
         "Expected at least one Event hit for 'PostgreSQL database'"
-    );
-}
-
-#[tokio::test]
-async fn query_episodic_hits_have_correct_kind() {
-    use crate::openhuman::memory::store::fts5::{self, EpisodicEntry};
-
-    let tmp = TempDir::new().unwrap();
-    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
-
-    fts5::episodic_insert(
-        &memory.conn,
-        &EpisodicEntry {
-            id: None,
-            session_id: "sess-kind".into(),
-            timestamp: 2000.0,
-            role: "assistant".into(),
-            content: "The deployment pipeline uses GitHub Actions for CI".into(),
-            lesson: Some("CI runs on push to main".into()),
-            tool_calls_json: None,
-            cost_microdollars: 0,
-        },
-    )
-    .unwrap();
-
-    let hits = memory
-        .query_namespace_hits("global", "GitHub Actions deployment", 10)
-        .await
-        .unwrap();
-
-    for hit in hits.iter().filter(|h| h.id.starts_with("episodic:")) {
-        assert_eq!(
-            hit.kind,
-            crate::openhuman::memory::store::MemoryItemKind::Episodic,
-            "Hits with 'episodic:' id prefix must have kind Episodic"
-        );
-    }
-}
-
-/// Episodic FTS relevance is derived from each hit's rank position
-/// (`1.0 - idx / len`). With two equally-fresh matches the only
-/// differentiator is rank, so the relevance scores must be exactly the
-/// per-position values {1.0, 0.5}. This pins the position-indexing math
-/// for n > 1 — the single-entry tests above cannot, since idx is always 0.
-#[tokio::test]
-async fn query_episodic_relevance_tracks_rank_position() {
-    use crate::openhuman::memory::store::fts5::{self, EpisodicEntry};
-
-    let tmp = TempDir::new().unwrap();
-    let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
-
-    // Two distinct entries, identical timestamp (equal freshness), both
-    // matching the query so episodic_hits has len == 2.
-    for content in [
-        "I have been using Tokio for async Rust development",
-        "Tokio async runtime powers our backend services",
-    ] {
-        fts5::episodic_insert(
-            &memory.conn,
-            &EpisodicEntry {
-                id: None,
-                session_id: "sess-rank".into(),
-                timestamp: 1000.0,
-                role: "user".into(),
-                content: content.into(),
-                lesson: None,
-                tool_calls_json: None,
-                cost_microdollars: 0,
-            },
-        )
-        .unwrap();
-    }
-
-    let hits = memory
-        .query_namespace_hits("global", "Tokio async", 10)
-        .await
-        .unwrap();
-
-    let mut relevances: Vec<f64> = hits
-        .iter()
-        .filter(|h| h.kind == crate::openhuman::memory::store::MemoryItemKind::Episodic)
-        .map(|h| h.score_breakdown.episodic_relevance)
-        .collect();
-    relevances.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-    assert_eq!(
-        relevances.len(),
-        2,
-        "expected exactly two episodic hits, got {relevances:?}"
-    );
-    assert!(
-        (relevances[0] - 0.5).abs() < 1e-9 && (relevances[1] - 1.0).abs() < 1e-9,
-        "episodic relevance must be {{0.5, 1.0}} for two-element rank order, got {relevances:?}"
     );
 }
 

@@ -15,7 +15,6 @@ use crate::openhuman::memory::store::types::{
 };
 
 use super::events;
-use super::fts5;
 use super::UnifiedMemory;
 use crate::openhuman::memory::MemoryCategory;
 use tinycortex::memory::types::{StoredMemoryDocument, GLOBAL_NAMESPACE};
@@ -28,12 +27,6 @@ const LEGACY_ASSISTANT_REPLY_KEY: &str = "assistant_resp";
 const GRAPH_WEIGHT: f64 = 0.55;
 const VECTOR_WEIGHT: f64 = 0.30;
 const KEYWORD_WEIGHT: f64 = 0.15;
-const EPISODIC_WEIGHT: f64 = 0.20;
-
-// Adjusted weights when episodic signal is present
-const GRAPH_WEIGHT_WITH_EPISODIC: f64 = 0.45;
-const VECTOR_WEIGHT_WITH_EPISODIC: f64 = 0.25;
-const KEYWORD_WEIGHT_WITH_EPISODIC: f64 = 0.10;
 
 const RECALL_PRIORITY_WEIGHT: f64 = 0.45;
 const RECALL_GRAPH_WEIGHT: f64 = 0.30;
@@ -332,84 +325,17 @@ impl UnifiedMemory {
             });
         }
 
-        // Episodic FTS5 search — search past conversation turns.
-        // Only merge episodic results when querying the global namespace,
-        // since episodic entries are session-scoped, not namespace-scoped.
-        let episodic_hits = if ns == "global" {
-            fts5::episodic_search(&self.conn, query, limit as usize).unwrap_or_else(|e| {
-                tracing::warn!("[query] episodic search failed: {e}");
-                Vec::new()
-            })
-        } else {
-            Vec::new()
-        };
-
-        if !episodic_hits.is_empty() {
-            tracing::debug!(
-                "[query] merging {} episodic hits for '{}'",
-                episodic_hits.len(),
-                query
-            );
-
-            // Reweight existing document/KV hits when episodic signal is present.
-            let has_episodic = true;
-            if has_episodic {
-                for hit in &mut hits {
-                    if hit.kind == MemoryItemKind::Document {
-                        let bd = &hit.score_breakdown;
-                        let new_score = (bd.graph_relevance * GRAPH_WEIGHT_WITH_EPISODIC)
-                            + (bd.vector_similarity * VECTOR_WEIGHT_WITH_EPISODIC)
-                            + (bd.keyword_relevance * KEYWORD_WEIGHT_WITH_EPISODIC);
-                        hit.score = new_score;
-                        hit.score_breakdown.final_score = new_score;
-                    }
-                }
-            }
-
-            for (position_idx, entry) in episodic_hits.iter().enumerate() {
-                let freshness = Self::recency_score(entry.timestamp, now);
-                // Episodic FTS5 returns results ordered by rank (best first).
-                // Normalize position to a 0-1 relevance score.
-                let fts_relevance = 1.0 - (position_idx as f64 / episodic_hits.len().max(1) as f64);
-
-                let episodic_score = (fts_relevance * 0.7) + (freshness * 0.3);
-                let final_score = episodic_score * EPISODIC_WEIGHT;
-
-                // Truncate long episodic content for context display (UTF-8 safe).
-                let content = match entry.content.char_indices().nth(500) {
-                    Some((byte_idx, _)) => format!("{}...", &entry.content[..byte_idx]),
-                    None => entry.content.clone(),
-                };
-
-                hits.push(NamespaceMemoryHit {
-                    id: format!("episodic:{}", entry.id.unwrap_or(0)),
-                    kind: MemoryItemKind::Episodic,
-                    namespace: ns.clone(),
-                    key: format!("{}:{}", entry.session_id, entry.role),
-                    title: entry.lesson.clone(),
-                    content,
-                    category: "episodic".to_string(),
-                    source_type: Some(entry.role.clone()),
-                    updated_at: entry.timestamp,
-                    score: final_score,
-                    score_breakdown: RetrievalScoreBreakdown {
-                        keyword_relevance: 0.0,
-                        vector_similarity: 0.0,
-                        graph_relevance: 0.0,
-                        episodic_relevance: fts_relevance,
-                        freshness,
-                        final_score,
-                    },
-                    document_id: None,
-                    chunk_id: None,
-                    supporting_relations: Vec::new(),
-                    // Episodic rows are derived from user chat turns and
-                    // never carry sync-ingest content; surface as
-                    // Internal so the subconscious gate trusts them.
-                    taint: crate::openhuman::memory::MemoryTaint::Internal,
-                });
-            }
-        }
+        // The episodic log is NOT merged here. Its rows are raw chat turns —
+        // the same verbatim conversation `drop_verbatim_conversation_copies`
+        // removes from the document side a few lines up — so merging them put
+        // the copy back through a second door: `memory_hybrid_search` renders
+        // every hit it is handed, so a global query returned transcript text
+        // competing with extracted memories for the same recall slots (#5312).
+        //
+        // Reading the conversation is `transcript_search`'s job. It reads the
+        // thread transcript directly, which is complete and current, where the
+        // episodic mirror is neither. Nothing else consumes
+        // `fts5::episodic_search`, so this path is the whole of the leak.
 
         // Event FTS5 search — search extracted facts, decisions, preferences.
         let event_hits = events::event_search_fts(&self.conn, &ns, query, limit as usize)
