@@ -179,13 +179,19 @@ mod tests {
     /// behalf of a reshape that had found nothing, so the model got neither.
     #[test]
     fn a_failed_response_selects_no_provider_to_reshape_with() {
-        register_provider(Arc::new(DummyProvider { slug: "gmail" }));
+        // A toolkit of this test's own, not `gmail`: the registry is process-
+        // global, so registering a `DummyProvider` under a real slug would hand
+        // it to any parallel test that looks Gmail up. `toolkit_from_slug`
+        // splits on the first `_`, so the slug below resolves to this toolkit.
+        register_provider(Arc::new(DummyProvider {
+            slug: "reshapeprobe",
+        }));
 
         assert!(
-            provider_for_reshape("GMAIL_LIST_THREADS", true).is_some(),
+            provider_for_reshape("RESHAPEPROBE_LIST_THINGS", true).is_some(),
             "the success case must still reshape, or this test proves nothing"
         );
-        assert!(provider_for_reshape("GMAIL_LIST_THREADS", false).is_none());
+        assert!(provider_for_reshape("RESHAPEPROBE_LIST_THINGS", false).is_none());
     }
 
     /// An unregistered toolkit has nothing to reshape with either way — the
