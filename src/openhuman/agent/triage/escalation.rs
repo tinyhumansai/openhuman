@@ -50,8 +50,10 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
     match run.decision.action {
         TriageAction::Drop => {
             tracing::debug!(
+                source = %envelope.source.slug(),
                 label = %envelope.display_label,
                 external_id = %envelope.external_id,
+                card_linked = envelope.card_link.is_some(),
                 reason = %run.decision.reason,
                 "[triage::escalation] DROP — no downstream work"
             );
@@ -64,11 +66,26 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
             gate_linked_card_terminal(envelope, "drop").await;
         }
         TriageAction::Acknowledge => {
+            // Acknowledge is a classification, not a write. What the trigger
+            // *was* is already durable in the composio trigger-history JSONL,
+            // and what it was *judged to be* went out as `TriggerEvaluated`
+            // above. Copying a summary into the memory store on top of that
+            // would duplicate a document the connector sync already ingested —
+            // same mail, second copy, competing for the same recall slots — so
+            // this arm deliberately writes nothing.
+            //
+            // What is genuinely missing is not a copy of the input but a record
+            // of what happened *after* the verdict, for every action, not just
+            // this one. That belongs in a progress surface of its own rather
+            // than bolted onto the acknowledge branch (#5408).
             tracing::info!(
+                source = %envelope.source.slug(),
                 label = %envelope.display_label,
                 external_id = %envelope.external_id,
+                card_linked = envelope.card_link.is_some(),
                 reason = %run.decision.reason,
-                "[triage::escalation] ACKNOWLEDGE — logged (memory-write is a future addition)"
+                "[triage::escalation] ACKNOWLEDGE — no autonomous action; \
+                 recorded as TriggerEvaluated, input retained in trigger history"
             );
             // Acknowledge means "seen, no autonomous action needed" — same as
             // drop, the linked card must not be picked up by the board poller.
