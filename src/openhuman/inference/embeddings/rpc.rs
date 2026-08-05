@@ -364,6 +364,19 @@ pub async fn update_settings(
     config.save().await.map_err(|e| e.to_string())?;
 
     if sig_changed {
+        // Rebuild the live memory client first. Its `UnifiedMemory` resolved an
+        // embedder at construction and never re-reads the config, so a sweep
+        // started before this would scan and write under the signature the save
+        // above just superseded — repairing nothing and marking the new
+        // signature's rows done. A rebuild failure is logged and the sweep still
+        // runs: it is then no worse off than it was without this call.
+        if let Err(error) = crate::openhuman::memory::global::rebind_current_workspace() {
+            tracing::warn!(
+                error = %error,
+                "{LOG_PREFIX} could not rebuild the memory client for the new embedder; \
+                 the re-embed sweep will run against the previous one"
+            );
+        }
         crate::openhuman::memory::queue::ensure_reembed_backfill(&config);
         // A new embedder changes the active dimension, which is what the base
         // sweep keys off: every chunk stored at the old dimension is pending

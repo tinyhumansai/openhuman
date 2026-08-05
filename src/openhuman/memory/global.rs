@@ -107,6 +107,54 @@ fn init_in_slot(
     Ok(client)
 }
 
+/// Rebuild the global client for the workspace it is already bound to.
+///
+/// [`init`] deliberately no-ops when the workspace is unchanged, which is right
+/// for its callers — but wrong for a change in *how* memory embeds rather than
+/// *where* it lives. `UnifiedMemory` resolves its embedder once, at
+/// construction, so after an embedding provider / model / dimension switch the
+/// live client still holds the old one: the base re-embed sweep would then scan
+/// and write under the superseded signature, leaving every row that the switch
+/// just made pending stuck that way until the next boot.
+///
+/// Returns `Ok(None)` when nothing is bound yet — there is no client to
+/// replace, and the next [`init`] picks up the saved config anyway. A rebuild
+/// failure leaves the existing client in place: a stale embedder still answers
+/// queries, where an empty slot answers nothing.
+pub fn rebind_current_workspace() -> Result<Option<MemoryClientRef>, String> {
+    rebind_in_slot(global_slot())
+}
+
+fn rebind_in_slot(slot: &GlobalClientSlot) -> Result<Option<MemoryClientRef>, String> {
+    let workspace_dir = {
+        let guard = slot
+            .read()
+            .map_err(|e| format!("[memory:global] read lock poisoned: {e}"))?;
+        match guard.as_ref() {
+            Some(existing) => existing.workspace_dir.clone(),
+            None => {
+                log::debug!("[memory:global] rebind skipped — no client bound yet");
+                return Ok(None);
+            }
+        }
+    };
+
+    log::info!(
+        "[memory:global] rebuilding MemoryClient in place workspace={}",
+        workspace_dir.display()
+    );
+    let client = Arc::new(MemoryClient::from_workspace_dir(workspace_dir.clone())?);
+
+    let mut guard = slot
+        .write()
+        .map_err(|e| format!("[memory:global] write lock poisoned: {e}"))?;
+    *guard = Some(GlobalMemoryClient {
+        workspace_dir,
+        client: Arc::clone(&client),
+    });
+    Ok(Some(client))
+}
+
 /// Initialise using the default `~/.openhuman/workspace` directory.
 ///
 /// **TEST-ONLY.** Production code must call [`init`] with the real workspace
@@ -202,6 +250,40 @@ mod tests {
 
         assert!(!Arc::ptr_eq(&first, &second));
         assert!(Arc::ptr_eq(&second, &current));
+    }
+
+    /// `init` returning the same handle for an unchanged workspace is what makes
+    /// a dedicated rebind necessary: an embedder swap changes how memory embeds,
+    /// not where it lives, so the workspace-keyed short-circuit would keep the
+    /// old embedder alive and the base sweep would run under a dead signature.
+    #[tokio::test]
+    async fn rebind_replaces_the_client_for_the_same_workspace() {
+        let slot = GlobalClientSlot::default();
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("ws");
+
+        let first = init_in_slot(&slot, workspace.clone()).unwrap();
+        // The path `init` takes for an unchanged workspace, spelled out.
+        assert!(Arc::ptr_eq(
+            &first,
+            &init_in_slot(&slot, workspace.clone()).unwrap()
+        ));
+
+        let rebound = rebind_in_slot(&slot).unwrap().expect("a client was bound");
+        let current = client_from(&slot).unwrap();
+
+        assert!(
+            !Arc::ptr_eq(&first, &rebound),
+            "rebind must build a new client, not hand back the bound one"
+        );
+        assert!(Arc::ptr_eq(&rebound, &current), "and must install it");
+    }
+
+    #[tokio::test]
+    async fn rebind_is_a_no_op_when_nothing_is_bound() {
+        let slot = GlobalClientSlot::default();
+        assert!(rebind_in_slot(&slot).unwrap().is_none());
+        assert!(client_from(&slot).is_err());
     }
 
     #[tokio::test]
