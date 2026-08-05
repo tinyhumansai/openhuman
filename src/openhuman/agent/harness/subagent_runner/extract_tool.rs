@@ -160,20 +160,18 @@ impl ExtractFromResultTool {
     }
 }
 
-#[async_trait]
-impl Tool for ExtractFromResultTool {
-    fn name(&self) -> &str {
-        "extract_from_result"
-    }
-
-    fn description(&self) -> &str {
-        // No sample handle is shown here, deliberately. A handle is minted at
-        // runtime and only exists once a result was actually stashed, so any
-        // example is a string the model cannot legitimately send — and it sends
-        // it: shown `result_id="res_1"`, two live runs called this tool with
-        // `res_1` against a cache that had never issued one, and both got a
-        // cache-miss instead of the data they wanted.
-        "Answer a targeted question against an oversized tool output that was \
+/// The model-facing description, lifted out of the trait impl so a test can
+/// read it without constructing a tool (which needs a live cache and model
+/// source).
+///
+/// No sample handle appears here, deliberately. A handle is minted at runtime
+/// and only exists once a result was actually stashed, so any example is a
+/// string the model cannot legitimately send — and it sends it: shown
+/// `result_id="res_1"`, two live runs called this tool with that value against
+/// a cache that had never issued one, and both got a cache-miss instead of the
+/// data they wanted.
+fn description_text() -> &'static str {
+    "Answer a targeted question against an oversized tool output that was \
          stashed under a `result_id` handle. Use this when a previous tool call \
          came back as a placeholder carrying such a handle, because its raw \
          output was too large to show inline. Copy that handle from the \
@@ -181,23 +179,38 @@ impl Tool for ExtractFromResultTool {
          exact facts/identifiers you need; returns only the extracted answer, \
          not the full payload. Multiple queries against the same `result_id` \
          are allowed — each one is independent."
+}
+
+/// The model-facing argument schema, lifted for the same reason.
+fn parameters_schema_json() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "result_id": {
+                "type": "string",
+                "description": "The handle emitted in the oversized tool output placeholder, copied exactly. Only a handle that appeared in an earlier result is valid; there is no handle to send if no result was stashed. A handle can also stop working: the cache keeps a bounded number of recent entries, so an older one may have been evicted, and the answer then is to re-run the original tool for a fresh handle, never to guess a new one."
+            },
+            "query": {
+                "type": "string",
+                "description": "Natural-language question naming the exact facts or identifiers to extract. Be specific."
+            }
+        },
+        "required": ["result_id", "query"]
+    })
+}
+
+#[async_trait]
+impl Tool for ExtractFromResultTool {
+    fn name(&self) -> &str {
+        "extract_from_result"
+    }
+
+    fn description(&self) -> &str {
+        description_text()
     }
 
     fn parameters_schema(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "result_id": {
-                    "type": "string",
-                    "description": "The handle emitted in the oversized tool output placeholder, copied exactly. Only a handle that appeared in an earlier result is valid; there is no handle to send if no result was stashed."
-                },
-                "query": {
-                    "type": "string",
-                    "description": "Natural-language question naming the exact facts or identifiers to extract. Be specific."
-                }
-            },
-            "required": ["result_id", "query"]
-        })
+        parameters_schema_json()
     }
 
     fn category(&self) -> ToolCategory {
