@@ -866,8 +866,8 @@ fn handle_install(params: Map<String, Value>) -> ControllerFuture {
 /// user-editable body, so a single reader keeps their validation identical.
 fn read_custom_input(
     params: &Map<String, Value>,
-) -> Result<crate::openhuman::mcp_registry::custom::CustomServerInput, String> {
-    Ok(crate::openhuman::mcp_registry::custom::CustomServerInput {
+) -> Result<crate::openhuman::mcp::registry::custom::CustomServerInput, String> {
+    Ok(crate::openhuman::mcp::registry::custom::CustomServerInput {
         display_name: read_required::<String>(params, "display_name")?,
         transport: read_required::<String>(params, "transport")?,
         command: read_optional_string(params, "command")?,
@@ -884,7 +884,7 @@ fn handle_add_custom(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let input = read_custom_input(&params)?;
         to_json(
-            crate::openhuman::mcp_registry::custom::ops::mcp_clients_add_custom(&config, input)
+            crate::openhuman::mcp::registry::custom::ops::mcp_clients_add_custom(&config, input)
                 .await?,
         )
     })
@@ -896,7 +896,7 @@ fn handle_update_custom(params: Map<String, Value>) -> ControllerFuture {
         let server_id = read_required::<String>(&params, "server_id")?;
         let input = read_custom_input(&params)?;
         to_json(
-            crate::openhuman::mcp_registry::custom::ops::mcp_clients_update_custom(
+            crate::openhuman::mcp::registry::custom::ops::mcp_clients_update_custom(
                 &config, server_id, input,
             )
             .await?,

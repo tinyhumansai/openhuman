@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
-use crate::openhuman::mcp_registry::types::{InstalledServer, ServerProvenance};
-use crate::openhuman::mcp_registry::{connections, store};
+use crate::openhuman::mcp::registry::types::{InstalledServer, ServerProvenance};
+use crate::openhuman::mcp::registry::{connections, store};
 use crate::rpc::RpcOutcome;
 
 use super::validate::{
