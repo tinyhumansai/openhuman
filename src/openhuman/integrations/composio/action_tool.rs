@@ -155,7 +155,14 @@ impl Tool for ComposioActionTool {
         // slug) routes through the `ApprovalGate` before it runs; a pure read
         // flows through unprompted. Without this the model could send mail /
         // create records via a per-action tool with no approval prompt at all.
-        super::tools::action_mutates_external_state(&self.action_name)
+        let mutates = super::tools::action_mutates_external_state(&self.action_name);
+        tracing::debug!(
+            target: "composio",
+            tool = %self.action_name,
+            external_effect = mutates,
+            "[composio] per-action approval classification"
+        );
+        mutates
     }
 
     fn category(&self) -> ToolCategory {
@@ -327,6 +334,12 @@ impl Tool for ComposioActionTool {
                 // record, and `reshape_supersedes_markdown` would then clear the
                 // backend's error rendering on behalf of a reshape that found
                 // nothing — leaving the model neither.
+                tracing::debug!(
+                    target: "composio",
+                    tool = %self.action_name,
+                    successful = resp.successful,
+                    "[composio] reshape provider selection"
+                );
                 if let Some(provider) =
                     super::providers::provider_for_reshape(&self.action_name, resp.successful)
                 {
@@ -343,6 +356,7 @@ impl Tool for ComposioActionTool {
                         .reshape_supersedes_markdown(&self.action_name, reshape_args.as_ref())
                     {
                         tracing::debug!(
+                            target: "composio",
                             tool = %&self.action_name,
                             "[composio] provider reshape supersedes the backend markdown rendering"
                         );

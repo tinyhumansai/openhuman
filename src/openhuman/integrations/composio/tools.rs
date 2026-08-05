@@ -1546,6 +1546,12 @@ impl Tool for ComposioExecuteTool {
                 // record, and `reshape_supersedes_markdown` would then clear the
                 // backend's error rendering on behalf of a reshape that found
                 // nothing — leaving the model neither.
+                tracing::debug!(
+                    target: "composio",
+                    tool = %tool,
+                    successful = resp.successful,
+                    "[composio] reshape provider selection"
+                );
                 if let Some(provider) = provider_for_reshape(&tool, resp.successful) {
                     provider.post_process_action_result(
                         &tool,
@@ -1558,6 +1564,7 @@ impl Tool for ComposioExecuteTool {
                     // JSON envelope when it is absent.
                     if provider.reshape_supersedes_markdown(&tool, reshape_args.as_ref()) {
                         tracing::debug!(
+                            target: "composio",
                             tool = %&tool,
                             "[composio] provider reshape supersedes the backend markdown rendering"
                         );
