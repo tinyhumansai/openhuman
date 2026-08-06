@@ -431,7 +431,8 @@ pub fn learning_schemas(function: &str) -> ControllerSchema {
         "learning_get_settings" => ControllerSchema {
             namespace: "learning",
             function: "get_settings",
-            description: "Read the self-learning master switch (`learning.enabled`) and related flags.",
+            description:
+                "Read the self-learning master switch (`learning.enabled`) and related flags.",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "enabled",
@@ -443,7 +444,8 @@ pub fn learning_schemas(function: &str) -> ControllerSchema {
         "learning_update_settings" => ControllerSchema {
             namespace: "learning",
             function: "update_settings",
-            description: "Update and persist the self-learning master switch. New sessions pick up \
+            description:
+                "Update and persist the self-learning master switch. New sessions pick up \
                           the value; the current session keeps its frozen learning_enabled flag.",
             inputs: vec![FieldSchema {
                 name: "enabled",

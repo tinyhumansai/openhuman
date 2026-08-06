@@ -30,9 +30,7 @@ vi.mock('../../services/api/learningApi', () => ({
 }));
 
 vi.mock('../../lib/i18n/I18nContext', () => ({
-  useT: () => ({
-    t: (key: string, fallback?: string) => fallback ?? key,
-  }),
+  useT: () => ({ t: (key: string, fallback?: string) => fallback ?? key }),
 }));
 
 describe('<FacetsPanel />', () => {

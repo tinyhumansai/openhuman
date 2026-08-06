@@ -214,9 +214,8 @@ impl Agent {
         )
         .await;
         let facets = crate::openhuman::agent::learning::load_learned_from_global_cache();
-        let standing = crate::openhuman::agent::learning::merge_standing_preferences(
-            general, facets,
-        );
+        let standing =
+            crate::openhuman::agent::learning::merge_standing_preferences(general, facets);
         tracing::debug!(
             "[learning] fetch_learned_context: merged {} standing preference(s) (Lane A + Active facets)",
             standing.len()

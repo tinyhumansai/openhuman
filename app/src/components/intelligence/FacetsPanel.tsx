@@ -9,10 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LuPin, LuPinOff, LuRefreshCw, LuTrash2 } from 'react-icons/lu';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import {
-  type LearningFacet,
-  learningApi,
-} from '../../services/api/learningApi';
+import { learningApi, type LearningFacet } from '../../services/api/learningApi';
 import Button from '../ui/Button';
 
 const cardClass = 'rounded-lg border border-line bg-surface p-4';
@@ -162,7 +159,10 @@ export default function FacetsPanel() {
 
   if (error) {
     return (
-      <div className={`${cardClass} text-sm text-coral-600`} role="alert" data-testid="facets-panel-error">
+      <div
+        className={`${cardClass} text-sm text-coral-600`}
+        role="alert"
+        data-testid="facets-panel-error">
         {error}
       </div>
     );
@@ -201,7 +201,9 @@ export default function FacetsPanel() {
           </div>
         </div>
         {!learningEnabled && (
-          <p className="mt-3 text-xs text-amber-700 dark:text-amber-300" data-testid="learning-off-hint">
+          <p
+            className="mt-3 text-xs text-amber-700 dark:text-amber-300"
+            data-testid="learning-off-hint">
             {t('brain.profile.learningOffHint')}
           </p>
         )}
@@ -255,9 +257,7 @@ export default function FacetsPanel() {
                         variant="tertiary"
                         size="sm"
                         disabled={busy}
-                        aria-label={
-                          pinned ? t('brain.profile.unpin') : t('brain.profile.pin')
-                        }
+                        aria-label={pinned ? t('brain.profile.unpin') : t('brain.profile.pin')}
                         onClick={() =>
                           void runAction(facet.key, () =>
                             pinned

@@ -202,7 +202,10 @@ fn merge_standing_preferences_lane_a_first_dedupes_and_caps() {
     assert!(merged.iter().any(|s| s.contains("verbosity")));
     assert!(merged.iter().any(|s| s.contains("rust")));
     assert_eq!(
-        merged.iter().filter(|s| s.to_lowercase().contains("concise")).count(),
+        merged
+            .iter()
+            .filter(|s| s.to_lowercase().contains("concise"))
+            .count(),
         1,
         "duplicate concise entry must be deduped"
     );
